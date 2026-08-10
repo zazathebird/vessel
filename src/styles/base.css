@@ -1,0 +1,202 @@
+/*
+ * Base layer. Everything here reads design tokens set by src/theme.ts — no
+ * literal colours below this comment, so a palette change is a variable swap.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: #0b0a1f; /* Nebula Drift bg, so first paint matches before tokens mount */
+  color-scheme: dark;
+}
+
+.vessel {
+  position: relative;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-body);
+  overflow: hidden;
+  /* Palette bleed: colours never cut, they cross-fade. */
+  transition: background-color 0.9s ease, color 0.9s ease;
+}
+
+/* Calm is a second aesthetic, not a dimmer switch: one accent, no motion. */
+.vessel.is-calm {
+  filter: saturate(0.45);
+}
+
+.vessel.is-calm *,
+.vessel.is-calm *::before,
+.vessel.is-calm *::after {
+  animation: none !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+}
+
+/* Honour the OS preference in CSS too, not only in app state. */
+@media (prefers-reduced-motion: reduce) {
+  .vessel *,
+  .vessel *::before,
+  .vessel *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* Focus styles are undefined in the prototype. Defining them is not a design
+   change; it is closing a gap the spec lists as work to do. */
+.vessel :focus-visible {
+  outline: 2px solid var(--a1);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+
+.stage {
+  position: relative;
+  z-index: 5;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: var(--page-padding);
+}
+
+/* Shared chrome primitives ------------------------------------------------ */
+
+.mono {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+}
+
+.chip {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  padding: 9px 12px;
+  border-radius: var(--radius);
+  text-transform: uppercase;
+  border: 1px solid var(--line);
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background-color 0.9s ease, color 0.9s ease, border-color 0.9s ease,
+    box-shadow 0.9s ease;
+}
+
+.chip[aria-pressed="true"],
+.chip.is-active {
+  border-color: var(--a1);
+  background: color-mix(in oklab, var(--a1) 16%, transparent);
+  color: var(--a1);
+}
+
+/* Touch targets: nav pills and CTAs must clear 44px on the narrow bands. */
+.band-phone .chip,
+.band-tablet .chip {
+  min-height: 44px;
+  padding: 13px 16px;
+}
+
+@keyframes v-rise {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes v-dilate {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.5;
+  }
+  42% {
+    transform: scale(1.14);
+    opacity: 0.95;
+  }
+  60% {
+    transform: scale(1.02);
+    opacity: 0.7;
+  }
+}
+
+@keyframes v-travel {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}
+
+@keyframes v-drift {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-12px);
+  }
+}
+
+@keyframes v-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes v-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.012);
+  }
+}
+
+@keyframes v-dive {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0);
+  }
+  55% {
+    opacity: 0;
+    transform: scale(2.6);
+    filter: blur(14px);
+  }
+  56% {
+    opacity: 0;
+    transform: scale(0.86);
+    filter: blur(14px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0);
+  }
+}
+
+@keyframes v-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
