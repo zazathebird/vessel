@@ -200,3 +200,54 @@ body {
     opacity: 1;
   }
 }
+
+/*
+ * The stage resolves in via one of two identically-shaped animations, alternated
+ * by nav parity. Ported verbatim from the prototype, where v-irisA and v-irisB are
+ * also defined identically — the alternation is what keeps consecutive navigations
+ * from feeling identical (per SPEC.md's motion systems §5), not a difference in the
+ * keyframes themselves.
+ */
+@keyframes v-iris-a {
+  from {
+    opacity: 0;
+    transform: scale(1.06);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes v-iris-b {
+  from {
+    opacity: 0;
+    transform: scale(1.06);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes v-shock {
+  0% {
+    opacity: 0.9;
+    transform: translate(-50%, -50%) scale(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(16);
+  }
+}
+
+@keyframes v-door-in {
+  0% {
+    opacity: 0;
+    transform: perspective(1200px) rotateX(26deg) scale(0.85);
+  }
+  100% {
+    opacity: 1;
+    transform: perspective(1200px) rotateX(0) scale(1);
+  }
+}

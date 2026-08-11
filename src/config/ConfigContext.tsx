@@ -23,7 +23,7 @@ interface ConfigContextValue {
   config: Config;
   /** Merge a partial update into config. */
   update: (patch: Partial<Config>) => void;
-  /** Navigate — pushes a real URL and applies per-page rolls. */
+  /** Navigate — pushes a real URL, dives the stage, and applies per-page rolls. */
   go: (page: PageId) => void;
   /** Operator shuffle. Announces the result; a blocked roll toasts instead. */
   shuffle: () => void;
@@ -35,6 +35,25 @@ interface ConfigContextValue {
   say: (message: string) => void;
   /** HH:MM · local, ticking. */
   clock: string;
+
+  // ---- ephemeral UI state — deliberately not persisted (see SPEC.md § State) ----
+  /** Mid page-transition: the stage is diving rather than resting. */
+  diving: boolean;
+  /** Increments per navigation; alternates which iris animation resolves the stage in. */
+  nav: number;
+  panelOpen: boolean;
+  togglePanel: () => void;
+  closePanel: () => void;
+  doorOpen: boolean;
+  /** Which unlock route fired, e.g. "unlocked via five taps". Shown in the door modal. */
+  doorVia: string;
+  openDoor: (via: string) => void;
+  closeDoor: () => void;
+  /** authenticate: sets unlocked, opens the panel, closes the door. Theatre — see CLAUDE.md. */
+  openConfig: () => void;
+  /** Screensaver active. Disabled entirely in calm; click-only wake. */
+  saver: boolean;
+  setSaver: (value: boolean) => void;
 }
 
 const ConfigContext = createContext<ConfigContextValue | null>(null);
@@ -62,8 +81,16 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   const [toast, setToast] = useState("");
   const [clock, setClock] = useState(() => formatClock(new Date()));
 
+  const [diving, setDiving] = useState(false);
+  const [nav, setNav] = useState(0);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [doorOpen, setDoorOpen] = useState(false);
+  const [doorVia, setDoorVia] = useState("");
+  const [saver, setSaver] = useState(false);
+
   const toastTimer = useRef<number | undefined>(undefined);
   const saveTimer = useRef<number | undefined>(undefined);
+  const diveTimer = useRef<number | undefined>(undefined);
 
   const say = useCallback((message: string) => {
     window.clearTimeout(toastTimer.current);
@@ -142,20 +169,53 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // ---- routing ----
-  const go = useCallback(
-    (page: PageId) => {
-      if (window.location.pathname !== PATHS[page]) {
-        window.history.pushState({}, "", PATHS[page]);
+  // Valve dive on navigation (motion system 5): a 620ms transform runs on the whole
+  // stage — scale up with blur while fading out, then an instant cut and a resolve
+  // back to 1. The page swap itself commits at the 300ms mark, mid-blur, so the
+  // ugly transition is hidden. Calm mode skips the dive and cuts instantly.
+  const go = useCallback((page: PageId) => {
+    setConfig((previous) => {
+      if (previous.page === page) return previous;
+
+      const commit = () => {
+        if (window.location.pathname !== PATHS[page]) {
+          window.history.pushState({}, "", PATHS[page]);
+        }
+        setConfig((prev) => {
+          const next = { ...prev, page };
+          const result = prev.mode === "page" ? roll(prev) : null;
+          return result ? { ...next, ...result } : next;
+        });
+        setNav((n) => n + 1);
+        setPanelOpen(false);
+        setDiving(false);
+      };
+
+      if (previous.calm) {
+        commit();
+        return previous;
       }
-      setConfig((previous) => {
-        const next = { ...previous, page };
-        if (previous.mode !== "page") return next;
-        const result = roll(previous);
-        return result ? { ...next, ...result } : next;
-      });
-    },
-    [],
-  );
+      setDiving(true);
+      window.clearTimeout(diveTimer.current);
+      diveTimer.current = window.setTimeout(commit, 300);
+      return previous;
+    });
+  }, []);
+
+  const togglePanel = useCallback(() => setPanelOpen((v) => !v), []);
+  const closePanel = useCallback(() => setPanelOpen(false), []);
+
+  const openDoor = useCallback((via: string) => {
+    setDoorVia(`unlocked via ${via}`);
+    setDoorOpen(true);
+    setPanelOpen(false);
+  }, []);
+  const closeDoor = useCallback(() => setDoorOpen(false), []);
+  const openConfig = useCallback(() => {
+    setDoorOpen(false);
+    setPanelOpen(true);
+    update({ unlocked: true });
+  }, [update]);
 
   useEffect(() => {
     const onPop = () => {
@@ -177,8 +237,40 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       toast,
       say,
       clock,
+      diving,
+      nav,
+      panelOpen,
+      togglePanel,
+      closePanel,
+      doorOpen,
+      doorVia,
+      openDoor,
+      closeDoor,
+      openConfig,
+      saver,
+      setSaver,
     }),
-    [config, update, go, shuffle, band, toast, say, clock],
+    [
+      config,
+      update,
+      go,
+      shuffle,
+      band,
+      toast,
+      say,
+      clock,
+      diving,
+      nav,
+      panelOpen,
+      togglePanel,
+      closePanel,
+      doorOpen,
+      doorVia,
+      openDoor,
+      closeDoor,
+      openConfig,
+      saver,
+    ],
   );
 
   return <ConfigContext.Provider value={value}>{children}</ConfigContext.Provider>;
