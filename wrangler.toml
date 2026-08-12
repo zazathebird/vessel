@@ -29,13 +29,13 @@ not_found_handling = "single-page-application"
 # read-after-write consistency, which KV's eventual consistency would quietly
 # undermine (§8).
 #
-# database_id is filled in when the database is created against the operator's
-# Cloudflare account. Local development uses wrangler's SQLite emulation and
-# ignores it.
+# database_id points at the real database, created 2026-08-12 against the
+# operator's Cloudflare account. Local development uses wrangler's SQLite
+# emulation and ignores it.
 [[d1_databases]]
 binding = "DB"
 database_name = "vessel"
-database_id = "PLACEHOLDER_SET_ON_FIRST_DEPLOY"
+database_id = "ec0f8475-8e96-4229-a4b7-80ee3d312fe2"
 migrations_dir = "migrations"
 
 # Rate-limit counters, because D1 has no atomic read-modify-write and a counter

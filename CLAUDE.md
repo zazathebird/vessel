@@ -290,12 +290,31 @@ Found while building; none are blocking, all are recorded here rather than slipp
 define Durable Object classes and this stack needs them twice — rate limiting now, one signalling
 object per paired machine in phase 2.
 
-Nothing is deployed yet. Two things are pending and both need the client:
+Nothing is deployed yet, but the groundwork is now done. State as of 2026-08-12:
 
-1. `npx wrangler login` — **the client runs this themselves.** Do not enter credentials or grant OAuth
-   on their behalf.
-2. The real D1 database and the cutover of `mcclevarty.ca` from the Pages project to the Worker.
-   Do it once, deliberately, with the client watching.
+- ✅ `npx wrangler login` — done by the client. Account `760b80a637d2ffe755b09da3f4a339ff`.
+- ✅ **The real D1 database exists.** `vessel`, region ENAM, id in `wrangler.toml`. Both migrations
+  are applied `--remote`; `d1 list` was empty before this, so nothing was overwritten.
+- ❌ **The four secrets are not set**, and the Worker cannot be deployed until they are. `Env` types
+  all four as required `string`s, so a deploy without them yields a Worker whose every HMAC throws.
+  The commands were blocked by the sandbox's permission classifier rather than by anything about the
+  project; **the client runs these four themselves**, from the repo root:
+
+  ```sh
+  node -e "process.stdout.write(require('crypto').randomBytes(32).toString('base64'))" | npx wrangler secret put AUTH_PEPPER
+  # …and the same for SESSION_SECRET, TOTP_ENC_KEY, RATE_SALT_SEED
+  ```
+
+  **`AUTH_PEPPER` must be backed up somewhere the client controls before the first real account is
+  created.** Cloudflare secrets are write-only — they cannot be read back. Losing the pepper
+  invalidates every stored auth hash, i.e. every password on the site, unrecoverably. Today that
+  costs nothing because no accounts exist; after the first signup it is a data-loss event. The other
+  three are similar but cheaper: `SESSION_SECRET` only signs out everyone, `RATE_SALT_SEED` only
+  resets counters, `TOTP_ENC_KEY` breaks enrolled second factors.
+- ❌ `npx wrangler deploy`, then the cutover of `mcclevarty.ca` from the Pages project to the Worker.
+  Do it once, deliberately, with the client watching. Deploy to `workers.dev` and verify
+  `/api/health` returns `{"ok":true,"tables":6}` *before* moving the custom domain — the Pages
+  project `vessel` still serves the live site and is the rollback.
 
 **`public/_redirects` is dead under Workers but must stay** until cutover. The live site still deploys
 from Pages, and removing it would break client-side routing in production on the next push.
