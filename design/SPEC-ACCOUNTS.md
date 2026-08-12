@@ -12,6 +12,15 @@ Decisions already fixed by the client, in conversation on 2026-08-12:
 | Whose drives | **Everyone's.** Each user can expose their own machines and grant access to others. Not just the operator's |
 | Sign-in | **Passkeys / WebAuthn.** No passwords stored anywhere |
 | Sequencing | **This spec first, approved, then build** |
+| What the agent *is* | **A browser tab holding a File System Access directory handle.** Not a native binary. See §8 |
+| Permissions | **Read-only.** The `perms` field exists in the grant document so writes remain possible later, but nothing writes |
+| Sharing unit | **A folder within a drive**, never a whole drive |
+| Grantee identity | **An account is required**, reached through a one-tap invite link. No capability URLs |
+
+The second of these replaced an earlier reading of the client's note — *"any drives i deem them
+accessible, which i will do per user manually"* — which described a narrow model where the operator is
+the only machine owner. The broad model is confirmed, and §8's move away from a native binary is what
+makes it affordable; see §12 for what that decision cost and saved.
 
 ---
 
@@ -26,9 +35,10 @@ version of it that avoids the price.
 
 Three things are **not** broken, and the design below works to keep them that way:
 
-- **No third-party runtime libraries.** WebAuthn, ECDH, AES-GCM and HKDF are all native `WebCrypto`.
-  The Worker side needs a small hand-rolled CBOR reader (~120 lines, one narrow subset) and nothing
-  else. The React app gains no dependencies.
+- **No third-party runtime libraries.** WebAuthn, P-256 signing, HKDF and AES-KW are all native
+  `WebCrypto`; WebRTC handles the transport and its encryption itself. The Worker side needs a small
+  hand-rolled CBOR reader (~120 lines, one narrow subset) and nothing else. The React app gains no
+  dependencies.
 - **No images, no webfonts.** Unchanged.
 - **The operator door stays theatre.** `SPEC.md` §Security is explicit: *"If real authentication is
   ever wanted, it needs a backend and should not reuse any of this UI."* Real auth gets its own
@@ -51,12 +61,17 @@ The case against, stated fairly, because it is real:
 
 - **Availability is tied to the owner's machine.** Asleep, offline, or moved house means the files are
   gone until it comes back. There is no server-side copy to fall back to. This is inherent, not a bug
-  to be fixed later.
-- **There is an install step.** Every person exposing a drive must run an agent on that machine. That
-  is a meaningful adoption cost and the single biggest risk to the feature being used at all.
+  to be fixed later. With a browser agent it is sharper still: the sharing tab must be *open*.
+- **There is a setup step**, though no longer an install one. Every person exposing a folder must open
+  the sharing page and pick that folder. That is a far smaller ask than a native binary, but it is not
+  nothing, and the tab-stays-open requirement is the honest cost of removing the install.
+- **Sharers are limited to Chromium.** The File System Access API exists in Chrome, Edge and other
+  Chromium browsers, and in neither Firefox nor Safari. Grantees are unaffected — receiving a file
+  needs no special API — so the restriction lands only on the smaller group, but it is a real one.
 - **The security surface is larger, not smaller.** Decentralising removes the honeypot but adds a
-  capability system, a relay, and a native binary on people's home machines. Each is a place to get it
-  wrong.
+  capability system, a signalling service, and a peer-to-peer transport. Each is a place to get it
+  wrong. It no longer adds a native binary on people's home machines, which was the largest single
+  item on this list.
 
 The design below is shaped to make those costs as small as they can be, but it does not eliminate
 them, and the feature should not be sold internally as though it does.
@@ -68,11 +83,24 @@ them, and the feature should not be sold internally as though it does.
 | Adversary | Guarantee |
 |---|---|
 | The site operator | Cannot read any user's files, and cannot mint a grant. The site holds no key that opens anything |
-| The relay operator | Sees ciphertext and traffic timing. No plaintext, no filenames, no keys |
-| Network attacker | TLS to the edge, plus end-to-end encryption inside it |
-| A malicious grantee | Confined to exactly the paths granted, at the permission granted, until expiry or revocation |
+| The signalling service | Brokers a handshake and sees who connected to whom, when. File bytes never pass through it at all |
+| A TURN relay, when one is needed | Sees DTLS ciphertext and traffic timing. No plaintext, no filenames, no keys |
+| Network attacker | TLS to the edge, plus DTLS end-to-end between the two peers inside it |
+| **A hostile signalling service** | Could substitute its own DTLS fingerprint and sit in the middle. Defeated by fingerprint binding — see below |
+| A malicious grantee | Confined to exactly the folder granted, read-only, until expiry or revocation |
 | A stolen laptop | Passkey requires user verification (biometric or PIN) on every sign-in |
 | **A compromised site frontend** | See below — this is the hard one |
+
+**The signalling MITM case.** Because the two peers discover each other through a service the site
+operates, that service brokers the exchange of DTLS fingerprints — and whoever controls that exchange
+can offer their own fingerprint to each side and decrypt everything in between. DTLS alone does not
+prevent this; it only guarantees that *some* two endpoints share a channel.
+
+The fix is mandatory, not optional, and without it the first row of this table is false: **the agent
+signs its DTLS fingerprint with its machine key, and the grantee verifies that signature against the
+`agent_pubkey` recorded when the machine was paired.** A substituted fingerprint fails the check and
+the connection is refused. The signalling service is thereby reduced to an introducer that cannot
+listen.
 
 **The compromised-frontend case.** If the site's JavaScript is ever compromised (XSS, or a hostile
 deploy), it runs in the origin that can use the signed-in user's grant key. A non-extractable
@@ -147,34 +175,40 @@ property, and the only place in the design where a passphrase appears.
 ## 6. The trust model, end to end
 
 ```
-  Owner's browser                  Site + Relay                 Owner's machine
-  ───────────────                  ────────────                 ───────────────
-  passkey ──► grant key                                          agent
+  Owner's browser                Site + Signalling            Owner's sharing tab
+  ───────────────                ─────────────────            ───────────────────
+  passkey ──► grant key                                        agent + folder handle
       │                                                            │
-      │  ①  pairing code, typed out-of-band                        │
+      │  ①  pairing: same account, both tabs signed in             │
       ├───────────────────────────────────────────────────────────►│
-      │     agent stores owner's grant PUBLIC key as its root      │
+      │     agent stores owner's grant PUBLIC key as its root,     │
+      │     and registers its own machine key with the site        │
       │                                                            │
       │  ②  signs grant: {grantee, drive, paths, perms, exp}       │
       ├──────────────────►  site stores it  ──────────────────────►│
       │     (site can read it; site CANNOT forge it)               │
       │                                                            │
   Grantee's browser                                                │
-      │  ③  connects via relay, presents grant + fresh proof       │
-      └──────────────────►  relay pipes bytes  ──────────────────►│
-                            (ciphertext only)      agent verifies:
-                                                   • signed by root? 
-                                                   • grantee key matches?
-                                                   • path in scope? not expired?
-                                                   • not revoked?
+      │  ③  signalling: SDP + DTLS fingerprint, signed by agent    │
+      ├──────────────────►   DO introduces  ──────────────────────►│
+      │      grantee verifies fingerprint against agent_pubkey      │
+      │                                                            │
+      │  ④  WebRTC data channel — DIRECT, peer to peer             │
+      └════════════════════════════════════════════════════════════┤
+             file bytes never touch the site      agent verifies:
+                                                  • signed by root?
+                                                  • grantee key matches?
+                                                  • path in scope? not expired?
+                                                  • not revoked?
 ```
 
 Three properties fall out of this, and they are the reason to build it this way:
 
 - **The site is a mailbox and a directory.** It stores grants and helps people find each other. It
   cannot create a grant, cannot open one, and cannot read a file.
-- **The relay is a dumb pipe.** Payloads are end-to-end encrypted between the grantee's browser and the
-  agent. The relay learns who talked to whom and when, and nothing else.
+- **The signalling service is an introducer, not a pipe.** It brokers a handshake and then drops out of
+  the conversation entirely. It learns who talked to whom and when, and nothing else — and because
+  fingerprints are signed, it cannot insert itself even if it wants to.
 - **The agent is the policy enforcement point.** It is the only component that decides whether a
   request is allowed, and it is on hardware the owner controls.
 
@@ -196,12 +230,13 @@ entire setup as a six-field share code, so a saved setup is a row holding a name
 does the unglamorous work of proving the auth layer, the session layer and the new dialog vocabulary
 in a context where nothing dangerous can go wrong.
 
-**Phase 2 — your own drives.** The agent, the relay, pairing, and browsing your own machine from your
-own browser. No grants to other people yet, which means no capability system to get wrong — the only
+**Phase 2 — your own drives.** The sharing page and its directory handle, the signalling service,
+pairing, WebRTC transport with fingerprint verification, and browsing your own machine from your own
+browser. No grants to other people yet, which means no capability system to get wrong — the only
 principal is the owner. This is where the transport and the file protocol get hardened.
 
-**Phase 3 — granting to others.** The capability system, the grant/revoke UI, the audit log. Everything
-in §6 that involves a second person.
+**Phase 3 — granting to others.** The capability system, invite links, the grant/revoke UI, the audit
+log. Everything in §6 that involves a second person.
 
 The temptation will be to collapse 2 and 3. The reason not to is that phase 2's failure mode is "my
 own files don't load" and phase 3's is "a stranger read my files." Those deserve separate hardening
@@ -209,27 +244,57 @@ passes and separate review.
 
 ## 8. Components to be built
 
-**The agent.** A single static binary, cross-compiled for Windows, macOS and Linux, with no runtime to
-install — **Go** is the pragmatic choice and the only new toolchain this project acquires. It holds an
-outbound WebSocket to the relay (outbound 443 only, so it works behind any home router without port
-forwarding or UPnP), stores the owner's grant public key and the live grant list, enforces path
-scoping, and serves file reads. It ships with a local UI at `127.0.0.1` for pairing and for seeing
-what it is currently sharing.
+**The agent — a page, not a binary.** This reverses the earlier draft, and the reversal is what makes
+the broad model affordable. The agent is a route on the site itself, opened on the machine that holds
+the files. `showDirectoryPicker()` returns a live handle to a real folder; the handle is persisted in
+IndexedDB and re-permissioned on later visits, so the folder is chosen once rather than every session.
+That tab holds a WebSocket to the signalling service, stores the owner's grant public key as its trust
+root, enforces path scoping, and serves reads over a data channel.
 
-**The relay.** A Cloudflare Durable Object per paired machine — one object, two sockets, bytes piped
-between them. Durable Objects are the right primitive because a relay session is inherently stateful
-and pinned to one machine. Cost note: in this design **all file traffic flows through Cloudflare**,
-which is fine for documents and expensive for video libraries. The later optimisation is WebRTC with
-the Durable Object demoted to signalling only, so transfers go peer-to-peer; that is deliberately not
-in the first build.
+What this buys, stated plainly because the earlier draft called the install step *"the single biggest
+risk to the feature being used at all"*:
+
+- **No install, so no code-signing.** A native binary asking to share your drives needs an OV or EV
+  certificate, a verified business entity, hardware-backed keys and a signing step in every release —
+  several hundred dollars a year and a real process — or else it greets every user with the same
+  full-screen OS warning that actual malware produces. None of that applies to a web page.
+- **A far smaller blast radius.** A native agent runs with the user's full filesystem rights, so a path
+  bug reaches the whole disk. The browser can only ever hand out handles to folders the user explicitly
+  picked; the sandbox enforces the outer boundary that the earlier design enforced only in our code.
+- **One language, one codebase.** No Go toolchain, no cross-compilation matrix, no second
+  implementation of grant verification to keep in step with the first.
+
+The costs are equally plain: **the tab must stay open**, and **sharers must use a Chromium browser**.
+Both are recorded in §2.
+
+A native always-on agent remains a legitimate later addition for anyone who wants sharing to survive a
+reboot. It is explicitly *not* a prerequisite, and the code-signing question travels with it rather
+than blocking this build.
+
+**The signalling service.** A Cloudflare Durable Object per paired machine, brokering SDP offers,
+answers and ICE candidates — kilobytes, not files. Durable Objects remain the right primitive because a
+session is stateful and pinned to one machine.
+
+**The transport.** A WebRTC data channel, negotiated through that Durable Object and then running
+**directly between the two peers**. This is the significant economic change: file bytes do not flow
+through Cloudflare, so hosting cost scales with connection count rather than with megabytes
+transferred. The earlier draft deferred peer-to-peer because implementing WebRTC in Go was real work;
+with a browser on both ends, `RTCPeerConnection` is simply present.
+
+**TURN**, for the minority of connections whose NATs refuse to traverse — a fair planning assumption is
+10–20%. Those fall back to a relayed path, which is a genuine per-byte cost, merely a bounded and much
+smaller one. Cloudflare sells TURN directly and is the default choice.
 
 **The store.** Cloudflare **D1**, not KV. Grants need relational queries ("everything granted to this
 person", "everything on this machine") and revocation needs read-after-write consistency, which KV's
 eventual consistency would quietly undermine.
 
-**Encryption on the wire.** ECDH P-256 between the grantee's session key and the agent's key, HKDF to
-an AES-GCM session key, fresh per connection. All WebCrypto on one side, Go standard library on the
-other.
+**Encryption on the wire.** WebRTC data channels are DTLS-encrypted between the peers by construction,
+including when relayed through TURN, so the hand-rolled ECDH/HKDF/AES-GCM layer the earlier draft
+specified is **removed as redundant**. What replaces it is smaller and load-bearing: the agent signs
+its DTLS fingerprint with its machine key and the grantee verifies that signature against
+`machines.agent_pubkey` before accepting. See §3 — without this the transport is authenticated only by
+the signalling service, which is exactly the party it must be secure against.
 
 ## 9. Data model (D1)
 
@@ -240,11 +305,26 @@ setups        id · account_id · name · share_code · created_at        ← ph
 machines      id · owner_id · name · agent_pubkey · paired_at · last_seen
 drives        id · machine_id · label · root_path · created_at
 grants        id · drive_id · grantee_id · paths · perms · expires_at · signed_doc · revoked_at
+invites       id · grant_id · issued_by · token_hash · claimed_by · expires_at   ← phase 3
 audit         id · actor_id · action · target · at        ← append-only, mirrored by the agent
 ```
 
 `signed_doc` is the owner-signed grant, stored verbatim. The site never regenerates it and never needs
 to understand it beyond routing it to the right agent.
+
+Three notes on fields whose shape is decided rather than incidental:
+
+- **`grants.perms` exists but only ever holds read.** Keeping the field costs one column and one check
+  the agent always passes; removing it would mean a migration and a grant-format version bump on the
+  day writes are wanted. Nothing in the UI offers a write option.
+- **`drives.root_path` is the folder the owner picked**, not a volume. Grants scope to a path at or
+  below it. The agent must resolve and re-check every requested path against that prefix *after*
+  normalisation, and must refuse symlinks that escape it — folder scoping is only as good as this
+  check, which is the one place in the agent worth a dedicated test suite.
+- **`invites.token_hash`, never the token.** An invite link carries a single-use token that admits the
+  holder to *registration for a named grant* — it is not itself a capability and confers no access
+  until a passkey is registered and a public key exists to bind the grant to. It expires, and it is
+  stored hashed so a leak of the table does not leak live invites.
 
 ## 10. New interface surfaces
 
@@ -279,10 +359,15 @@ also break the browser-automation guidance the project already follows.
 what to do next. Buttons disable and show progress in place rather than swapping to a spinner that
 loses the label. Nothing spins for longer than 400ms without saying what it is waiting for.
 
-**Where the new UI lives.** Two new routes, `/account` and `/machines`, joining the nine existing pages
-in `src/data/pageIds.ts`. They are chrome-consistent — same header, same hero, same content grid, same
-thirteen layouts apply — because a bespoke settings aesthetic bolted onto this site is the other way
-this reads as amateur.
+**Where the new UI lives.** Two new routes in phase 1, `/account` and `/machines`, joining the nine
+existing pages in `src/data/pageIds.ts`. They are chrome-consistent — same header, same hero, same
+content grid, same thirteen layouts apply — because a bespoke settings aesthetic bolted onto this site
+is the other way this reads as amateur.
+
+Phase 2 adds a third, `/share` — the agent itself. It is the one surface with a reason to *diverge*:
+it is a long-lived tab whose job is to be glanceable from across a room and to make "this tab is
+holding your folder open" unmissable. It stays palette-driven and uses the same tokens, but it need not
+pretend to be a content page.
 
 **Effects.** The client asked for these too. The site's motion is already strong and the risk is
 additive noise, so: the new surfaces use the existing five motion systems and the existing easing
@@ -348,30 +433,63 @@ So an account screen is the first form, the first labelled input, and the first 
 codebase has ever had. That is the concrete reason §10 is a requirement rather than polish — there is
 nothing to copy, so whatever gets built first *becomes* the convention.
 
-Two defects in the existing input are worth fixing as part of that groundwork, since both would
-otherwise be inherited by every form that follows:
+One defect in the existing input is worth fixing as part of that groundwork, since it would otherwise
+be inherited by every form that follows:
 
-- **`.v-paste` sets `outline: none` with no `:focus-visible` replacement** (`overlays.css:185-194`).
-  The one focusable text field in the app has no visible focus indicator, inside a focus-trapped
-  drawer. This contradicts the closed-gap claim in `CLAUDE.md` §Accessibility and is a genuine bug.
 - **The paste field submits on Enter only** — no button, no form — so a code cannot be applied by
-  mouse or touch alone.
+  mouse or touch alone (`SiteConfigPanel.tsx:261-271`).
+
+An earlier draft of this section also claimed `.v-paste` had no visible focus indicator, on the
+strength of its `outline: none` (`overlays.css:185-194`). **That was wrong.** `.vessel :focus-visible`
+(`base.css:68`) is specificity 0-2-0 against that rule's 0-1-0 and wins on specificity irrespective of
+source order; the field focuses with the standard `--a1` ring. Verified in a browser rather than
+reasoned about. The retraction is kept here rather than deleted because the claim also reached
+`CLAUDE.md`, and a plausible-sounding bug is easier to re-introduce than to disprove twice.
 
 ## 12. Open questions
 
-These need answers before phase 2, not before phase 1 — phase 1 can start as soon as this document is
-approved.
+### Resolved 2026-08-12
 
-1. **Who operates the relay?** Cloudflare Durable Objects on the existing account is the assumption
-   here. It puts the operator in the traffic path, which is fine given end-to-end encryption, but it is
-   a hosting cost that scales with usage rather than with users.
-2. **Does the agent get code-signed?** An unsigned binary asking to share your drives is a hard sell,
-   and SmartScreen on Windows will say so loudly. Certificates cost money annually. Unsigned is
-   possible for a handful of trusted people and untenable beyond that.
-3. **Write access, or read-only?** Read-only is dramatically safer and covers most of what "access my
-   drives" means. Writes should be phase 4 at the earliest, if ever.
-4. **What is the sharing unit?** Whole drive, or a folder within it? This spec assumes folder-scoped
-   from the start, because whole-drive-only would make the first mistake unrecoverable.
-5. **Does a grantee need an account?** Assumed yes — a grant is bound to a public key, and an account
-   is what holds one. Link-based access for people without accounts would be friendlier and
-   considerably less safe.
+The five questions this section originally carried are all answered, and the answers are folded into
+the sections above rather than left here. Recorded for the reasoning, since several were close calls:
+
+1. **Who operates the relay?** — Cloudflare, but the role shrank. Choosing a browser agent put
+   `RTCPeerConnection` on both ends, which demoted the Durable Object from pipe to introducer and moved
+   file bytes off the operator's infrastructure entirely. The residual cost is TURN for the 10–20% of
+   connections that cannot traverse NAT. This was the strongest objection to the broad model and it is
+   now largely gone.
+2. **Does the agent get code-signed?** — **Moot for this build**, because there is no binary. It
+   returns only if a native always-on agent is built later, and it travels with that decision.
+3. **Write access, or read-only?** — **Read-only.** The `perms` field stays in the grant document so
+   writes remain reachable without a format change; no surface offers them.
+4. **What is the sharing unit?** — **A folder**, per the original assumption. Whole-drive-only would
+   make the first mistake unrecoverable.
+5. **Does a grantee need an account?** — **Yes**, reached through a one-tap invite link. Capability
+   URLs were rejected: they leak through history, referrers and chat, they cannot be bound to a person,
+   and they reduce the audit log to "someone who had the link."
+
+### Still open, and now blocking phase 2
+
+The browser agent answers old questions and raises new ones. None of these block phase 1.
+
+1. **What happens when the sharing tab closes?** The honest answer today is "sharing stops," which is
+   correct but needs to be *communicated* rather than merely true. A grantee hitting a closed tab must
+   see "that machine is offline" and not a generic failure. Whether the owner gets any warning before
+   closing — and whether that is even possible without being obnoxious — is undecided.
+2. **How durable is the persisted directory handle in practice?** Handles survive in IndexedDB and
+   permission can be granted persistently, but browser storage eviction, profile clearing and policy
+   changes can all revoke it silently. The re-pairing path needs to be routine and cheap rather than an
+   error state, and it has not been designed.
+3. **What is the TURN budget, and what happens when it is exhausted?** Per-byte cost on the relayed
+   minority is bounded but not zero, and an unauthenticated-by-default TURN service is an abuse target.
+   Credentials must be short-lived and issued per session.
+4. **Does the agent enforce a rate or volume limit?** Nothing currently stops a grantee reading the
+   same folder continuously. The agent is the right place to cap it, and no cap is specified.
+5. **Multiple sharing tabs on the same machine, or the same folder shared from two machines.** Both are
+   reachable states with undefined behaviour.
+
+### Deferred with the native agent, if it is ever built
+
+Code-signing certificates and their annual cost; a Go implementation of grant verification kept in step
+with the TypeScript one; installer and update mechanics; running as a service. All of it is avoidable
+for as long as the tab-open constraint is acceptable.

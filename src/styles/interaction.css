@@ -1,0 +1,155 @@
+/*
+ * Interaction layer — hover, press and disabled for every control on the site.
+ *
+ * Why this is a separate file rather than states added to each class:
+ *
+ * Before it, the codebase contained sixteen `transition` declarations and all
+ * sixteen ran at 0.9s — the palette-bleed duration from base.css, which is
+ * right for "colours never cut, they cross-fade" and hopeless for anything a
+ * pointer does. It also contained no :hover, :active or :disabled rule
+ * anywhere, and those two facts are the same fact: a hover that fades in over
+ * nine-tenths of a second feels worse than no hover at all, so none was ever
+ * written. Adding states without fixing the timing would have made the site
+ * feel worse, not better.
+ *
+ * So there are two timing systems now, and they are separated by *property*
+ * rather than by selector:
+ *
+ *   colour  (background-color, color, border-color)  → 0.9s, the palette's
+ *   motion  (translate, scale)                       → --t-hover / --t-press
+ *
+ * Nothing below animates a colour, and the palette never animates a position.
+ * That is what lets both live inside one transition declaration without
+ * fighting, and it means a palette change still bleeds at exactly the rate it
+ * always did while a hover lands in a seventh of the time.
+ *
+ * `translate` and `scale` are used rather than `transform`, deliberately and
+ * for two reasons. They compose independently, so a press can scale a control
+ * that a hover has already lifted without either rule having to know about the
+ * other. And they leave `transform` untouched for the cursor-lean that
+ * useMotionSystems writes straight to .v-block's style attribute — see the
+ * animation-fill-mode note in CLAUDE.md for what happens when those collide.
+ *
+ * box-shadow is the one property both systems want, and one property cannot
+ * carry two durations. It is given the fast timing because hover is constant
+ * and a palette change is occasional. The visible cost is precise and small:
+ * for the 0.9s after a palette change, an active swatch's glow finishes
+ * re-colouring before its border does. At no other time is there a difference.
+ *
+ * Every selector here is prefixed with `.vessel` to reach 0-2-0 specificity,
+ * so these rules beat the 0-1-0 declarations in chrome.css and overlays.css on
+ * specificity rather than on import order. The file is still imported last,
+ * but nothing depends on that.
+ */
+
+.vessel {
+  --t-hover: 140ms;
+  --t-press: 90ms;
+  --ease-ui: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* Box-like controls -------------------------------------------------------- */
+
+.vessel .chip,
+.vessel .v-cta,
+.vessel .v-siteconfig-btn,
+.vessel .v-swatch,
+.vessel .v-door-go,
+.vessel .v-door-leave,
+.vessel .v-knock {
+  transition: background-color 0.9s ease, color 0.9s ease, border-color 0.9s ease,
+    box-shadow var(--t-hover) var(--ease-ui), translate var(--t-hover) var(--ease-ui),
+    scale var(--t-press) var(--ease-ui);
+}
+
+.vessel .chip:hover:not(:disabled),
+.vessel .v-cta:hover:not(:disabled),
+.vessel .v-siteconfig-btn:hover:not(:disabled),
+.vessel .v-swatch:hover:not(:disabled),
+.vessel .v-door-go:hover:not(:disabled),
+.vessel .v-door-leave:hover:not(:disabled),
+.vessel .v-knock:hover:not(:disabled) {
+  translate: 0 -1px;
+  box-shadow: 0 3px 16px color-mix(in oklab, var(--a1) 20%, transparent);
+}
+
+/* The two controls that already carry a palette glow intensify theirs instead
+   of having it replaced by the weaker generic one. */
+.vessel .v-cta.is-primary:hover:not(:disabled) {
+  box-shadow: 0 0 44px color-mix(in oklab, var(--a1) 46%, transparent);
+}
+
+.vessel .v-swatch.is-active:hover:not(:disabled) {
+  box-shadow: 0 0 28px color-mix(in oklab, var(--a1) 58%, transparent);
+}
+
+/* Press cancels the hover lift, so a control moves down into the click rather
+   than staying raised while it shrinks. */
+.vessel .chip:active:not(:disabled),
+.vessel .v-cta:active:not(:disabled),
+.vessel .v-siteconfig-btn:active:not(:disabled),
+.vessel .v-swatch:active:not(:disabled),
+.vessel .v-door-go:active:not(:disabled),
+.vessel .v-door-leave:active:not(:disabled),
+.vessel .v-knock:active:not(:disabled) {
+  translate: 0 0;
+  scale: 0.978;
+}
+
+/* Text-like controls ------------------------------------------------------- */
+
+/* The logo, the revealed address and the footer links are type, not buttons,
+   so they lift but never glow — a shadow under a word reads as a mistake. */
+.vessel .v-logo,
+.vessel .v-mail,
+.vessel .v-footer-link {
+  transition: color 0.9s ease, border-color 0.9s ease,
+    translate var(--t-hover) var(--ease-ui), scale var(--t-press) var(--ease-ui);
+}
+
+.vessel .v-logo:hover:not(:disabled),
+.vessel .v-mail:hover:not(:disabled),
+.vessel .v-footer-link:hover:not(:disabled) {
+  translate: 0 -1px;
+}
+
+.vessel .v-logo:active:not(:disabled),
+.vessel .v-mail:active:not(:disabled),
+.vessel .v-footer-link:active:not(:disabled) {
+  translate: 0 0;
+  scale: 0.97;
+}
+
+/* Disabled ----------------------------------------------------------------- */
+
+/*
+ * Nothing in the site can be disabled yet, because nothing is asynchronous.
+ * The convention is established here anyway: accounts introduce the first
+ * control that has to refuse a click while a request is in flight, and the
+ * answer to "what does disabled look like" should not be improvised at that
+ * point. Both forms are covered because a disabled <a> has to use the ARIA
+ * one — the attribute does nothing on an anchor.
+ */
+.vessel button:disabled,
+.vessel [aria-disabled="true"] {
+  opacity: 0.42;
+  cursor: not-allowed;
+  translate: none;
+  scale: none;
+  box-shadow: none;
+}
+
+/*
+ * Calm mode keeps its interaction feedback.
+ *
+ * base.css strips box-shadow globally under .is-calm, so the hover glow goes
+ * on its own and the lift is all that remains — which is the intended result.
+ * Calm means no *ambient* motion; it is also the accessibility escape hatch
+ * for the low-contrast palettes, and stripping the only confirmation that a
+ * control responded would make the accessible mode the less usable one. A 1px
+ * lift is feedback, not decoration.
+ *
+ * prefers-reduced-motion needs no rule here either: base.css already collapses
+ * transition-duration to 0.001ms, which makes every state below instant rather
+ * than absent. That is the correct reading of the preference.
+ */

@@ -7,6 +7,7 @@ import "./styles/base.css";
 import "./styles/chrome.css";
 import "./styles/layouts.css";
 import "./styles/overlays.css";
+import "./styles/interaction.css";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("#root is missing from index.html");

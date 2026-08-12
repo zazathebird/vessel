@@ -71,6 +71,26 @@ the operator door and its six routes, the screensaver, calm mode, and the five m
 `.v-chrome` rather than children, because the screensaver fades the chrome to `opacity: 0` with
 `pointer-events: none` and must not take the panel or the door with it.
 
+`src/styles/interaction.css` is the fifth stylesheet and owns **every** hover, press and disabled
+state. It exists because the site had two requirements fighting over the same CSS properties: the
+palette bleed needs colour to cross-fade over 0.9s, and pointer feedback needs to land in ~140ms.
+Before it, all sixteen transitions in the codebase ran at 0.9s and there was not one `:hover`,
+`:active` or `:disabled` rule anywhere — which was the direct consequence, not a coincidence.
+
+The split is **by property, not by selector**: colour properties belong to the palette at 0.9s,
+`translate` and `scale` belong to interaction at 140ms/90ms. Nothing in the interaction layer animates
+a colour and the palette never animates a position. Two things follow that are easy to undo by
+accident:
+
+- **Use `translate` / `scale`, never `transform`.** They compose independently, and `transform` is
+  reserved for the cursor-lean that `useMotionSystems` writes to `.v-block`'s style attribute.
+- **Selectors are prefixed `.vessel` to reach 0-2-0**, so they beat the 0-1-0 rules in `chrome.css`
+  and `overlays.css` on specificity rather than on import order. Dropping the prefix silently
+  reinstates the 0.9s hover.
+
+`box-shadow` is the one property both systems want and it is given the fast timing deliberately; the
+cost is documented at the top of the file.
+
 Two CSS gotchas that have already bitten once each, both worth knowing before editing styles:
 
 - **`band-*` and `layout-*` are on the same element.** `.band-phone .layout-stack` matches nothing;
@@ -203,12 +223,18 @@ focus return for both overlays (`src/hooks/useFocusTrap.ts`), a live region for 
 styles and CSS-level `prefers-reduced-motion`. The sleeping chrome also takes `inert`, so a faded-out
 interface cannot be reached by Tab.
 
-**One exception, found 2026-08-12 and not yet fixed.** `.v-paste` — the share-code field in the
-siteconfig panel, and the only text input in the entire app — sets `outline: none`
-(`src/styles/overlays.css:185-194`) with no `:focus-visible` replacement, so it has no visible focus
-indicator inside a focus-trapped drawer. It also submits on Enter only, with no button, so a code
-cannot be applied by mouse or touch alone. Both are worth fixing before any account form is built,
-since there is no other form in the codebase and whatever ships first becomes the convention.
+**One real defect, and one that was recorded in error.** `.v-paste` — the share-code field in the
+siteconfig panel, and the only text input in the entire app — submits on **Enter only, with no
+button** (`SiteConfigPanel.tsx:261-271`), so a code cannot be applied by mouse or touch alone. That
+one is genuine and worth fixing before any account form is built, since there is no other form in the
+codebase and whatever ships first becomes the convention.
+
+The *focus-indicator* half of this note was wrong and is retracted. `.v-paste` does set
+`outline: none` (`overlays.css:185-194`), but `.vessel :focus-visible` in `base.css:68` has
+specificity 0-2-0 against that rule's 0-1-0, so it wins on specificity regardless of file order and
+the input focuses with the normal 2px `--a1` ring. Verified in the browser 2026-08-12: real click,
+`:focus-visible` matches, computed outline `solid 2px` at 3px offset, ring visible in a screenshot.
+Do not "fix" this.
 
 Still open, and genuinely unresolved rather than overlooked: several palettes fail WCAG AA on body
 text. That is deliberate — Peat especially — and calm mode is the intended remedy.
