@@ -238,9 +238,51 @@ part does not.
   exercised** — it needs a sign-in endpoint to fail against.
 - `worker/crypto.ts` — HMAC helpers, constant-time compare, and `clientKey` for IP-free rate-limit
   keying.
+- **The auth layer, end to end.** `src/auth/` holds the browser half — `derive.ts` (PBKDF2 → HKDF
+  split into an auth secret and a wrapping key), `grantKey.ts` (the P-256 grant key and its AES-KW
+  slots), `recoveryCodes.ts`, `api.ts`, `flows.ts`. `worker/accounts.ts` holds signup, challenge,
+  sign-in, the TOTP second factor, sessions and the key-slot endpoint; `worker/session.ts` and
+  `worker/totp.ts` are its two primitives.
+- `scripts/auth-e2e.ts` — **78 checks against a live Worker and local D1**, run with
+  `npm run test:auth` against `npm run dev:worker`. It imports the real `src/auth` modules rather
+  than reimplementing them, so it fails if browser and Worker ever disagree about a byte, and it
+  computes TOTP codes independently from RFC 6238 rather than calling `worker/totp.ts`.
 
-Next, in order: browser-side PBKDF2 + key-slot wrapping, signup, sign-in, TOTP, sessions. Then the
-operator surface, then account/setups pages, then the dialog primitive and command palette.
+Three things that are decisions, and are easy to "fix" back into bugs:
+
+- **`recordSuccess` resets the account bucket and only *decays* the client bucket** by one
+  (`rate-limit.ts` `/succeed`). Wiping the client bucket on success hands an attacker a free reset:
+  sign in to an account you own, and the counter recording your failures against everyone else's
+  goes to zero. Client allowance is 50 and account allowance 5 because one address is a household
+  behind NAT and five would lock out a café over one typo.
+- **A redeemed recovery code returns its key slot in the sign-in response**, and the slot row is
+  *kept*, not deleted. The wrapping key exists only for that request — the code is spent — so a slot
+  not handed back is a grant key sealed for ever, which would quietly make §5's "preserves grant
+  authority in full" false. `signInWithRecoveryCode` unwraps it before returning.
+- **A recovery code is not marked used until the sign-in completes.** With two-factor on, the ticket
+  carries the pending credential id. Spending it earlier would burn one of ten codes per abandoned
+  attempt, for the person recovery exists for.
+
+Next, in order: the operator surface and its reset flow, set/change password (which is what lets a
+redeemed recovery code write a fresh password slot), passkeys, then account/setups pages, then the
+dialog primitive and command palette.
+
+### Four things the client has not yet signed off
+
+Found while building; none are blocking, all are recorded here rather than slipped in.
+
+1. **`totp.last_step`** (`migrations/0002_totp_replay.sql`) is a field §9's inventory does not list,
+   and §9 says adding one is a spec change. It stores the 30-second window of the last successful
+   second factor — coarser than `credentials.last_used_at`, which the inventory already covers. It
+   exists because without it a TOTP code is replayable for up to 90 seconds. Recommend approving.
+2. **§3's operator row is stronger than the design supports.** The Worker sees the raw `authSecret`
+   on every sign-in and holds the account's salt and iteration count, so an operator who logged one
+   sign-in could grind candidate passwords offline, re-derive the wrapping key, and open the key
+   slot from their own D1. The cryptography is fine — the *unconditional* wording is not.
+3. **`⌘K` is claimed twice.** `SPEC.md` makes it the operator door's sixth unlock route;
+   `SPEC-ACCOUNTS.md` §10 makes it the command palette. Both cannot be true.
+4. **Signup discloses handle availability** (409) while `challenge` goes to real trouble to hide it.
+   Defensible — availability is inherently public — but the two should not disagree.
 
 ### Deployment is mid-migration
 

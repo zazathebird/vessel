@@ -1,0 +1,101 @@
+/**
+ * The transport half of the account layer: one place that knows how to talk to
+ * the Worker, and nothing that knows how to derive a key.
+ *
+ * Deliberately not a React hook and deliberately not a context. §11 requires
+ * that `ConfigContext` stays synchronous and gains no fetching — it loads
+ * config during first render specifically to avoid a default-palette flash — so
+ * every network call in this project starts here and is owned by the account
+ * layer above it.
+ *
+ * `credentials: "same-origin"` is on every request because the session is a
+ * cookie. It is the default for same-origin fetches, and it is written out
+ * anyway: the day someone points this at a different origin, the silent version
+ * of that change is a sign-in that appears to work and then forgets you.
+ */
+
+/** A failure with wording the Worker intends to be shown to the user as-is (§10). */
+export class ApiError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      ...init,
+      credentials: "same-origin",
+      headers: { "content-type": "application/json", ...(init.headers ?? {}) },
+    });
+  } catch {
+    // A network failure is not a server error and must not be reported as one.
+    // §11: everything degrades — signed out, offline or Worker-down, the site is
+    // the site that exists today.
+    throw new ApiError(0, "Could not reach the server. Check your connection and try again.");
+  }
+
+  const body = (await response.json().catch(() => ({}))) as { error?: string };
+  if (!response.ok) {
+    throw new ApiError(response.status, body.error ?? "Something went wrong. Try again shortly.");
+  }
+  return body as T;
+}
+
+function post<T>(path: string, body: unknown): Promise<T> {
+  return call<T>(path, { method: "POST", body: JSON.stringify(body) });
+}
+
+export interface PublicAccount {
+  id: string;
+  handle: string;
+  isOperator: boolean;
+  createdAt: number;
+}
+
+/** What the server knows about the KDF, and therefore what the browser must use. */
+export interface KdfDescriptor {
+  salt: string;
+  iterations: number;
+  recoveryIterations: number;
+}
+
+/** Ciphertext the server cannot open, returned to the one account it belongs to (§5). */
+export interface WrappedKeySlot {
+  wrappedGrantKey: string;
+  grantPubkey: string;
+  alg: string;
+}
+
+export type SignInResult =
+  | {
+      status: "signed-in";
+      account: PublicAccount;
+      resetAt: number | null;
+      /** Present only when a recovery code was redeemed — open it now or it is lost. */
+      keySlot?: WrappedKeySlot;
+    }
+  | { status: "totp-required"; ticket: string };
+
+export interface MeResult {
+  account: PublicAccount;
+  resetAt: number | null;
+  credentials: { password: boolean; passkeys: number; recoveryCodesRemaining: number };
+  totp: { enrolled: boolean; confirmed: boolean };
+}
+
+export const api = {
+  signup: (body: unknown) => post<{ account: PublicAccount }>("/api/auth/signup", body),
+  challenge: (handle: string) => post<{ kdf: KdfDescriptor }>("/api/auth/challenge", { handle }),
+  signin: (body: unknown) => post<SignInResult>("/api/auth/signin", body),
+  totp: (ticket: string, code: string) => post<SignInResult>("/api/auth/totp", { ticket, code }),
+  signout: () => post<{ status: string }>("/api/auth/signout", {}),
+  me: () => call<MeResult>("/api/me"),
+  keySlot: () =>
+    call<{ wrappedGrantKey: string; grantPubkey: string; alg: string }>("/api/account/slot"),
+  totpEnrol: () => post<{ secret: string; uri: string }>("/api/totp/enrol", {}),
+  totpConfirm: (code: string) => post<{ backupCodes: string[] }>("/api/totp/confirm", { code }),
+};

@@ -14,8 +14,17 @@
  * this class never sees an address to be careless with.
  */
 
-/** Attempts allowed inside one window before backoff starts. */
-const FREE_ATTEMPTS = 5;
+/**
+ * Attempts allowed inside one window before backoff starts.
+ *
+ * A default rather than a constant, because the two kinds of bucket are counting
+ * different things. An **account** bucket watches one person's credential and
+ * five wrong tries is generous. A **client** bucket watches an address, and one
+ * address is a household, an office, or a whole mobile carrier behind NAT — five
+ * would lock out a café because one person mistyped. Callers pass what suits
+ * them; the shape of the backoff is identical either way.
+ */
+const DEFAULT_FREE_ATTEMPTS = 5;
 
 /** The base window. Backoff multiplies this, it does not replace it. */
 const WINDOW_MS = 15 * 60 * 1000;
@@ -56,15 +65,18 @@ export class RateLimiter {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const now = Date.now();
+    const free = Number(url.searchParams.get("free")) || DEFAULT_FREE_ATTEMPTS;
 
     switch (url.pathname) {
       case "/check":
-        return json(await this.check(now));
+        return json(await this.check(now, free));
       case "/fail":
-        return json(await this.fail(now));
+        return json(await this.fail(now, free));
+      case "/succeed":
+        return json(await this.succeed(now, free));
       case "/reset":
         await this.state.storage.deleteAll();
-        return json({ allowed: true, remaining: FREE_ATTEMPTS, retryAt: 0 });
+        return json({ allowed: true, remaining: free, retryAt: 0 });
       default:
         return new Response("not found", { status: 404 });
     }
@@ -78,16 +90,39 @@ export class RateLimiter {
   }
 
   /** Would an attempt be permitted right now? Does not consume anything. */
-  private async check(now: number): Promise<RateVerdict> {
+  private async check(now: number, free: number): Promise<RateVerdict> {
     const bucket = await this.load(now);
     if (bucket.blockedUntil > now) {
       return { allowed: false, remaining: 0, retryAt: bucket.blockedUntil };
     }
     return {
       allowed: true,
-      remaining: Math.max(0, FREE_ATTEMPTS - bucket.failures),
+      remaining: Math.max(0, free - bucket.failures),
       retryAt: 0,
     };
+  }
+
+  /**
+   * A success, on a bucket that must not simply be wiped.
+   *
+   * This is for the **client** bucket, and the distinction from `/reset` is the
+   * whole security of it. A wipe on success is a gift to an attacker: sign in
+   * correctly to an account you own, and the counter recording your failures
+   * against everybody else's accounts goes back to zero — so you can test five
+   * passwords, reset, test five more, for ever. Credential stuffing is exactly
+   * what this bucket exists to stop, and a wipe disables it.
+   *
+   * Decaying by one instead means honest traffic drains the counter roughly as
+   * fast as it fills it, while a run of failures still accumulates. An attacker
+   * gets one attempt back per success rather than all of them.
+   */
+  private async succeed(now: number, free: number): Promise<RateVerdict> {
+    const bucket = await this.load(now);
+    if (bucket.failures > 0) {
+      bucket.failures -= 1;
+      await this.state.storage.put("bucket", bucket);
+    }
+    return this.check(now, free);
   }
 
   /**
@@ -96,12 +131,12 @@ export class RateLimiter {
    * Only failures are recorded. A successful sign-in calls /reset, so an
    * ordinary user who mistypes twice and then succeeds carries nothing forward.
    */
-  private async fail(now: number): Promise<RateVerdict> {
+  private async fail(now: number, free: number): Promise<RateVerdict> {
     const bucket = await this.load(now);
     bucket.failures += 1;
     bucket.expiresAt = now + WINDOW_MS;
 
-    const over = bucket.failures - FREE_ATTEMPTS;
+    const over = bucket.failures - free;
     if (over > 0) {
       // 2^over windows, capped. The cap matters: without it a sustained attack
       // on a known handle locks its owner out indefinitely, which converts a
@@ -119,7 +154,7 @@ export class RateLimiter {
 
     return {
       allowed: bucket.blockedUntil <= now,
-      remaining: Math.max(0, FREE_ATTEMPTS - bucket.failures),
+      remaining: Math.max(0, free - bucket.failures),
       retryAt: bucket.blockedUntil,
     };
   }

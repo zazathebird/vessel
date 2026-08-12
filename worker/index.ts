@@ -14,25 +14,14 @@
  *    it.
  */
 
-import { RateLimiter } from "./rate-limit";
+import * as accounts from "./accounts";
 import { clientKey } from "./crypto";
+import { BadRequest } from "./encoding";
+import type { Env } from "./env";
+import { RateLimiter } from "./rate-limit";
 
 export { RateLimiter };
-
-export interface Env {
-  ASSETS: Fetcher;
-  DB: D1Database;
-  RATE_LIMIT: DurableObjectNamespace;
-
-  /** HMAC key for stored auth hashes (§4). */
-  AUTH_PEPPER: string;
-  /** HMAC key for session cookies. */
-  SESSION_SECRET: string;
-  /** Wraps totp.secret_enc at rest. */
-  TOTP_ENC_KEY: string;
-  /** Seeds the daily-rotating rate-limit salt. */
-  RATE_SALT_SEED: string;
-}
+export type { Env };
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -45,9 +34,11 @@ export default {
     try {
       return await route(request, env, ctx, url);
     } catch (error) {
-      // Never leak an internal error to the client. §10 requires that failures
-      // state what to do next, and "something went wrong" with a 500 is the
-      // honest version of that when we genuinely do not know.
+      // A `BadRequest` carries wording that was written to be shown to a user;
+      // anything else carries wording that was not, so it becomes a generic 500.
+      // §10 requires that failures say what to do next, and "something went
+      // wrong" is the honest version of that when we genuinely do not know.
+      if (error instanceof BadRequest) return problem(error.status, error.message);
       console.error("unhandled", error);
       return problem(500, "Something went wrong at our end. Try again shortly.");
     }
@@ -63,6 +54,29 @@ async function route(
   switch (`${request.method} ${url.pathname}`) {
     case "GET /api/health":
       return health(env);
+
+    // Identity (§4). The order here is the order a person meets them.
+    case "POST /api/auth/signup":
+      return accounts.signup(request, env);
+    case "POST /api/auth/challenge":
+      return accounts.challenge(request, env);
+    case "POST /api/auth/signin":
+      return accounts.signin(request, env);
+    case "POST /api/auth/totp":
+      return accounts.signinTotp(request, env);
+    case "POST /api/auth/signout":
+      return accounts.signout(request, env);
+
+    // The signed-in account.
+    case "GET /api/me":
+      return accounts.me(request, env);
+    case "GET /api/account/slot":
+      return accounts.keySlot(request, env);
+    case "POST /api/totp/enrol":
+      return accounts.totpEnrol(request, env);
+    case "POST /api/totp/confirm":
+      return accounts.totpConfirm(request, env);
+
     default:
       return problem(404, "No such endpoint.");
   }

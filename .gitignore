@@ -5,3 +5,9 @@ dist/
 
 # wrangler local D1 / DO state
 .wrangler/
+
+.wrangler-dev.log
+
+# Local Worker secrets. The real ones are set with `wrangler secret put` and
+# live only in Cloudflare; this file holds development placeholders.
+.dev.vars
