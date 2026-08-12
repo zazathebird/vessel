@@ -186,30 +186,85 @@ other line of copy is still verbatim-only.
 
 ## Where this stands, and what is next
 
-The site is finished and deployed (`main` → Cloudflare Pages → `mcclevarty.ca`). The queued work,
-in the order the client set:
+The site is finished and live (`main` → Cloudflare Pages → `mcclevarty.ca`). **Phase 1 of the accounts
+work is now in progress** — the spec was approved by the client on 2026-08-12 and the build has
+started.
 
-1. **Accounts, saved setups, and brokered drive access.** Now specified in full:
-   **`design/SPEC-ACCOUNTS.md`** — a *proposal*, not an approved spec, and **nothing in it is built**.
-   Read it before touching any of this. Four decisions are already fixed by the client: an account
-   holds the person's own *site setup* (not uploaded media), every user may expose their own machines
-   (not just the operator), sign-in is passkeys with no email collected, and the spec gets approved
-   before code. It phases into (1) accounts + saved setups, (2) your own drives, (3) grants to
-   others — the phases are load-bearing and must not be collapsed, because phase 2 fails as "my files
-   don't load" and phase 3 fails as "a stranger read my files."
+### `design/SPEC-ACCOUNTS.md` is approved and authoritative
 
-   Two things in it that override older notes here: the store is **D1, not KV** (revocation needs
-   read-after-write consistency), and per `SPEC.md` §Security the real auth **must not reuse the
-   operator door's UI** — the door stays theatre.
+Read it before touching any of this. It is no longer a proposal. **§12 is a decision log** — every
+rejected option keeps its reasoning and carries a *"revisit if"* condition, so an idea that comes back
+starts from "here is why we didn't" rather than being re-derived. Add to it rather than relitigating.
 
-   Still open, and listed in that spec's §12: who operates the relay, whether the agent gets
-   code-signed, read-only vs write, folder vs whole-drive scoping, and whether a grantee needs an
-   account. Those block phase 2, not phase 1.
-2. *(folded into 1 — the drive half is phases 2 and 3 of the same spec)*
-3. **Richer transitions, slide-overs and typewriter effects.** Requested, and sequenced after 1. The
-   hard part is the constraint attached to it: every layout, palette and ornament has to stay
-   visually distinct. That points at a small set of motion primitives each layout composes
-   differently, rather than bespoke animation per layout — but confirm the approach before building.
+The decisions most likely to be broken by someone who has not read it:
+
+- **Sign-in is password + TOTP, with passkeys retained** as an alternative credential. This replaced
+  passkey-only on 2026-08-12. **No email is collected**, and the operator can reset any password —
+  which is what makes email unnecessary.
+- **Key slots (§5) are the load-bearing idea.** One grant keypair per account, wrapped once per
+  credential, LUKS-style. Any credential opens the same key. This is why operator reset is safe: it
+  deletes the password slot and cannot open it. **Operator escrow is rejected permanently** — a slot
+  wrapped to an operator key would let the operator sign grants in a user's name, which is the exact
+  thing the design exists to prevent.
+- **The password never reaches the server.** The browser runs PBKDF2 and sends a derived auth secret;
+  the Worker stores only an HMAC of that under a pepper. Do not "simplify" this into a server-side
+  hash — it also dodges the Worker CPU cap, and the browser must derive a password key anyway to open
+  its key slot.
+- **No personal data, and §9 has the full inventory** so the claim can be checked. Three fields were
+  removed on 2026-08-12 for carrying personal data nobody chose to collect: `drives.root_path` (held
+  `C:\Users\Patrick\Documents`), hostnames as machine names, and raw IPs in rate limiting. Absolute
+  paths now live only in the sharing tab; grants scope by relative subpath. **Adding anything to that
+  inventory is a spec change, not an implementation detail.**
+- **Phases 1/2/3 must not be collapsed** — phase 2 fails as "my files don't load", phase 3 as "a
+  stranger read my files."
+- Real auth **must not reuse the operator door's UI** (`SPEC.md` §Security). The door stays theatre.
+
+Phase 1 grew roughly threefold with the second round of decisions, and it has one non-negotiable
+internal order: **authentication works end to end before any interface work starts.** Building the
+command palette on a sign-in that does not work yet is how the fun part ships and the load-bearing
+part does not.
+
+### What is built so far
+
+- `migrations/0001_phase1_accounts.sql` — phase 1 tables only. Machines, drives, grants and invites
+  are deliberately absent; an empty `grants` table is an invitation to fill it before the phase that
+  hardens it. Constraints verified against local D1.
+- `worker/index.ts` — serves the static site via the assets binding, `/api/*` is the exception.
+  Delete every route and the site serves as it does today, which is what "accounts are strictly
+  additive" has to mean.
+- `worker/rate-limit.ts` — the `RateLimiter` Durable Object. Counts failures only, resets on success,
+  exponential backoff to a **one-hour ceiling**; the ceiling stops an attack on a known handle from
+  becoming an indefinite lockout of its owner. Never sees an IP. **Its backoff path is not yet
+  exercised** — it needs a sign-in endpoint to fail against.
+- `worker/crypto.ts` — HMAC helpers, constant-time compare, and `clientKey` for IP-free rate-limit
+  keying.
+
+Next, in order: browser-side PBKDF2 + key-slot wrapping, signup, sign-in, TOTP, sessions. Then the
+operator surface, then account/setups pages, then the dialog primitive and command palette.
+
+### Deployment is mid-migration
+
+**The site moved from Pages to a Worker with static assets** (`wrangler.toml`), because Pages cannot
+define Durable Object classes and this stack needs them twice — rate limiting now, one signalling
+object per paired machine in phase 2.
+
+Nothing is deployed yet. Two things are pending and both need the client:
+
+1. `npx wrangler login` — **the client runs this themselves.** Do not enter credentials or grant OAuth
+   on their behalf.
+2. The real D1 database and the cutover of `mcclevarty.ca` from the Pages project to the Worker.
+   Do it once, deliberately, with the client watching.
+
+**`public/_redirects` is dead under Workers but must stay** until cutover. The live site still deploys
+from Pages, and removing it would break client-side routing in production on the next push.
+
+Also queued, after phase 1:
+
+- **Richer transitions, slide-overs and typewriter effects.** The hard part is the constraint: every
+  layout, palette and ornament has to stay visually distinct. That points at a small set of motion
+  primitives each layout composes differently, rather than bespoke animation per layout — but confirm
+  the approach before building. The file-explorer design in §10 is *not* this; it is phase 2 and
+  already specified.
 
 One thing left unverified: the client has not yet confirmed the **Matrix rain fall speed** by eye.
 It was rebuilt after they said the original was far too fast, and verified headlessly at 96–307
