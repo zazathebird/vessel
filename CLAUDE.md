@@ -169,15 +169,23 @@ other line of copy is still verbatim-only.
 The site is finished and deployed (`main` → Cloudflare Pages → `mcclevarty.ca`). The queued work,
 in the order the client set:
 
-1. **Accounts and saved setups.** Settled with the client as phase 1 of a two-phase feature. A whole
-   setup is already expressible as a share code, so this is close to persisting a code against an
-   identity — but it needs auth and a store (Cloudflare KV or D1 sit naturally on the existing Pages
-   deploy) and it is the first thing to break the no-backend model. Worth stating that trade-off
-   explicitly before writing any of it.
-2. **Private access to drives on people's own machines.** Phase 2, explicitly *not* started. The
-   client's model is that the site brokers access and never holds data. That is a distributed system
-   — relay, per-machine agent, grant/revoke, audit — not site work, and it needs its own spec and
-   its own security review. Do not fold it into phase 1.
+1. **Accounts, saved setups, and brokered drive access.** Now specified in full:
+   **`design/SPEC-ACCOUNTS.md`** — a *proposal*, not an approved spec, and **nothing in it is built**.
+   Read it before touching any of this. Four decisions are already fixed by the client: an account
+   holds the person's own *site setup* (not uploaded media), every user may expose their own machines
+   (not just the operator), sign-in is passkeys with no email collected, and the spec gets approved
+   before code. It phases into (1) accounts + saved setups, (2) your own drives, (3) grants to
+   others — the phases are load-bearing and must not be collapsed, because phase 2 fails as "my files
+   don't load" and phase 3 fails as "a stranger read my files."
+
+   Two things in it that override older notes here: the store is **D1, not KV** (revocation needs
+   read-after-write consistency), and per `SPEC.md` §Security the real auth **must not reuse the
+   operator door's UI** — the door stays theatre.
+
+   Still open, and listed in that spec's §12: who operates the relay, whether the agent gets
+   code-signed, read-only vs write, folder vs whole-drive scoping, and whether a grantee needs an
+   account. Those block phase 2, not phase 1.
+2. *(folded into 1 — the drive half is phases 2 and 3 of the same spec)*
 3. **Richer transitions, slide-overs and typewriter effects.** Requested, and sequenced after 1. The
    hard part is the constraint attached to it: every layout, palette and ornament has to stay
    visually distinct. That points at a small set of motion primitives each layout composes
@@ -194,6 +202,13 @@ The spec's gap list is closed: accessible button names, `aria-current` on nav, f
 focus return for both overlays (`src/hooks/useFocusTrap.ts`), a live region for toasts, focus-visible
 styles and CSS-level `prefers-reduced-motion`. The sleeping chrome also takes `inert`, so a faded-out
 interface cannot be reached by Tab.
+
+**One exception, found 2026-08-12 and not yet fixed.** `.v-paste` — the share-code field in the
+siteconfig panel, and the only text input in the entire app — sets `outline: none`
+(`src/styles/overlays.css:185-194`) with no `:focus-visible` replacement, so it has no visible focus
+indicator inside a focus-trapped drawer. It also submits on Enter only, with no button, so a code
+cannot be applied by mouse or touch alone. Both are worth fixing before any account form is built,
+since there is no other form in the codebase and whatever ships first becomes the convention.
 
 Still open, and genuinely unresolved rather than overlooked: several palettes fail WCAG AA on body
 text. That is deliberate — Peat especially — and calm mode is the intended remedy.
