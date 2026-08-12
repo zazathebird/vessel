@@ -105,7 +105,9 @@ The boundary holds because account access and grant authority are protected by d
 reset destroys the password slot rather than opening it (§5). A user whose account is taken over loses
 privacy over their saved setups and their grant *list*; they do not lose their files, and the operator
 gains no power to hand anyone else's files to anyone. Users are told the operator can reset passwords,
-in the same plain language as everything else, rather than discovering it.
+rather than discovering it — **in plain language, not in the vocabulary of this paragraph.** The exact
+user-facing wording is fixed in §4 and deliberately contains none of *mint*, *grant authority* or *key
+slot*; those words are for this document only.
 
 **The signalling MITM case.** Because the two peers discover each other through a service the site
 operates, that service brokers the exchange of DTLS fingerprints — and whoever controls that exchange
@@ -250,6 +252,20 @@ Three requirements attached, none of them optional:
 1. **The reset is logged to `audit` and shown to the user** on next sign-in — "your password was reset
    by the operator, on this date." An administrative power that leaves no trace is fine right up until
    the once it is not.
+
+   **The wording users see, verbatim.** The threat-model language in §3 is internal — *mint a grant*,
+   *grant authority*, *key slot* are terms for this document and must not reach a screen. One short
+   passage, shown at signup and again on the account page, in the site's own register:
+
+   > I can reset your password if you lose it. That means I can get into your account, which is worth
+   > knowing. It does not mean I can get into your files — a reset destroys the key that shares your
+   > folders rather than opening it. You would set your sharing up again afterwards, and anyone you had
+   > already shared with keeps working in the meantime.
+
+   No heading called *Disclaimer*, no checkbox, no modal to dismiss. It sits in the page as a plain
+   paragraph, the way the home page's admission that the site is unnecessary does. A user agreeing to
+   use the site is not the point; the point is that discovering this later would feel like something had
+   been hidden, and it costs four sentences not to hide it.
 2. **The operator is shown the consequences before confirming**, in specific terms — "Ada has issued 3
    grants; resetting will leave those live until they expire and she will not be able to revoke them
    until she re-pairs *workshop-pc*."
