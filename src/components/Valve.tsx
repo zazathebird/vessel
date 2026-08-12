@@ -20,18 +20,23 @@ export function Valve({ layout }: { layout: LayoutId }) {
       <span className="v-valve-ring r1" />
       <span className="v-valve-ring r2" />
       <span className="v-valve-ring r3" />
-      {layout === "radial" &&
-        NAV.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            className={`chip v-pill v-orbit-pill${config.page === item.id ? " is-active" : ""}`}
-            aria-current={config.page === item.id ? "page" : undefined}
-            onClick={() => go(item.id)}
-          >
-            {item.label}
-          </button>
-        ))}
+      {layout === "radial" && (
+        // The pills get their own container so their positions can be addressed
+        // by :nth-child without counting the rings that precede them.
+        <div className="v-orbit">
+          {NAV.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={`chip v-pill v-orbit-pill${config.page === item.id ? " is-active" : ""}`}
+              aria-current={config.page === item.id ? "page" : undefined}
+              onClick={() => go(item.id)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
       <span className="v-valve-core" />
     </div>
   );

@@ -9,6 +9,9 @@ import {
 } from "react";
 import type { ReactNode } from "react";
 
+import { MAIL } from "../data/mail";
+import { MODES } from "../data/catalog";
+import type { ModeId } from "../data/catalog";
 import { PALETTES, paletteIndexForHour } from "../data/palettes";
 import { PATHS, pageFromPath } from "../data/pageIds";
 import type { PageId } from "../data/pageIds";
@@ -53,7 +56,14 @@ interface ConfigContextValue {
   openConfig: () => void;
   /** Screensaver active. Disabled entirely in calm; click-only wake. */
   saver: boolean;
-  setSaver: (value: boolean) => void;
+  /** Restart the idle clock. Called on click and keypress — never on movement. */
+  poke: () => void;
+  /** Has the address been revealed on this page. Resets on every page change. */
+  mailShown: boolean;
+  /** Reveal the address, copy it to the clipboard, and toast. */
+  revealMail: () => void;
+  /** Switch randomiser mode, applying the new mode's immediate effect. */
+  setMode: (mode: ModeId) => void;
 }
 
 const ConfigContext = createContext<ConfigContextValue | null>(null);
@@ -87,10 +97,19 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   const [doorOpen, setDoorOpen] = useState(false);
   const [doorVia, setDoorVia] = useState("");
   const [saver, setSaver] = useState(false);
+  const [mailShown, setMailShown] = useState(false);
 
   const toastTimer = useRef<number | undefined>(undefined);
   const saveTimer = useRef<number | undefined>(undefined);
   const diveTimer = useRef<number | undefined>(undefined);
+  const idleTimer = useRef<number | undefined>(undefined);
+
+  // The idle timer fires a minute after the last click, long after the render
+  // that armed it, so it reads current state from a ref rather than a closure.
+  const live = useRef({ calm: config.calm, panelOpen, doorOpen });
+  useEffect(() => {
+    live.current = { calm: config.calm, panelOpen, doorOpen };
+  });
 
   const say = useCallback((message: string) => {
     window.clearTimeout(toastTimer.current);
@@ -115,6 +134,55 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     });
   }, [say]);
 
+  /**
+   * The address is never in static markup — it is assembled from parts at
+   * runtime, and this is the only place it exists as a whole string.
+   */
+  const revealMail = useCallback(() => {
+    setMailShown(true);
+    navigator.clipboard?.writeText(MAIL).catch(() => {});
+    say("address copied");
+  }, [say]);
+
+  const setMode = useCallback(
+    (mode: ModeId) => {
+      setConfig((previous) => {
+        const next = { ...previous, mode };
+        // Picking a mode applies it immediately, so the operator sees what they chose.
+        if (mode === "tod") return { ...next, pal: paletteIndexForHour(new Date().getHours()) };
+        if (mode === "visit") {
+          const result = roll(next);
+          return result ? { ...next, ...result } : next;
+        }
+        return next;
+      });
+      say(MODES.find((m) => m.id === mode)?.label ?? mode);
+    },
+    [say],
+  );
+
+  // ---- screensaver ----
+  // Sixty seconds without a *click* fades the interface out. Mouse movement
+  // deliberately does not count, so leaving the pointer drifting over the page
+  // still lets it sleep. Disabled entirely in calm, and the panel and door hold
+  // it off — they are fixed-position siblings the fade cannot reach.
+  const poke = useCallback(() => {
+    window.clearTimeout(idleTimer.current);
+    setSaver((sleeping) => (sleeping ? false : sleeping));
+    idleTimer.current = window.setTimeout(() => {
+      const { calm, panelOpen: panel, doorOpen: door } = live.current;
+      if (calm || panel || door) return;
+      setSaver(true);
+    }, 60_000);
+  }, []);
+
+  useEffect(() => {
+    poke();
+    return () => window.clearTimeout(idleTimer.current);
+    // Opening or closing an overlay restarts the clock, so it can never be left
+    // armed from before the panel opened.
+  }, [poke, panelOpen, doorOpen]);
+
   // ---- first load: per-visit and time-of-day ----
   // Time of day must NOT override a first visit: Nebula Drift wins on load, and
   // the clock only takes over on a return visit or when the hour actually changes.
@@ -134,6 +202,11 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     // Intentionally runs once, on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // A revealed address does not follow the visitor to the next page.
+  useEffect(() => {
+    setMailShown(false);
+  }, [config.page]);
 
   // ---- clock tick, and the hour-change hook for time-of-day ----
   useEffect(() => {
@@ -174,6 +247,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   // back to 1. The page swap itself commits at the 300ms mark, mid-blur, so the
   // ugly transition is hidden. Calm mode skips the dive and cuts instantly.
   const go = useCallback((page: PageId) => {
+    poke();
     setConfig((previous) => {
       if (previous.page === page) return previous;
 
@@ -200,7 +274,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       diveTimer.current = window.setTimeout(commit, 300);
       return previous;
     });
-  }, []);
+  }, [poke]);
 
   const togglePanel = useCallback(() => setPanelOpen((v) => !v), []);
   const closePanel = useCallback(() => setPanelOpen(false), []);
@@ -248,7 +322,10 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       closeDoor,
       openConfig,
       saver,
-      setSaver,
+      poke,
+      setMode,
+      mailShown,
+      revealMail,
     }),
     [
       config,
@@ -270,6 +347,10 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       closeDoor,
       openConfig,
       saver,
+      poke,
+      setMode,
+      mailShown,
+      revealMail,
     ],
   );
 

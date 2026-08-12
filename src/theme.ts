@@ -27,6 +27,20 @@ const LAYOUT_RADIUS: Partial<Record<LayoutId, string>> = {
   stack: "0px",
 };
 
+/**
+ * Layouts that set their own display size, overriding the per-band value.
+ *
+ * Magazine's minimum is the spec's `46px`, not the prototype's `40px` — see
+ * CLAUDE.md § "Known deviations from the prototype".
+ */
+const LAYOUT_H1: Partial<Record<LayoutId, string>> = {
+  magazine: "clamp(46px, 7.6vw, 104px)",
+  sidescroll: "clamp(34px, 5vw, 68px)",
+  ledger: "clamp(30px, 4vw, 52px)",
+  console: "clamp(30px, 4vw, 52px)",
+  marginalia: "clamp(32px, 4.4vw, 60px)",
+};
+
 function radiusFor(layout: LayoutId, band: Band, calm: boolean): string {
   if (calm) return CALM_RADIUS;
   // Stack is only borderless on desk; on small screens it is the collapse target
@@ -40,6 +54,9 @@ export function themeVars(config: Config, layout: LayoutId, band: Band): CSSProp
   const type = TYPESETS[config.type] ?? TYPESETS[0];
   const tokens = BAND_TOKENS[band];
   const { calm } = config;
+  // 404 desaturates and drops its accents to muted greys — pressure lost. Calm
+  // wins over it, since calm is a whole aesthetic rather than a page treatment.
+  const lost = !calm && config.page === "notfound";
 
   return {
     "--bg": palette.bg,
@@ -48,9 +65,9 @@ export function themeVars(config: Config, layout: LayoutId, band: Band): CSSProp
     "--fg": palette.fg,
     "--muted": palette.muted,
     "--faint": palette.faint,
-    "--a1": palette.a1,
+    "--a1": lost ? palette.muted : palette.a1,
     // Calm leaves exactly one accent: a2 and a3 collapse into the neutral ramp.
-    "--a2": calm ? palette.muted : palette.a2,
+    "--a2": calm ? palette.muted : lost ? palette.faint : palette.a2,
     "--a3": calm ? palette.faint : palette.a3,
 
     "--font-body": type.body,
@@ -65,7 +82,7 @@ export function themeVars(config: Config, layout: LayoutId, band: Band): CSSProp
     "--grid-columns": tokens.gridColumns,
     "--grid-gap": tokens.gridGap,
     "--valve-size": tokens.valveSize,
-    "--h1-size": tokens.h1Size,
+    "--h1-size": LAYOUT_H1[layout] ?? tokens.h1Size,
     "--footer-padding": tokens.footerPadding,
     "--footer-size": tokens.footerSize,
     "--sheet-columns": tokens.sheetColumns,
@@ -85,6 +102,7 @@ export function themeClasses(config: Config, layout: LayoutId, band: Band): stri
     config.calm ? "is-calm" : "is-alive",
     config.grain && !config.calm ? "has-grain" : null,
     config.breathe && !config.calm ? "has-breathe" : null,
+    config.cursor && !config.calm ? "has-cursor" : null,
   ]
     .filter(Boolean)
     .join(" ");

@@ -63,12 +63,23 @@ variable swap, which is what makes the 0.9s palette bleed work.
 Per-frame values (mouse position, scroll velocity, card element list, keystroke buffer, drag origin,
 scramble token) belong in refs, outside React state. The spec is explicit about this.
 
-Built: token layer, persistence, share codes, randomiser + guardrails, bands, routing, page copy.
-Not built: all real chrome, layouts, canvas effects, siteconfig panel, calm mode's full treatment,
-the five motion systems, screensaver, unlock routes.
+All of it is built: token layer, persistence, share codes, randomiser + guardrails, bands, routing,
+page copy, the shared chrome, all thirteen layouts, all twelve canvas effects, the siteconfig panel,
+the operator door and its six routes, the screensaver, calm mode, and the five motion systems.
 
-`src/App.tsx` is a scaffold that renders the state machine so it can be verified in a browser. It is
-not the design and gets replaced.
+`src/App.tsx` is the real shell. The three overlays (panel, door, screensaver) are siblings of
+`.v-chrome` rather than children, because the screensaver fades the chrome to `opacity: 0` with
+`pointer-events: none` and must not take the panel or the door with it.
+
+Two CSS gotchas that have already bitten once each, both worth knowing before editing styles:
+
+- **`band-*` and `layout-*` are on the same element.** `.band-phone .layout-stack` matches nothing;
+  it has to be `.band-phone.layout-stack`. Every phone override was silently dead until this was
+  found — and phones collapse almost everything to Stack, so it was the main phone path.
+- **`.v-block` uses `animation-fill-mode: backwards`, not `both`.** An animated declaration outranks
+  the style attribute, so a forwards fill would leave `v-rise`'s `transform: translateY(0)` owning
+  the card for ever and the cursor-lean tilt — which is written to `el.style.transform` — would
+  never render. The stagger only needs the from-state held during the delay.
 
 ## Constraints that are decisions, not oversights
 
@@ -113,6 +124,19 @@ Both deliberate. Add to this list rather than silently diverging.
    clauses match. Every other rule behaves identically under both readings.
 2. **Focus-visible styles** exist in `base.css`. The spec lists their absence as a gap to close, not
    a design decision.
+3. **Magazine's h1 minimum is `46px`**, the spec's value, not the prototype's `40px`. The spec is
+   authoritative on every other measurement, so it is here too.
+4. **Matrix rain is rebuilt, at the client's request** (`src/fx/effects.ts`). The prototype moves a
+   whole 16px cell per frame — about 960px/s — and fakes trails by overdrawing the background, so
+   every stream shares one speed and one endless tail. Each column now owns its speed, trail length
+   and glyphs; the trail is drawn explicitly so the leading glyph can be near-white with the body
+   falling away behind it; glyphs are mirrored half-width katakana and mutate in place. Colour is
+   still entirely from the palette (`fg` lead, `a1` body), so it recolours like everything else.
+5. **"Breathing" does something.** The prototype stores the toggle and defines a `v-breathe`
+   keyframe, but never attaches it, so the control is inert. It now drives the vignette at the
+   valve's 4.6s rhythm — no reflow, no text resampling, no scrollbar from a scaled column.
+6. **Contact's primary CTA reveals the address** instead of navigating to the page it is already on,
+   where the prototype leaves it doing nothing. Contact is the one page with a job.
 
 ## Copy correction, approved by the client
 
@@ -129,8 +153,12 @@ copy — the 404's "eight other pages" (nine pages minus itself), "six ways into
 routes), "24 colour palettes", "12 background modes" and "5 type systems" are all correct. Every
 other line of copy is still verbatim-only.
 
-## Accessibility gaps still open
+## Accessibility
 
-The spec lists these as work to do, not design intent: accessible button names, `aria-current` on
-nav, focus trapping and focus return for the panel, a live region for toasts. Focus-visible styles
-and CSS-level `prefers-reduced-motion` are already handled in `base.css`.
+The spec's gap list is closed: accessible button names, `aria-current` on nav, focus trapping and
+focus return for both overlays (`src/hooks/useFocusTrap.ts`), a live region for toasts, focus-visible
+styles and CSS-level `prefers-reduced-motion`. The sleeping chrome also takes `inert`, so a faded-out
+interface cannot be reached by Tab.
+
+Still open, and genuinely unresolved rather than overlooked: several palettes fail WCAG AA on body
+text. That is deliberate — Peat especially — and calm mode is the intended remedy.

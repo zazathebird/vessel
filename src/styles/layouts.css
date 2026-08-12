@@ -1,0 +1,238 @@
+/*
+ * The nine layout archetypes that only need overrides on top of the Cinematic
+ * baseline in chrome.css. Terminal, Side-scroll, Stack and Console need
+ * stage-level structure and live there instead.
+ *
+ * Every rule here is scoped to a `.layout-*` class, which theme.ts sets from the
+ * *adapted* layout — so on small screens Magazine, Mosaic, Ledger and Radial
+ * simply never match, and nothing below has to know about bands.
+ *
+ * Ported from the prototype's renderVals() (design/prototype.html:1029), where
+ * these are inline style branches rather than rules.
+ */
+
+/* Magazine ---------------------------------------------------------------- */
+
+.layout-magazine .v-hero {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 18px;
+  padding-bottom: 28px;
+  border-bottom: 3px solid var(--fg);
+}
+
+.vessel.is-calm.layout-magazine .v-hero {
+  border-bottom: 1px solid var(--line);
+}
+
+.layout-magazine .v-title {
+  text-transform: uppercase;
+}
+
+.vessel.is-calm.layout-magazine .v-title {
+  text-transform: none;
+}
+
+.layout-magazine .v-grid {
+  display: block;
+  columns: 3;
+  column-gap: 26px;
+  padding-top: 26px;
+}
+
+.layout-magazine .v-block {
+  padding: 14px 0 22px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  backdrop-filter: none;
+  box-shadow: none;
+  break-inside: avoid;
+  margin-bottom: 22px;
+}
+
+/* Card deck --------------------------------------------------------------- */
+
+.layout-deck .v-grid {
+  display: flex;
+  gap: 22px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  padding: 6px 0 26px;
+}
+
+.layout-deck .v-block {
+  flex: var(--deck-card);
+  scroll-snap-align: center;
+  min-height: 330px;
+}
+
+.band-phone.layout-deck .v-block {
+  min-height: auto;
+}
+
+/* Split ------------------------------------------------------------------- */
+
+.layout-split .v-grid {
+  grid-template-columns: repeat(2, 1fr);
+  gap: 22px;
+}
+
+/* Radial orbit ------------------------------------------------------------ */
+/* The valve grows and the seven nav pills orbit it; the pill placement itself
+   lives with the valve in chrome.css. */
+
+.layout-radial .v-hero {
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+/* Mosaic ------------------------------------------------------------------ */
+
+.layout-mosaic .v-grid {
+  grid-template-columns: repeat(6, 1fr);
+  grid-auto-rows: minmax(120px, auto);
+  gap: 16px;
+}
+
+/* A repeating six-step span pattern: 4×2, 2×1, 2×2, 4×1, 3×2, 3×1. */
+.layout-mosaic .v-block:nth-child(6n + 1) {
+  grid-column: span 4;
+  grid-row: span 2;
+}
+.layout-mosaic .v-block:nth-child(6n + 2) {
+  grid-column: span 2;
+  grid-row: span 1;
+}
+.layout-mosaic .v-block:nth-child(6n + 3) {
+  grid-column: span 2;
+  grid-row: span 2;
+}
+.layout-mosaic .v-block:nth-child(6n + 4) {
+  grid-column: span 4;
+  grid-row: span 1;
+}
+.layout-mosaic .v-block:nth-child(6n + 5) {
+  grid-column: span 3;
+  grid-row: span 2;
+}
+.layout-mosaic .v-block:nth-child(6n + 6) {
+  grid-column: span 3;
+  grid-row: span 1;
+}
+
+/* Ledger ------------------------------------------------------------------ */
+
+.layout-ledger .v-hero {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 14px;
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--line);
+}
+
+.layout-ledger .v-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border-top: 1px solid var(--line);
+}
+
+.layout-ledger .v-block {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.9fr) 2.1fr;
+  gap: 26px;
+  align-items: start;
+  padding: 18px 4px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  backdrop-filter: none;
+  box-shadow: none;
+}
+
+/* Banding on the odd-indexed rows — the second, fourth, sixth block. */
+.layout-ledger .v-block:nth-child(even) {
+  background: color-mix(in oklab, var(--surface) 34%, transparent);
+}
+
+/* Ledger collapses to Cinematic below 900px, so this only guards against a
+   share code or stored config landing mid-resize. */
+.band-phone.layout-ledger .v-block,
+.band-tablet.layout-ledger .v-block {
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+/* Marginalia -------------------------------------------------------------- */
+
+.layout-marginalia .v-hero {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 20px;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.layout-marginalia .v-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 34px;
+  max-width: 720px;
+  margin: 0 auto;
+  padding-top: 20px;
+}
+
+/* The negative margin pulls the rule out into the gutter, where it reads as a
+   marginal hairline rather than as a card edge. */
+.layout-marginalia .v-block {
+  padding: 0 0 30px 30px;
+  margin-left: -30px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  backdrop-filter: none;
+  box-shadow: none;
+}
+
+.band-phone.layout-marginalia .v-block,
+.band-tablet.layout-marginalia .v-block {
+  padding: 0 0 24px;
+  margin-left: 0;
+  border-left: 0;
+}
+
+/* Contact sheet ----------------------------------------------------------- */
+
+.layout-sheet .v-grid {
+  grid-template-columns: var(--sheet-columns);
+  gap: 14px;
+}
+
+.band-phone.layout-sheet .v-grid {
+  gap: 10px;
+}
+
+.layout-sheet .v-block {
+  padding: 12px;
+  gap: 9px;
+}
+
+.band-phone.layout-sheet .v-block {
+  padding: 10px;
+}
+
+/* Image-first: the tiles grow and the text becomes subordinate to them. */
+.layout-sheet .v-tile {
+  min-height: 190px;
+}
+
+.band-phone.layout-sheet .v-tile {
+  min-height: 130px;
+}

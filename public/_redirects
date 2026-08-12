@@ -1,0 +1,3 @@
+# Nine real URLs are routed in the client, so every path must be served the app
+# shell rather than a host 404. /404 is a real page here, not a fallback.
+/*  /index.html  200

@@ -31,6 +31,14 @@ body {
   transition: background-color 0.9s ease, color 0.9s ease;
 }
 
+/* 404 is desaturated to 55% and its accents drop to muted greys (theme.ts). The
+   calm rule follows this one deliberately: at equal specificity the later rule
+   wins, so calm's own saturation holds even on the 404 page. */
+.vessel.page-notfound {
+  filter: saturate(0.55);
+  transition: filter 0.9s ease;
+}
+
 /* Calm is a second aesthetic, not a dimmer switch: one accent, no motion. */
 .vessel.is-calm {
   filter: saturate(0.45);

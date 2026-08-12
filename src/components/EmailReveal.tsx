@@ -1,32 +1,17 @@
-import { useEffect, useState } from "react";
-
 import { useConfig } from "../config/ConfigContext";
+import { MAIL } from "../data/mail";
 
 /**
- * The email is never allowed to appear in static markup — it is assembled from
- * parts at runtime. Click reveals it, copies it to the clipboard, and toasts;
- * it resets to unrevealed on every page change (SPEC.md § the nine pages).
+ * Click to reveal the address, which also copies it and toasts. Reveal state
+ * lives in the context rather than here, so Contact's primary CTA can trigger
+ * the same reveal and so it resets on page change (SPEC.md § State).
  */
-const MAIL_PARTS = ["patrickmcclevarty", String.fromCharCode(64), "outlook", ".", "com"];
-const MAIL = MAIL_PARTS.join("");
-
 export function EmailReveal() {
-  const { config, say } = useConfig();
-  const [shown, setShown] = useState(false);
-
-  useEffect(() => {
-    setShown(false);
-  }, [config.page]);
-
-  const reveal = () => {
-    setShown(true);
-    navigator.clipboard?.writeText(MAIL).catch(() => {});
-    say("address copied");
-  };
+  const { mailShown, revealMail } = useConfig();
 
   return (
-    <button type="button" className="v-mail" onClick={reveal}>
-      {shown ? MAIL : "click to reveal the address"}
+    <button type="button" className="v-mail" onClick={revealMail}>
+      {mailShown ? MAIL : "click to reveal the address"}
     </button>
   );
 }

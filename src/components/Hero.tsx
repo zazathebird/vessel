@@ -7,7 +7,7 @@ import { useScramble } from "../hooks/useScramble";
 import { Valve } from "./Valve";
 
 export function Hero({ page, layout }: { page: Page; layout: LayoutId }) {
-  const { config, go, adapted } = useConfig();
+  const { config, go, adapted, revealMail } = useConfig();
   const isNotFound = config.page === "notfound";
 
   const h1Text = useScramble(page.title, config.calm);
@@ -34,7 +34,7 @@ export function Hero({ page, layout }: { page: Page; layout: LayoutId }) {
               key={cta.label}
               type="button"
               className={`v-cta${cta.primary ? " is-primary" : ""}`}
-              onClick={() => go(cta.to)}
+              onClick={() => (cta.action === "reveal-mail" ? revealMail() : go(cta.to))}
             >
               {cta.label}
             </button>

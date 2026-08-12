@@ -1,30 +1,56 @@
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 import { useConfig } from "./config/ConfigContext";
 import { PAGES } from "./data/pages";
 import { themeClasses, themeVars } from "./theme";
 import { FxCanvas } from "./fx/FxCanvas";
+import { useMotionSystems } from "./hooks/useMotionSystems";
+import { useOperatorRoutes } from "./hooks/useOperatorRoutes";
 import { Header } from "./components/Header";
 import { Hero } from "./components/Hero";
 import { ContentBlock } from "./components/ContentBlock";
 import { Footer } from "./components/Footer";
+import { SiteConfigPanel } from "./components/SiteConfigPanel";
+import { OperatorDoor } from "./components/OperatorDoor";
+import { Screensaver } from "./components/Screensaver";
 
 /**
- * The real chrome: header, hero (with the valve), content grid, footer — shared
- * by all nine pages, restyled per layout by CSS alone (theme.ts's class names).
+ * The whole site: one chrome — header, hero with the valve, content grid,
+ * footer — shared by all nine pages and restyled per layout by CSS alone,
+ * over the canvas and under the three overlays.
  *
- * Still open: the remaining eleven canvas effects, the siteconfig panel and
- * operator door (theatre — see CLAUDE.md), the screensaver, and eight of the
- * thirteen layouts' CSS (Magazine, Deck, Split, Radial, Mosaic, Ledger,
- * Marginalia, Contact sheet — Cinematic, Terminal, Side-scroll, Stack and
- * Console are done). Cursor-lean card tilt and the scroll-velocity boost are
- * also not wired yet. None of that blocks the site from working.
+ * The overlays are siblings of `.v-chrome` rather than children, because the
+ * screensaver fades the chrome to `opacity: 0` with `pointer-events: none` and
+ * must not be able to take the panel or the door with it.
  */
 export default function App() {
-  const { config, layout, band, diving, nav } = useConfig();
+  const { config, layout, band, diving, nav, saver } = useConfig();
 
   const page = PAGES[config.page];
+  const hostRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLElement | null>(null);
+  const glowRef = useRef<HTMLDivElement | null>(null);
+  const chromeRef = useRef<HTMLDivElement | null>(null);
+
+  // A faded-out interface must not still be reachable by Tab. `inert` is set
+  // imperatively because React 18's DOM typings do not carry the attribute.
+  useEffect(() => {
+    const chrome = chromeRef.current;
+    if (!chrome) return;
+    if (saver) chrome.setAttribute("inert", "");
+    else chrome.removeAttribute("inert");
+  }, [saver]);
+
+  // Motion systems 2 and 4 plus the cursor glow; the key tells the hook when the
+  // card list has been rebuilt under it.
+  useMotionSystems({ hostRef, glowRef, stageRef, gridKey: `${config.page}:${layout}:${band}` });
+  useOperatorRoutes();
+
+  // A new page starts at the top. The stage is the scroll container, not the
+  // window, so this cannot be left to the browser.
+  useEffect(() => {
+    if (stageRef.current) stageRef.current.scrollTop = 0;
+  }, [config.page]);
 
   const stageAnimation = config.calm
     ? "none"
@@ -32,13 +58,19 @@ export default function App() {
       ? "v-dive 0.62s cubic-bezier(0.6,0,0.3,1) both"
       : `${nav % 2 ? "v-iris-a" : "v-iris-b"} 0.5s cubic-bezier(0.2,0.8,0.2,1) both`;
 
+  // Console streams its blocks in one at a time, so arrival reads as output
+  // being printed rather than as a grid settling.
   const staggerMs = layout === "console" ? 160 : 50;
 
   const grid = useMemo(
     () => (
       <div className="v-grid">
         {page.blocks.map((block, i) => (
-          <ContentBlock key={block.kicker} block={block} index={i} staggerMs={staggerMs} />
+          // Keyed by kicker *and* index: Now reuses "in progress" twice, and a
+          // duplicate key would let React reconcile the two together. Including
+          // the kicker still changes every key across a page change, which is
+          // what remounts the cards and replays their staggered entrance.
+          <ContentBlock key={`${block.kicker}-${i}`} block={block} index={i} staggerMs={staggerMs} />
         ))}
       </div>
     ),
@@ -54,31 +86,39 @@ export default function App() {
   );
 
   return (
-    <div className={`page-${config.page} ${themeClasses(config, layout, band)}`} style={themeVars(config, layout, band)}>
-      <FxCanvas fx={config.fx} pal={config.pal} calm={config.calm} />
+    <div
+      ref={hostRef}
+      className={`page-${config.page} ${themeClasses(config, layout, band)}`}
+      style={themeVars(config, layout, band)}
+    >
+      <FxCanvas />
       <div className="v-vignette" aria-hidden="true" />
       <div className="v-grain" aria-hidden="true" />
+      <div ref={glowRef} className="v-cursor-glow" aria-hidden="true" />
 
-      <div className="v-chrome">
+      <div ref={chromeRef} className={`v-chrome${saver ? " is-sleeping" : ""}`}>
         <Header />
 
-        {layout === "terminal" ? (
-          <main ref={stageRef} className="v-stage" style={{ animation: stageAnimation }}>
-            <div className="v-termbar">
-              <span className="v-termbar-dot" style={{ background: "var(--a3)" }} />
-              <span className="v-termbar-dot" style={{ background: "var(--a2)" }} />
-              <span className="v-termbar-dot" style={{ background: "var(--a1)" }} />
-              <span className="v-termbar-title">vessel — /{config.page}</span>
-            </div>
-            <div className="v-termbody">{body}</div>
-          </main>
-        ) : (
-          <main ref={stageRef} className="v-stage" style={{ animation: stageAnimation }}>
-            {body}
-          </main>
-        )}
+        <main ref={stageRef} className="v-stage" style={{ animation: stageAnimation }}>
+          {layout === "terminal" ? (
+            <>
+              <div className="v-termbar" aria-hidden="true">
+                <span className="v-termbar-dot" style={{ background: "var(--a3)" }} />
+                <span className="v-termbar-dot" style={{ background: "var(--a2)" }} />
+                <span className="v-termbar-dot" style={{ background: "var(--a1)" }} />
+                <span className="v-termbar-title">vessel — /{config.page}</span>
+              </div>
+              <div className="v-termbody">{body}</div>
+            </>
+          ) : (
+            body
+          )}
+        </main>
       </div>
 
+      <Screensaver />
+      <SiteConfigPanel />
+      <OperatorDoor />
       <Toast />
     </div>
   );
@@ -86,10 +126,9 @@ export default function App() {
 
 function Toast() {
   const { toast } = useConfig();
-  if (!toast) return null;
   return (
-    <div role="status" aria-live="polite" className="v-toast">
-      {toast}
+    <div role="status" aria-live="polite" className="v-toast-live">
+      {toast ? <div className="v-toast">{toast}</div> : null}
     </div>
   );
 }

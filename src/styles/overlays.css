@@ -1,0 +1,392 @@
+/*
+ * The three fixed-position overlays: the siteconfig drawer, the operator door,
+ * and the screensaver. They sit outside `.v-chrome` so the screensaver's fade
+ * cannot reach them — which is also why opening either one holds the idle timer
+ * off (see ConfigContext's poke()).
+ *
+ * Tokens only, as everywhere else: the panel bleeds with the palette the
+ * operator is picking, which is the point of picking it from inside the panel.
+ */
+
+/* siteconfig drawer --------------------------------------------------------- */
+
+.v-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 60;
+  width: min(92vw, 420px);
+  padding: 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  overflow-y: auto;
+  border-left: 1px solid var(--line);
+  background: color-mix(in oklab, var(--surface) 94%, transparent);
+  backdrop-filter: blur(22px);
+  box-shadow: -40px 0 90px rgba(0, 0, 0, 0.55);
+  animation: v-panel-in 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes v-panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.v-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.v-panel-title {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.v-panel-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--a2);
+}
+
+.v-panel-name {
+  font-size: 19px;
+  letter-spacing: -0.01em;
+  color: var(--fg);
+}
+
+.v-panel-close {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: none;
+  color: var(--muted);
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.v-panel-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.v-panel-label {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.v-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+/* The panel is operator-only and never touch-first, so its chips keep the
+   compact desk size on every band rather than inheriting the 44px target. */
+.band-phone .v-panel .chip,
+.band-tablet .v-panel .chip {
+  min-height: 0;
+  padding: 9px 12px;
+}
+
+.v-shuffle {
+  padding: 13px;
+  border: 1px solid var(--a2);
+  border-radius: var(--radius);
+  background: color-mix(in oklab, var(--a2) 14%, transparent);
+  color: var(--a2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background-color 0.9s ease, color 0.9s ease, border-color 0.9s ease;
+}
+
+.v-swatches {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 9px;
+}
+
+/* Each tile shows its own three accents on its own background, so the grid is a
+   preview rather than a list of names. */
+.v-swatch {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: calc(var(--radius) - 5px);
+  cursor: pointer;
+  transition: border-color 0.9s ease, box-shadow 0.9s ease;
+}
+
+.v-swatch.is-active {
+  border-color: var(--a1);
+  box-shadow: 0 0 22px color-mix(in oklab, var(--a1) 45%, transparent);
+}
+
+.v-swatch-dots {
+  display: flex;
+  gap: 3px;
+}
+
+.v-swatch-dots span {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+.v-swatch-name {
+  font-size: 10px;
+  line-height: 1.2;
+  text-align: left;
+  color: var(--fg);
+}
+
+.v-share-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.v-code {
+  flex: 1;
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  color: var(--a1);
+}
+
+.v-paste {
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in oklab, var(--bg) 60%, transparent);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--fg);
+  outline: none;
+}
+
+.v-knock {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in oklab, var(--bg) 60%, transparent);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.v-knock-state {
+  color: var(--muted);
+}
+
+/* Operator door ------------------------------------------------------------- */
+
+.v-door-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: color-mix(in oklab, var(--bg) 82%, transparent);
+  backdrop-filter: blur(18px) saturate(1.25);
+}
+
+.v-shock {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 200px;
+  height: 200px;
+  border-radius: 50%;
+  pointer-events: none;
+  animation: v-shock 1.15s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.v-shock.a {
+  border: 1px solid var(--a1);
+}
+
+.v-shock.b {
+  border: 1px solid var(--a2);
+  animation-delay: 0.12s;
+}
+
+.v-door {
+  position: relative;
+  width: min(92vw, 460px);
+  max-height: 92vh;
+  overflow-y: auto;
+  padding: 34px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  border: 1px solid var(--a1);
+  border-radius: calc(var(--radius) + 6px);
+  background: color-mix(in oklab, var(--surface) 92%, transparent);
+  box-shadow: 0 0 90px color-mix(in oklab, var(--a1) 40%, transparent);
+  animation: v-door-in 0.52s cubic-bezier(0.2, 0.9, 0.25, 1) both;
+}
+
+.v-door-via {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--a1);
+}
+
+.v-door-pip {
+  width: 11px;
+  height: 11px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--a1);
+  box-shadow: 0 0 16px var(--a1);
+  animation: v-dilate 1.8s ease-in-out infinite;
+}
+
+.v-door-title {
+  margin: 0;
+  font-size: 28px;
+  letter-spacing: -0.02em;
+  color: var(--fg);
+}
+
+.v-door-copy {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.62;
+  color: var(--muted);
+}
+
+.v-door-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.v-door-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 15px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--faint);
+}
+
+.v-door-value {
+  color: var(--fg);
+}
+
+.v-door-pending {
+  color: var(--a3);
+}
+
+.v-door-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.v-door-go,
+.v-door-leave {
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.v-door-go {
+  flex: 1;
+  padding: 14px;
+  border: 1px solid var(--a1);
+  background: color-mix(in oklab, var(--a1) 14%, transparent);
+  color: var(--a1);
+}
+
+.v-door-leave {
+  padding: 14px 18px;
+  border: 1px solid var(--line);
+  background: none;
+  color: var(--muted);
+}
+
+.v-door-routes {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  line-height: 1.7;
+  color: var(--faint);
+}
+
+/* Screensaver --------------------------------------------------------------- */
+
+.v-saver {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  animation: v-fade-in 2.4s ease both;
+}
+
+.v-saver-label {
+  position: absolute;
+  left: 50%;
+  bottom: 40px;
+  transform: translateX(-50%);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--faint);
+  opacity: 0.6;
+}

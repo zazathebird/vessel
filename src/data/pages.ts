@@ -15,6 +15,15 @@ export interface PageCta {
   label: string;
   to: PageId;
   primary?: boolean;
+  /**
+   * A CTA that acts on the page it already sits on rather than navigating.
+   *
+   * DEVIATION FROM THE PROTOTYPE, deliberate: there, Contact's primary CTA
+   * points at Contact, so pressing it on Contact does nothing at all. Contact
+   * is the one page with a job, so its "Copy the address" button does what it
+   * says instead. The copy is unchanged.
+   */
+  action?: "reveal-mail";
 }
 
 export interface PageBlock {
@@ -101,7 +110,7 @@ export const PAGES: Record<PageId, Page> = {
     eyebrow: "the useful page",
     title: "Computer repair.",
     lede: "Independent, one person, no shopfront. Dead, slow, infected, or you need the photos off a drive that stopped spinning. Email is below, reply usually within a day.",
-    ctas: [{ label: "Copy the address", to: "contact", primary: true }],
+    ctas: [{ label: "Copy the address", to: "contact", primary: true, action: "reveal-mail" }],
     blocks: [
       { kicker: "email", title: "The only way in", body: "Plain email, assembled in your browser so the scrapers don't get it. No form, no ticket system, nothing that stores your details on someone else's server.", hasMail: true },
       { kicker: "what i fix", title: "Most of it", body: "", hasList: true, items: ["Laptops and desktops — Windows, macOS, Linux", "Won't boot, blue screens, random shutdowns", "SSD and RAM upgrades for slow machines", "Malware removal and clean reinstalls", "Data recovery from failing drives", "Screens, keyboards, batteries, fans", "Home wifi, routers, printers (reluctantly)", "Backups, so it doesn't happen twice"] },
