@@ -1,10 +1,14 @@
 import { FX, LAYOUTS, TYPESETS } from "../data/catalog";
+import { ORNAMENTS } from "../data/ornaments";
 import { PALETTES } from "../data/palettes";
 import { isAllowed } from "../data/guardrails";
 import type { Config } from "./types";
 
 /** What a roll may change. Anything outside this set keeps its current value. */
-export type RollResult = Pick<Config, "pal" | "layout" | "fx" | "type" | "grain" | "breathe" | "cursor">;
+export type RollResult = Pick<
+  Config,
+  "pal" | "layout" | "fx" | "ornament" | "type" | "grain" | "breathe" | "cursor"
+>;
 
 const MAX_ATTEMPTS = 60;
 
@@ -29,6 +33,7 @@ export function roll(config: Config): RollResult | null {
       pal: scope.pal ? pickIndex(PALETTES.length) : config.pal,
       layout: scope.layout ? pick(LAYOUTS).id : config.layout,
       fx: scope.fx ? pick(FX).id : config.fx,
+      ornament: scope.ornament ? pick(ORNAMENTS).id : config.ornament,
       type: scope.type ? pickIndex(TYPESETS.length) : config.type,
       grain: scope.toggles ? Math.random() > 0.35 : config.grain,
       breathe: scope.toggles ? Math.random() > 0.2 : config.breathe,

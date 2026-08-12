@@ -4,6 +4,7 @@ import { useConfig } from "../config/ConfigContext";
 import { decodeShareCode, encodeShareCode } from "../config/shareCode";
 import { FX, LAYOUTS, MODES, SCOPES, TYPESETS } from "../data/catalog";
 import type { ScopeId } from "../data/catalog";
+import { ORNAMENTS } from "../data/ornaments";
 import { PALETTES } from "../data/palettes";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 
@@ -163,6 +164,26 @@ export function SiteConfigPanel() {
               }}
             >
               {effect.label}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="v-panel-section">
+        <h2 className="v-panel-label">Ornament — {ORNAMENTS.length}</h2>
+        <div className="v-chip-row">
+          {ORNAMENTS.map((ornament) => (
+            <button
+              key={ornament.id}
+              type="button"
+              className={`chip${config.ornament === ornament.id ? " is-active" : ""}`}
+              aria-pressed={config.ornament === ornament.id}
+              onClick={() => {
+                update({ ornament: ornament.id });
+                say(ornament.id === "none" ? "ornament off" : ornament.label);
+              }}
+            >
+              {ornament.label}
             </button>
           ))}
         </div>

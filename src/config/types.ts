@@ -1,4 +1,6 @@
 import type { FxId, LayoutId, ModeId, ScopeId } from "../data/catalog";
+import type { OrnamentId } from "../data/ornaments";
+import { DEFAULT_ORNAMENT } from "../data/ornaments";
 import type { PageId } from "../data/pageIds";
 
 export type Scopes = Record<ScopeId, boolean>;
@@ -14,6 +16,8 @@ export interface Config {
   pal: number;
   layout: LayoutId;
   fx: FxId;
+  /** Which hero ornament is drawn. */
+  ornament: OrnamentId;
   /** Index into TYPESETS. */
   type: number;
   mode: ModeId;
@@ -31,9 +35,10 @@ export const DEFAULT_CONFIG: Config = {
   pal: 0, // Nebula Drift — what a stranger gets on a first visit
   layout: "cinematic",
   fx: "vessels",
+  ornament: DEFAULT_ORNAMENT,
   type: 0,
   mode: "tod",
-  scope: { pal: true, layout: true, fx: true, type: true, toggles: true },
+  scope: { pal: true, layout: true, fx: true, ornament: true, type: true, toggles: true },
   calm: false,
   grain: true,
   breathe: true,

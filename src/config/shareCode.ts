@@ -1,11 +1,16 @@
 import { FX, LAYOUTS, TYPESETS } from "../data/catalog";
+import { ORNAMENTS } from "../data/ornaments";
 import { PALETTES } from "../data/palettes";
 import type { Config } from "./types";
 
 /**
- * Share codes: five base-36 fields joined by hyphens, uppercased.
- * palette index · layout index · effect index · type index · toggle bitfield.
- * Bitfield: 1 grain, 2 breathing, 4 cursor glow, 8 calm. e.g. "A-3-1-0-7".
+ * Share codes: base-36 fields joined by hyphens, uppercased.
+ * palette · layout · effect · type · toggle bitfield · ornament.
+ * Bitfield: 1 grain, 2 breathing, 4 cursor glow, 8 calm. e.g. "A-3-1-0-7-1".
+ *
+ * The ornament was added after codes were already in circulation, so it goes
+ * last and is optional on the way in: a five-field code still decodes, and
+ * leaves the ornament alone rather than silently resetting it.
  */
 
 const GRAIN = 1;
@@ -21,7 +26,8 @@ export function encodeShareCode(config: Config): string {
     (config.breathe ? BREATHE : 0) +
     (config.cursor ? CURSOR : 0) +
     (config.calm ? CALM : 0);
-  return [config.pal, layout, fx, config.type, bits]
+  const ornament = ORNAMENTS.findIndex((o) => o.id === config.ornament);
+  return [config.pal, layout, fx, config.type, bits, ornament]
     .map((n) => Math.max(0, n).toString(36))
     .join("-")
     .toUpperCase();
@@ -31,12 +37,13 @@ export function encodeShareCode(config: Config): string {
 export type SharedConfig = Pick<
   Config,
   "pal" | "layout" | "fx" | "type" | "grain" | "breathe" | "cursor" | "calm" | "mode"
->;
+> &
+  Partial<Pick<Config, "ornament">>;
 
 /** Returns null for anything malformed — the caller toasts "that isn't a setup code". */
 export function decodeShareCode(input: string): SharedConfig | null {
   const parts = String(input ?? "").toLowerCase().trim().split("-");
-  if (parts.length !== 5) return null;
+  if (parts.length !== 5 && parts.length !== 6) return null;
 
   const numbers = parts.map((part) => {
     // parseInt would accept "3junk" as 3; a share code field is base-36 digits only.
@@ -45,8 +52,9 @@ export function decodeShareCode(input: string): SharedConfig | null {
   });
   if (numbers.some((n) => Number.isNaN(n))) return null;
 
-  const [pal, layout, fx, type, bits] = numbers;
+  const [pal, layout, fx, type, bits, ornament] = numbers;
   return {
+    ...(ornament === undefined ? {} : { ornament: (ORNAMENTS[ornament] ?? ORNAMENTS[0]).id }),
     pal: Math.min(pal, PALETTES.length - 1),
     layout: (LAYOUTS[layout] ?? LAYOUTS[0]).id,
     fx: (FX[fx] ?? FX[0]).id,

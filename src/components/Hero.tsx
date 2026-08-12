@@ -4,7 +4,7 @@ import { PALETTES } from "../data/palettes";
 import type { Page } from "../data/pages";
 import type { LayoutId } from "../data/catalog";
 import { useScramble } from "../hooks/useScramble";
-import { Valve } from "./Valve";
+import { Ornament } from "./Ornament";
 
 export function Hero({ page, layout }: { page: Page; layout: LayoutId }) {
   const { config, go, adapted, revealMail } = useConfig();
@@ -19,7 +19,7 @@ export function Hero({ page, layout }: { page: Page; layout: LayoutId }) {
 
   return (
     <section className="v-hero">
-      <Valve layout={layout} />
+      <Ornament layout={layout} />
 
       <div className="v-hero-text">
         <div className="v-eyebrow">

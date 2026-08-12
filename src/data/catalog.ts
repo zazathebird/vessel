@@ -15,7 +15,7 @@ export type TypeSetId = "grotesk" | "editorial" | "mixed" | "allmono" | "condens
 
 export type ModeId = "static" | "tod" | "visit" | "page" | "manual";
 
-export type ScopeId = "pal" | "layout" | "fx" | "type" | "toggles";
+export type ScopeId = "pal" | "layout" | "fx" | "ornament" | "type" | "toggles";
 
 export const LAYOUTS: { id: LayoutId; label: string }[] = [
   { id: "cinematic", label: "Cinematic" },
@@ -76,6 +76,7 @@ export const SCOPES: { id: ScopeId; label: string }[] = [
   { id: "pal", label: "Palette" },
   { id: "layout", label: "Layout" },
   { id: "fx", label: "Effect" },
+  { id: "ornament", label: "Ornament" },
   { id: "type", label: "Type" },
   { id: "toggles", label: "Toggles" },
 ];

@@ -137,6 +137,17 @@ Both deliberate. Add to this list rather than silently diverging.
    valve's 4.6s rhythm — no reflow, no text resampling, no scrollbar from a scaled column.
 6. **Contact's primary CTA reveals the address** instead of navigating to the page it is already on,
    where the prototype leaves it doing nothing. Contact is the one page with a job.
+7. **The hero ornament is a setting, not a fixture** (`src/data/ornaments.ts`). The spec ships only
+   the valve, and the client's objection to it was specific and right: `v-dilate` scales the rings
+   as well as brightening them, so the whole assembly physically pumps and reads as a speaker cone.
+   There are now five — **Lens** (the default: a recessed eye where the geometry is dead still and
+   only the light moves), Valve (unchanged), Aperture, Orrery, None — pickable in siteconfig,
+   rollable under a sixth `ornament` scope, and carried as a sixth share-code field. All five sit in
+   one square slot (`.v-ornament`), so the layouts that resize it and the ones that hide it need no
+   knowledge of which is showing, and Radial's orbiting nav pills work over any of them.
+
+   Two consequences worth knowing: `SCOPES` now has six entries, not the spec's five; and share
+   codes are six fields, with five-field codes still decoding and simply leaving the ornament alone.
 
 ## Copy correction, approved by the client
 

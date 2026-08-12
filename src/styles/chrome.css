@@ -496,9 +496,14 @@
   color: var(--faint);
 }
 
-/* The valve ------------------------------------------------------------------ */
+/* The hero ornament ---------------------------------------------------------
+ *
+ * One square slot, four things that can sit in it, all drawn from palette
+ * tokens. The slot owns the size, the drift and the calm behaviour, so each
+ * ornament below only has to draw itself.
+ */
 
-.v-valve {
+.v-ornament {
   position: relative;
   width: var(--valve-size);
   aspect-ratio: 1;
@@ -509,25 +514,25 @@
   animation: v-drift 9s ease-in-out infinite;
 }
 
-.is-calm .v-valve {
+.is-calm .v-ornament {
   opacity: 0.5;
   animation: none;
 }
 
-.band-phone .v-valve,
-.layout-sidescroll .v-valve,
-.layout-terminal .v-valve,
-.layout-ledger .v-valve,
-.layout-console .v-valve,
-.layout-sheet .v-valve {
+.band-phone .v-ornament,
+.layout-sidescroll .v-ornament,
+.layout-terminal .v-ornament,
+.layout-ledger .v-ornament,
+.layout-console .v-ornament,
+.layout-sheet .v-ornament {
   display: none;
 }
 
-.layout-radial .v-valve {
+.layout-radial .v-ornament {
   width: min(62vw, 540px);
 }
 
-.layout-magazine .v-valve {
+.layout-magazine .v-ornament {
   width: 180px;
 }
 
@@ -575,6 +580,204 @@
 .is-calm .v-valve-dash,
 .is-calm .v-valve-ring,
 .is-calm .v-valve-core {
+  animation: none;
+}
+
+/* Lens — the default.
+ *
+ * The complaint about the valve was that `v-dilate` scales the rings as well as
+ * brightening them, so the whole assembly physically pumps. Nothing here scales
+ * or moves: the bezel is fixed, and only the light inside the pupil and the
+ * halo around it changes. A still object with moving light reads as watching;
+ * a moving object reads as a speaker cone.
+ */
+
+.v-lens-bezel {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: radial-gradient(circle at 50% 42%, var(--surface), var(--bg) 78%);
+  box-shadow: inset 0 2px 18px rgba(0, 0, 0, 0.55), inset 0 -1px 0 color-mix(in oklab, var(--fg) 10%, transparent);
+}
+
+/* The recess the pupil sits in — a second, tighter wall so the eye has depth
+   rather than being a flat disc with a dot on it. */
+.v-lens-inner {
+  position: absolute;
+  inset: 17%;
+  border-radius: 50%;
+  border: 1px solid color-mix(in oklab, var(--line) 70%, transparent);
+  background: radial-gradient(circle at 50% 60%, var(--bg), color-mix(in oklab, var(--bg) 60%, black) 90%);
+  box-shadow: inset 0 6px 22px rgba(0, 0, 0, 0.7);
+}
+
+.v-lens-halo {
+  position: absolute;
+  inset: 22%;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in oklab, var(--a1) 45%, transparent), transparent 68%);
+  filter: blur(6px);
+  animation: v-lens-breathe 5.2s ease-in-out infinite;
+}
+
+.v-lens-pupil {
+  position: relative;
+  /* Small and hot inside a large dark bezel — that ratio is what makes it read
+     as a lens with a light behind it rather than as a glowing ball. */
+  width: 22%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 42% 38%,
+    color-mix(in oklab, var(--fg) 78%, var(--a1)) 0%,
+    var(--a1) 34%,
+    color-mix(in oklab, var(--a1) 55%, var(--bg)) 72%,
+    color-mix(in oklab, var(--a1) 20%, var(--bg)) 100%
+  );
+  box-shadow: 0 0 46px color-mix(in oklab, var(--a1) 70%, transparent),
+    0 0 90px color-mix(in oklab, var(--a1) 30%, transparent);
+  animation: v-lens-breathe 5.2s ease-in-out infinite;
+}
+
+/* A thin lit rim right at the pupil's edge: the aperture the light comes through. */
+.v-lens-iris {
+  position: absolute;
+  inset: 37%;
+  border-radius: 50%;
+  border: 1px solid color-mix(in oklab, var(--a1) 85%, transparent);
+  box-shadow: 0 0 22px color-mix(in oklab, var(--a1) 45%, transparent),
+    inset 0 0 14px color-mix(in oklab, var(--a1) 30%, transparent);
+}
+
+/* The specular highlight that makes it read as glass rather than as a hole.
+   Sits on the pupil's upper left, where a light source above and in front of
+   the lens would put it. */
+.v-lens-glint {
+  position: absolute;
+  top: 41%;
+  left: 41%;
+  width: 8%;
+  height: 4.5%;
+  border-radius: 50%;
+  transform: rotate(-24deg);
+  background: color-mix(in oklab, var(--fg) 70%, transparent);
+  filter: blur(2px);
+  opacity: 0.75;
+}
+
+/* Brightness only — no transform, deliberately. */
+@keyframes v-lens-breathe {
+  0%,
+  100% {
+    opacity: 0.78;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.is-calm .v-lens-halo,
+.is-calm .v-lens-pupil {
+  animation: none;
+}
+
+/* Aperture — hard-edged blades on a slow rotation around a dark opening. */
+
+.v-ap-blades {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: repeating-conic-gradient(
+    from 0deg,
+    color-mix(in oklab, var(--surface) 92%, transparent) 0deg 55deg,
+    color-mix(in oklab, var(--line) 80%, transparent) 55deg 60deg
+  );
+  animation: v-spin 44s linear infinite;
+}
+
+.v-ap-hole {
+  position: absolute;
+  inset: 33%;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 45%, color-mix(in oklab, var(--a1) 26%, var(--bg)), var(--bg) 72%);
+  box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.75),
+    0 0 40px color-mix(in oklab, var(--a1) 34%, transparent);
+}
+
+.v-ap-rim {
+  position: absolute;
+  inset: 30%;
+  border-radius: 50%;
+  border: 1px solid var(--a1);
+  opacity: 0.75;
+}
+
+.is-calm .v-ap-blades {
+  animation: none;
+}
+
+/* Orrery — three bodies, each orbiting slower the further out it sits.
+ *
+ * The ring spins and carries the body pinned to its top edge, which is why the
+ * body is a child rather than a sibling. Nothing pulses. */
+
+.v-orrery-ring {
+  position: absolute;
+  border-radius: 50%;
+  border: 1px solid color-mix(in oklab, var(--line) 90%, transparent);
+  animation: v-spin linear infinite;
+}
+
+.v-orrery-ring.o1 {
+  inset: 8%;
+  animation-duration: 38s;
+}
+
+.v-orrery-ring.o2 {
+  inset: 26%;
+  border-style: dashed;
+  animation-duration: 23s;
+  animation-direction: reverse;
+}
+
+.v-orrery-ring.o3 {
+  inset: 42%;
+  animation-duration: 13s;
+}
+
+.v-orrery-body {
+  position: absolute;
+  top: -5px;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  margin-left: -5px;
+  border-radius: 50%;
+  background: var(--a2);
+  box-shadow: 0 0 18px var(--a2);
+}
+
+.v-orrery-ring.o1 .v-orrery-body {
+  background: var(--a3);
+  box-shadow: 0 0 18px var(--a3);
+}
+
+.v-orrery-ring.o3 .v-orrery-body {
+  background: var(--a1);
+  box-shadow: 0 0 20px var(--a1);
+}
+
+.v-orrery-sun {
+  position: relative;
+  width: 16%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(circle at 38% 34%, color-mix(in oklab, var(--fg) 60%, var(--a1)), var(--a1) 60%, transparent 78%);
+  box-shadow: 0 0 54px color-mix(in oklab, var(--a1) 60%, transparent);
+}
+
+.is-calm .v-orrery-ring {
   animation: none;
 }
 
