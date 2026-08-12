@@ -190,8 +190,15 @@ Argon2id was rejected — see §12 — for having no WebCrypto primitive and req
 runtime dependency.
 
 **Rate limiting is mandatory and it is new.** Passkeys needed none; passwords invite credential
-stuffing. Per-account and per-IP attempt limits with exponential backoff, held in a Durable Object
+stuffing. Per-account and per-client attempt limits with exponential backoff, held in a Durable Object
 rather than D1 so the counter is consistent under concurrency.
+
+**No raw IP address is stored, anywhere, at any point.** An IP is personal data, and per-IP rate
+limiting is the one place in this design where one would otherwise be written down. The counter is
+keyed by `HMAC-SHA-256(rotating_salt, ip)` instead — enough to recognise a repeat offender within the
+window, useless afterwards. The salt rotates daily, which retires every key with it; entries expire
+with the backoff window and are never copied into D1. The `audit` table records **actor and action, not
+origin**: what happened and who did it, never from where.
 
 ### Two-factor
 
@@ -480,7 +487,7 @@ key_slots     id · account_id · credential_id · wrapped_grant_key · alg   �
 totp          account_id · secret_enc · confirmed_at · backup_codes_hash
 setups        id · account_id · name · share_code · created_at        ← phase 1 ends here
 machines      id · owner_id · name · agent_pubkey · paired_at · last_seen
-drives        id · machine_id · label · root_path · created_at        ← several per machine
+drives        id · machine_id · label · created_at        ← several per machine. NO path, see below
 grants        id · drive_id · grantee_id · paths · perms · expires_at · signed_doc · revoked_at
 invites       id · grant_id · issued_by · token_hash · claimed_by · expires_at   ← phase 3
 audit         id · actor_id · action · target · at        ← append-only, mirrored by the agent
@@ -497,10 +504,24 @@ Three notes on fields whose shape is decided rather than incidental:
 - **`grants.perms` exists but only ever holds read.** Keeping the field costs one column and one check
   the agent always passes; removing it would mean a migration and a grant-format version bump on the
   day writes are wanted. Nothing in the UI offers a write option.
-- **`drives.root_path` is the folder the owner picked**, not a volume. Grants scope to a path at or
-  below it. The agent must resolve and re-check every requested path against that prefix *after*
-  normalisation, and must refuse symlinks that escape it — folder scoping is only as good as this
-  check, which is the one place in the agent worth a dedicated test suite.
+- **No filesystem path is ever stored server-side.** This reverses the earlier draft, which held
+  `drives.root_path` — the folder the owner picked. On Windows that value is `C:\Users\Patrick\
+  Documents` and on macOS `/Users/patrick/Documents`: **the account holder's real name, in plaintext,
+  collected by accident.** The client's constraint on 2026-08-12 was that no personal data be stored,
+  and a home-directory path is personal data that nobody chose to provide.
+
+  The root handle and its absolute path live **only in the sharing tab's IndexedDB**, alongside the
+  directory handle they belong to. The server holds `drives.label`, a display name the owner types.
+  Grants scope by `drive_id` plus a **relative** subpath, and the agent resolves that against the root
+  it holds locally. The scoping check is unchanged in strength — resolve, normalise, re-check the
+  prefix, refuse symlinks that escape, and it remains the one place in the agent worth a dedicated
+  test suite. It simply runs against a root the server never learns.
+
+  A second benefit falls out for free: a breach of `drives` and `grants` now reveals that someone
+  shared *a* folder called "Invoices", not where it is or whose machine it sits on.
+- **`machines.name` is typed by the owner and never taken from the hostname.** Default hostnames are
+  `patricks-macbook` and `daves-pc` — the same accidental-name problem in a second place. The pairing
+  screen asks for a name, suggests nothing, and says the name is visible to anyone shared with.
 - **`key_slots` is a separate table, not columns on `accounts`.** An account has as many slots as it
   has credentials, and slot lifetime follows credential lifetime: adding a passkey writes a slot,
   deleting it drops one, an operator reset deletes exactly the password slot and touches nothing else.
@@ -513,6 +534,37 @@ Three notes on fields whose shape is decided rather than incidental:
   holder to *registration for a named grant* — it is not itself a capability and confers no access
   until a passkey is registered and a public key exists to bind the grant to. It expires, and it is
   stored hashed so a leak of the table does not leak live invites.
+
+### Everything stored about a person
+
+The client's constraint on 2026-08-12: *"as long as it isn't personal data — email, names, dates of
+birth."* This is the complete inventory, so the claim can be checked rather than trusted, and so a
+later addition has to be argued against a list rather than slipped in.
+
+| Stored | What it is | Personal? |
+|---|---|---|
+| `handle` | A display name the user chooses | Only if they choose their own name — their call, and it is the one field where that is true |
+| `auth_hash`, `kdf_salt`, `kdf_iterations` | A peppered hash of a browser-derived secret | No. **The password itself is never stored, hashed or otherwise — it never reaches the server** |
+| `credential_id`, `public_key`, `sign_count` | Passkey material | No. Pseudonymous, site-scoped, useless elsewhere |
+| `code_hash` | Hashed recovery codes | No |
+| `totp.secret_enc`, `backup_codes_hash` | Second-factor material | No |
+| `wrapped_grant_key` | Ciphertext the server cannot open | No |
+| `grant_pubkey`, `agent_pubkey` | Public keys | No |
+| `setups.name`, `share_code` | "Workshop mode", `2-0-0-0-7-3` | No |
+| `machines.name` | A label the owner types, never the hostname | No, given the hostname rule above |
+| `drives.label` | A label the owner types | No |
+| `grants.paths` | Relative subpaths under a drive | No absolute path, no home directory, no username |
+| `created_at`, `last_seen`, `last_used_at`, `reset_at` | Timestamps | Activity metadata. Retained because a user needs "last used" to spot a credential that is not theirs |
+| `audit` | Actor, action, target, time | Behavioural, and deliberately so — it is the record that catches a compromised frontend (§3). No IP, no user agent |
+
+**Not stored, at any point:** email addresses, real names, dates of birth, phone numbers, postal
+addresses, payment details, IP addresses, user-agent strings, absolute filesystem paths, hostnames,
+file contents, file names outside a granted subpath, and passwords.
+
+**Adding anything to the left column is a spec change**, not an implementation detail. The two most
+likely candidates are email (§12 C, already rejected once with the condition that would reverse it) and
+IP logging for abuse investigation — which would be reasonable to want and is exactly why it is written
+down here as absent.
 
 ## 10. New interface surfaces
 
@@ -778,6 +830,20 @@ to phase 2 because nothing can be browsed before it exists.
 
 - *Rejected: an icon set or icon font.* Every option breaks "no images, no webfonts". Drawing icons from
   palette roles also makes them recolour with everything else, which a sprite sheet never would.
+
+**I. No personal data, checked against real values rather than asserted.** *Client constraint, and it
+caught three things.*
+
+The client's position — usernames and passwords are fine, email and real names are not — held up, but
+three fields were carrying personal data nobody had chosen to collect. §9 now has the full inventory.
+
+- *Removed: `drives.root_path`.* Held `C:\Users\Patrick\Documents`. The absolute path now lives only in
+  the sharing tab; grants scope by relative subpath. **Revisit if** never — the server has no use for
+  it, and doing without makes a breach less informative.
+- *Removed: hostnames as machine names.* `patricks-macbook`. The owner types a label instead.
+- *Removed: raw IPs from rate limiting.* Now `HMAC-SHA-256(daily_rotating_salt, ip)`, in a Durable
+  Object, expiring with the backoff window, never in D1. **Revisit if** abuse makes investigation
+  necessary — and note that reversing this is a spec change, not a config tweak.
 
 **H. Phase 1 grew, and stays one phase.** *Scope note, flagged by the assistant and accepted.*
 
