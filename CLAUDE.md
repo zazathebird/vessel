@@ -295,29 +295,43 @@ Nothing is deployed yet, but the groundwork is now done. State as of 2026-08-12:
 - ✅ `npx wrangler login` — done by the client. Account `760b80a637d2ffe755b09da3f4a339ff`.
 - ✅ **The real D1 database exists.** `vessel`, region ENAM, id in `wrangler.toml`. Both migrations
   are applied `--remote`; `d1 list` was empty before this, so nothing was overwritten.
-- ❌ **The four secrets are not set**, and the Worker cannot be deployed until they are. `Env` types
-  all four as required `string`s, so a deploy without them yields a Worker whose every HMAC throws.
-  The commands were blocked by the sandbox's permission classifier rather than by anything about the
-  project; **the client runs these four themselves**, from the repo root:
-
-  ```sh
-  node -e "process.stdout.write(require('crypto').randomBytes(32).toString('base64'))" | npx wrangler secret put AUTH_PEPPER
-  # …and the same for SESSION_SECRET, TOTP_ENC_KEY, RATE_SALT_SEED
-  ```
-
-  **`AUTH_PEPPER` must be backed up somewhere the client controls before the first real account is
-  created.** Cloudflare secrets are write-only — they cannot be read back. Losing the pepper
-  invalidates every stored auth hash, i.e. every password on the site, unrecoverably. Today that
-  costs nothing because no accounts exist; after the first signup it is a data-loss event. The other
-  three are similar but cheaper: `SESSION_SECRET` only signs out everyone, `RATE_SALT_SEED` only
+- ✅ **All four secrets are set**, by the client. `AUTH_PEPPER` is backed up in their password
+  manager. That backup matters: Cloudflare secrets are write-only and cannot be read back, so losing
+  the pepper invalidates every stored auth hash — every password on the site — unrecoverably. It is
+  free to regenerate while the account count is zero and a data-loss event after the first signup.
+  The other three are cheaper: `SESSION_SECRET` only signs everyone out, `RATE_SALT_SEED` only
   resets counters, `TOTP_ENC_KEY` breaks enrolled second factors.
-- ❌ `npx wrangler deploy`, then the cutover of `mcclevarty.ca` from the Pages project to the Worker.
-  Do it once, deliberately, with the client watching. Deploy to `workers.dev` and verify
-  `/api/health` returns `{"ok":true,"tables":6}` *before* moving the custom domain — the Pages
-  project `vessel` still serves the live site and is the rollback.
+- ✅ **The Worker is deployed** at `https://vessel.patrickmcclevarty.workers.dev`. Verified there:
+  `/api/health` returns `{"ok":true,"tables":6}` — so D1 is bound, migrated and reachable, and the
+  Durable Object namespace answers. `/`, `/contact`, `/work`, `/404` and an unrouted path all return
+  200 and serve the app shell, with the served bundle hash matching a local `npm run build`.
+  Unknown `/api/*` returns the JSON 404. **Give a fresh deploy a few seconds before testing routes**
+  — `/contact` 404s briefly while the asset manifest propagates, then settles to 200.
+- ❌ **The cutover of `mcclevarty.ca` from the Pages project to the Worker has not happened**, and is
+  the one remaining outward-facing step. Do it once, deliberately, with the client watching. The
+  Pages project `vessel` still serves the live site and is the rollback.
 
-**`public/_redirects` is dead under Workers but must stay** until cutover. The live site still deploys
-from Pages, and removing it would break client-side routing in production on the next push.
+**`public/_redirects` must stay until cutover, and it is not inert — it breaks the Worker deploy.**
+The earlier note here called it "dead under Workers". That was wrong. Workers static assets treats
+`_redirects` as *configuration*, not as an asset: it parses and validates the file, and rejects
+`/*  /index.html  200` with `Invalid _redirects configuration — Line 3: Infinite loop detected`
+(the rule strips `/index` and re-triggers itself). The deploy fails outright at the API call.
+
+Because it is configuration rather than an asset, **`.assetsignore` does not help** — that only
+filters the upload list, and the validation has already happened. This was tried and does not work.
+
+It cannot simply be deleted either: `main` still auto-deploys to Pages, which serves the live site,
+and removing it would break client-side routing there on the next push. So the file stays in `public/`
+and is stripped from `dist/` at deploy time only:
+
+```
+"predeploy": "npm run build && node -e \"...rmSync('dist/_redirects')...\"",
+"deploy": "wrangler deploy"
+```
+
+**Deploy with `npm run deploy`, never bare `wrangler deploy`** — the bare command fails on a fresh
+build. Pages is unaffected: Cloudflare runs its own `npm run build` and never sees the removal. At
+cutover, delete `public/_redirects` and both scripts together.
 
 Also queued, after phase 1:
 
