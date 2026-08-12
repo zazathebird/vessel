@@ -183,6 +183,11 @@
 }
 
 .v-paste {
+  /* Shares .v-share-row with its apply button, so it takes the slack the way
+     .v-code does. min-width: 0 because a flex item will not shrink past its
+     intrinsic input width without it, and the button would be pushed out. */
+  flex: 1;
+  min-width: 0;
   padding: 11px 13px;
   border: 1px solid var(--line);
   border-radius: var(--radius);

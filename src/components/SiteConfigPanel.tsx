@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import type { FormEvent } from "react";
 
 import { useConfig } from "../config/ConfigContext";
 import { decodeShareCode, encodeShareCode } from "../config/shareCode";
@@ -45,6 +46,11 @@ export function SiteConfigPanel() {
     update(shared);
     setPasted("");
     say("setup applied");
+  };
+
+  const submitCode = (event: FormEvent) => {
+    event.preventDefault();
+    applyCode(pasted);
   };
 
   return (
@@ -258,17 +264,24 @@ export function SiteConfigPanel() {
             copy
           </button>
         </div>
-        <input
-          className="v-paste"
-          value={pasted}
-          aria-labelledby="v-share-label"
-          placeholder="paste a code, press enter"
-          onChange={(event) => setPasted(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key !== "Enter") return;
-            applyCode(event.currentTarget.value);
-          }}
-        />
+        {/*
+         * A real <form>, for the one text input on the site. Enter and the
+         * button are then the same path rather than two, and this is the shape
+         * the account forms inherit — see CLAUDE.md on why whatever ships here
+         * first becomes the convention.
+         */}
+        <form className="v-share-row" onSubmit={submitCode}>
+          <input
+            className="v-paste"
+            value={pasted}
+            aria-labelledby="v-share-label"
+            placeholder="paste a code"
+            onChange={(event) => setPasted(event.target.value)}
+          />
+          <button type="submit" className="chip" disabled={!pasted.trim()}>
+            apply
+          </button>
+        </form>
       </section>
 
       <button type="button" className="v-knock" onClick={() => say("you are already inside")}>

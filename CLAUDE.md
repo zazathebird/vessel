@@ -223,14 +223,19 @@ focus return for both overlays (`src/hooks/useFocusTrap.ts`), a live region for 
 styles and CSS-level `prefers-reduced-motion`. The sleeping chrome also takes `inert`, so a faded-out
 interface cannot be reached by Tab.
 
-**One real defect, and one that was recorded in error.** `.v-paste` — the share-code field in the
-siteconfig panel, and the only text input in the entire app — submits on **Enter only, with no
-button** (`SiteConfigPanel.tsx:261-271`), so a code cannot be applied by mouse or touch alone. That
-one is genuine and worth fixing before any account form is built, since there is no other form in the
-codebase and whatever ships first becomes the convention.
+**The one real defect is fixed, and it set the form convention.** `.v-paste` — the share-code field
+in the siteconfig panel, and the only text input in the entire app — used to submit on Enter only
+with no button, so a code could not be applied by mouse or touch at all. It is now a real `<form>`
+with an `apply` submit button, disabled while the field is empty or blank.
+
+That shape is deliberate and the account forms should follow it: **one `<form>` with an `onSubmit`
+that calls `preventDefault()`, and a `type="submit"` button.** Enter and the button are then the same
+code path instead of two that can drift apart, and neither has to be special-cased. The disabled
+convention it uses was already waiting in `interaction.css` for exactly this. The row reuses
+`.v-share-row`, so the paste field lines up with the copy field above it.
 
 The *focus-indicator* half of this note was wrong and is retracted. `.v-paste` does set
-`outline: none` (`overlays.css:185-194`), but `.vessel :focus-visible` in `base.css:68` has
+`outline: none` (`overlays.css:185-199`), but `.vessel :focus-visible` in `base.css:68` has
 specificity 0-2-0 against that rule's 0-1-0, so it wins on specificity regardless of file order and
 the input focuses with the normal 2px `--a1` ring. Verified in the browser 2026-08-12: real click,
 `:focus-visible` matches, computed outline `solid 2px` at 3px offset, ring visible in a screenshot.
