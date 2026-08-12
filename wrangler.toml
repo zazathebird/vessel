@@ -1,0 +1,44 @@
+#:schema node_modules/wrangler/config-schema.json
+
+# Vessel — Cloudflare Pages project with Functions.
+#
+# Pages Functions rather than a standalone Worker: same project, same domain,
+# same deploy. No CORS, no second thing to keep in step, and the site stays one
+# artefact. The static build is unchanged — `functions/` is additive, and the
+# site serves exactly as it does today if every endpoint is removed.
+
+name = "vessel"
+compatibility_date = "2026-08-12"
+pages_build_output_dir = "dist"
+
+# D1, not KV. Grants need relational queries and revocation needs
+# read-after-write consistency, which KV's eventual consistency would quietly
+# undermine (SPEC-ACCOUNTS.md §8).
+#
+# database_id is filled in when the database is created against the operator's
+# Cloudflare account. Local development uses wrangler's own SQLite emulation
+# and does not need it.
+[[d1_databases]]
+binding = "DB"
+database_name = "vessel"
+database_id = "PLACEHOLDER_SET_ON_FIRST_DEPLOY"
+migrations_dir = "migrations"
+
+# Rate-limit counters live in a Durable Object, not D1: D1 has no atomic
+# read-modify-write, and a counter that loses races is one an attacker can
+# outrun (§4). Keyed by HMAC of the client IP under a daily-rotating salt —
+# no raw IP is written down anywhere, ever.
+[[durable_objects.bindings]]
+name = "RATE_LIMIT"
+class_name = "RateLimiter"
+script_name = "vessel"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RateLimiter"]
+
+# Secrets are set with `wrangler pages secret put`, never committed:
+#   AUTH_PEPPER     — HMAC key for stored auth hashes (§4)
+#   SESSION_SECRET  — HMAC key for session cookies
+#   TOTP_ENC_KEY    — wraps totp.secret_enc at rest
+#   RATE_SALT_SEED  — seeds the daily-rotating rate-limit salt
