@@ -32,9 +32,21 @@ export function FxCanvas() {
     let cache: FxCache = {};
     let cachedFor = live.current.fx;
     let raf = 0;
+    let lastFrameAt = performance.now();
 
     const step = () => {
       raf = requestAnimationFrame(step);
+
+      // Frames elapsed at 60fps. Every effect advances by boost, so folding the
+      // real frame delta into it makes them run at the same wall-clock speed on
+      // a 120Hz display as on a 60Hz one — without this, refresh rate silently
+      // doubles the speed of the rain and every particle field. Clamped so a
+      // long stall (a backgrounded tab, a slow first paint) cannot jump the
+      // world forward, and pinned to 1 at 60fps so nothing changes there.
+      const now = performance.now();
+      const dt = Math.min(3, Math.max(0.2, (now - lastFrameAt) / (1000 / 60)));
+      lastFrameAt = now;
+
       const canvas = canvasRef.current;
       if (!canvas || !canvas.isConnected || document.hidden) return;
       const ctx = canvas.getContext("2d");
@@ -58,7 +70,7 @@ export function FxCanvas() {
         cachedFor = id;
       }
 
-      const boost = 1 + motion.scrollV + (sleeping ? 0.9 : 0);
+      const boost = (1 + motion.scrollV + (sleeping ? 0.9 : 0)) * dt;
       t += 0.011 * boost;
 
       drawFx(id, {

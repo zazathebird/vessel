@@ -213,7 +213,7 @@ const pressure: Effect = ({ ctx, w, h, p, t, beat }) => {
  * the width and read as text rather than as rain.
  */
 const RAIN_GLYPHS =
-  "ﾊﾐﾋｰｳｼﾅﾓﾆｻﾜﾂｵﾘｱﾎﾃﾏｹﾒｴｶｷﾑﾕﾗｾﾈｽﾀﾇﾍｦｲｸｺｿﾁﾄﾉﾌﾔﾖﾙﾚﾛﾝ0123456789:・.\"=*+-<>¦｜ç";
+  "ﾊﾐﾋｰｳｼﾅﾓﾆｻﾜﾂｵﾘｱﾎﾃﾏｹﾒｴｶｷﾑﾕﾗｾﾈｽﾀﾇﾍｦｲｸｺｿﾁﾄﾉﾌﾔﾖﾙﾚﾛﾝ0123456789:･.\"=*+-<>¦|ç";
 
 const RAIN_CELL = 16;
 /** Cells per frame. Slow enough to read as falling glyphs rather than a blur. */
@@ -291,7 +291,7 @@ const rain: Effect = ({ ctx, w, h, p, boost }, cache) => {
     // Tail first, head last, so the bright glyph is never overdrawn.
     for (let k = stream.length - 1; k >= 1; k--) {
       const row = head - k;
-      if (row < 0 || row > rows) continue;
+      if (row < 0 || row >= rows) continue;
       if (Math.random() < RAIN_MUTATE) stream.glyphs[row] = randomGlyph();
       // Squared falloff: the body stays legible and the last few cells fade out
       // rather than the whole trail dimming evenly.
