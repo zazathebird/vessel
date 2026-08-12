@@ -164,6 +164,30 @@ copy — the 404's "eight other pages" (nine pages minus itself), "six ways into
 routes), "24 colour palettes", "12 background modes" and "5 type systems" are all correct. Every
 other line of copy is still verbatim-only.
 
+## Where this stands, and what is next
+
+The site is finished and deployed (`main` → Cloudflare Pages → `mcclevarty.ca`). The queued work,
+in the order the client set:
+
+1. **Accounts and saved setups.** Settled with the client as phase 1 of a two-phase feature. A whole
+   setup is already expressible as a share code, so this is close to persisting a code against an
+   identity — but it needs auth and a store (Cloudflare KV or D1 sit naturally on the existing Pages
+   deploy) and it is the first thing to break the no-backend model. Worth stating that trade-off
+   explicitly before writing any of it.
+2. **Private access to drives on people's own machines.** Phase 2, explicitly *not* started. The
+   client's model is that the site brokers access and never holds data. That is a distributed system
+   — relay, per-machine agent, grant/revoke, audit — not site work, and it needs its own spec and
+   its own security review. Do not fold it into phase 1.
+3. **Richer transitions, slide-overs and typewriter effects.** Requested, and sequenced after 1. The
+   hard part is the constraint attached to it: every layout, palette and ornament has to stay
+   visually distinct. That points at a small set of motion primitives each layout composes
+   differently, rather than bespoke animation per layout — but confirm the approach before building.
+
+One thing left unverified: the client has not yet confirmed the **Matrix rain fall speed** by eye.
+It was rebuilt after they said the original was far too fast, and verified headlessly at 96–307
+px/sec against the old 960 — but the browser session it was checked in could not run animation.
+`RAIN_SPEED_MIN` and `RAIN_SPEED_RANGE` in `src/fx/effects.ts` are the two constants to adjust.
+
 ## Accessibility
 
 The spec's gap list is closed: accessible button names, `aria-current` on nav, focus trapping and
