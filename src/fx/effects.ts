@@ -74,6 +74,8 @@ export interface FxCache {
   parts?: Particle[] | null;
   tree?: Branch[] | null;
   flow?: Channel[] | null;
+  /** The duel's stance transition, spark field and clash flash. */
+  duel?: DuelState | null;
 }
 
 const TAU = 6.3;
@@ -486,6 +488,476 @@ const orbits: Effect = ({ ctx, w, h, p, t }) => {
   ctx.globalAlpha = 1;
 };
 
+// Duelling figures ------------------------------------------------------------
+
+/**
+ * Two figures fighting with energy blades, endlessly.
+ *
+ * **One continuous duel, not a sequence of battles.** The client asked for the
+ * fight never to end and the *stance* to be what changes, which is a much better
+ * fit for this codebase than a set of choreographed bouts: there is no cut, no
+ * replay boundary, and nothing to keep in sync with the effect clock. The figures
+ * simply ease from one stance to the next, forever, picking the next one at
+ * random when they arrive.
+ *
+ * **Nothing here is drawn from a picture.** Every figure is a handful of line
+ * segments computed from joint angles, so the effect obeys the *Assets* rule the
+ * whole site is built under — no images, no sprites, no third-party anything. The
+ * two pairings differ only in the silhouette details appended to the same body
+ * (hood versus cape, halo versus horns), which is why one renderer serves both
+ * and why adding a third pairing is a line in `EFFECTS`, not a new effect.
+ *
+ * **Colour is entirely the palette's**, as in every other effect. Blades take the
+ * two accents so the pair reads as opposed, the bodies take `fg`, and the core of
+ * each blade is `fg` for the same reason the Matrix rain's leading glyph is —
+ * it is the brightest thing the palette offers, and a literal white would be the
+ * one hardcoded colour in the codebase. A palette change re-lights the duel over
+ * the usual 0.9s without the animation noticing.
+ */
+
+/**
+ * One figure's joints for a single stance. Angles are radians, and the arm chain
+ * is **cumulative** — the forearm's true angle is `shoulder + elbow`, the blade's
+ * is `shoulder + elbow + wrist`. That makes a stance readable as a pose ("upper
+ * arm up, forearm level, blade angled back") and makes interpolation between two
+ * stances behave, since every value is a local rotation rather than a position
+ * that could pull a limb out of its socket.
+ *
+ * Positive Y is down, so a *negative* angle points a limb upward.
+ */
+interface Limbs {
+  /** Torso tilt from vertical. Positive leans toward the opponent. */
+  lean: number;
+  /** 0 stands tall, 1 drops into a deep guard. */
+  crouch: number;
+  shoulder: number;
+  elbow: number;
+  wrist: number;
+  /** The free arm, counterweighting the blade. */
+  offArm: number;
+  frontLeg: number;
+  backLeg: number;
+}
+
+interface Stance {
+  a: Limbs;
+  b: Limbs;
+}
+
+interface Spark {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  life: number;
+}
+
+export interface DuelState {
+  from: Stance;
+  to: Stance;
+  /** Progress through the current transition, 0–1. */
+  k: number;
+  speed: number;
+  sparks: Spark[];
+  /** Previous frame's clock, for a delta the boost cannot distort. */
+  prev: number;
+  flash: number;
+  flashX: number;
+  flashY: number;
+  /** Ignition progress, 0–1. Blades grow out of the hilts rather than snapping on. */
+  ignite: number;
+}
+
+function limbs(
+  lean: number,
+  crouch: number,
+  shoulder: number,
+  elbow: number,
+  wrist: number,
+  offArm: number,
+  frontLeg: number,
+  backLeg: number,
+): Limbs {
+  return { lean, crouch, shoulder, elbow, wrist, offArm, frontLeg, backLeg };
+}
+
+/**
+ * The stance vocabulary. Any stance can follow any other, because each is a
+ * balanced pose rather than a frame of a fixed sequence — which is what lets the
+ * next one be chosen at random without the fight ever looking broken.
+ */
+const STANCES: Stance[] = [
+  // Both high, blades crossed overhead.
+  {
+    a: limbs(0.12, 0.2, -1.15, -0.3, 0.3, 0.7, 0.32, -0.36),
+    b: limbs(0.12, 0.2, -1.15, -0.3, 0.3, 0.7, 0.32, -0.36),
+  },
+  // A cuts down from overhead; B catches it high.
+  {
+    a: limbs(0.34, 0.45, -1.5, 0.45, 0.15, 1.0, 0.6, -0.5),
+    b: limbs(-0.14, 0.3, -1.3, -0.2, 0.6, 0.5, 0.24, -0.28),
+  },
+  // B lunges a thrust; A turns it aside.
+  {
+    a: limbs(-0.2, 0.35, -0.45, 0.35, -0.7, 0.9, 0.2, -0.5),
+    b: limbs(0.45, 0.55, -0.15, 0.05, 0.0, 1.1, 0.75, -0.6),
+  },
+  // Blade lock, both pressing into the centre.
+  {
+    a: limbs(0.4, 0.55, -0.9, -0.15, 0.15, 0.85, 0.55, -0.55),
+    b: limbs(0.4, 0.55, -0.9, -0.15, 0.15, 0.85, 0.55, -0.55),
+  },
+  // A sweeps low; B drops the blade to block.
+  {
+    a: limbs(0.25, 0.6, 0.35, 0.2, 0.25, -0.5, 0.5, -0.6),
+    b: limbs(0.1, 0.55, 0.15, 0.5, 0.55, -0.3, 0.42, -0.42),
+  },
+  // A recoils out of measure; B advances.
+  {
+    a: limbs(-0.35, 0.15, -0.7, -0.5, -0.35, 0.3, -0.2, -0.1),
+    b: limbs(0.38, 0.4, -1.0, 0.2, 0.2, 0.95, 0.62, -0.52),
+  },
+  // B cuts overhead; A cross-blocks.
+  {
+    a: limbs(-0.16, 0.32, -1.35, -0.15, 0.65, 0.45, 0.26, -0.3),
+    b: limbs(0.36, 0.45, -1.5, 0.4, 0.12, 1.0, 0.6, -0.5),
+  },
+  // The pause. Both open, blades wide — the beat before it starts again.
+  {
+    a: limbs(0.05, 0.1, -0.25, -0.55, -0.5, -0.7, 0.18, -0.22),
+    b: limbs(0.05, 0.1, -0.25, -0.55, -0.5, -0.7, 0.18, -0.22),
+  },
+  // A thrusts; B deflects downward.
+  {
+    a: limbs(0.42, 0.5, -0.2, 0.1, -0.05, 1.05, 0.7, -0.58),
+    b: limbs(-0.1, 0.4, 0.1, 0.45, 0.7, -0.25, 0.3, -0.35),
+  },
+];
+
+function mixLimbs(a: Limbs, b: Limbs, k: number): Limbs {
+  return {
+    lean: a.lean + (b.lean - a.lean) * k,
+    crouch: a.crouch + (b.crouch - a.crouch) * k,
+    shoulder: a.shoulder + (b.shoulder - a.shoulder) * k,
+    elbow: a.elbow + (b.elbow - a.elbow) * k,
+    wrist: a.wrist + (b.wrist - a.wrist) * k,
+    offArm: a.offArm + (b.offArm - a.offArm) * k,
+    frontLeg: a.frontLeg + (b.frontLeg - a.frontLeg) * k,
+    backLeg: a.backLeg + (b.backLeg - a.backLeg) * k,
+  };
+}
+
+type FighterStyle = "hooded" | "caped" | "haloed" | "horned";
+
+/**
+ * Draw one figure and return the tip of its blade, which is what the caller
+ * needs to know whether the blades just met.
+ */
+function drawFighter(
+  ctx: CanvasRenderingContext2D,
+  baseX: number,
+  groundY: number,
+  s: number,
+  facing: number,
+  l: Limbs,
+  style: FighterStyle,
+  ink: string,
+  blade: string,
+  core: string,
+  /** Blade length, 0–1. Below 1 the blade is still extending from the hilt. */
+  extend: number,
+  /** Unsteadiness in the blade's length, sampled per figure per frame. */
+  flicker: number,
+): { x: number; y: number } {
+  const hipX = baseX;
+  const hipY = groundY - s * 0.46 + l.crouch * s * 0.07;
+
+  const shX = hipX + Math.sin(l.lean) * facing * s * 0.3;
+  const shY = hipY - Math.cos(l.lean) * s * 0.3;
+  const headX = shX + Math.sin(l.lean) * facing * s * 0.1;
+  const headY = shY - Math.cos(l.lean) * s * 0.1;
+  const headR = s * 0.072;
+
+  const kneeFX = hipX + Math.sin(l.frontLeg) * facing * s * 0.24;
+  const kneeFY = hipY + Math.cos(l.frontLeg) * s * 0.24;
+  const footFX = kneeFX + Math.sin(l.frontLeg * 0.35) * facing * s * 0.24;
+  const kneeBX = hipX + Math.sin(l.backLeg) * facing * s * 0.24;
+  const kneeBY = hipY + Math.cos(l.backLeg) * s * 0.24;
+  const footBX = kneeBX + Math.sin(l.backLeg * 0.35) * facing * s * 0.24;
+
+  const elbX = shX + Math.cos(l.shoulder) * facing * s * 0.17;
+  const elbY = shY + Math.sin(l.shoulder) * s * 0.17;
+  const handX = elbX + Math.cos(l.shoulder + l.elbow) * facing * s * 0.16;
+  const handY = elbY + Math.sin(l.shoulder + l.elbow) * s * 0.16;
+  const bladeAngle = l.shoulder + l.elbow + l.wrist;
+  // The blade is never quite still. A ~1.5% length wobble is the whole trick
+  // behind the way these read on screen — a perfectly rigid glowing line looks
+  // like a drawn stick, and the same line breathing slightly looks like it is
+  // being *held*. It is deliberately too small to see as movement.
+  const reach = s * 0.6 * extend * (1 + flicker * 0.015);
+  const tipX = handX + Math.cos(bladeAngle) * facing * reach;
+  const tipY = handY + Math.sin(bladeAngle) * reach;
+
+  const offElbX = shX + Math.cos(l.offArm) * facing * s * 0.17;
+  const offElbY = shY + Math.sin(l.offArm) * s * 0.17;
+  const offHandX = offElbX + Math.cos(l.offArm + 0.5) * facing * s * 0.16;
+  const offHandY = offElbY + Math.sin(l.offArm + 0.5) * s * 0.16;
+
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  // The cape hangs behind the shoulders and drags — drawn first so the body
+  // covers its top edge.
+  if (style === "caped") {
+    ctx.globalAlpha = 0.32;
+    ctx.fillStyle = ink;
+    ctx.beginPath();
+    ctx.moveTo(shX, shY - s * 0.02);
+    ctx.lineTo(shX - facing * s * 0.2, hipY + s * 0.3);
+    ctx.lineTo(shX - facing * s * 0.02, hipY + s * 0.34);
+    ctx.lineTo(shX + facing * s * 0.03, shY);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  ctx.globalAlpha = 0.92;
+  ctx.strokeStyle = ink;
+
+  ctx.lineWidth = Math.max(2, s * 0.026);
+  ctx.beginPath();
+  ctx.moveTo(hipX, hipY);
+  ctx.lineTo(kneeFX, kneeFY);
+  ctx.lineTo(footFX, groundY);
+  ctx.moveTo(hipX, hipY);
+  ctx.lineTo(kneeBX, kneeBY);
+  ctx.lineTo(footBX, groundY);
+  ctx.stroke();
+
+  ctx.lineWidth = Math.max(3, s * 0.05);
+  ctx.beginPath();
+  ctx.moveTo(hipX, hipY);
+  ctx.lineTo(shX, shY);
+  ctx.stroke();
+
+  ctx.lineWidth = Math.max(2, s * 0.028);
+  ctx.beginPath();
+  ctx.moveTo(shX, shY);
+  ctx.lineTo(offElbX, offElbY);
+  ctx.lineTo(offHandX, offHandY);
+  ctx.moveTo(shX, shY);
+  ctx.lineTo(elbX, elbY);
+  ctx.lineTo(handX, handY);
+  ctx.stroke();
+
+  ctx.fillStyle = ink;
+  ctx.beginPath();
+  ctx.arc(headX, headY, headR, 0, TAU);
+  ctx.fill();
+
+  if (style === "hooded") {
+    ctx.globalAlpha = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(headX - facing * headR * 1.5, headY + headR * 1.3);
+    ctx.lineTo(headX + facing * headR * 0.2, headY - headR * 2.1);
+    ctx.lineTo(headX + facing * headR * 1.4, headY + headR * 0.9);
+    ctx.closePath();
+    ctx.fill();
+  } else if (style === "caped") {
+    // A brow ridge and a jaw line: enough to read as a helmet at this size.
+    ctx.globalAlpha = 0.55;
+    ctx.fillRect(headX - headR, headY - headR * 1.15, headR * 2, headR * 0.5);
+    ctx.fillRect(headX - headR * 0.7, headY + headR * 0.55, headR * 1.4, headR * 0.55);
+  } else if (style === "haloed") {
+    ctx.globalAlpha = 0.85;
+    ctx.strokeStyle = blade;
+    ctx.lineWidth = Math.max(1.5, s * 0.014);
+    ctx.beginPath();
+    ctx.ellipse(headX, headY - headR * 1.6, headR * 1.25, headR * 0.42, 0, 0, TAU);
+    ctx.stroke();
+  } else {
+    ctx.globalAlpha = 0.9;
+    ctx.strokeStyle = ink;
+    ctx.lineWidth = Math.max(2, s * 0.02);
+    ctx.beginPath();
+    ctx.moveTo(headX - headR * 0.72, headY - headR * 0.62);
+    ctx.lineTo(headX - headR * 1.25, headY - headR * 2.0);
+    ctx.moveTo(headX + headR * 0.72, headY - headR * 0.62);
+    ctx.lineTo(headX + headR * 1.25, headY - headR * 2.0);
+    ctx.stroke();
+  }
+
+  // The blade: three passes, widest and faintest first, so the glow falls away
+  // from a bright core without needing a gradient or an alpha-composited layer.
+  const hiltX = handX - Math.cos(bladeAngle) * facing * s * 0.035;
+  const hiltY = handY - Math.sin(bladeAngle) * s * 0.035;
+
+  ctx.strokeStyle = blade;
+  ctx.globalAlpha = 0.16;
+  ctx.lineWidth = Math.max(9, s * 0.075);
+  ctx.beginPath();
+  ctx.moveTo(hiltX, hiltY);
+  ctx.lineTo(tipX, tipY);
+  ctx.stroke();
+
+  ctx.globalAlpha = 0.45;
+  ctx.lineWidth = Math.max(4, s * 0.034);
+  ctx.beginPath();
+  ctx.moveTo(hiltX, hiltY);
+  ctx.lineTo(tipX, tipY);
+  ctx.stroke();
+
+  ctx.strokeStyle = core;
+  ctx.globalAlpha = 0.95;
+  ctx.lineWidth = Math.max(1.5, s * 0.012);
+  ctx.beginPath();
+  ctx.moveTo(hiltX, hiltY);
+  ctx.lineTo(tipX, tipY);
+  ctx.stroke();
+
+  ctx.globalAlpha = 1;
+  return { x: tipX, y: tipY };
+}
+
+/**
+ * Build the effect for one pairing. Both duels are the same fight with different
+ * silhouettes, so they share every line of logic below.
+ */
+function duelling(left: FighterStyle, right: FighterStyle): Effect {
+  return ({ ctx, w, h, p, t }, cache) => {
+    let st = cache.duel;
+    if (!st) {
+      st = cache.duel = {
+        from: STANCES[0],
+        to: STANCES[1],
+        k: 0,
+        speed: 0.55,
+        sparks: [],
+        prev: t,
+        flash: 0,
+        flashX: 0,
+        flashY: 0,
+        ignite: 0,
+      };
+    }
+
+    // **Clamped.** `t` arrives already multiplied by boost, so a scroll surge or
+    // the screensaver kicking in would otherwise hand this a delta big enough to
+    // teleport the fighters through a whole stance. A dropped frame is cheaper
+    // than a jump cut, and a negative delta (palette reload, clock reset) must
+    // never run the duel backwards.
+    const dt = Math.min(0.05, Math.max(0, t - st.prev));
+    st.prev = t;
+
+    st.k += dt * st.speed;
+    if (st.k >= 1) {
+      st.k = 0;
+      st.from = st.to;
+      // Random, but never the same stance twice running — repeating one reads as
+      // the animation having frozen, which is the one thing an endless fight
+      // cannot afford to look like.
+      let next = st.to;
+      for (let guard = 0; guard < 8 && next === st.to; guard += 1) {
+        next = STANCES[(Math.random() * STANCES.length) | 0];
+      }
+      st.to = next;
+      // Varying the speed is what stops the duel reading as a metronome: a slow
+      // circling recovery followed by a fast exchange is a fight, an even
+      // cadence is a machine.
+      st.speed = 0.35 + Math.random() * 0.8;
+    }
+
+    const k = st.k * st.k * (3 - 2 * st.k);
+    const la = mixLimbs(st.from.a, st.to.a, k);
+    const lb = mixLimbs(st.from.b, st.to.b, k);
+
+    const s = Math.min(h * 0.5, w * 0.34);
+    const groundY = h * 0.8;
+    const cx = w / 2;
+    const gap = s * 0.62;
+
+    ctx.globalAlpha = 0.25;
+    ctx.strokeStyle = p.line;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(cx - s * 1.9, groundY);
+    ctx.lineTo(cx + s * 1.9, groundY);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    // Ignition. The blades grow out of the hilts over the first ~0.6s of the
+    // effect's life rather than snapping on, which is what makes switching to
+    // this effect read as the fight starting instead of a frame appearing.
+    st.ignite = Math.min(1, st.ignite + dt * 1.7);
+    const extend = st.ignite * st.ignite * (3 - 2 * st.ignite);
+
+    // Two different phases so the pair never flickers in unison, which would
+    // read as the whole canvas pulsing rather than as two separate blades.
+    const flickerA = Math.sin(t * 47) + Math.sin(t * 83.3 + 1.7);
+    const flickerB = Math.sin(t * 51.7 + 2.9) + Math.sin(t * 79.1);
+
+    const tipA = drawFighter(
+      ctx, cx - gap, groundY, s, 1, la, left, p.fg, p.a1, p.fg, extend, flickerA,
+    );
+    const tipB = drawFighter(
+      ctx, cx + gap, groundY, s, -1, lb, right, p.fg, p.a3, p.fg, extend, flickerB,
+    );
+
+    const dist = Math.hypot(tipA.x - tipB.x, tipA.y - tipB.y);
+    if (dist < s * 0.16 && st.flash < 0.3) {
+      st.flash = 1;
+      st.flashX = (tipA.x + tipB.x) / 2;
+      st.flashY = (tipA.y + tipB.y) / 2;
+      for (let i = 0; i < 16; i += 1) {
+        const ang = Math.random() * TAU;
+        const speed = s * (0.35 + Math.random() * 1.2);
+        st.sparks.push({
+          x: st.flashX,
+          y: st.flashY,
+          vx: Math.cos(ang) * speed,
+          vy: Math.sin(ang) * speed - s * 0.25,
+          life: 1,
+        });
+      }
+    }
+    st.flash = Math.max(0, st.flash - dt * 2.6);
+
+    if (st.flash > 0) {
+      // Concentric discs rather than a radial gradient: the palette hands out hex
+      // strings and a gradient would need them as rgba, which means parsing a
+      // colour — the one thing this file is careful never to do.
+      ctx.fillStyle = p.a2;
+      for (let i = 3; i >= 1; i -= 1) {
+        ctx.globalAlpha = st.flash * 0.14 * i;
+        ctx.beginPath();
+        ctx.arc(st.flashX, st.flashY, s * 0.05 * i * (2 - st.flash), 0, TAU);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    if (st.sparks.length > 220) st.sparks.splice(0, st.sparks.length - 220);
+    const alive: Spark[] = [];
+    ctx.fillStyle = p.a2;
+    for (const sp of st.sparks) {
+      sp.x += sp.vx * dt;
+      sp.y += sp.vy * dt;
+      sp.vy += s * 2.4 * dt;
+      sp.life -= dt * 1.6;
+      if (sp.life <= 0) continue;
+      alive.push(sp);
+      ctx.globalAlpha = Math.min(1, sp.life) * 0.85;
+      ctx.beginPath();
+      ctx.arc(sp.x, sp.y, Math.max(1, s * 0.008 * sp.life + 0.6), 0, TAU);
+      ctx.fill();
+    }
+    st.sparks = alive;
+    ctx.globalAlpha = 1;
+  };
+}
+
+const duel = duelling("hooded", "caped");
+const duelholy = duelling("haloed", "horned");
+
 const EFFECTS: Record<Exclude<FxId, "off">, Effect> = {
   vessels,
   flow,
@@ -498,6 +970,8 @@ const EFFECTS: Record<Exclude<FxId, "off">, Effect> = {
   tunnel,
   bokeh,
   orbits,
+  duel,
+  duelholy,
 };
 
 /** Draw one frame. "None" clears; the rest get an opaque palette ground first. */

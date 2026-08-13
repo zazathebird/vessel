@@ -9,7 +9,8 @@ export type LayoutId =
 
 export type FxId =
   | "vessels" | "flow" | "pressure" | "rain" | "stars" | "constellation"
-  | "aurora" | "plasma" | "tunnel" | "bokeh" | "orbits" | "off";
+  | "aurora" | "plasma" | "tunnel" | "bokeh" | "orbits" | "off"
+  | "duel" | "duelholy";
 
 export type TypeSetId = "grotesk" | "editorial" | "mixed" | "allmono" | "condensed";
 
@@ -46,6 +47,13 @@ export const FX: { id: FxId; label: string }[] = [
   { id: "bokeh", label: "Bokeh" },
   { id: "orbits", label: "Orbits" },
   { id: "off", label: "None" },
+  // **Appended, never inserted.** `shareCode.ts` encodes the effect as this
+  // array's *index*, so putting anything ahead of an existing entry silently
+  // repoints every share code already in the wild — a code that read "Orbits"
+  // would quietly start meaning something else. New effects go on the end, even
+  // when that puts them after "None" and reads oddly in the panel.
+  { id: "duel", label: "Lightswords: light & dark" },
+  { id: "duelholy", label: "Lightswords: saint & serpent" },
 ];
 
 export interface TypeSet {
