@@ -166,3 +166,8 @@ Found while building; none blocking. Full reasoning in `CLAUDE.md`.
    route, `SPEC-ACCOUNTS.md` §10 makes it the command palette. Both cannot be true.
 4. **Signup discloses handle availability** (409) while `challenge` goes to real
    trouble to hide it. Defensible, but the two should not disagree.
+
+---
+
+**Starting a session?** `docs/HANDOFF.md` has a paste-ready prompt, the deploy
+verification block, and the list of things that cannot be verified from this side.

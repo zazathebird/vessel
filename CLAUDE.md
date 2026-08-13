@@ -25,7 +25,8 @@ No runtime dependencies beyond React — the routing, state, styling **and authe
 hand-rolled, deliberately (see *Assets* in the spec: no third-party libraries, no webfonts, no
 images).
 
-`TODO.md` is the ordered backlog. `README.md` orients a newcomer. This file is the working notes:
+`TODO.md` is the ordered backlog. `docs/HANDOFF.md` is how to start a session, verify a deploy, and
+what cannot be verified here. `README.md` orients a newcomer. This file is the working notes:
 binding decisions, deliberate deviations, and traps.
 
 ## The spec is authoritative
