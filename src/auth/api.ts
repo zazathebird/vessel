@@ -105,6 +105,14 @@ export interface PasskeyInfo {
   hasSlot: boolean;
 }
 
+/** One saved setup: a name and the share code it pins (SPEC-ACCOUNTS §11). */
+export interface SavedSetup {
+  id: string;
+  name: string;
+  shareCode: string;
+  createdAt: number;
+}
+
 export interface MeResult {
   account: PublicAccount;
   resetAt: number | null;
@@ -177,4 +185,10 @@ export const api = {
       {},
     ),
   passkeySignIn: (body: unknown) => post<PasskeySignInResult>("/api/auth/passkey", body),
+
+  // Saved setups — session-gated; saving a look is not a credential change.
+  setupsList: () => call<{ setups: SavedSetup[] }>("/api/setups"),
+  setupSave: (name: string, shareCode: string) =>
+    post<{ status: string; setup: SavedSetup }>("/api/setups", { name, shareCode }),
+  setupDelete: (id: string) => post<{ status: string }>("/api/setups/delete", { id }),
 };

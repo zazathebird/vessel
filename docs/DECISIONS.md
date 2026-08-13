@@ -13,6 +13,34 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-13 — Saved setups, on the signed-in summary
+
+`TODO.md` item 5's second piece, and §11's "nearly free" half delivered as such:
+`worker/setups.ts` (list/save/delete, session-gated — saving a look is not a credential
+change), `src/components/Setups.tsx` on the `/signin` summary. A setup is a name and
+`encodeShareCode(config)`; applying goes through `decodeShareCode`, so it behaves exactly
+like pasting a code, randomiser pinned to Static included. The Worker validates the code's
+*shape* only — the catalogue lives in the browser and `decodeShareCode` already clamps
+out-of-range fields, so a server-side copy would be a second thing to keep in step with no
+second opinion. Saving over an existing name replaces it, **case-insensitively** (the
+unique index collates binary, so the handler resolves the name first; two rows differing
+by case would be a list that looks like a bug). Fifty setups per account, bounded because
+an unbounded user-writable table invites a script. Deletion asks twice on the button, the
+`/admin` convention — the dialog primitive is the next backlog item, and a setup is the
+mildest destruction on the site.
+
+Two things deliberately *not* done, so they are chosen rather than drifted into:
+
+- **`/account` stays reserved and the summary stays on `/signin`** — §10's shipped-routes
+  note calls the split "a change worth making deliberately rather than incidentally", and
+  nothing in setups forces it.
+- **The signed-in *current* config still does not sync** — §11's "server copy wins on
+  conflict" sentence describes a mechanism phase 1's definition (§7: "named setups saved
+  and applied") does not include. Building it means conflict rules and another write path
+  through `ConfigContext`; if wanted, it is its own item, not a rider on this one.
+
+**Unverified by eye:** the Setups section, like every account screen.
+
 ## 2026-08-13 — Passkeys, as another key slot on the same grant key
 
 `TODO.md` item 5's first piece, built exactly as SPEC-ACCOUNTS §4/§5 specify: hand-rolled

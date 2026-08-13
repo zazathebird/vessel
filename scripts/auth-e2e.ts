@@ -1486,6 +1486,48 @@ async function main(): Promise<void> {
     check("a registration from a foreign origin is refused", foreignRefused?.status === 400, foreignRefused?.message);
   }
 
+  section("Saved setups (§11) — a name and a share code");
+  {
+    // Still signed in as the passkey fixture from the section above.
+    const none = await api.setupsList();
+    check("a fresh account has no setups", none.setups.length === 0, String(none.setups.length));
+
+    const saved = await api.setupSave("Workshop mode", "2-0-0-0-7-3");
+    check(
+      "a setup saves",
+      saved.status === "saved" && saved.setup.name === "Workshop mode",
+      JSON.stringify(saved).slice(0, 120),
+    );
+
+    const replaced = await api.setupSave("WORKSHOP MODE", "A-3-1-0-7-1");
+    check("saving the same name replaces it, case-insensitively", replaced.status === "replaced");
+    let listed = (await api.setupsList()).setups;
+    check(
+      "one setup remains, holding the new code and casing",
+      listed.length === 1 && listed[0].shareCode === "A-3-1-0-7-1" && listed[0].name === "WORKSHOP MODE",
+      JSON.stringify(listed).slice(0, 140),
+    );
+
+    const legacy = await api.setupSave("legacy", "2-0-0-0-7");
+    check("a five-field legacy code is accepted", legacy.status === "saved");
+
+    const junk = await refusal(() => api.setupSave("bad", "not a code!!"));
+    check("a malformed code is refused", junk?.status === 400, junk?.message);
+    const blank = await refusal(() => api.setupSave("   ", "2-0-0-0-7-3"));
+    check("a blank name is refused", blank?.status === 400, blank?.message);
+
+    listed = (await api.setupsList()).setups;
+    const workshop = listed.find((setup) => setup.name === "WORKSHOP MODE")!;
+    const deleted = await api.setupDelete(workshop.id);
+    check("a setup deletes", deleted.status === "deleted");
+    const missing = await refusal(() => api.setupDelete(workshop.id));
+    check("deleting it twice is refused", missing?.status === 404, missing?.message);
+
+    const anonymous = new Client();
+    await anonymous.call("/api/setups");
+    check("setups are invisible without a session", anonymous.lastStatus === 401);
+  }
+
   // Rate limiting ---------------------------------------------------------------
   //
   // **This runs last, and it has to.** §4's per-client bucket is keyed by

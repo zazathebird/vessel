@@ -68,6 +68,11 @@ client walks it in a real browser.
 
 In that order. Note `⌘K` is claimed twice — see *Unsigned-off* below.
 
+- **Account/setups — done 2026-08-13.** Saved setups on the `/signin` summary
+  (`worker/setups.ts`, `src/components/Setups.tsx`): name + share code, apply =
+  paste, case-insensitive replace, harness-covered. `/account` stays reserved
+  and the signed-in *current* config still does not sync — both deliberate,
+  `docs/DECISIONS.md` has the reasoning. **Unverified by eye:** the section.
 - **Passkeys — done 2026-08-13.** Hand-rolled WebAuthn (`worker/webauthn.ts`,
   `worker/passkeys.ts`, `src/auth/passkeys.ts`), each passkey a key slot on the
   same grant key via the `prf` extension, driven end to end by the harness with

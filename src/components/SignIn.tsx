@@ -13,6 +13,7 @@ import { looksLikeRecoveryCode } from "../auth/recoveryCodes";
 import { signInWithPasskey, webAuthnSupported } from "../auth/passkeys";
 import { ApiError, api, type MeResult } from "../auth/api";
 import { Passkeys } from "./Passkeys";
+import { Setups } from "./Setups";
 import { TotpEnrol } from "./TotpEnrol";
 
 /**
@@ -475,11 +476,12 @@ export function SignIn() {
           </p>
         ) : (
           <p className="v-account-note">
-            There is nothing else to do in here yet — no setups to save, no machines to reach.
-            That is the honest state of it: the account works, and the things an account is{" "}
-            <em>for</em> are being built behind it.
+            Setups below are the first thing an account actually holds. The rest of what one is{" "}
+            <em>for</em> — machines, sharing — is still being built behind it.
           </p>
         )}
+
+        <Setups />
 
         <ChangePassword />
 

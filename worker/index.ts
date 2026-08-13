@@ -17,6 +17,7 @@
 import * as accounts from "./accounts";
 import * as admin from "./admin";
 import * as passkeys from "./passkeys";
+import * as setups from "./setups";
 import { clientKey } from "./crypto";
 import { BadRequest } from "./encoding";
 import type { Env } from "./env";
@@ -257,6 +258,14 @@ async function route(
       return passkeys.register(request, env);
     case "POST /api/passkey/remove":
       return passkeys.remove(request, env);
+
+    // Saved setups (§11) — a name and a share code, per signed-in account.
+    case "GET /api/setups":
+      return setups.list(request, env);
+    case "POST /api/setups":
+      return setups.save(request, env);
+    case "POST /api/setups/delete":
+      return setups.remove(request, env);
 
     default:
       return problem(404, "No such endpoint.");
