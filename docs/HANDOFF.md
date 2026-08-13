@@ -1,37 +1,58 @@
 # Handoff
 
-Updated 2026-08-13, after the security-audit session — six fixes shipped and
-verified live (`docs/SECURITY-AUDIT.md`), three DNS items logged for the
-client's dashboards (`TODO.md` 16). The session before it built all of
-`TODO.md` item 5 — passkeys, saved setups, the dialog primitive, the command
-palette. Read `TODO.md` for what to do and `docs/DECISIONS.md` for why things
-are as they are; this file is how to pick the work up and how to prove you have
-not broken anything.
+Updated 2026-08-13 (night), after the client-requests session: visible
+branding is now `mcclevarty.ca` everywhere (CLAUDE.md deviation 10), the duel
+figures carry their likenesses with fixed blade colours (deviation 9), all
+eight photo slots hold PD/CC0 placeholders (`docs/PHOTOS.md`), phones have
+feature parity (ornament + duels + `cmd` chip), home's option-count block is
+jokes now, and the app-shell/UI review finally ran — eight findings fixed,
+`docs/REVIEW-CONTINUATION.md` deleted per its own note. Harness is at **178**.
+Read `TODO.md` for what to do and `docs/DECISIONS.md` for why things are as
+they are; this file is how to pick the work up and how to prove you have not
+broken anything.
 
 ---
 
-## Start-of-session prompt
+## Start-of-session prompt — phase 2
 
 Paste this to begin:
 
-> Read `CLAUDE.md`, `TODO.md` and `docs/HANDOFF.md` before doing anything.
-> `docs/DECISIONS.md` is the dated history if you need to know why something is
-> the way it is.
+> Read `CLAUDE.md`, `TODO.md` and `docs/HANDOFF.md` before doing anything, then
+> `design/SPEC-ACCOUNTS.md` §6–§8 and §12 in full. `docs/DECISIONS.md` is the
+> dated history if you need to know why something is the way it is.
 >
-> The site is live at `mcclevarty.ca`, served by a Cloudflare Worker. Everything
-> in `main` is deployed — verify with the bundle-hash check in
-> `docs/HANDOFF.md` rather than assuming.
+> The site is live at `mcclevarty.ca`, served by a Cloudflare Worker;
+> everything in `main` is deployed. First prove the ground: kill stray
+> `wrangler dev` processes, run `npm run test:auth` against `npm run
+> dev:worker`, and confirm it passes before anything else.
 >
-> Start by running `npm run test:auth` against `npm run dev:worker` — it should
-> pass. Kill any stray `wrangler dev` first: a second instance silently takes
-> port 8788 and the harness will not find it.
+> Then begin **SPEC-ACCOUNTS phase 2** — machine pairing, the per-machine
+> signalling Durable Object, and brokered drive access — and get as far as you
+> can in this order, stopping only where a decision is genuinely mine:
 >
-> If it passes, tell me before moving on. Then work `TODO.md` in order — the
-> first open items need me (redeeming a recovery code in a real browser, and my
-> eye on the duel's motion and all the new account screens). The next
-> *buildable* items are 7 and 8, and both are spec changes needing my sign-off
-> first, so check with me before starting either. Do not deploy without running
-> the verification block in `docs/HANDOFF.md` afterwards.
+> 1. **Spec first.** Extend `design/SPEC-ACCOUNTS.md` with the phase-2 design
+>    in §12's decision-log style: every choice recorded with what it was chosen
+>    over and a "revisit if". Decide what you can from the approved spec and
+>    log it; collect the genuinely client-level calls into one short list for
+>    me instead of stopping at each.
+> 2. **Authentication and plumbing before interface**, exactly as phase 1 did
+>    it: migrations (machines/pairing tables — grants stay absent until the
+>    phase that hardens them), the pairing protocol, the signalling Durable
+>    Object, and `scripts/auth-e2e.ts` coverage proving every new route end to
+>    end — including the negative cases — before any screen exists.
+> 3. Interface last, reusing the account-form conventions (`CLAUDE.md`
+>    § Accessibility) and never the operator door's UI.
+>
+> Phases 2 and 3 stay uncollapsed: phase 2 fails as "my files don't load",
+> phase 3 as "a stranger read my files" — do not borrow phase-3 hardening
+> early, and do not ship phase-2 routes that phase 3 will need to break.
+>
+> Deploy only if typecheck, build and the harness are all green, then run the
+> verification block in `docs/HANDOFF.md`. Commit and push at the end. Also
+> waiting on me, whenever I say so mid-session: the free-diagnostic copy
+> rewrite (my call is pending), the sign-off list at the bottom of `TODO.md`,
+> and every "unverified by eye" item — batch those into one list for me at the
+> end rather than asking as you go.
 
 ---
 
@@ -39,14 +60,20 @@ Paste this to begin:
 
 - **`piratelife` is the operator**, and is the only account. Promoted with step 1
   of `docs/BREAK-GLASS.md`. The old test account was deleted through `/admin`.
-- **Deployed and working** (verified 2026-08-13, full block below, all green
-  through the security-audit commit, Worker version `c562087f`): sign-up,
-  sign-in + TOTP, change password, recovery-code sign-in, `/admin` incl.
-  operator password reset, TOTP enrolment, **passkeys** (register/list/remove/
-  sign-in, each a key slot on the same grant key), **saved setups**,
-  operator-published site config, forced HTTPS. The harness is at **174
-  checks** and covers all of it, passkeys included, via a software
-  authenticator.
+- **Deployed and working** (verified 2026-08-13 night, Worker version
+  `9226f325`): sign-up, sign-in + TOTP, change password, recovery-code
+  sign-in, `/admin` incl. operator password reset, TOTP enrolment,
+  **passkeys** (register/list/remove/sign-in, each a key slot on the same
+  grant key), **saved setups**, operator-published site config, forced HTTPS.
+  The harness is at **178 checks** and covers all of it, passkeys included,
+  via a software authenticator.
+- **The client-requests session (2026-08-13 night) is live**: `mcclevarty.ca`
+  branding (the TOTP issuer and passkey rp name changed with it), the
+  middle-finger favicon, upgraded duel silhouettes with fixed blade colours,
+  placeholder photos in all eight slots, mobile parity (phone ornament +
+  header `cmd` chip on non-desk bands), the home jokes block, and the eight
+  app-shell review fixes — including two visitor-visible regressions (Radial's
+  orbit gap, the stuck "leaving…" button).
 - **The 2026-08-13 security audit shipped and is live**: hardened API error
   responses, `no-store` on the four secret-carrying responses, the session
   cookie renamed to `__Host-vessel_session` (anyone signed in at deploy was
@@ -72,13 +99,14 @@ Paste this to begin:
   motion. Passkeys additionally need a **real authenticator** — the harness
   proves the bytes, only the client's device can prove the platform prompt and
   its `prf` support.
-- **Nothing is buildable without the client now.** Items 7 (sound) and 8 (edit
-  mode) are spec changes needing sign-off; 2–4 and the item-5 screens need the
-  client's browser; 13 and **16 (DNSSEC, CAA, DMARC — the audit's remaining
-  third)** need the Cloudflare/Namespro dashboards; 6b waits on the duel
-  verdict. The sign-off list at the bottom of `TODO.md` (`totp.last_step`, §3's
-  operator wording, `⌘K`, signup 409) is the highest-leverage thing to put in
-  front of the client next.
+- **The next build is SPEC-ACCOUNTS phase 2** (machine pairing, the signalling
+  Durable Object, drive brokering) — the client gave the go on 2026-08-13. The
+  start-of-session prompt above is written for it. Also open: the
+  free-diagnostic copy rewrite (client is leaning yes, exact wording and any
+  fee amount pending), items 7 (sound) and 8 (edit mode) as spec changes
+  needing sign-off, 13 and **16 (DNSSEC, CAA, DMARC)** in the dashboards, 6b
+  on the duel verdict, and the sign-off list at the bottom of `TODO.md`
+  (`totp.last_step`, §3's operator wording, `⌘K`, signup 409).
 
 ---
 
@@ -201,8 +229,9 @@ had to be walked back to "unverified".
 ## Traps that have each cost a cycle
 
 - **Share codes are base-36.** Effect index 12 is `C`. `0-0-12-0-7-0` parses `12`
-  as 38, falls through `FX[38] ?? FX[0]`, and applies Vessels — which looks
-  exactly like a failed deploy. See `docs/DUEL.md`.
+  as 38, falls through `FX[38] ?? FX[0]`, and applies the default effect (id
+  `vessels`, labelled "Branches") — which looks exactly like a failed deploy.
+  See `docs/DUEL.md`.
 - **`FX` order is a wire format.** Append, never insert; the index is the share
   code.
 - **`URL.protocol = "https:"` silently does nothing in workerd.** It produced a
