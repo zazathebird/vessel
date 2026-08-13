@@ -779,6 +779,18 @@ than to disprove twice.
 
 Each rejected option carries a **"revisit if"** — the condition that would make it the right answer.
 
+### Resolved 2026-08-13 (passkeys built)
+
+**J. A passkey sign-in is one step: no TOTP stage, no rate limiting.** Decided at build time,
+consistent with this document rather than changing it: §3's stolen-laptop row already makes user
+verification the passkey's second factor, §4 records that passkeys need no rate limiting, and the
+Worker refuses an assertion without the UV flag so the property is enforced rather than assumed.
+
+- *Rejected: requiring a TOTP code after a passkey.* It would back an unphishable factor with a
+  phishable one and add a stage the passkey-only original never had. **Revisit if** UV-less
+  assertions ever have to be accepted (e.g. a security-key population without PIN), at which point
+  the second factor question reopens for exactly those credentials.
+
 ### Resolved 2026-08-12 (second round — auth, drives, interface)
 
 Prompted by the client's review of the first draft. These reverse or extend earlier decisions.

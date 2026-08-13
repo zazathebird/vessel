@@ -68,6 +68,14 @@ client walks it in a real browser.
 
 In that order. Note `⌘K` is claimed twice — see *Unsigned-off* below.
 
+- **Passkeys — done 2026-08-13.** Hand-rolled WebAuthn (`worker/webauthn.ts`,
+  `worker/passkeys.ts`, `src/auth/passkeys.ts`), each passkey a key slot on the
+  same grant key via the `prf` extension, driven end to end by the harness with
+  a software authenticator. Two recorded decisions — no TOTP stage and no rate
+  limiting on passkey sign-in — in `docs/DECISIONS.md`. **Unverified by eye:**
+  the Passkeys section, the sign-in link, and the real-authenticator ceremony
+  on the live site, which needs the client's device.
+
 ---
 
 ## The lightsword duel

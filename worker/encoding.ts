@@ -46,6 +46,27 @@ export function expectBytes(text: unknown, length: number, field: string): Uint8
 }
 
 /**
+ * The same, for fields whose length is a range rather than a constant — a
+ * WebAuthn credential id is 16 bytes from some authenticators and up to 1023
+ * from others, and `clientDataJSON` is whatever the browser wrote.
+ */
+export function expectBytesRange(
+  text: unknown,
+  min: number,
+  max: number,
+  field: string,
+): Uint8Array {
+  if (typeof text !== "string" || !/^[A-Za-z0-9_-]+$/.test(text)) {
+    throw new BadRequest(`${field} is missing or malformed.`);
+  }
+  const bytes = fromBase64Url(text);
+  if (bytes.length < min || bytes.length > max) {
+    throw new BadRequest(`${field} should be ${min} to ${max} bytes, not ${bytes.length}.`);
+  }
+  return bytes;
+}
+
+/**
  * A client error carrying wording the client can show as-is.
  *
  * §10 requires that every failure says what to do next, so these messages are

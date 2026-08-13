@@ -86,6 +86,25 @@ export type SignInResult =
     }
   | { status: "totp-required"; ticket: string };
 
+/** A passkey sign-in completes in one step — no TOTP stage. See `src/auth/passkeys.ts`. */
+export interface PasskeySignInResult {
+  status: "signed-in";
+  account: PublicAccount;
+  resetAt: number | null;
+  /** The passkey's own slot, when it has one — the browser just evaluated `prf` and can open it. */
+  keySlot?: WrappedKeySlot;
+}
+
+/** One passkey, as the account screen lists it. */
+export interface PasskeyInfo {
+  id: string;
+  label: string;
+  createdAt: number;
+  lastUsedAt: number | null;
+  /** False means no `prf`: it signs in and can never open the grant key. */
+  hasSlot: boolean;
+}
+
 export interface MeResult {
   account: PublicAccount;
   resetAt: number | null;
@@ -138,4 +157,24 @@ export const api = {
   // without it. The enrolment screen derives it and passes the whole body here.
   totpEnrol: (body: unknown) => post<{ secret: string; uri: string }>("/api/totp/enrol", body),
   totpConfirm: (body: unknown) => post<{ backupCodes: string[] }>("/api/totp/confirm", body),
+
+  // Passkeys. The two `challenge` calls mint stateless five-minute tokens; the
+  // `rpId`/`origin` they return exist for the e2e harness's software
+  // authenticator — a real browser writes its own and the Worker checks against
+  // the request, which is the security model.
+  passkeyChallenge: () =>
+    post<{ token: string; challenge: string; rpId: string; origin: string }>(
+      "/api/passkey/challenge",
+      {},
+    ),
+  passkeyRegister: (body: unknown) =>
+    post<{ status: string; slotWrapped: boolean }>("/api/passkey/register", body),
+  passkeyList: () => call<{ passkeys: PasskeyInfo[] }>("/api/passkeys"),
+  passkeyRemove: (body: unknown) => post<{ status: string }>("/api/passkey/remove", body),
+  passkeySignInChallenge: () =>
+    post<{ token: string; challenge: string; rpId: string; origin: string }>(
+      "/api/auth/passkey/challenge",
+      {},
+    ),
+  passkeySignIn: (body: unknown) => post<PasskeySignInResult>("/api/auth/passkey", body),
 };

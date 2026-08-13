@@ -13,6 +13,45 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-13 — Passkeys, as another key slot on the same grant key
+
+`TODO.md` item 5's first piece, built exactly as SPEC-ACCOUNTS §4/§5 specify: hand-rolled
+WebAuthn (`worker/webauthn.ts` — the ~120-line CBOR subset §1 budgeted, ES256 only,
+attestation `none`), a `passkey` credential row per registration, and — when the
+authenticator supports the `prf` extension — one more key slot wrapping the **same** grant
+key, re-wrapped in the browser ciphertext-to-ciphertext through `rewrapSlot`. No `prf`
+means **no slot**, said honestly on the screen (§5: "the fallback is a missing slot rather
+than a different design"). The e2e harness drives the real `src/auth/passkeys.ts` flows
+through an `Authenticator` seam, with a software authenticator
+(`scripts/webauthn-sim.ts`) that *encodes* the CBOR/DER the Worker *decodes* — a second
+opinion, like the harness's RFC 6238 TOTP.
+
+Two decisions made here, neither a spec change but both worth a record:
+
+- **A passkey sign-in has no TOTP stage.** §3's stolen-laptop row makes user verification
+  the passkey's second factor ("passkeys require user verification on every sign-in" — and
+  `verifyAssertion` refuses an assertion without the UV flag, so this is enforced, not
+  assumed). TOTP is §4's answer to a problem passkeys do not have ("new with passwords,
+  absent with passkeys"), and the original approved design was passkey-only with no TOTP at
+  all. Requiring a phone code after a biometric would be the site asking for a weaker
+  factor to back a stronger one.
+- **No rate limiting on the assertion path**, per §4's "passkeys needed none": a failed
+  attempt requires forging a P-256 signature, which attempts do not help with. The
+  challenge routes mint stateless five-minute HMAC tokens (two new `TokenPurpose`s), so
+  the Worker keeps no challenge table; a replayed registration is refused by the
+  credential-id uniqueness index instead of by session state.
+
+Also settled: register and remove both demand the password (`assertPassword`, which owns
+the rate limiting — adding a credential is a credential change), and removing a passkey is
+refused when its slot is the account's last openable one, the same line
+`adminResetPassword` refuses to cross. Sign-count monotonicity is checked but not
+enforced; synced passkeys commonly report 0 for ever.
+
+**Unverified by eye, like every account screen**: the Passkeys section of the summary and
+the "sign in with a passkey" link — and a passkey against the *live* site needs a real
+authenticator, which only the client has. The harness proves the bytes; the browser
+ceremony (platform prompt, `prf` support on real authenticators) is the client's walk.
+
 ## 2026-08-13 — The lightsword duel returns, as little matches in the ornament slot
 
 `TODO.md` item 6, built to `docs/DUEL.md`. The engine is new (`src/fx/duel.ts`): blocky

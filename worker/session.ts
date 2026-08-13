@@ -82,7 +82,16 @@ const SET_PASSWORD_TTL_MS = 15 * 60 * 1000;
  * It rides in the response body, never in a cookie: it is a one-shot capability
  * for the next request, not ambient authority attached to the browser.
  */
-export type TokenPurpose = "session" | "totp-ticket" | "set-password";
+export type TokenPurpose =
+  | "session"
+  | "totp-ticket"
+  | "set-password"
+  // The WebAuthn challenge tokens (worker/passkeys.ts). Same shape as the TOTP
+  // ticket — a stateless, five-minute claim whose subject carries the challenge
+  // — so the Worker keeps no challenge table and a replayed registration is
+  // caught by the credential-id uniqueness index rather than by session state.
+  | "webauthn-register"
+  | "webauthn-signin";
 
 export interface Token {
   subject: string;

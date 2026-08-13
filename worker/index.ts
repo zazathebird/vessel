@@ -16,6 +16,7 @@
 
 import * as accounts from "./accounts";
 import * as admin from "./admin";
+import * as passkeys from "./passkeys";
 import { clientKey } from "./crypto";
 import { BadRequest } from "./encoding";
 import type { Env } from "./env";
@@ -204,6 +205,13 @@ async function route(
     case "POST /api/auth/signout":
       return accounts.signout(request, env);
 
+    // Passkey sign-in (§4). Anonymous, like the password routes above; the
+    // register/list/remove routes live with the signed-in account below.
+    case "POST /api/auth/passkey/challenge":
+      return passkeys.signInChallenge(request, env);
+    case "POST /api/auth/passkey":
+      return passkeys.signIn(request, env);
+
     // The published site appearance. The read is public — it is the look every
     // visitor is already being served — and the write is operator-only.
     case "GET /api/site-config":
@@ -241,6 +249,14 @@ async function route(
       return accounts.totpEnrol(request, env);
     case "POST /api/totp/confirm":
       return accounts.totpConfirm(request, env);
+    case "GET /api/passkeys":
+      return passkeys.list(request, env);
+    case "POST /api/passkey/challenge":
+      return passkeys.registerChallenge(request, env);
+    case "POST /api/passkey/register":
+      return passkeys.register(request, env);
+    case "POST /api/passkey/remove":
+      return passkeys.remove(request, env);
 
     default:
       return problem(404, "No such endpoint.");

@@ -124,7 +124,7 @@ const DEFAULT_ITERATIONS = 600_000;
 /** Nothing legitimate here is large. A signup with ten slots is a few kilobytes. */
 const MAX_BODY_BYTES = 64 * 1024;
 
-interface AccountRow {
+export interface AccountRow {
   id: string;
   handle: string;
   is_operator: number;
@@ -145,7 +145,7 @@ export function json(data: unknown, init: ResponseInit = {}): Response {
  * key is ciphertext the server cannot open, which is not a reason to let a proxy
  * keep a copy of it, and `Response.json` sets no cache headers of its own.
  */
-function noStore(response: Response): Response {
+export function noStore(response: Response): Response {
   response.headers.set("cache-control", "no-store");
   return response;
 }
@@ -403,7 +403,7 @@ export async function requireAccount(request: Request, env: Env): Promise<Accoun
  * `session.ts` survives it. Omitting it starts a new session, which is what a
  * sign-in wants and what a refresh must never do.
  */
-async function withSession(
+export async function withSession(
   env: Env,
   accountId: string,
   response: Response,
@@ -450,7 +450,7 @@ async function requirePassword(request: Request, env: Env, account: AccountRow):
  *
  * Putting the counting inside the check means a future caller cannot forget it.
  */
-async function assertPassword(
+export async function assertPassword(
   request: Request,
   env: Env,
   account: AccountRow,
@@ -475,7 +475,7 @@ async function assertPassword(
   await recordSuccess(env, names);
 }
 
-function publicAccount(account: AccountRow) {
+export function publicAccount(account: AccountRow) {
   return {
     id: account.id,
     handle: account.handle,

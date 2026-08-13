@@ -10,7 +10,9 @@ import {
   type RecoverySignIn,
 } from "../auth/flows";
 import { looksLikeRecoveryCode } from "../auth/recoveryCodes";
+import { signInWithPasskey, webAuthnSupported } from "../auth/passkeys";
 import { ApiError, api, type MeResult } from "../auth/api";
+import { Passkeys } from "./Passkeys";
 import { TotpEnrol } from "./TotpEnrol";
 
 /**
@@ -214,6 +216,29 @@ export function SignIn() {
     setCode("");
     await refreshSession();
     say(`Signed in as ${me.account.handle}.`);
+  }
+
+  /**
+   * Sign in with a passkey — one step, no handle and no password typed. The
+   * browser prompts for the device's own verification, which is the second
+   * factor (`docs/DECISIONS.md` 2026-08-13), so there is no TOTP stage on this
+   * path and `settle` only ever sees "signed-in".
+   */
+  async function onPasskey() {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await signInWithPasskey();
+      const me = await api.me();
+      setStage({ name: "signed-in", me });
+      await refreshSession();
+      say(`Signed in as ${me.account.handle}.`);
+    } catch (cause) {
+      fail(cause);
+    } finally {
+      setBusy(false);
+    }
   }
 
   const credentialsReady = handle.trim().length >= 3 && password.length > 0 && !busy;
@@ -460,6 +485,8 @@ export function SignIn() {
 
         <TotpEnrol me={stage.me} onChanged={refreshMe} />
 
+        <Passkeys onChanged={refreshMe} />
+
         <button type="button" className="v-btn" onClick={onSignOut} disabled={busy}>
           {busy ? "Signing out…" : "Sign out"}
         </button>
@@ -703,6 +730,16 @@ export function SignIn() {
         <button type="submit" className="v-btn v-btn-primary" disabled={!credentialsReady}>
           {busy ? "Signing in…" : "Sign in"}
         </button>
+
+        {webAuthnSupported() ? (
+          <p className="v-account-aside">
+            Or skip the typing:{" "}
+            <button type="button" className="v-account-link" onClick={onPasskey} disabled={busy}>
+              sign in with a passkey
+            </button>
+            , if this account has one.
+          </p>
+        ) : null}
 
         <p className="v-account-aside">
           No account?{" "}

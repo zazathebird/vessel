@@ -41,10 +41,17 @@ import {
   signWithGrantKey,
 } from "../src/auth/grantKey";
 import {
+  addPasskey,
+  prfWrappingKey,
+  removePasskey,
+  signInWithPasskey,
+} from "../src/auth/passkeys";
+import {
   looksLikeRecoveryCode,
   newRecoveryCodes,
   normaliseRecoveryCode,
 } from "../src/auth/recoveryCodes";
+import { SoftwareAuthenticator } from "./webauthn-sim";
 
 const BASE = process.env.VESSEL_API ?? "http://127.0.0.1:8787";
 
@@ -1285,6 +1292,198 @@ async function main(): Promise<void> {
     } else {
       await d1("DELETE FROM site_config WHERE id = 1");
     }
+  }
+
+  // Passkeys --------------------------------------------------------------------
+  //
+  // Driven through the real `src/auth/passkeys.ts` flows via the Authenticator
+  // seam, with `scripts/webauthn-sim.ts` standing in for the platform. The sim
+  // *encodes* the CBOR and DER the Worker *decodes*, from the spec rather than
+  // from shared code, so the wire format is proven against a second opinion.
+  section("Passkeys (§4/§5) — another key slot on the same grant key");
+  {
+    asBrowser(new BrowserSession());
+    const pkHandle = `harness-pk-${RUN}`;
+    await signUpFlow(pkHandle, password);
+    const grantPubkey = (await api.keySlot()).grantPubkey;
+
+    // rpId and origin exactly as the Worker will check them, learned from the
+    // anonymous challenge route — the sim has no browser to learn them from.
+    const probe = await api.passkeySignInChallenge();
+    const authenticator = new SoftwareAuthenticator(probe.origin, probe.rpId);
+
+    const wrongPassword = await refusal(() => addPasskey("not the password", "x", authenticator));
+    check(
+      "addPasskey refuses a wrong password locally, at the re-wrap",
+      wrongPassword?.status === -1,
+      wrongPassword?.message,
+    );
+
+    const added = await addPasskey(password, "harness laptop", authenticator);
+    check("addPasskey registers, with the grant key re-wrapped into its slot", added.slotWrapped === true);
+
+    const me = await api.me();
+    check("the account now counts one passkey", me.credentials.passkeys === 1, String(me.credentials.passkeys));
+
+    const listed = (await api.passkeyList()).passkeys;
+    check(
+      "the passkey lists with its label and slot",
+      listed.length === 1 && listed[0].label === "harness laptop" && listed[0].hasSlot === true,
+      JSON.stringify(listed).slice(0, 140),
+    );
+
+    await api.signout();
+    asBrowser(new BrowserSession());
+    const signedIn = await signInWithPasskey(authenticator);
+    check(
+      "a passkey signs in",
+      signedIn.status === "signed-in" && signedIn.account.handle === pkHandle,
+      JSON.stringify(signedIn).slice(0, 140),
+    );
+    check("the sign-in carries the passkey's key slot", !!signedIn.keySlot);
+
+    // §5's whole point, for the newest credential kind: the prf-derived
+    // wrapping key opens the ORIGINAL grant key.
+    if (signedIn.keySlot) {
+      const assertion = await authenticator.get({
+        challenge: crypto.getRandomValues(new Uint8Array(32)),
+      });
+      const opened = await unwrapSlot(
+        fromBase64Url(signedIn.keySlot.wrappedGrantKey),
+        await prfWrappingKey(assertion.prfOutput!),
+        fromBase64Url(signedIn.keySlot.grantPubkey),
+      );
+      const message = new TextEncoder().encode("a passkey opens the same key");
+      const pub = await crypto.subtle.importKey(
+        "raw",
+        fromBase64Url(grantPubkey),
+        { name: "ECDSA", namedCurve: "P-256" },
+        false,
+        ["verify"],
+      );
+      check(
+        "the passkey slot opens the ORIGINAL grant key",
+        await crypto.subtle.verify(
+          { name: "ECDSA", hash: "SHA-256" },
+          pub,
+          await signWithGrantKey(opened, message),
+          message,
+        ),
+      );
+      check(
+        "it is the same public key the account was created with",
+        signedIn.keySlot.grantPubkey === grantPubkey,
+      );
+    }
+
+    // The recorded decision (docs/DECISIONS.md 2026-08-13): user verification
+    // is the passkey's second factor, so TOTP on the account does not add a
+    // stage to a passkey sign-in.
+    const enrolment = await beginTotpEnrolment(password);
+    await enrolment.confirm(await totpCode(enrolment.secret));
+    await api.signout();
+    asBrowser(new BrowserSession());
+    const oneStep = await signInWithPasskey(authenticator);
+    check(
+      "a passkey signs in without the TOTP stage — UV is the second factor",
+      oneStep.status === "signed-in",
+      JSON.stringify(oneStep).slice(0, 120),
+    );
+
+    // §5's fallback: no prf, no slot, said honestly rather than faked.
+    const prfless = new SoftwareAuthenticator(probe.origin, probe.rpId);
+    prfless.supportsPrf = false;
+    const bare = await addPasskey(password, "no prf", prfless);
+    check("an authenticator without prf registers with no slot", bare.slotWrapped === false);
+    const two = (await api.passkeyList()).passkeys;
+    check(
+      "the slotless passkey lists as such",
+      two.length === 2 && two.some((entry) => entry.label === "no prf" && !entry.hasSlot),
+      JSON.stringify(two).slice(0, 160),
+    );
+
+    // Removing a credential is a credential change, so it demands the password.
+    const noPassword = await refusal(() =>
+      api.passkeyRemove({ id: two.find((entry) => entry.label === "no prf")!.id }),
+    );
+    check("removal without the password is refused", noPassword?.status === 401, noPassword?.message);
+    await removePasskey(password, two.find((entry) => entry.label === "no prf")!.id);
+    check(
+      "the removed passkey is gone from the listing",
+      (await api.passkeyList()).passkeys.length === 1,
+    );
+
+    // The sign-in path's refusals, all one sentence.
+    const stranger = new SoftwareAuthenticator(probe.origin, probe.rpId);
+    await stranger.create({
+      challenge: crypto.getRandomValues(new Uint8Array(32)),
+      accountId: "x",
+      handle: "x",
+    });
+    const unknown = await refusal(() => signInWithPasskey(stranger));
+    check("an unregistered passkey is refused", unknown?.status === 401, unknown?.message);
+
+    const tampered = await refusal(() =>
+      signInWithPasskey({
+        create: (options) => authenticator.create(options),
+        get: async (options) => {
+          const assertion = await authenticator.get(options);
+          assertion.signature[assertion.signature.length - 1] ^= 1;
+          return assertion;
+        },
+      }),
+    );
+    check("a tampered signature is refused", tampered?.status === 401, tampered?.message);
+
+    // A replayed registration: same attestation, same still-valid token. The
+    // credential-id uniqueness index is what refuses it, which is what lets the
+    // challenge token stay stateless.
+    const { kdf } = await api.challenge(pkHandle);
+    const derived = await deriveFromPassword(password, {
+      salt: fromBase64Url(kdf.salt),
+      iterations: kdf.iterations,
+    });
+    const manual = await api.passkeyChallenge();
+    const attestation = await authenticator.create({
+      challenge: fromBase64Url(manual.challenge),
+      accountId: "x",
+      handle: pkHandle,
+    });
+    const registerBody = {
+      authSecret: derived.authSecret,
+      token: manual.token,
+      label: "replayed",
+      credential: {
+        id: toBase64Url(attestation.id),
+        clientDataJSON: toBase64Url(attestation.clientDataJSON),
+        attestationObject: toBase64Url(attestation.attestationObject),
+      },
+    };
+    const firstRegistration = await refusal(() => api.passkeyRegister(registerBody));
+    check("a slotless manual registration succeeds", firstRegistration === null, firstRegistration?.message);
+    const replayed = await refusal(() => api.passkeyRegister(registerBody));
+    check("replaying the same registration is refused with 409", replayed?.status === 409, replayed?.message);
+
+    // clientData written for a foreign origin — a phishing page's registration.
+    const foreign = new SoftwareAuthenticator("https://evil.example", probe.rpId);
+    const foreignChallenge = await api.passkeyChallenge();
+    const foreignAttestation = await foreign.create({
+      challenge: fromBase64Url(foreignChallenge.challenge),
+      accountId: "x",
+      handle: pkHandle,
+    });
+    const foreignRefused = await refusal(() =>
+      api.passkeyRegister({
+        authSecret: derived.authSecret,
+        token: foreignChallenge.token,
+        credential: {
+          id: toBase64Url(foreignAttestation.id),
+          clientDataJSON: toBase64Url(foreignAttestation.clientDataJSON),
+          attestationObject: toBase64Url(foreignAttestation.attestationObject),
+        },
+      }),
+    );
+    check("a registration from a foreign origin is refused", foreignRefused?.status === 400, foreignRefused?.message);
   }
 
   // Rate limiting ---------------------------------------------------------------

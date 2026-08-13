@@ -296,7 +296,12 @@ The design decisions most likely to be broken by someone who has not read it:
   handle from becoming an indefinite lockout of its owner. Never sees an IP.
 - `src/auth/` — the browser half: `derive.ts` (PBKDF2 → HKDF split into an auth secret and a
   wrapping key), `grantKey.ts` (the P-256 grant key and its AES-KW slots), `recoveryCodes.ts`,
-  `api.ts`, `flows.ts`, `SessionContext.tsx`.
+  `api.ts`, `flows.ts`, `passkeys.ts` (WebAuthn flows behind an injectable `Authenticator` seam),
+  `SessionContext.tsx`.
+- `worker/webauthn.ts` — the hand-rolled CBOR subset and ES256 verification §1 budgeted;
+  `worker/passkeys.ts` — the passkey routes. `scripts/webauthn-sim.ts` is the harness's software
+  authenticator: it *encodes* the CBOR/DER the Worker *decodes*, independently, as a second
+  opinion.
 - `scripts/auth-e2e.ts` — the harness. It imports the real `src/auth` modules — including
   `flows.ts` and `api.ts`, driven through a fetch shim that intercepts **only relative URLs**, so
   the raw `Client`'s cookie isolation survives — so it fails if browser and Worker ever disagree
@@ -344,6 +349,21 @@ The design decisions most likely to be broken by someone who has not read it:
   enforcement — for fifteen minutes it was the only thing standing there.
 - **Change-password reuses the salt.** Recovery codes derive against the password's salt, so rolling
   it would silently kill all ten.
+- **A passkey sign-in has no TOTP stage, and no rate limiting.** User verification is the
+  passkey's second factor (§3's stolen-laptop row; `verifyAssertion` refuses an assertion without
+  the UV flag, so it is enforced) and §4 says passkeys need no rate limiting — a failed attempt
+  means forging a P-256 signature. Adding a TOTP stage here would back a stronger factor with a
+  weaker one. `docs/DECISIONS.md` 2026-08-13.
+- **A `prf`-less authenticator registers a passkey with no key slot**, deliberately (§5: "the
+  fallback is a missing slot rather than a different design"). It signs in and can never open the
+  grant key, and the screen says so. Do not "fix" this by wrapping the slot to something the
+  server holds — that is escrow.
+- **Removing a passkey is refused when its slot is the account's last openable one** — same line
+  as reset's second refusal: deleting the last openable slot is account destruction under a
+  milder name. Spent recovery codes' slots do not count as openable.
+- **The WebAuthn challenge tokens are stateless** (two `TokenPurpose`s in `worker/session.ts`);
+  a replayed registration is refused by the credential-id uniqueness index, not by a challenge
+  table. Do not add one.
 - **Set-password re-wraps; it does not unwrap.** `unwrapSlot` returns a deliberately
   **non-extractable** key, which cannot be wrapped into a new slot, so the flow goes
   ciphertext-to-ciphertext through `rewrapSlot`. Calling `unwrapSlot` here typechecks and fails at
