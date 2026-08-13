@@ -52,25 +52,44 @@ Working preferences he stated mid-session, which persist:
 | F | **C-1 (half) — `predeploy` runs `npm run typecheck`**, so the Worker can no longer deploy with a type error. `wrangler deploy` bundles with esbuild, which strips types without checking them | `package.json` | `npm run predeploy` |
 
 **`npm run test:auth`: 89 checks passed.** `npm run typecheck` and `npm run build` both
-pass. **Nothing has been committed and nothing has been deployed.**
+pass. **Committed locally as `1729dfd`. Nothing has been pushed and nothing has been
+deployed** — pushing to `main` auto-deploys the old Pages project, so hold pushes too.
 
 Note on E: the failing test means the docs' claim of a clean 78-check run had not been
 true since that section was added. The suite is worth trusting — it caught a real bug
 this review found independently.
 
-### In flight when this was last written
+### Also done — every frontend finding in §4, plus C-3, C-4 and C-6
 
-Two agents were dispatched and may or may not have finished:
+All seventeen landed, typecheck and build pass, and they are in the same commit. F-1
+through F-13 are marked FIXED in §4 below. **F-14 was never dispatched and is still
+open** — it is small, and it matters on the one path where the recovery code is already
+spent. Four further notes from that work, all still open:
 
-- **Frontend fixes** — the whole of §4 (F-1 … F-14) plus C-3, C-4, C-6. Scope limited
-  to `src/**` and `index.html`.
+1. **`interaction.css:126` has a stale comment** — "Nothing in the site can be disabled
+   yet, because nothing is asynchronous." Untrue now: `.v-btn:disabled`, the publish
+   button and the share-apply button all disable.
+2. **`document.title` is only correct after hydration.** The Worker-served shell always
+   ships `<title>vessel</title>`, so crawlers and the first paint see the generic title.
+   Fixing it properly means injecting the title in `worker/site-config.ts`, alongside
+   the config injection that already runs there.
+3. **`useOperatorRoutes` calls `poke()` on every keydown before the `isEditable`
+   guard**, so typing in a password field keeps the screensaver awake. That looks
+   intentional — typing is activity — but nobody has confirmed it.
+4. **The `go()` page-equality check now reads a ref** updated in a post-render effect
+   rather than the updater's `previous`. Two `go()` calls dispatched in one tick before
+   any re-render would both pass. No such path exists today (nav, arrows, CTAs and
+   popstate are all separate events), but it is a new precondition.
+
+### Still in flight
+
 - **Docs restructure** — the whole of §6, including creating `docs/DECISIONS.md`. Scope
   limited to `.md` files, and explicitly *not* this file.
 
-**Check `git status` and `git diff --stat` first.** If `src/` or the `.md` files are
-modified, that work landed; verify it with `npm run typecheck && npm run build` and, for
-the docs, spot-check a few claims. If they are untouched, the agents did not finish and
-that work is still to do — §4 and §6 are complete specifications for it.
+**Check `git status` and `git log` first.** If the `.md` files are modified beyond this
+one, that work landed — spot-check a few of its claims against the code, since the whole
+point of the restructure is accuracy. If they are untouched, §6 is a complete
+specification for doing it.
 
 ### Then, in order
 
@@ -403,7 +422,7 @@ Both passes checked these adversarially rather than assuming them:
 
 ## 4. Frontend, GUI and VFX findings
 
-### F-1 — HIGH. A leftward text-selection drag navigates away, and can destroy the recovery codes
+### F-1 — HIGH — **FIXED.** A leftward text-selection drag navigates away, and can destroy the recovery codes
 
 `src/hooks/useAccountRoutes.ts:89-99` (mirror: `src/hooks/useOperatorRoutes.ts:103-113`).
 
@@ -425,7 +444,7 @@ page).
 pointer target is not inside `.v-account` / `.v-panel`. **The same guard belongs on the
 operator's drag-right route** — an operator selecting text opens the door.
 
-### F-2 — MEDIUM. `.v-code` is defined twice, and the wrong one wins
+### F-2 — MEDIUM — **FIXED.** `.v-code` is defined twice, and the wrong one wins
 
 `src/styles/overlays.css:183` (share-code display: `flex:1; font-size:12px;
 letter-spacing:0.1em; color:var(--a1); padding:11px 13px`) versus
@@ -439,7 +458,7 @@ actually render at 12px in the accent colour with the share row's padding.
 
 **Fix:** rename one. `.v-recovery-code` for the SignUp list.
 
-### F-3 — MEDIUM. Terminal layout silently moves the scroll container to the document
+### F-3 — MEDIUM — **FIXED.** Terminal layout silently moves the scroll container to the document
 
 `src/styles/chrome.css:286-296` sets `.layout-terminal .v-stage { height:auto;
 overflow:hidden }`, so long pages grow `.vessel` (`min-height:100vh`) and the
@@ -458,7 +477,7 @@ overflow:hidden }`, so long pages grow `.vessel` (`min-height:100vh`) and the
 and either give the terminal body a real height or accept document scroll and listen
 there too.
 
-### F-4 — MEDIUM (dev-visible, fragile). Side effects inside the `setConfig` updater in `go`
+### F-4 — MEDIUM (dev-visible, fragile) — **FIXED.** Side effects inside the `setConfig` updater in `go`
 
 `src/config/ConfigContext.tsx:283-311`. **Both the frontend and the config reviewer
 found this independently.**
@@ -474,7 +493,7 @@ once — this is a dev-fidelity and fragility bug, not a live one.
 **Fix:** read `config.page` from the existing `live` ref for the equality check, and do
 the branch and timer work outside `setConfig`, using it only for the pure merge.
 
-### F-5 — LOW/MEDIUM. Entering the Konami code pages the site four times mid-entry
+### F-5 — LOW/MEDIUM — **FIXED.** Entering the Konami code pages the site four times mid-entry
 
 `src/hooks/useOperatorRoutes.ts:84-100`. The arrow-paging block runs **before** the key
 buffer check, and the code contains arrowleft ×2 and arrowright ×2 — so an operator
@@ -484,7 +503,7 @@ per-page roll if mode is "page", before the door opens.
 **Fix:** suppress paging while the buffer is a prefix of `KONAMI`, or check the buffer
 first.
 
-### F-6 — LOW. `Ctrl+K` is preventDefault-ed for every visitor although the door no-ops for them
+### F-6 — LOW — **FIXED.** `Ctrl+K` is preventDefault-ed for every visitor although the door no-ops for them
 
 `useOperatorRoutes.ts:67-71`. `openDoor` returns early for non-operators
 (`ConfigContext.tsx:333-341`), but `event.preventDefault()` has already stolen the
@@ -497,7 +516,7 @@ preventDefault when the door will actually open.
 in `SPEC.md` and by the command palette in `SPEC-ACCOUNTS.md` §10. Resolving that
 decision may resolve this bug.
 
-### F-7 — LOW. `.v-btn` hover and press snap instead of animating
+### F-7 — LOW — **FIXED.** `.v-btn` hover and press snap instead of animating
 
 `src/styles/interaction.css:162-169` gives `.v-btn` `:hover`/`:active` translate and
 scale but **no `transition`**, and `.v-btn` is in neither transition list (box-like at
@@ -507,20 +526,20 @@ Every account-page button (Sign in, Create account, Sign out, Change password) s
 
 **Fix:** `.vessel .v-btn { transition: translate var(--t-hover) …, scale var(--t-press) …; }`
 
-### F-8 — LOW. `.v-shuffle` and `.v-panel-close` have no hover or press state at all
+### F-8 — LOW — **FIXED.** `.v-shuffle` and `.v-panel-close` have no hover or press state at all
 
 `overlays.css:70-80, 121-133`. This contradicts `interaction.css`'s stated charter —
 hover, press and disabled for *every* control on the site. Both are buttons the
 operator uses constantly, and every chip around them lifts while these two do not.
 
-### F-9 — LOW. The 404 "pressure lost" treatment misses `--a3`
+### F-9 — LOW — **FIXED.** The 404 "pressure lost" treatment misses `--a3`
 
 `src/theme.ts:59-71`. The `lost` state remaps `--a1` to muted and `--a2` to faint, but
 the `--a3` ternary has **no `lost` branch** — so the third accent (termbar dot, kicker
 on some layouts, orrery body, error borders) stays fully saturated on the one page
 whose comment says accents "drop to muted greys".
 
-### F-10 — LOW. SignUp's "Copy all ten" toasts success without checking
+### F-10 — LOW — **FIXED.** SignUp's "Copy all ten" toasts success without checking
 
 `src/components/SignUp.tsx:85-88`. `navigator.clipboard?.writeText(...)` has no
 `.catch` — every other clipboard call in the codebase has one
@@ -530,12 +549,12 @@ consequential copy on the site.
 
 **Fix:** `.then(() => say(…)).catch(() => say("copy failed — write them down"))`.
 
-### F-11 — LOW. Dead rule `.stage`
+### F-11 — LOW — **FIXED.** Dead rule `.stage`
 
 `src/styles/base.css:74-80`. Nothing renders `className="stage"`; it is a stale
 duplicate of `.v-stage` in `chrome.css`. Delete before it drifts into a trap.
 
-### F-12 — LOW. The publish button's accessible name never changes
+### F-12 — LOW — **FIXED.** The publish button's accessible name never changes
 
 `SiteConfigPanel.tsx:329-337`. `aria-labelledby="v-publish-label"` pins the name to the
 heading "Publish to everyone", so a screen reader never hears "publish" versus
@@ -543,13 +562,13 @@ heading "Publish to everyone", so a screen reader never hears "publish" versus
 
 **Fix:** drop the `aria-labelledby`; the section heading already gives context.
 
-### F-13 — LOW. `document.title` is static across all real URLs
+### F-13 — LOW — **FIXED.** `document.title` is static across all real URLs
 
 Routing pushes real paths (`src/data/pageIds.ts`) but the title is always "vessel"
 (`index.html:6`). History entries, tabs and screen-reader page announcements are
 indistinguishable. One line in the `config.page` effect fixes it.
 
-### F-14 — INFO. The recovery-path second factor has no expiry escape
+### F-14 — INFO — **STILL OPEN.** The recovery-path second factor has no expiry escape
 
 `SignIn.tsx:302-320` lacks the ticket-timeout reset that `onSecondFactor` (:254-257)
 has, and if `completeSecondFactor` ever resolves with a non-`signed-in` status the

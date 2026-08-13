@@ -44,8 +44,22 @@ build. See *Deployment* below.
 | `migrations/` | D1 schema |
 | `scripts/auth-e2e.ts` | Auth suite — runs the real `src/auth` modules against a live Worker |
 
-`CLAUDE.md` carries the working notes: binding decisions, deliberate deviations, and the
-implementation traps. **`TODO.md` is the ordered backlog.**
+## The documents
+
+| File | What it is for |
+|---|---|
+| `TODO.md` | **The ordered backlog.** The one place that says what to do next |
+| `docs/HANDOFF.md` | Starting a session, verifying a deploy, and what cannot be verified from here |
+| `CLAUDE.md` | Working notes — binding decisions, deliberate deviations, implementation traps. Invariants only |
+| `docs/DECISIONS.md` | Dated history: what was decided, when, and why. Where superseded notes stay true |
+| `docs/BREAK-GLASS.md` | The operator's recovery path when password, recovery codes and phone are all gone |
+| `docs/DUEL.md` | The lightsword duel — withdrawn from the picker, fully specified for the rebuild |
+| `docs/pi-sharing-host.md` | **Phase 2.** Building the always-on Linux/Raspberry Pi host that will hold the sharing tab open. Paired with `scripts/pi-setup.sh` and `scripts/linux-drive-report.sh` |
+| `design/SPEC.md` | The design handoff. Authoritative on copy, tokens, layouts and motion |
+| `design/SPEC-ACCOUNTS.md` | The accounts and drive-access spec. Approved 2026-08-12; §12 is its decision log |
+| `design/GUIDE-SUBDOMAINS.md` | How to add a page, and the four things per-account subdomains would break |
+
+`TODO.md` and `docs/HANDOFF.md` are the only two that say "do X next". Everything else says why.
 
 ## Build status
 

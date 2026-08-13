@@ -165,8 +165,12 @@ function expectHandle(value: unknown): string {
   if (typeof value !== "string") throw new BadRequest("Choose a handle.");
   const handle = value.trim();
   if (!HANDLE_PATTERN.test(handle)) {
+    // Describes `HANDLE_PATTERN` and must keep describing it. It used to promise
+    // `.` and `_`, which the DNS-safe tightening removed — so the rule the person
+    // was told and the rule they were held to disagreed, and the refusal read as
+    // a bug in the site.
     throw new BadRequest(
-      "A handle is 3 to 24 characters: letters, numbers, and . _ - after the first.",
+      "A handle is 3 to 24 characters: letters, numbers, and hyphens after the first.",
     );
   }
   if (RESERVED_HANDLES.has(handle.toLowerCase())) {

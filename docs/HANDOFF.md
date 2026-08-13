@@ -11,12 +11,14 @@ the work up and how to prove you have not broken anything.
 Paste this to begin:
 
 > Read `CLAUDE.md`, `TODO.md` and `docs/HANDOFF.md` before doing anything.
+> `docs/DECISIONS.md` is the dated history if you need to know why something is
+> the way it is.
 >
 > The site is live at `mcclevarty.ca`, served by a Cloudflare Worker. Everything
 > in `main` is deployed — verify with the bundle-hash check in
 > `docs/HANDOFF.md` rather than assuming.
 >
-> Start with `TODO.md` item 1: run the auth end-to-end suite. Nine checks
+> Start with `TODO.md` item 1: run the auth end-to-end suite. Eleven checks
 > covering recovery→set-password were written on 2026-08-12 and have **never
 > been executed**, so that flow is unproven rather than tested. Kill any stray
 > `wrangler dev` first — a second instance silently takes port 8788 and the
@@ -68,6 +70,10 @@ curl -s -o /dev/null -w "%{http_code}\n" https://mcclevarty.ca/contact
 **`/api/health` is the decisive one** for "is the Worker serving this domain" —
 Pages has no `/api` and could not answer it at all.
 
+**Step 3 proves the headers on page routes only.** `run_worker_first` excludes
+`/assets/*`, so the hashed bundles never pass through `harden()` and carry none
+of them. That is `TODO.md` #16, not a deploy failure.
+
 **Give a fresh deploy a few seconds** before testing routes. `/contact` 404s
 briefly while the asset manifest propagates, then settles to 200.
 
@@ -77,6 +83,34 @@ static assets otherwise parses as *configuration* and rejects as an infinite
 loop.
 
 ---
+
+## Running the stack locally
+
+Two things stand between a clean checkout and a working `npm run test:auth`, and
+both look like the code is broken.
+
+**`wrangler.toml` must keep `[dev] upstream_protocol = "https"`.** The `routes`
+entry makes `wrangler dev` simulate the request as arriving at
+`http://mcclevarty.ca/…`, so the loopback exemption in `httpsRedirect` — which
+checks `url.hostname` — never matches, and the Worker 301s every local request
+to itself. The symptom is that *everything*, including `/api/health`, returns
+301 with `Location` equal to the request URL, and the harness cannot run at all.
+`https` matches what the Worker sees in production after edge TLS.
+
+**Delete `dist/_redirects` before running the local Worker.** It is
+`public/_redirects`, copied into `dist/` by the build. Workers static assets
+parses `_redirects` as *configuration* and rejects `/* /index.html 200` as an
+infinite loop — locally as well as on deploy. `npm run predeploy` strips it;
+a bare `npm run build` does not.
+
+**Zombie `workerd` processes** are the third one. Repeated `wrangler dev` runs on
+Windows leave listeners on 8787/8788/8789, and each new run silently takes the
+next free port while the stale instance keeps answering your `curl` with the
+*old* code — which makes a correct fix look like it did nothing.
+
+```powershell
+Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'wrangler' }
+```
 
 ## Checking production data
 

@@ -89,6 +89,45 @@ function httpsRedirect(request: Request, url: URL): Response | null {
 const HSTS = "max-age=63072000; includeSubDomains";
 
 /**
+ * Refuse a state-changing request whose `Origin` is not ours.
+ *
+ * **This is defence in depth, not the defence.** `SameSite=Lax` on the session
+ * cookie (`session.ts`) is what actually stops cross-site POSTs: the cookie is
+ * simply not sent, so the handler 401s. Two things it does not cover:
+ *
+ * 1. **The Lax+POST grace window.** Chromium sends a freshly set cookie on a
+ *    top-level cross-site POST for its first two minutes — which is the two
+ *    minutes right after signing in, when the user is most likely to be
+ *    somewhere else in another tab.
+ * 2. **Same-site subdomains.** SameSite is *site*, not *origin*. Per-account
+ *    subdomains are analysed in `design/GUIDE-SUBDOMAINS.md`, and if they are
+ *    ever built, `anything.mcclevarty.ca` becomes same-site with the apex and
+ *    its POSTs carry the cookie. This check is what keeps that from silently
+ *    turning into account takeover through `/api/admin/*`.
+ *
+ * A **missing** `Origin` is allowed: same-origin GETs and some non-browser
+ * clients omit it, and the harness is one of them. Refusing only a *present and
+ * wrong* origin is the standard shape and costs nothing.
+ */
+function crossOrigin(request: Request, url: URL): boolean {
+  if (request.method === "GET" || request.method === "HEAD") return false;
+
+  const origin = request.headers.get("origin");
+  if (!origin) return false;
+
+  try {
+    const sent = new URL(origin);
+    // The Worker's own host, whatever it is — apex in production, loopback under
+    // `wrangler dev`. Comparing against the request's host rather than a literal
+    // keeps this correct on the `workers.dev` URL and in tests without a list to
+    // maintain.
+    return sent.host !== url.host;
+  } catch {
+    return true;
+  }
+}
+
+/**
  * Headers every response carries. Deliberately not a full CSP: the app shell has
  * the published site config **inlined** as a script (see `site-config.ts`), so a
  * `script-src` without a nonce plumbed through that injection would blank the
@@ -123,6 +162,10 @@ export default {
       // to read the published row serves the site's built-in defaults rather
       // than serving nothing.
       return harden(await withSiteConfig(await env.ASSETS.fetch(request), env));
+    }
+
+    if (crossOrigin(request, url)) {
+      return harden(problem(403, "That request came from somewhere we do not serve."));
     }
 
     try {

@@ -1,8 +1,18 @@
 # Handoff: Vessel — identity, saved setups, and brokered drive access
 
-**Status: proposal. Nothing here is built.** This document exists to be argued with before any code is
-written. `design/SPEC.md` remains authoritative for the site as it stands; this is a companion that
+**Status: approved by the client on 2026-08-12. Phase 1 is built and deployed.** This document was
+written to be argued with before any code existed; that argument happened, and it is now the
+authoritative design. **§12 is the living decision log** — nothing is deleted when it is settled,
+every rejection keeps its reasoning and its *"revisit if"* condition. Add to it rather than
+relitigating.
+
+`design/SPEC.md` remains authoritative for the site as it stands; this is a companion that
 extends it, and where the two disagree, the disagreements are called out explicitly in §1.
+
+**What shipped diverges from this document in three places**, each annotated where it occurs:
+the phase-1 routes (§10), the SPA fallback mechanism (§11), and one column the schema has that
+§9's inventory does not list (§9). `docs/DECISIONS.md` carries the dated build history;
+`CLAUDE.md` carries the invariants.
 
 Decisions already fixed by the client, in conversation on 2026-08-12:
 
@@ -484,7 +494,7 @@ credentials   id · account_id · kind · label · created_at · last_used_at
                 passkey:  credential_id · public_key · sign_count
                 recovery: code_hash · used_at
 key_slots     id · account_id · credential_id · wrapped_grant_key · alg   ← one per credential, §5
-totp          account_id · secret_enc · confirmed_at · backup_codes_hash
+totp          account_id · secret_enc · confirmed_at · backup_codes_hash · last_step ⚠
 setups        id · account_id · name · share_code · created_at        ← phase 1 ends here
 machines      id · owner_id · name · agent_pubkey · paired_at · last_seen
 drives        id · machine_id · label · created_at        ← several per machine. NO path, see below
@@ -492,6 +502,13 @@ grants        id · drive_id · grantee_id · paths · perms · expires_at · si
 invites       id · grant_id · issued_by · token_hash · claimed_by · expires_at   ← phase 3
 audit         id · actor_id · action · target · at        ← append-only, mirrored by the agent
 ```
+
+⚠ **`totp.last_step` is in the schema (migration `0002`) and is not in the inventory below, which
+this section says is a spec change rather than an implementation detail.** It stores the 30-second
+window of the last successful second factor; without it a TOTP code is replayable for up to ninety
+seconds. It is coarser than `credentials.last_used_at`, which the inventory already covers.
+**Awaiting client sign-off** — recorded in `TODO.md` and `CLAUDE.md`, and listed here rather than
+left to be discovered.
 
 Rate-limit counters are deliberately **not** here. They live in a Durable Object, because D1 gives no
 atomic read-modify-write and a counter that loses races is a counter an attacker can outrun.
@@ -606,7 +623,20 @@ joining the nine existing pages in `src/data/pageIds.ts`. They are chrome-consis
 content grid, same thirteen layouts apply — because a bespoke settings aesthetic bolted onto this site
 is the other way this reads as amateur.
 
-Phase 2 adds a third, `/share` — the agent itself. It is the one surface with a reason to *diverge*:
+> **What actually shipped: `/signup`, `/signin` and `/admin`.** `/account` and `/machines` do not
+> exist. **The account summary lives on `/signin`**, which renders the sign-in form or the signed-in
+> summary depending on what `api.me()` answers on mount — one page for both states. `/machines` has
+> nothing to list until phase 2. `/account` remains a reserved handle and remains on the backlog;
+> splitting the summary out of `/signin` is a change worth making deliberately rather than
+> incidentally.
+>
+> Two further departures from this paragraph, both at the client's request: the account pages are
+> **unlinked** (reached by typing `whoami`, `login` or `admin`, or by dragging the page left), and
+> `/admin` is reachable by anyone while its *contents* are operator-gated, rather than returning the
+> 404 page to non-operators.
+
+Phase 2 adds a third, `/share` — the agent itself. *(A fourth, on the count above; the numbering
+here predates the shipped route list.)* It is the one surface with a reason to *diverge*:
 it is a long-lived tab whose job is to be glanceable from across a room and to make "this tab is
 holding your folder open" unmissable. It stays palette-driven and uses the same tokens, but it need not
 pretend to be a content page.
@@ -682,6 +712,12 @@ them into compile errors until done, which is the good kind of coupling:
 5. `persistence.ts` needs nothing — it validates `page` against `Object.keys(PATHS)` and picks them up
 
 `public/_redirects` already handles the SPA fallback on Cloudflare.
+
+> **Superseded by the move to a Worker.** The SPA fallback is now
+> `not_found_handling = "single-page-application"` in `wrangler.toml`. `public/_redirects` survives
+> only because Pages still auto-deploys from `main` and is the rollback — and it is not inert:
+> Workers static assets parses it as *configuration* and rejects it, so `npm run deploy` strips it
+> from `dist/`. See `docs/DECISIONS.md`.
 
 **Context split.** `ConfigContext` gains an optional `account` and the setup list. **It does not gain
 fetching** — a separate `AccountContext` owns every network call, so `ConfigContext` stays synchronous
@@ -831,6 +867,13 @@ to phase 2 because nothing can be browsed before it exists.
 - *Rejected: an icon set or icon font.* Every option breaks "no images, no webfonts". Drawing icons from
   palette roles also makes them recolour with everything else, which a sprite sheet never would.
 
+**H. Phase 1 grew, and stays one phase.** *Scope note, flagged by the assistant and accepted.*
+
+Phase 1 was "passkey sign-in plus a setups table". It is now passwords, TOTP, rate limiting, key slots,
+an operator admin surface, a reset flow, a dialog primitive and a command palette. It remains one phase
+because the auth layer is not independently useful in halves, but **authentication must work end to end
+before any of the interface work begins** — the aesthetic layer is sequenced second *within* phase 1.
+
 **I. No personal data, checked against real values rather than asserted.** *Client constraint, and it
 caught three things.*
 
@@ -844,13 +887,6 @@ three fields were carrying personal data nobody had chosen to collect. §9 now h
 - *Removed: raw IPs from rate limiting.* Now `HMAC-SHA-256(daily_rotating_salt, ip)`, in a Durable
   Object, expiring with the backoff window, never in D1. **Revisit if** abuse makes investigation
   necessary — and note that reversing this is a spec change, not a config tweak.
-
-**H. Phase 1 grew, and stays one phase.** *Scope note, flagged by the assistant and accepted.*
-
-Phase 1 was "passkey sign-in plus a setups table". It is now passwords, TOTP, rate limiting, key slots,
-an operator admin surface, a reset flow, a dialog primitive and a command palette. It remains one phase
-because the auth layer is not independently useful in halves, but **authentication must work end to end
-before any of the interface work begins** — the aesthetic layer is sequenced second *within* phase 1.
 
 ### Resolved 2026-08-12 (first round)
 

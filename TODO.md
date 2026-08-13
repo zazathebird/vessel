@@ -1,7 +1,8 @@
 # TODO
 
 The single ordered backlog. `CLAUDE.md` explains *why* things are the way they
-are; this file is only what is left to do.
+are, and `docs/DECISIONS.md` records what was decided when; this file is only
+what is left to do.
 
 Last updated 2026-08-13.
 
@@ -16,17 +17,23 @@ npm run dev:worker      # wait for "Ready on http://127.0.0.1:8787"
 npm run test:auth       # in a second terminal
 ```
 
-`scripts/auth-e2e.ts` gained a **set-password** section on 2026-08-12 — nine
+`scripts/auth-e2e.ts` gained a **set-password** section on 2026-08-12 — eleven
 checks covering recovery→set-password — and **those checks have never been
 executed.** They are committed and they typecheck, but two `wrangler dev`
 instances fought over local D1 that session, the restart landed on port 8788,
 and the run was abandoned. Until this passes, treat recovery-code sign-in as
 written-but-unproven.
 
-Two known snags:
+The harness prints its own total at the end; do not hardcode a count anywhere
+else.
+
+Three known snags:
 - If the port is not 8787, the harness will not find the server. Kill stray
   `wrangler dev` processes first — a second instance silently takes 8788.
 - `SQLITE_BUSY` / `workerd failed to start` means two instances are running.
+- A bare `npm run build` leaves `dist/_redirects` in place, which the local
+  Worker rejects the same way a deploy would. Run `npm run predeploy` instead,
+  or delete the file. See `docs/HANDOFF.md`.
 
 ### 2. Redeem one recovery code on the live site, once, deliberately
 
@@ -135,6 +142,86 @@ doing properly; not worth doing badly.
 
 SSL/TLS → Edge Certificates. The Worker already redirects, so this is belt and
 braces — but it happens at the edge without costing a Worker invocation.
+
+---
+
+## Security — found, reviewed, not fixed
+
+Four fixes landed on 2026-08-13 and are recorded in `docs/DECISIONS.md`. These
+were found in the same review and left open deliberately. None is exploitable
+by an anonymous visitor today; each becomes worse under a specific future
+change, which is noted.
+
+### 14. No Origin check on mutating `/api/*`
+
+CSRF rests on `SameSite=Lax` alone. Every state-changing endpoint is POST and
+the cookie is `HttpOnly; Secure; SameSite=Lax; Path=/`, host-only, so a
+cross-site POST arrives without it and 401s. Two residual gaps: Chromium treats
+a freshly set cookie as sendable on a top-level cross-site POST for its first
+two minutes — right after sign-in, when the user is active — and **SameSite is
+*site*, not *origin***.
+
+**That second one is why this must land before per-account subdomains ever
+ship.** An attacker-controlled or XSS'd `evil.mcclevarty.ca` would be same-site
+with the apex and its POSTs *would* carry the cookie, converting this silently
+into a live CSRF surface against `/api/admin/*` and `/api/account/*`. See
+`design/GUIDE-SUBDOMAINS.md`.
+
+The fix is cheap: on non-GET `/api/*`, reject when `Origin` is present and is
+not the site's own (allowing loopback for dev). Requiring
+`content-type: application/json` closes the related `enctype="text/plain"`
+form-POST shape — `readJson` does not check content type today.
+
+### 15. The set-password ticket is replayable for its full 15-minute TTL
+
+`worker/session.ts` calls the ticket "a one-shot capability for the next
+request" and `src/auth/flows.ts` clears it — **client-side only.**
+`setPassword` calls `session.verify` and nothing else: no server-side nonce
+store, no used-flag, no invalidation. The same ticket sets the password
+repeatedly for fifteen minutes.
+
+Bounded, because every use also needs the live session cookie and the recovery
+code is already spent — so the blast radius is a caller who already holds that
+session. But the property the comment asserts is not enforced, and `setPassword`
+has no rate limit of its own; it relies solely on the ticket.
+
+Fix by rejecting when the recovery slots the ticket targets are already cleared,
+or by adding a single-use marker.
+
+### 16. `/assets/*` responses carry none of the security headers
+
+`run_worker_first = ["/*", "!/assets/*"]` means the hashed bundles are served by
+the asset server and never pass `harden()` — no HSTS, and **no
+`x-content-type-options: nosniff` on exactly the JS and CSS responses where
+nosniff matters most.** The "headers on every response" claim was verified on
+page routes only.
+
+Ship a `dist/_headers` scoped to `/assets/*` — Workers static assets parses
+`_headers` the same way it parses `_redirects`, which the deploy failure proves
+— or accept it and say so.
+
+### 17. The handle-rule error message is stale
+
+`expectHandle` in `worker/accounts.ts` still tells the user a handle may contain
+"`. _ -` after the first". `HANDLE_PATTERN` has been DNS-safe since `e65cbe5`
+and permits only letters, numbers and hyphens. The message is simply wrong.
+
+### 18. Password change is not a session-revocation event
+
+`changePassword` and `setPassword` do not rotate or invalidate other session
+cookies, and the stateless session design permits none. A stolen cookie survives
+the victim changing their password, bounded by the 30-minute TTL and the 12-hour
+absolute ceiling. Consistent with the no-session-table decision — but it should
+be a written-down residual exposure rather than an assumption. Closing it needs
+a table, so it is a design decision, not a patch.
+
+### 19. `/api/account/slot` authorises on the session alone
+
+**Not exploitable today**: it returns only ciphertext the server cannot open,
+and unwrapping needs the password-derived wrapping key, which no session grants.
+It becomes real in phase 3, where §3 requires a fresh user-verification gesture
+per grant signature — a stolen 30-minute session could otherwise fetch the slot.
+Add the password-proof + current-TOTP gate **before phase 3**, not with it.
 
 ---
 

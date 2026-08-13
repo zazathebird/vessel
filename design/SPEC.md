@@ -1,5 +1,12 @@
 # Handoff: Vessel — personal site + computer repair contact
 
+> **This is the design handoff, kept as delivered.** It remains authoritative on copy, tokens,
+> layouts, motion timings and product decisions. Where the built site departs from it, the
+> departure is deliberate and is recorded in `CLAUDE.md` under *Known deviations from the
+> prototype* — read that list alongside this document rather than treating a difference as a bug.
+> `design/SPEC-ACCOUNTS.md` extends this spec with accounts and drive access; §1 of that file
+> states what it breaks here.
+
 > **Package 2 of 2 — supersedes `design_handoff_vessel`.** Everything previously marked *pass two* is now built, and responsive behaviour is designed rather than deferred. Changes since package 1: five new layout archetypes (Ledger, Stack, Marginalia, Console, Contact sheet — thirteen total), a three-band responsive system, adapted-layout collapsing on small screens, and touch-target corrections. Sections revised: *The layout archetypes*, *Responsive*, *Design tokens*, *Suggested build order*.
 
 ## Overview
@@ -12,13 +19,13 @@ The tone is dry and self-aware. The site openly admits it is unnecessary. That i
 
 ## About the design files
 
-`Site v2 - Vessel.dc.html` in this bundle is a **design reference created in HTML** — a working prototype that demonstrates the intended look, motion, and behaviour. It is not production code to copy directly.
+`design/prototype.html` (delivered as `Site v2 - Vessel.dc.html`) is a **design reference created in HTML** — a working prototype that demonstrates the intended look, motion, and behaviour. It is not production code to copy directly.
 
 It is unusual in one respect: it genuinely runs, and every feature described below actually works in it. Open it in a browser and use it. Treat it as an executable spec rather than as a source tree.
 
 The task is to **recreate this design in a real codebase** — a fresh project, since none exists yet. Pick the framework you judge best; the notes below assume React + Vite + TypeScript, which maps closely to the prototype's structure, but nothing here depends on that choice.
 
-`support.js` is the prototype's own runtime. **Do not port it.** It exists only to make the single HTML file render. `reference/Site v2 - Kaleidos.dc.html` is an earlier, rejected direction, included for context only — do not build from it.
+`design/support.js` is the prototype's own runtime. **Do not port it.** It exists only to make the single HTML file render. `design/rejected-kaleidos.html` (delivered as `reference/Site v2 - Kaleidos.dc.html`) is an earlier, rejected direction, included for context only — do not build from it.
 
 ## Fidelity
 
@@ -250,11 +257,12 @@ Right-side drawer, `min(92vw, 420px)`, `padding: 26px`, `gap: 24px`, background 
 
 1. **Behaviour** — five mode chips, a shuffle button (`--a2` treatment), five scope chips
 2. **Palette — 24** — a 3-column swatch grid; each tile shows three accent dots on the palette's own background, selected tile gets an `--a1` border and glow. Picking one forces mode to Static
-3. **Layout — 8** — chips
+3. **Layout — 13** — chips
 4. **Background — 12** — chips
-5. **Typography** — chips
-6. **Life signs** — Grain, Breathing, Cursor glow, Calm mode
-7. **Share a setup** — the current code in a `<code>` block with a copy button, plus a paste field
+5. **Ornament** — chips *(added in the build; see `CLAUDE.md` deviation 7)*
+6. **Typography** — chips
+7. **Life signs** — Grain, Breathing, Cursor glow, Calm mode
+8. **Share a setup** — the current code in a `<code>` block with a copy button, plus a paste field
 
 Chip style, used throughout: mono 11px, `letter-spacing: .1em`, `padding: 9px 12px`, `border-radius: var(--radius)`, uppercase. Active: `1px solid var(--a1)`, background `color-mix(in oklab, var(--a1) 16%, transparent)`, text `--a1`. Inactive: `1px solid var(--line)`, text `--muted`.
 
@@ -395,9 +403,12 @@ Photo slots are placeholders awaiting real images. When they arrive: strip EXIF,
 
 ## Files
 
-- `Site v2 - Vessel.dc.html` — **the design reference.** Runs standalone in a browser. All copy, palettes, thirteen layout rules, canvas effects, responsive bands, and interaction logic live here. Resize the window past 900px and 560px to see the bands switch
-- `support.js` — prototype runtime only. **Do not port**
-- `reference/Site v2 - Kaleidos.dc.html` — a rejected earlier direction, for context only
+Delivered filenames on the left, repository paths on the right. The repository paths are the ones
+that exist.
+
+- `Site v2 - Vessel.dc.html` → **`design/prototype.html`** — **the design reference.** Runs standalone in a browser. All copy, palettes, thirteen layout rules, canvas effects, responsive bands, and interaction logic live here. Resize the window past 900px and 560px to see the bands switch
+- `support.js` → **`design/support.js`** — prototype runtime only. **Do not port**
+- `reference/Site v2 - Kaleidos.dc.html` → **`design/rejected-kaleidos.html`** — a rejected earlier direction, for context only
 
 ## Suggested build order
 

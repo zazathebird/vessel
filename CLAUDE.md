@@ -2,10 +2,15 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+**This file holds invariants — things that are true now and that a future reader could plausibly
+"fix" back into a bug.** Dated history lives in `docs/DECISIONS.md`; the ordered backlog lives in
+`TODO.md`; how to start a session and verify a deploy lives in `docs/HANDOFF.md`. If this file and
+`TODO.md` disagree, `TODO.md` is newer.
+
 ## The project
 
-"Vessel" — a personal site for an independent computer repair operator, being built from a complete
-design handoff. React 18 + Vite + TypeScript.
+"Vessel" — a personal site for an independent computer repair operator, built from a complete
+design handoff. React 18 + Vite + TypeScript, served by a Cloudflare Worker.
 
 ```sh
 npm run dev          # Vite dev server on http://localhost:5173 — no API
@@ -19,29 +24,29 @@ npm run deploy       # build, strip dist/_redirects, publish the Worker
 **Deploy with `npm run deploy`, never bare `wrangler deploy`** — see *Deployment*.
 
 The only tests are `scripts/auth-e2e.ts`, which drives the real `src/auth` modules against a live
-Worker and local D1. There is no test suite for the site itself.
+Worker and local D1 and prints its own check count on completion. There is no test suite for the
+site itself.
 
 No runtime dependencies beyond React — the routing, state, styling **and authentication** are all
 hand-rolled, deliberately (see *Assets* in the spec: no third-party libraries, no webfonts, no
 images).
 
-`TODO.md` is the ordered backlog. `docs/HANDOFF.md` is how to start a session, verify a deploy, and
-what cannot be verified here. `README.md` orients a newcomer. This file is the working notes:
-binding decisions, deliberate deviations, and traps.
-
 ## The spec is authoritative
 
 - `design/SPEC.md` — final copy, tokens, layouts, motion timings, product decisions
+- `design/SPEC-ACCOUNTS.md` — accounts and brokered drive access. **Approved 2026-08-12**, not a
+  proposal. §12 is its decision log
 - `design/prototype.html` — an **executable** spec. It genuinely runs; every feature described in
   SPEC.md works in it. Open it in a browser and use it rather than guessing at behaviour. It pulls
   React and Babel from unpkg at load, so it needs network access
 - `design/support.js` — the prototype's own renderer. **Do not port it and do not read it for design
   intent.** It is scaffolding
 - `design/rejected-kaleidos.html` — an earlier direction that was rejected. Context only
+- `design/GUIDE-SUBDOMAINS.md` — how to add a page, and what per-account subdomains would break
 
 Fidelity is high: every hex value, duration, and easing curve in the spec is intended, not
-approximate. The two deliberate exceptions are photo slots (placeholders, real images don't exist
-yet) and operator authentication (theatre — see below).
+approximate. The deliberate exceptions are photo slots (placeholders, real images don't exist yet),
+operator authentication (theatre — see below), and the items under *Known deviations* below.
 
 ### Finding things in the prototype
 
@@ -56,7 +61,7 @@ Copy these verbatim rather than retyping or paraphrasing:
 | 288 | `PALETTES` — 24 palettes × 9 roles → already ported to `src/data/palettes.ts` |
 | 315–348 | `LAYOUTS`, `FX`, `TYPESETS`, `MODES`, `SCOPES` → `src/data/catalog.ts` |
 | 351 | `BAD` + `LOWCONTRAST` guardrails → `src/data/guardrails.ts` |
-| 366 | `PAGES` — all nine pages' final copy → ported to `src/data/pages.ts` (with the one approved copy correction below) |
+| 366 | `PAGES` — the nine content pages' final copy → ported to `src/data/pages.ts` (with the one approved copy correction below) |
 | 710 | `scramble()` — the title assembly, and its timing trap |
 | 823 | `startFx()` — all twelve canvas effects |
 | 1029 | `renderVals()` — where layout, band, and calm collapse into concrete styles |
@@ -75,13 +80,46 @@ variable swap, which is what makes the 0.9s palette bleed work.
 Per-frame values (mouse position, scroll velocity, card element list, keystroke buffer, drag origin,
 scramble token) belong in refs, outside React state. The spec is explicit about this.
 
-All of it is built: token layer, persistence, share codes, randomiser + guardrails, bands, routing,
-page copy, the shared chrome, all thirteen layouts, all twelve canvas effects, the siteconfig panel,
-the operator door and its six routes, the screensaver, calm mode, and the five motion systems.
-
 `src/App.tsx` is the real shell. The three overlays (panel, door, screensaver) are siblings of
 `.v-chrome` rather than children, because the screensaver fades the chrome to `opacity: 0` with
 `pointer-events: none` and must not take the panel or the door with it.
+
+**The panel and the door are operator-only**, gated once at `openDoor` / `togglePanel` in
+`ConfigContext` rather than at each of the six unlock routes — a route added later inherits the
+gate instead of needing to remember it. `isOperator` is false until the session probe settles, so
+the door cannot flash open on load. Losing `isOperator` force-closes both. `SPEC.md` describes
+`authenticate` making the `siteconfig` button appear permanently for anyone; that is the
+prototype's behaviour and no longer the site's. **The door itself is still theatre** — it guards a
+settings drawer and nothing else.
+
+### The two halves of published site config
+
+- `worker/site-config.ts` writes `window.__VESSEL_SITE__` into the app shell's `<head>` with
+  HTMLRewriter, before the bundle loads.
+- `src/config/siteConfig.ts` is the client half: `publishedConfig()` reads that global
+  **synchronously during the first render**, which is the whole reason it is not a fetch —
+  `ConfigContext` builds its initial state in that render so there is no flash of the default
+  palette, and a fetch would put a 0.9s bleed from Nebula Drift to the real palette on every cold
+  load. Absent or malformed, it returns null and the built-in defaults render.
+
+`loadConfig` validates the published payload field by field, exactly as it always validated stored
+config. A published layout id that no longer exists would otherwise render an unstyled page for
+every visitor at once.
+
+### Session and account routing
+
+- `src/auth/SessionContext.tsx` — who is signed in. **Deliberately separate from `ConfigContext`**,
+  which §11 requires stay synchronous and gain no fetching. Everything gated on it starts hidden
+  and appears when the answer arrives.
+- `src/hooks/useAccountRoutes.ts` — the unlinked routes to the account pages: type `whoami`,
+  `login` or `admin`, or drag the page **left** past 260px, mirroring the door's rightward drag.
+  **These never call `openDoor`.**
+- `src/hooks/useOperatorRoutes.ts` — the door's six routes, and arrow-key page cycling over `NAV`.
+
+Both keystroke hooks carry an `isEditable` guard: without it, typing in an account form pages the
+site on arrow keys and opens the door on `sudo`.
+
+### The interaction stylesheet
 
 `src/styles/interaction.css` is the fifth stylesheet and owns **every** hover, press and disabled
 state. It exists because the site had two requirements fighting over the same CSS properties: the
@@ -140,14 +178,22 @@ ones most likely to be "fixed" by accident:
   `ConfigContext` via `hasVisited()`
 - **Persistence** is validated field by field in `src/config/persistence.ts`, not trusted. A stored
   layout id that no longer exists would otherwise render an unstyled page forever
-- **Adapted layouts**: the operator's stored layout is never overwritten when a small screen
-  collapses it; the hero metadata strip appends ` · adapted` so the state is never silently wrong
+- **Adapted layouts**: the operator's stored layout is **never overwritten** when a small screen
+  collapses it — it re-emerges when the window widens. That state is now surfaced **nowhere**:
+  `SPEC.md` puts a ` · adapted` suffix on the hero metadata strip, and the strip was removed
+  (deviation 8 below). Deliberate. If it needs to return it wants its own affordance rather than
+  the whole readout coming back
 - **Routing**: the prototype swaps pages in place with no URL change. That is a prototype
-  limitation, not a design decision — nine real URLs are already wired in `src/data/pageIds.ts`
+  limitation, not a design decision — **twelve** real URLs are wired in `src/data/pageIds.ts`: the
+  nine content pages plus `/signup`, `/signin` and `/admin`. Several code comments still say
+  "nine"
+- **Share codes are base-36 and `FX` order is a wire format.** Effect index 12 is `C`, not `12`;
+  `0-0-12-0-7-0` parses `12` as 38, falls through `FX[38] ?? FX[0]` and applies Vessels, which
+  looks exactly like a failed deploy. Append to `FX`, never insert
 
 ## Known deviations from the prototype
 
-Both deliberate. Add to this list rather than silently diverging.
+All deliberate. Add to this list rather than silently diverging.
 
 1. **Guardrail evaluation** (`src/data/guardrails.ts`). The prototype's `ok()` tests each clause
    independently, so `{ type:["editorial"], pal:["datamosh"] }` rejects *every* Editorial config
@@ -180,53 +226,38 @@ Both deliberate. Add to this list rather than silently diverging.
 
    Two consequences worth knowing: `SCOPES` now has six entries, not the spec's five; and share
    codes are six fields, with five-field codes still decoding and simply leaving the ornament alone.
+   The siteconfig panel therefore has an **Ornament** section the spec's list does not mention.
+8. **The hero vitals strip is removed**, at the client's request (`fa95fba`, 2026-08-12). The
+   palette name, layout name, effect name and `pulse 47 bpm` were a readout of state nobody asked
+   to see — *show the layout, do not caption it.* The 404's `pressure lost` variant and the
+   ` · adapted` suffix went with it; see the adapted-layouts trap above for what that costs.
+   `docs/DECISIONS.md` has the full note.
 
 ## Copy correction, approved by the client
 
 The home page's third block is stale from v1: it reads "Twenty-four palettes, eight layouts" and
 lists "8 layout archetypes", but v2 ships thirteen. **The client has confirmed the full option set
-stays and the copy gets corrected.** When porting `PAGES` into `src/data/pages.ts`, the `home`
-block with `kicker: "the site"` becomes:
+stays and the copy gets corrected.** In `src/data/pages.ts`, the `home` block with
+`kicker: "the site"` reads:
 
 - title: `Twenty-four palettes, thirteen layouts`
 - list item 2: `13 layout archetypes`
 
 Body text and the other three list items are unchanged. This is the **only** stale count in the
-copy — the 404's "eight other pages" (nine pages minus itself), "six ways into a panel" (six unlock
-routes), "24 colour palettes", "12 background modes" and "5 type systems" are all correct. Every
-other line of copy is still verbatim-only.
+copy — the 404's "eight other pages" (nine content pages minus itself), "six ways into a panel"
+(six unlock routes), "24 colour palettes", "12 background modes" and "5 type systems" are all
+correct. Every other line of copy is verbatim-only.
 
-## Where this stands, and what is next
+## Accounts — the invariants
 
-> **`TODO.md` is the ordered backlog.** It is the one place that says what to do next; this file says
-> *why* things are the way they are. If the two disagree, `TODO.md` is newer.
+`design/SPEC-ACCOUNTS.md` is approved and authoritative. Read it before touching any of this. §12
+is a decision log: every rejected option keeps its reasoning and carries a *"revisit if"*
+condition. Add to it rather than relitigating.
 
-The site is finished and live at `mcclevarty.ca`, served by a **Cloudflare Worker** (see
-*Deployment* below — the Pages migration is done, not pending). **Phase 1 of the accounts work is in
-progress**: the spec was approved by the client on 2026-08-12, authentication works end to end, and
-sign-up, sign-in, recovery codes, change-password, `/admin` and operator-published site config are
-all deployed.
+The design decisions most likely to be broken by someone who has not read it:
 
-Three things are true as of 2026-08-13 and are easy to get wrong from the older notes below:
-
-- **`piratelife` is the operator.** It was created through `/signup` and promoted with step 1 of
-  `docs/BREAK-GLASS.md`. The earlier note saying the only account is `erwerwerwer` and that nobody
-  can open the panel is **obsolete** — `erwerwerwer` was deleted through `/admin`, which is also how
-  that page got its first end-to-end test.
-- **HTTPS is forced and the security headers are on.** See *Security headers* below.
-- **The lightsword duel is withdrawn from the picker**, not built. `docs/DUEL.md` is its spec.
-
-### `design/SPEC-ACCOUNTS.md` is approved and authoritative
-
-Read it before touching any of this. It is no longer a proposal. **§12 is a decision log** — every
-rejected option keeps its reasoning and carries a *"revisit if"* condition, so an idea that comes back
-starts from "here is why we didn't" rather than being re-derived. Add to it rather than relitigating.
-
-The decisions most likely to be broken by someone who has not read it:
-
-- **Sign-in is password + TOTP, with passkeys retained** as an alternative credential. This replaced
-  passkey-only on 2026-08-12. **No email is collected**, and the operator can reset any password —
-  which is what makes email unnecessary.
+- **Sign-in is password + TOTP, with passkeys retained** as an alternative credential. **No email
+  is collected**, and the operator can reset any password — which is what makes email unnecessary.
 - **Key slots (§5) are the load-bearing idea.** One grant keypair per account, wrapped once per
   credential, LUKS-style. Any credential opens the same key. This is why operator reset is safe: it
   deletes the password slot and cannot open it. **Operator escrow is rejected permanently** — a slot
@@ -243,44 +274,53 @@ The decisions most likely to be broken by someone who has not read it:
   inventory is a spec change, not an implementation detail.**
 - **Phases 1/2/3 must not be collapsed** — phase 2 fails as "my files don't load", phase 3 as "a
   stranger read my files."
+- **Authentication works end to end before any interface work starts.** Building the command palette
+  on a sign-in that does not work is how the fun part ships and the load-bearing part does not.
 - Real auth **must not reuse the operator door's UI** (`SPEC.md` §Security). The door stays theatre.
 
-Phase 1 grew roughly threefold with the second round of decisions, and it has one non-negotiable
-internal order: **authentication works end to end before any interface work starts.** Building the
-command palette on a sign-in that does not work yet is how the fun part ships and the load-bearing
-part does not.
+### Where the code is
 
-### What is built so far
-
-- `migrations/0001_phase1_accounts.sql` — phase 1 tables only. Machines, drives, grants and invites
-  are deliberately absent; an empty `grants` table is an invitation to fill it before the phase that
-  hardens it. Constraints verified against local D1.
-- `worker/index.ts` — serves the static site via the assets binding, `/api/*` is the exception.
+- `migrations/` — `0001` phase 1 tables, `0002` TOTP replay, `0003` site config. Machines, drives,
+  grants and invites are deliberately absent: an empty `grants` table is an invitation to fill it
+  before the phase that hardens it.
+- `worker/index.ts` — serves the static site via the assets binding; `/api/*` is the exception.
   Delete every route and the site serves as it does today, which is what "accounts are strictly
   additive" has to mean.
-- `worker/rate-limit.ts` — the `RateLimiter` Durable Object. Counts failures only, resets on success,
-  exponential backoff to a **one-hour ceiling**; the ceiling stops an attack on a known handle from
-  becoming an indefinite lockout of its owner. Never sees an IP. **Its backoff path is not yet
-  exercised** — it needs a sign-in endpoint to fail against.
-- `worker/crypto.ts` — HMAC helpers, constant-time compare, and `clientKey` for IP-free rate-limit
-  keying.
-- **The auth layer, end to end.** `src/auth/` holds the browser half — `derive.ts` (PBKDF2 → HKDF
-  split into an auth secret and a wrapping key), `grantKey.ts` (the P-256 grant key and its AES-KW
-  slots), `recoveryCodes.ts`, `api.ts`, `flows.ts`. `worker/accounts.ts` holds signup, challenge,
-  sign-in, the TOTP second factor, sessions and the key-slot endpoint; `worker/session.ts` and
-  `worker/totp.ts` are its two primitives.
-- `scripts/auth-e2e.ts` — **78 checks against a live Worker and local D1**, run with
-  `npm run test:auth` against `npm run dev:worker`. It imports the real `src/auth` modules rather
-  than reimplementing them, so it fails if browser and Worker ever disagree about a byte, and it
-  computes TOTP codes independently from RFC 6238 rather than calling `worker/totp.ts`.
+- `worker/accounts.ts` — signup, challenge, sign-in, the TOTP second factor, sessions, key slots,
+  change/set password. `worker/session.ts`, `worker/totp.ts`, `worker/crypto.ts` are its primitives;
+  `worker/admin.ts` is the operator surface; `worker/site-config.ts` the published appearance.
+- `worker/rate-limit.ts` — the `RateLimiter` Durable Object. Counts failures only, resets on
+  success, exponential backoff to a **one-hour ceiling**; the ceiling stops an attack on a known
+  handle from becoming an indefinite lockout of its owner. Never sees an IP.
+- `src/auth/` — the browser half: `derive.ts` (PBKDF2 → HKDF split into an auth secret and a
+  wrapping key), `grantKey.ts` (the P-256 grant key and its AES-KW slots), `recoveryCodes.ts`,
+  `api.ts`, `flows.ts`, `SessionContext.tsx`.
+- `scripts/auth-e2e.ts` — the harness. It imports the real `src/auth` modules rather than
+  reimplementing them, so it fails if browser and Worker ever disagree about a byte, and it computes
+  TOTP codes independently from RFC 6238 rather than calling `worker/totp.ts`. Its last section
+  exercises the `RateLimiter`'s backoff path.
 
-Three things that are decisions, and are easy to "fix" back into bugs:
+### Things that are decisions, and are easy to "fix" back into bugs
 
 - **`recordSuccess` resets the account bucket and only *decays* the client bucket** by one
   (`rate-limit.ts` `/succeed`). Wiping the client bucket on success hands an attacker a free reset:
   sign in to an account you own, and the counter recording your failures against everyone else's
   goes to zero. Client allowance is 50 and account allowance 5 because one address is a household
   behind NAT and five would lock out a café over one typo.
+- **Rate limiting reserves and checks in one round-trip** (`assertAttempt` → `/attempt`). `/check`
+  then `/fail` was two, so N concurrent sign-ins all passed the check before any failure landed.
+  **`challenge` deliberately stays on `/check`**: asking for a salt is not a failable attempt, and
+  counting it would let anyone lock an owner out.
+- **The rate limiting lives inside `assertPassword`, not in its callers.** Two callers had none and
+  left an unthrottled online password oracle usable by anyone holding a session obtained *without*
+  the password. Putting the counting inside the check means a future caller cannot forget it.
+- **`challenge`'s decoy reports `DEFAULT_ITERATIONS`, the real constant.** A varied decoy was the
+  tell, not the disguise — see `docs/DECISIONS.md`. When real iteration counts start varying,
+  sample the decoy from the same distribution.
+- **`challenge` takes the salt from any credential that has one**, preferring the password row for
+  its iteration count. Keyed on `kind = 'password'` it dropped an operator-reset account through to
+  the decoy branch and handed back a fabricated salt, turning a working recovery code into a wrong
+  one. This is what makes operator password reset safe to build.
 - **A redeemed recovery code returns its key slot in the sign-in response**, and the slot row is
   *kept*, not deleted. The wrapping key exists only for that request — the code is spent — so a slot
   not handed back is a grant key sealed for ever, which would quietly make §5's "preserves grant
@@ -288,167 +328,20 @@ Three things that are decisions, and are easy to "fix" back into bugs:
 - **A recovery code is not marked used until the sign-in completes.** With two-factor on, the ticket
   carries the pending credential id. Spending it earlier would burn one of ten codes per abandoned
   attempt, for the person recovery exists for.
-
-**Signup has a real UI as of 2026-08-12** — `src/components/SignUp.tsx` at `/signup`, linked from
-`FOOTER_NAV` as "Account". Verified in a browser against production: an account was created end to
-end and ten recovery codes rendered. The test account was deleted afterwards (`accounts`,
-`credentials` and `key_slots` all cascade to zero), because its password was written down in a
-transcript. **The account count is zero again, so `HANDLE_PATTERN` and the schema are still free to
-change without a migration.**
-
-**There is no sign-in UI.** You can create an account on the live site and cannot then use it from
-the browser. `/api/auth/challenge`, `/signin` and `/totp` all exist and are tested; only the form is
-missing. That is the smallest, highest-value next piece and it should come before anything else.
-
-Next, in order: **sign-in UI**, then the operator surface and its reset flow, set/change password
-(which is what lets a redeemed recovery code write a fresh password slot), passkeys, then
-account/setups pages, then the dialog primitive and command palette.
-
-**Not built, and asked for on 2026-08-12: an operator-only siteconfig whose saved settings apply to
-every visitor**, plus a way to hide/close config mode. This is not a small change. Config today is
-per-visitor in `localStorage` (`src/config/persistence.ts`); making it global needs a D1 table, a
-read endpoint the site calls on load, a write endpoint gated on `accounts.is_operator`, and a
-decision about precedence — whether a visitor's own choices override the operator's defaults or are
-replaced by them. That precedence question is a product decision, not an implementation detail, and
-it should be settled before the table is designed. It also depends on sign-in existing, since there
-is no way to be the operator in a browser yet.
-
-### Sign-in, operator-published config, and administration
-
-All deployed to `mcclevarty.ca` and verified live. In order:
-
-- **Sign-in exists** (`src/components/SignIn.tsx`, `/signin`). Handle + password,
-  the TOTP second factor, the account summary, sign-out, and change-password. One
-  page for both states — `api.me()` on mount decides form or summary.
-- **Change password** (`changePassword` in `flows.ts` + `worker/accounts.ts`).
-  Re-wraps the key slot rather than regenerating the grant key, via `rewrapSlot`,
-  where the scalar never becomes bytes in JS. **The salt is reused deliberately** —
-  recovery codes derive against the password's salt, so rolling it would silently
-  kill all ten. Verified: old password rejected, new one works.
-- **The operator's config is now the site's** (`worker/site-config.ts`, migration
-  `0003`). Published to D1, **inlined into the app shell by the Worker** rather
-  than fetched, so there is no palette flash and no network dependency on boot.
-  Needed `run_worker_first` in `wrangler.toml`: by default a request matching a
-  real file never invokes the Worker, so `/` (which *is* index.html) silently got
-  no injection while `/contact` did.
-- **The panel and door are operator-only.** Gated once at `openDoor`/`togglePanel`
-  in `ConfigContext`, not at each of the six unlock routes. Visitors cannot see or
-  change anything; `loadConfig` no longer reads visitor localStorage.
-- **`/admin`** (`src/components/Admin.tsx`, `worker/admin.ts`): list accounts,
-  grant/revoke operator, reset 2FA, delete. Guards against removing your own last
-  operator flag and against deleting yourself.
-- **The account pages are unlinked**, at the client's request. Reached by typing
-  `whoami`, `login` or `admin`, or dragging **left** — mirroring the door's
-  rightward drag. These never call `openDoor`; the door stays theatre.
-- **Two real bugs fixed**: the screensaver faded out the recovery-codes screen
-  mid-transcription (`holdSaver`, reference-counted), and `useOperatorRoutes` paged
-  the site on arrow keys and opened the door on `sudo` from inside the new text
-  inputs (`isEditable` guard).
-- **Email recovery was proposed and rejected** in favour of `docs/BREAK-GLASS.md`.
-  Reasons recorded there. Do not re-add it without reading that file.
-
-### Operator bootstrap, and recovery-code sign-in
-
-- **`piratelife` exists and is the operator.** Created through `/signup` by the
-  client, promoted with step 1 of `docs/BREAK-GLASS.md`. `/admin` is reachable on
-  the live site for the first time. The old test account `erwerwerwer` was then
-  deleted **through `/admin`**, which is how that page got its first end-to-end
-  test. `piratelife` is now the only account.
-- **The footer carries `account` and `admin` links, but only for a signed-in
-  operator.** The account pages stay unlinked for visitors, which is what was
-  asked for — but an operator having to remember a typed word to reach their own
-  administration is a trapdoor that locks from the inside, not privacy. Signed
-  out, `useSession().isOperator` is false and the links do not render.
-- **Sign in with a recovery code, and set a password afterwards** — the whole
-  path, browser and Worker. `/api/account/set-password`, `signInWithRecoveryCode`
-  returning a `RecoverySignIn`, and three new stages in `SignIn.tsx`.
-
-Four things here are decisions, and three of them were latent bugs:
-
-- **`signInWithRecoveryCode` returns an object with methods, not a result.** The
-  old shape returned `{ result, grantKey }`, which meant that on an account
-  **with a second factor** the wrapping key derived from the code went out of
-  scope at the `return` — and the key slot that arrives after TOTP could never be
-  opened. Recovery worked for accounts without 2FA and stranded the grant key of
-  every account with it. The closure now holds the key and `completeSecondFactor`
-  finishes the sign-in through it.
-- **Set-password re-wraps, it does not unwrap.** `unwrapSlot` returns a
-  deliberately **non-extractable** key, which cannot be wrapped into a new slot,
-  so the flow goes ciphertext-to-ciphertext through `rewrapSlot` exactly as
-  `changePassword` does. Calling `unwrapSlot` here would typecheck and fail at
+- **Authorisation for set-password is a ticket, not the session.** A session says who you are, never
+  how you proved it. Gated on the session alone, a stolen cookie would become permanent takeover.
+  `set-password` is minted only inside `completeSignIn`, only on the recovery path, only after the
+  last factor.
+- **Change-password reuses the salt.** Recovery codes derive against the password's salt, so rolling
+  it would silently kill all ten.
+- **Set-password re-wraps; it does not unwrap.** `unwrapSlot` returns a deliberately
+  **non-extractable** key, which cannot be wrapped into a new slot, so the flow goes
+  ciphertext-to-ciphertext through `rewrapSlot`. Calling `unwrapSlot` here typechecks and fails at
   runtime.
-- **`challenge` now takes the salt from any credential that has one**, preferring
-  the password row for its iteration count. Keyed on `kind = 'password'` it
-  dropped an account whose password the operator had reset through to the decoy
-  branch and handed back a *fabricated* salt — turning a working recovery code
-  into a wrong one, and looking like user error. This is what makes operator
-  password reset safe to build.
-- **Authorisation for set-password is a ticket, not the session.** A session says
-  who you are, never how you proved it. Gated on the session alone, a stolen
-  cookie — a bounded thirty-minute exposure today — would become permanent
-  takeover. `TokenPurpose` gains `set-password`, minted only inside
-  `completeSignIn`, only on the recovery path, only after the last factor.
-
-Verified live after deploy: `/api/health` returns six tables, `challenge` returns
-the real salt for `piratelife` (600000/100000) and a *varying* decoy for a
-nonexistent handle, `/signin` and `/admin` both 200.
-
-**Not verified: the recovery path has not been run end to end by a human.** The
-code typechecks and the query it depends on was checked against production data,
-but no recovery code has actually been redeemed on the live site. Doing so spends
-one of ten, which is why it was not done casually — but it should be done once,
-deliberately, before it is relied on.
-
-### Security headers, and the redirect bug worth not repeating
-
-`http://mcclevarty.ca/` used to answer **200 over cleartext** — the browser's
-"not secure" warning — because a Workers route matches both schemes. Fixed in
-`worker/index.ts`. Verified live: `http://` → exactly one 301 → `https://` → 200,
-with `Strict-Transport-Security`, `x-content-type-options`, `referrer-policy` and
-`x-frame-options` on every response.
-
-**The first attempt would have taken the site down**, and the failure is not
-obvious from reading it:
-
-```js
-const secure = new URL(url.toString());
-secure.protocol = "https:";      // silently does nothing in workerd
-```
-
-The setter did not take, so `Location` came back equal to the request URL — an
-infinite redirect loop, caught locally as `redirect count exceeded`. The URL is
-now built by concatenation **and** compared against the request before being
-sent, so the worst case is "no redirect happens" rather than "site down". Keep
-that guard. Loopback is exempt or `wrangler dev` and `npm run test:auth` break.
-
-**There is deliberately no CSP.** The app shell has the published site config
-*inlined* as a script (`worker/site-config.ts`), so a `script-src` without a nonce
-plumbed through that injection would blank the site's appearance on first paint.
-Worth doing properly; not worth doing badly.
-
-Cloudflare's **SSL/TLS → Edge Certificates → Always Use HTTPS** does the same
-redirect at the edge without costing a Worker invocation. Turning it on as well
-is free and is recommended.
-
-### The duel effect — WITHDRAWN. `docs/DUEL.md` is the full spec.
-
-**It is no longer in the effect picker.** The client saw the shipped stick-figure
-version and rejected it: *"that is terrible"*, *"WAY too slow"*. What they want is
-a fast, obviously readable 8/32-bit pixel fight with discrete matches and winners,
-and they supplied a working reference implementation on 2026-08-12 that is the
-authoritative statement of it. **All of that — the reference's design table, why
-the first version failed, the four changes needed to port it into this codebase,
-and the base-36 share-code trap — is written up in `docs/DUEL.md`.** Read that
-file rather than re-deriving any of it.
-
-The code survives in `src/fx/effects.ts` (`EFFECTS.duel`, `EFFECTS.duelholy`) and
-in `FxId`; only the two `FX` catalogue entries were removed, so nothing else had
-to change and putting them back is two lines. The blade rendering and clash
-sparks are worth keeping; the stance machine is not.
 
 ### Four things the client has not yet signed off
 
-Found while building; none are blocking, all are recorded here rather than slipped in.
+Found while building; none are blocking. Listed in `TODO.md`; the reasoning is here.
 
 1. **`totp.last_step`** (`migrations/0002_totp_replay.sql`) is a field §9's inventory does not list,
    and §9 says adding one is a spec change. It stores the 30-second window of the last successful
@@ -463,86 +356,47 @@ Found while building; none are blocking, all are recorded here rather than slipp
 4. **Signup discloses handle availability** (409) while `challenge` goes to real trouble to hide it.
    Defensible — availability is inherently public — but the two should not disagree.
 
-### Deployment — the migration is done
+## Deployment
 
-**The site moved from Pages to a Worker with static assets** (`wrangler.toml`), because Pages cannot
+Served by a **Cloudflare Worker with static assets** (`wrangler.toml`), not Pages. Pages cannot
 define Durable Object classes and this stack needs them twice — rate limiting now, one signalling
-object per paired machine in phase 2.
+object per paired machine in phase 2. The cutover completed 2026-08-12; `docs/DECISIONS.md` has
+the story and the rollback.
 
-**The cutover completed on 2026-08-12 and everything below is now ✅.** The checklist is kept because
-each line records a decision or a trap, not because anything is outstanding:
+Rules, each of which cost something to learn:
 
-- ✅ `npx wrangler login` — done by the client. Account `760b80a637d2ffe755b09da3f4a339ff`.
-- ✅ **The real D1 database exists.** `vessel`, region ENAM, id in `wrangler.toml`. Both migrations
-  are applied `--remote`; `d1 list` was empty before this, so nothing was overwritten.
-- ✅ **All four secrets are set**, by the client. `AUTH_PEPPER` is backed up in their password
-  manager. That backup matters: Cloudflare secrets are write-only and cannot be read back, so losing
-  the pepper invalidates every stored auth hash — every password on the site — unrecoverably. It is
-  free to regenerate while the account count is zero and a data-loss event after the first signup.
-  The other three are cheaper: `SESSION_SECRET` only signs everyone out, `RATE_SALT_SEED` only
-  resets counters, `TOTP_ENC_KEY` breaks enrolled second factors.
-- ✅ **The Worker is deployed** at `https://vessel.patrickmcclevarty.workers.dev`. Verified there:
-  `/api/health` returns `{"ok":true,"tables":6}` — so D1 is bound, migrated and reachable, and the
-  Durable Object namespace answers. `/`, `/contact`, `/work`, `/404` and an unrouted path all return
-  200 and serve the app shell, with the served bundle hash matching a local `npm run build`.
-  Unknown `/api/*` returns the JSON 404. **Give a fresh deploy a few seconds before testing routes**
-  — `/contact` 404s briefly while the asset manifest propagates, then settles to 200.
-- ✅ **The cutover is done.** `mcclevarty.ca` is served by the Worker as of 2026-08-12.
+- **Deploy with `npm run deploy`, never bare `wrangler deploy`.** `predeploy` strips
+  `dist/_redirects`, which Workers static assets otherwise parses as *configuration* and rejects as
+  an infinite loop. The deploy fails outright at the API call.
+- **`public/_redirects` stays** until the Pages project is deliberately retired. Pages still
+  auto-deploys from `main` and is the rollback. `.assetsignore` does not help — validation happens
+  before the upload list is filtered.
+- **The Worker's SPA fallback is `not_found_handling`**, not `_redirects`.
+- **`run_worker_first = ["/*", "!/assets/*"]`** is what lets the Worker inline the published site
+  config into HTML. By default a request matching a real file never invokes the Worker, so `/`
+  (which *is* index.html) silently got no injection while `/contact` did. The negation keeps the
+  hashed bundles on the fast path — and means `/assets/*` responses never pass through `harden()`.
+- **`workers.dev` is disabled**, since `workers_dev` defaults to false once a route exists. Wanted:
+  it closes the signup endpoint that was publicly reachable before cutover. Set `workers_dev = true`
+  if you need a non-production URL back, knowing that reopens it.
+- **`[dev] upstream_protocol = "https"`** is load-bearing for local development, not cosmetic. See
+  `docs/HANDOFF.md`.
+- **Give a fresh deploy a few seconds** before testing routes; asset manifests propagate.
 
-  It was done by adding a `routes` entry to `wrangler.toml` rather than by deleting the Pages custom
-  domain, because **a Workers route is evaluated ahead of a Pages custom domain**. `wrangler pages
-  domain` is not a command in wrangler 4.122, so removing it via CLI was not available anyway — but
-  the route approach is better regardless: the Pages project is untouched and still holds the domain
-  underneath, so **rollback is deleting the `routes` block and running `npm run deploy`**, not
-  rebuilding infrastructure under pressure.
+### HTTPS and headers
 
-  Verified live: `/api/health` returns `{"ok":true,"tables":6}` — decisive, because Pages has no
-  `/api` and could not answer it at all. `/`, `/contact`, `/work`, `/404` and an unrouted path all
-  200, the served bundle hash matches a local build, and `mcclevarty.com` still 301s to `.ca`.
+HTTPS is forced in `worker/index.ts` and `Strict-Transport-Security`, `x-content-type-options`,
+`referrer-policy` and `x-frame-options` are set on page responses.
 
-  **Adding `routes` silently disabled the `workers.dev` URL**, since `workers_dev` defaults to false
-  once a route exists. `vessel.patrickmcclevarty.workers.dev` no longer resolves. That is wanted here
-  — it closes the public signup endpoint that was reachable before cutover — but it means there is no
-  longer a non-production URL to test against. Set `workers_dev = true` if you need one back.
+**`URL.protocol = "https:"` silently does nothing in workerd.** The redirect URL is built by
+concatenation **and** compared against the request before being sent, so the worst case is "no
+redirect happens" rather than an infinite loop. Keep that guard. Loopback is exempt or
+`wrangler dev` and `npm run test:auth` break.
 
-  **`public/_redirects` still has to stay.** Pages continues to auto-deploy from `main` and is the
-  rollback, so it must keep working. `predeploy` strips it from `dist/` for the Worker; leave both in
-  place until the Pages project is deliberately retired.
-
-**`public/_redirects` must stay until cutover, and it is not inert — it breaks the Worker deploy.**
-The earlier note here called it "dead under Workers". That was wrong. Workers static assets treats
-`_redirects` as *configuration*, not as an asset: it parses and validates the file, and rejects
-`/*  /index.html  200` with `Invalid _redirects configuration — Line 3: Infinite loop detected`
-(the rule strips `/index` and re-triggers itself). The deploy fails outright at the API call.
-
-Because it is configuration rather than an asset, **`.assetsignore` does not help** — that only
-filters the upload list, and the validation has already happened. This was tried and does not work.
-
-It cannot simply be deleted either: `main` still auto-deploys to Pages, which serves the live site,
-and removing it would break client-side routing there on the next push. So the file stays in `public/`
-and is stripped from `dist/` at deploy time only:
-
-```
-"predeploy": "npm run build && node -e \"...rmSync('dist/_redirects')...\"",
-"deploy": "wrangler deploy"
-```
-
-**Deploy with `npm run deploy`, never bare `wrangler deploy`** — the bare command fails on a fresh
-build. Pages is unaffected: Cloudflare runs its own `npm run build` and never sees the removal. At
-cutover, delete `public/_redirects` and both scripts together.
-
-Also queued, after phase 1:
-
-- **Richer transitions, slide-overs and typewriter effects.** The hard part is the constraint: every
-  layout, palette and ornament has to stay visually distinct. That points at a small set of motion
-  primitives each layout composes differently, rather than bespoke animation per layout — but confirm
-  the approach before building. The file-explorer design in §10 is *not* this; it is phase 2 and
-  already specified.
-
-One thing left unverified: the client has not yet confirmed the **Matrix rain fall speed** by eye.
-It was rebuilt after they said the original was far too fast, and verified headlessly at 96–307
-px/sec against the old 960 — but the browser session it was checked in could not run animation.
-`RAIN_SPEED_MIN` and `RAIN_SPEED_RANGE` in `src/fx/effects.ts` are the two constants to adjust.
+**There is deliberately no CSP.** The app shell has the published site config *inlined* as a script
+(`worker/site-config.ts`), so a `script-src` without a nonce plumbed through that injection would
+blank the site's appearance on first paint. Worth doing properly; not worth doing badly —
+`TODO.md` #12.
 
 ## Accessibility
 
@@ -551,23 +405,21 @@ focus return for both overlays (`src/hooks/useFocusTrap.ts`), a live region for 
 styles and CSS-level `prefers-reduced-motion`. The sleeping chrome also takes `inert`, so a faded-out
 interface cannot be reached by Tab.
 
-**The one real defect is fixed, and it set the form convention.** `.v-paste` — the share-code field
-in the siteconfig panel, and the only text input in the entire app — used to submit on Enter only
-with no button, so a code could not be applied by mouse or touch at all. It is now a real `<form>`
-with an `apply` submit button, disabled while the field is empty or blank.
+**The form convention.** `.v-paste` — the share-code field in the siteconfig panel — used to submit
+on Enter only with no button, so a code could not be applied by mouse or touch at all. It is now a
+real `<form>` with an `apply` submit button, disabled while the field is blank.
 
-That shape is deliberate and the account forms should follow it: **one `<form>` with an `onSubmit`
-that calls `preventDefault()`, and a `type="submit"` button.** Enter and the button are then the same
-code path instead of two that can drift apart, and neither has to be special-cased. The disabled
-convention it uses was already waiting in `interaction.css` for exactly this. The row reuses
-`.v-share-row`, so the paste field lines up with the copy field above it.
+Account forms follow that shape: **one `<form>` with an `onSubmit` that calls `preventDefault()`,
+and a `type="submit"` button.** Enter and the button are then the same code path instead of two that
+can drift apart, and neither has to be special-cased. The disabled convention it uses was already
+waiting in `interaction.css`. The row reuses `.v-share-row`, so the paste field lines up with the
+copy field above it.
 
-The *focus-indicator* half of this note was wrong and is retracted. `.v-paste` does set
-`outline: none` (`overlays.css:185-199`), but `.vessel :focus-visible` in `base.css:68` has
-specificity 0-2-0 against that rule's 0-1-0, so it wins on specificity regardless of file order and
-the input focuses with the normal 2px `--a1` ring. Verified in the browser 2026-08-12: real click,
-`:focus-visible` matches, computed outline `solid 2px` at 3px offset, ring visible in a screenshot.
-Do not "fix" this.
+**The focus-indicator half of that note was wrong and is retracted.** `.v-paste` does set
+`outline: none` in `overlays.css`, but `.vessel :focus-visible` in `base.css` has specificity 0-2-0
+against that rule's 0-1-0, so it wins on specificity regardless of file order and the input focuses
+with the normal 2px `--a1` ring. Verified in a browser 2026-08-12: real click, `:focus-visible`
+matches, computed outline `solid 2px` at 3px offset. Do not "fix" this.
 
 Still open, and genuinely unresolved rather than overlooked: several palettes fail WCAG AA on body
 text. That is deliberate — Peat especially — and calm mode is the intended remedy.

@@ -307,13 +307,28 @@ export function SignIn() {
     setError(null);
     try {
       const finished = await stage.session.completeSecondFactor(digits);
-      if (finished.status === "signed-in") {
-        setCode("");
-        setStage({ name: "set-password", session: stage.session });
-        await refreshSession();
+      if (finished.status !== "signed-in") {
+        // Unreachable today — `api.totp` throws on anything but success — but a
+        // silent no-op here would leave the busy flag cleared, no error shown,
+        // and a correct code apparently ignored. On the one path where the
+        // recovery code is *already spent*, that dead end costs the user a code
+        // to escape from.
+        throw new Error("That sign-in did not complete. Start again with another recovery code.");
       }
+      setCode("");
+      setStage({ name: "set-password", session: stage.session });
+      await refreshSession();
     } catch (cause) {
       fail(cause);
+      // The recovery ticket lives five minutes, exactly as on the password path
+      // — but here the code that bought it is spent, so sending the user back to
+      // the credentials stage must also tell them the next attempt costs another
+      // one. Leaving them on a dead ticket is worse: every correct code they
+      // type is refused with no way to tell why.
+      if (cause instanceof ApiError && /timed out/i.test(cause.message)) {
+        setStage({ name: "credentials" });
+        setCode("");
+      }
     } finally {
       setBusy(false);
     }
