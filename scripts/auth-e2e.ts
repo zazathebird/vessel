@@ -18,8 +18,19 @@
  * There is no assertion library, for the same reason there is no UI library.
  */
 
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
+
+import { api, ApiError } from "../src/auth/api";
 import { deriveFromPassword, deriveFromRecoveryCode, newKdfParams } from "../src/auth/derive";
 import { fromBase64Url, toBase64Url } from "../src/auth/encoding";
+import {
+  changePassword as changePasswordFlow,
+  openGrantKey,
+  signIn as signInFlow,
+  signInWithRecoveryCode,
+  signUp as signUpFlow,
+} from "../src/auth/flows";
 import {
   SLOT_ALG,
   generateGrantKey,
@@ -42,6 +53,93 @@ const RUN = Math.random().toString(36).slice(2, 8);
 
 /** See the header note in `Client.call`. RFC 5737 reserves this range for documentation. */
 const CLIENT_IP = `203.0.113.${1 + Math.floor(Math.random() * 254)}`;
+
+// The fetch shim: what lets this file import `flows.ts` and `api.ts` for real -
+//
+// The browser modules call `fetch("/api/…")` with relative paths and lean on the
+// browser's cookie jar. Node has neither, so the harness supplies both — and
+// ONLY for relative URLs. The raw `Client` below builds absolute URLs and passes
+// through untouched, so its cookie isolation is unaffected. This wrapper is the
+// whole difference between driving the real modules and re-implementing them,
+// and re-implementation was exactly the coverage gap: a copy cannot fail when
+// browser and Worker drift apart.
+class BrowserSession {
+  cookie: string | null = null;
+}
+
+let browser = new BrowserSession();
+
+/** Point the flows/api modules at a fresh (or saved) cookie jar. */
+function asBrowser(session: BrowserSession): BrowserSession {
+  browser = session;
+  return session;
+}
+
+const nodeFetch = globalThis.fetch;
+globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+  const url =
+    typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+  if (!url.startsWith("/")) return nodeFetch(input as RequestInfo, init);
+
+  const headers = new Headers(init?.headers ?? {});
+  // Same per-run rate-limit bucket as `Client.call` — see the note there.
+  headers.set("cf-connecting-ip", CLIENT_IP);
+  if (browser.cookie) headers.set("cookie", browser.cookie);
+
+  const response = await nodeFetch(`${BASE}${url}`, { ...init, headers });
+  const setCookie = response.headers.get("set-cookie");
+  if (setCookie) browser.cookie = setCookie.split(";")[0];
+  return response;
+}) as typeof fetch;
+
+/**
+ * Run a call that is SUPPOSED to fail, and hand back how it failed. An
+ * `ApiError` carries the Worker's status; a local (pre-network) refusal from
+ * `flows.ts` comes back as status -1, which is itself worth asserting — it
+ * proves the check fired before anything went over the wire.
+ */
+async function refusal(
+  run: () => Promise<unknown>,
+): Promise<{ status: number; message: string } | null> {
+  try {
+    await run();
+    return null;
+  } catch (error) {
+    if (error instanceof ApiError) return { status: error.status, message: error.message };
+    return { status: -1, message: (error as Error).message };
+  }
+}
+
+/**
+ * Run one statement against the local D1 the Worker under test is using.
+ *
+ * The admin section needs an operator, `is_operator` is not settable through any
+ * API on purpose, and `docs/BREAK-GLASS.md` step 1 is exactly this statement
+ * against production. Concurrent access alongside `wrangler dev` is fine —
+ * SQLite arbitrates — and the Worker reads the account row per request, so a
+ * flip is visible immediately.
+ *
+ * Async rather than `execSync`, and that is load-bearing: wrangler takes several
+ * seconds, and a blocked event loop stops undici from noticing the dev server
+ * closing its idle keep-alive socket — the next fetch then dies on the stale
+ * connection with a "could not reach the server" that looks like the Worker
+ * crashed. It did not; the harness just went deaf for five seconds.
+ */
+const execAsync = promisify(exec);
+
+async function d1(sql: string): Promise<void> {
+  if (sql.includes('"')) throw new Error("keep double quotes out of harness SQL");
+  await execAsync(`npx wrangler d1 execute vessel --local --command "${sql}"`);
+}
+
+/**
+ * Wait for the next 30-second TOTP step. Each successful second factor spends
+ * its step (the replay guard — `migrations/0002`), so a scenario that needs a
+ * fresh code after one has just been used must sit out the remainder.
+ */
+function untilNextTotpStep(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 30_000 - (Date.now() % 30_000) + 750));
+}
 
 let passed = 0;
 const failures: string[] = [];
@@ -460,7 +558,7 @@ async function main(): Promise<void> {
     // does simply by not signing in within the same half-minute they set two
     // factor up. Without the wait the harness would be testing the guard, not
     // the sign-in, and would fail for the right reason at the wrong moment.
-    await new Promise((resolve) => setTimeout(resolve, 30_000 - (Date.now() % 30_000) + 750));
+    await untilNextTotpStep();
 
     const enrolled = new Client();
     const { kdf } = await enrolled.call("/api/auth/challenge", { body: { handle } });
@@ -802,6 +900,306 @@ async function main(): Promise<void> {
       another.status === "signed-in",
       JSON.stringify(another).slice(0, 140),
     );
+  }
+
+  // The real browser modules -----------------------------------------------------
+  //
+  // Everything above drives the Worker with raw fetch, which proves the Worker
+  // but not the code the browser actually runs. These three sections import
+  // `flows.ts` and `api.ts` and drive them end to end through the shimmed
+  // fetch, so a byte-level disagreement between `src/auth` and `worker/` fails
+  // here rather than in a user's browser.
+  section("flows.ts + api.ts, driven for real");
+  const flowsHandle = `harness-flow-${RUN}`;
+  const secondPassword = `${password}, changed`;
+  const finalPassword = `${password}, recovered`;
+  let flowsCodes: string[] = [];
+  let flowsTotpSecret = "";
+  let grantPubkeyAtSignup = "";
+  {
+    asBrowser(new BrowserSession());
+
+    const tooShort = await refusal(() => signUpFlow(flowsHandle, "short"));
+    check(
+      "signUp refuses a short password before any network call",
+      tooShort?.status === -1,
+      tooShort?.message,
+    );
+
+    const created = await signUpFlow(flowsHandle, password);
+    check("signUp creates the account", created.account.handle === flowsHandle);
+    check("signUp hands back ten recovery codes", created.recoveryCodes.length === 10);
+    flowsCodes = created.recoveryCodes;
+
+    const me = await api.me();
+    check("signUp leaves the browser signed in", me.account.handle === flowsHandle);
+
+    await api.signout();
+    const signedOut = await refusal(() => api.me());
+    check("api.signout ends the session", signedOut?.status === 401, signedOut?.message);
+
+    const wrong = await refusal(() => signInFlow(flowsHandle, "definitely not the password"));
+    check("signIn with the wrong password surfaces the Worker's 401", wrong?.status === 401, wrong?.message);
+
+    const good = await signInFlow(flowsHandle, password);
+    check("signIn signs in", good.status === "signed-in");
+    grantPubkeyAtSignup = (await api.keySlot()).grantPubkey;
+
+    // Change-password, previously an untested endpoint. The flow re-wraps the
+    // slot ciphertext-to-ciphertext, so the proof is that the *new* password
+    // opens the *original* grant key — asserted at the very end of the third
+    // section, after recovery and set-password have also had their turn.
+    const samePassword = await refusal(() => changePasswordFlow(password, password));
+    check("changePassword refuses the unchanged password locally", samePassword?.status === -1);
+
+    await changePasswordFlow(password, secondPassword);
+    asBrowser(new BrowserSession());
+    const stale = await refusal(() => signInFlow(flowsHandle, password));
+    check("the old password no longer signs in", stale?.status === 401, stale?.message);
+    const changed = await signInFlow(flowsHandle, secondPassword);
+    check("the changed password signs in", changed.status === "signed-in");
+
+    // §3's single-operation unwrap. The TOTP half is browser-side format
+    // checking only for now — `/api/account/slot` authorising on the session
+    // alone is TODO #15 — so any six digits pass, deliberately.
+    const opened = await openGrantKey(secondPassword, "000000");
+    const message = new TextEncoder().encode("one signature, then the key dies");
+    const pub = await crypto.subtle.importKey(
+      "raw",
+      fromBase64Url(grantPubkeyAtSignup),
+      { name: "ECDSA", namedCurve: "P-256" },
+      false,
+      ["verify"],
+    );
+    check(
+      "openGrantKey opens the account's grant key after a password change",
+      await crypto.subtle.verify(
+        { name: "ECDSA", hash: "SHA-256" },
+        pub,
+        await signWithGrantKey(opened, message),
+        message,
+      ),
+    );
+
+    // TOTP enrolment through api.ts — the exact calls the enrolment screen
+    // will make, including the trap: both need the password's authSecret.
+    const noSecret = await refusal(() => api.totpEnrol({}));
+    check("api.totpEnrol without the password is refused", noSecret?.status === 401, noSecret?.message);
+
+    const { kdf } = await api.challenge(flowsHandle);
+    const derived = await deriveFromPassword(secondPassword, {
+      salt: fromBase64Url(kdf.salt),
+      iterations: kdf.iterations,
+    });
+    const enrol = await api.totpEnrol({ authSecret: derived.authSecret });
+    check(
+      "api.totpEnrol returns the secret and the otpauth URI",
+      /^[A-Z2-7]{32}$/.test(enrol.secret) && enrol.uri.startsWith("otpauth://totp/"),
+    );
+    flowsTotpSecret = enrol.secret;
+
+    const confirmed = await api.totpConfirm({
+      code: await totpCode(enrol.secret),
+      authSecret: derived.authSecret,
+    });
+    check("api.totpConfirm issues ten backup codes", confirmed.backupCodes.length === 10);
+  }
+
+  section("Recovery with two-factor, through flows.ts — the stranded-key path");
+  {
+    // This is the path that carried the stranded-wrapping-key bug: on an
+    // account WITH a second factor, the key slot arrives only after TOTP, and
+    // an earlier version of `signInWithRecoveryCode` had already let the
+    // wrapping key go out of scope by then. Neither recovery fixture above has
+    // TOTP enrolled, so until this section the regression had zero coverage.
+    await untilNextTotpStep();
+    asBrowser(new BrowserSession());
+
+    const recovery = await signInWithRecoveryCode(flowsHandle, flowsCodes[0]);
+    check(
+      "a recovery sign-in on a 2FA account asks for the second factor",
+      recovery.result.status === "totp-required",
+      JSON.stringify(recovery.result).slice(0, 120),
+    );
+    check("the key slot is not claimed before the second factor", recovery.canSetPassword() === false);
+
+    const early = await refusal(() => recovery.setPassword(finalPassword));
+    check("setPassword before the second factor is refused locally", early?.status === -1);
+
+    const wrongCode = await refusal(() => recovery.completeSecondFactor("000000"));
+    check("a wrong second factor is refused", wrongCode?.status === 401, wrongCode?.message);
+
+    const finished = await recovery.completeSecondFactor(await totpCode(flowsTotpSecret));
+    check("the correct code completes the recovery sign-in", finished.status === "signed-in");
+    check(
+      "the wrapping key survived the second factor — slot and ticket in hand",
+      recovery.canSetPassword() === true,
+      "the stranded-wrapping-key bug is back",
+    );
+
+    await recovery.setPassword(finalPassword);
+    const me = await api.me();
+    check("nine recovery codes remain", me.credentials.recoveryCodesRemaining === 9);
+
+    const twice = await refusal(() => recovery.setPassword(finalPassword));
+    check("setPassword cannot be called twice", twice?.status === -1, twice?.message);
+
+    // The password is provably replaced. Completing a fresh sign-in needs a
+    // fresh TOTP step; rather than a second 30-second wait, the admin section
+    // below resets this account's TOTP and finishes the proof with one factor.
+    asBrowser(new BrowserSession());
+    const old = await refusal(() => signInFlow(flowsHandle, secondPassword));
+    check("the pre-recovery password no longer works", old?.status === 401, old?.message);
+    const recovered = await signInFlow(flowsHandle, finalPassword);
+    check(
+      "the recovered password is accepted (second factor still pending)",
+      recovered.status === "totp-required",
+      JSON.stringify(recovered).slice(0, 120),
+    );
+  }
+
+  section("Admin routes and published site config");
+  {
+    const adminHandle = `harness-adm-${RUN}`;
+    const operatorSession = asBrowser(new BrowserSession());
+    await signUpFlow(adminHandle, password);
+
+    const denied = await refusal(() => api.adminAccounts());
+    check("a non-operator is refused the admin surface", denied?.status === 403, denied?.message);
+    const deniedPublish = await refusal(() => api.publishSiteConfig({ pal: 3 }));
+    check("a non-operator cannot publish site config", deniedPublish?.status === 403, deniedPublish?.message);
+
+    // The one thing no API can do, by design. BREAK-GLASS step 1, locally.
+    await d1(`UPDATE accounts SET is_operator = 1 WHERE handle = '${adminHandle}'`);
+
+    let accounts = (await api.adminAccounts()).accounts;
+    const self = accounts.find((row) => row.handle === adminHandle);
+    check("flipping is_operator in D1 grants the admin surface", self?.isOperator === true);
+
+    const flowsRow = accounts.find((row) => row.handle === flowsHandle);
+    check("the listing shows the 2FA fixture's TOTP as confirmed", flowsRow?.totp.confirmed === true);
+    check(
+      "the listing counts the fixture's spent recovery code",
+      flowsRow?.credentials.recoveryCodesRemaining === 9,
+      String(flowsRow?.credentials.recoveryCodesRemaining),
+    );
+
+    // Fixtures from previous runs accumulate in local D1, and a stale operator
+    // among them would make the last-operator guard below nondeterministic.
+    // Deleting them here is the delete route exercised on real targets, and it
+    // keeps the local database from growing a run at a time.
+    const stale = accounts.filter(
+      (row) => row.handle.startsWith("harness-") && !row.handle.endsWith(RUN),
+    );
+    for (const row of stale) await api.adminDeleteAccount(row.id);
+    accounts = (await api.adminAccounts()).accounts;
+    check(
+      `delete-account removed the ${stale.length} stale fixture(s)`,
+      accounts.every((row) => !row.handle.startsWith("harness-") || row.handle.endsWith(RUN)),
+    );
+
+    const selfDelete = await refusal(() => api.adminDeleteAccount(self!.id));
+    check("an operator cannot delete themselves", selfDelete?.status === 400, selfDelete?.message);
+
+    const otherOperators = accounts.filter((row) => row.isOperator && row.id !== self!.id);
+    if (otherOperators.length === 0) {
+      const lastFlag = await refusal(() => api.adminSetOperator(self!.id, false));
+      check(
+        "the only operator cannot remove their own flag",
+        lastFlag?.status === 400,
+        lastFlag?.message,
+      );
+    } else {
+      // Somebody promoted a non-harness account in this local database; the
+      // guard legitimately does not fire, so asserting it would test the
+      // database's mood rather than the code.
+      console.log(
+        `  (skipping the last-operator guard: ${otherOperators.length} other operator(s) exist locally)`,
+      );
+    }
+
+    await api.adminSetOperator(flowsRow!.id, true);
+    let listed = (await api.adminAccounts()).accounts.find((row) => row.id === flowsRow!.id);
+    check("operator can be granted", listed?.isOperator === true);
+    await api.adminSetOperator(flowsRow!.id, false);
+    listed = (await api.adminAccounts()).accounts.find((row) => row.id === flowsRow!.id);
+    check("and revoked", listed?.isOperator === false);
+
+    await api.adminResetTotp(flowsRow!.id);
+    listed = (await api.adminAccounts()).accounts.find((row) => row.id === flowsRow!.id);
+    check("reset-totp clears the flag in the listing", listed?.totp.confirmed === false);
+
+    // ...which finishes the recovery proof: one factor now suffices, the
+    // recovered password works, and it opens the ORIGINAL grant key — through
+    // signup, change-password, recovery, set-password and a TOTP reset.
+    asBrowser(new BrowserSession());
+    const oneFactor = await signInFlow(flowsHandle, finalPassword);
+    check("after reset-totp the fixture signs in with one factor", oneFactor.status === "signed-in");
+
+    const slot = await api.keySlot();
+    check("the grant public key never moved", slot.grantPubkey === grantPubkeyAtSignup);
+    const { kdf } = await api.challenge(flowsHandle);
+    const reDerived = await deriveFromPassword(finalPassword, {
+      salt: fromBase64Url(kdf.salt),
+      iterations: kdf.iterations,
+    });
+    const reopened = await unwrapSlot(
+      fromBase64Url(slot.wrappedGrantKey),
+      reDerived.wrappingKey,
+      fromBase64Url(slot.grantPubkey),
+    );
+    const message = new TextEncoder().encode("same key, four credentials later");
+    const pub = await crypto.subtle.importKey(
+      "raw",
+      fromBase64Url(slot.grantPubkey),
+      { name: "ECDSA", namedCurve: "P-256" },
+      false,
+      ["verify"],
+    );
+    check(
+      "the recovered password opens the original grant key",
+      await crypto.subtle.verify(
+        { name: "ECDSA", hash: "SHA-256" },
+        pub,
+        await signWithGrantKey(reopened, message),
+        message,
+      ),
+    );
+
+    // Site config, the remaining untested pair of routes. Reads go through a
+    // raw Client: the app deliberately has no fetching reader — the browser
+    // gets this injected as `window.__VESSEL_SITE__` — so there is no
+    // `api.readSiteConfig` to import, and that absence is correct.
+    asBrowser(operatorSession);
+    const reader = new Client();
+    const original = (await reader.call("/api/site-config")).config ?? null;
+
+    const junkOnly = await refusal(() => api.publishSiteConfig({ nonsense: true }));
+    check("a config with no known keys is refused", junkOnly?.status === 400, junkOnly?.message);
+
+    const published = await api.publishSiteConfig({ pal: 7, layout: 2, junk: "stripped" });
+    check("the operator can publish", published.status === "published");
+    check(
+      "unknown keys are stripped before storage",
+      !("junk" in (published.config as Record<string, unknown>)),
+    );
+
+    const readBack = (await reader.call("/api/site-config")).config as Record<string, unknown>;
+    check("the published config reads back", readBack?.pal === 7 && readBack?.layout === 2);
+
+    const html = await (await fetch(`${BASE}/`)).text();
+    check(
+      "the app shell carries the injected config",
+      html.includes("window.__VESSEL_SITE__") && html.includes('"pal":7'),
+      "no __VESSEL_SITE__ injection in served HTML",
+    );
+
+    // Leave the local database's published look the way this run found it.
+    if (original) {
+      await api.publishSiteConfig(original);
+    } else {
+      await d1("DELETE FROM site_config WHERE id = 1");
+    }
   }
 
   // Rate limiting ---------------------------------------------------------------

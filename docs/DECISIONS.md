@@ -13,6 +13,53 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-13 — The harness now drives the real browser modules
+
+`TODO.md` item 1, closed. The suite grew from 89 to 131 checks, and the growth is in kind, not
+just count.
+
+### `flows.ts` and `api.ts` are imported, not re-implemented
+
+The harness's whole argument is "it fails when browser and Worker disagree about a byte" — and it
+was re-implementing every flow with raw `fetch`, which reopens exactly that gap. It now imports
+`signUp`, `signIn`, `signInWithRecoveryCode`, `changePassword` and `openGrantKey` from
+`src/auth/flows.ts` and the `api` object itself, driven through a **fetch shim** that maps
+relative URLs onto the local Worker and plays cookie jar. The shim intercepts *only* relative
+URLs, so the raw `Client` (absolute URLs) keeps its own cookie isolation; `asBrowser()` swaps
+jars between scenarios.
+
+### Recovery-with-2FA finally has coverage
+
+The stranded-wrapping-key bug lived in `flows.ts` on exactly one path: an account **with** TOTP,
+where the key slot arrives only after the second factor, by which time an earlier version had let
+the wrapping key go out of scope. Both existing recovery fixtures had no TOTP, so that regression
+had zero coverage. There is now a fixture that goes signup → change-password → TOTP enrolment
+(through `api.totpEnrol`/`api.totpConfirm`) → recovery redemption → `completeSecondFactor` →
+`setPassword`, asserting `canSetPassword()` flips true only after the second factor and that the
+original grant key survives the whole chain.
+
+### The untested endpoints are tested
+
+Change-password, `GET`/`POST /api/site-config` (including HTML injection of
+`window.__VESSEL_SITE__` and key-stripping), and all four `/api/admin/*` routes, including both
+guards. The operator fixture is made by flipping `is_operator` in local D1 — `docs/BREAK-GLASS.md`
+step 1, locally — because no API can do it, by design. Each run also deletes previous runs'
+`harness-*` fixtures through the delete route, so local D1 stops accumulating a fixture set per
+run (35 had built up) and the last-operator guard stays deterministic. The guard check skips,
+loudly, if a non-`harness-` operator exists locally; `signintest` — pre-`/admin` dev debris — was
+holding an operator flag and was demoted locally for exactly that reason.
+
+### Two things learned the hard way
+
+- **`execSync` kills the harness's own connections.** Shelling out to `wrangler d1 execute`
+  synchronously blocks the event loop for seconds; undici cannot service the dev server closing
+  its idle keep-alive socket, and the next fetch dies with "could not reach the server" while the
+  Worker is fine. The `d1()` helper is async and its comment says why.
+- **`api.totpEnrol`/`api.totpConfirm` hardcoded empty-ish bodies** and could never have worked —
+  the Worker demands the password's `authSecret` on both (a credential change demands a
+  credential). They now pass a caller-supplied body through, which is the transport half of
+  `TODO.md` item 4; the enrolment screen still owes the derivation.
+
 ## 2026-08-13 — CSRF, asset headers, and the recovery dead end
 
 `561e067`, closing three items the review had left open.

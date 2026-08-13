@@ -10,39 +10,28 @@ Last updated 2026-08-13.
 
 ## Do this first
 
-### 1. Close the harness's three coverage gaps
+### 1. ~~Close the harness's three coverage gaps~~ — done 2026-08-13
+
+All three closed; `docs/DECISIONS.md` has the full note. The suite now imports
+`flows.ts` and `api.ts` through a fetch shim, covers recovery-with-2FA (the
+stranded-wrapping-key path), change-password, site config, and all four admin
+routes with their guards. The number stays so cross-references hold.
 
 ```sh
 npm run dev:worker      # wait for "Ready on http://127.0.0.1:8787"
 npm run test:auth       # in a second terminal
 ```
 
-**The suite passes** — the set-password section written on 2026-08-12 was
-finally executed on 2026-08-13 and is green. The harness prints its own total;
-do not hardcode a count anywhere else. What it does *not* cover is the problem:
-
-- **It never imports `flows.ts` or `api.ts`.** It drives `derive`, `encoding`,
-  `grantKey` and `recoveryCodes` for real and re-implements the rest with raw
-  `fetch`. The whole value of the harness is that it fails when browser and
-  Worker disagree about a byte, and re-implementation reopens exactly that gap.
-- **Recovery-with-2FA has zero coverage**, and that is the path that carried the
-  stranded-wrapping-key bug — which lives in `flows.ts`. Both recovery fixtures
-  have no TOTP enrolled. It can silently regress into a permanently sealed grant
-  key. Add a fixture *with* TOTP, driven through `signInWithRecoveryCode` +
-  `completeSecondFactor`.
-- **Untested endpoints**: `POST /api/account/password` (change-password),
-  `GET`/`POST /api/site-config`, and all four `/api/admin/*` routes —
-  **including** the "cannot remove your own last operator flag" and "cannot
-  delete yourself" guards. An admin section needs an operator fixture; flip
-  `is_operator` in local D1 during setup.
-
-Three snags when running it:
+The harness prints its own total; do not hardcode a count anywhere else. Snags
+when running it:
 - If the port is not 8787, the harness will not find the server. Kill stray
   `wrangler dev` processes first — a second instance silently takes 8788.
 - `SQLITE_BUSY` / `workerd failed to start` means two instances are running.
 - A bare `npm run build` leaves `dist/_redirects` in place, which the local
   Worker rejects the same way a deploy would. Run `npm run predeploy` instead,
   or delete the file. See `docs/HANDOFF.md`.
+- The last-operator guard check skips (and says so) if a non-`harness-` account
+  holds an operator flag in local D1. Demote it or accept the skip.
 
 ### 2. Redeem one recovery code on the live site, once, deliberately
 
@@ -71,9 +60,10 @@ explains why no route hands back another account's slot.
 Endpoints and tests exist; there is no UI, so nobody can turn on the second
 factor that sign-in already supports.
 
-**The trap:** `api.totpEnrol()` posts `{}`, but `worker/accounts.ts` calls
-`requirePassword` on it. The screen must derive and send an `authSecret` or every
-call 401s. `totpConfirm` needs one too.
+**The trap, half closed 2026-08-13:** `api.totpEnrol` and `api.totpConfirm` now
+pass a caller-supplied body through (the harness drives them for real), but
+`worker/accounts.ts` calls `requirePassword` on both — the screen must still
+derive and send an `authSecret` with each, or every call 401s.
 
 §4 requires the secret be shown both as a manual string and as an `otpauth://`
 URI — both are already returned. No QR library (no third-party deps), so render

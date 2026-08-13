@@ -294,10 +294,14 @@ The design decisions most likely to be broken by someone who has not read it:
 - `src/auth/` — the browser half: `derive.ts` (PBKDF2 → HKDF split into an auth secret and a
   wrapping key), `grantKey.ts` (the P-256 grant key and its AES-KW slots), `recoveryCodes.ts`,
   `api.ts`, `flows.ts`, `SessionContext.tsx`.
-- `scripts/auth-e2e.ts` — the harness. It imports the real `src/auth` modules rather than
-  reimplementing them, so it fails if browser and Worker ever disagree about a byte, and it computes
-  TOTP codes independently from RFC 6238 rather than calling `worker/totp.ts`. Its last section
-  exercises the `RateLimiter`'s backoff path.
+- `scripts/auth-e2e.ts` — the harness. It imports the real `src/auth` modules — including
+  `flows.ts` and `api.ts`, driven through a fetch shim that intercepts **only relative URLs**, so
+  the raw `Client`'s cookie isolation survives — so it fails if browser and Worker ever disagree
+  about a byte, and it computes TOTP codes independently from RFC 6238 rather than calling
+  `worker/totp.ts`. Its `d1()` helper shells out to wrangler **asynchronously on purpose**: a
+  blocking `execSync` stops undici noticing closed keep-alive sockets and the next fetch dies with
+  a phantom "could not reach the server". Its last section exercises the `RateLimiter`'s backoff
+  path.
 
 ### Things that are decisions, and are easy to "fix" back into bugs
 

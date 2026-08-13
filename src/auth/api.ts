@@ -130,6 +130,9 @@ export const api = {
   setPassword: (body: unknown) => post<{ status: string }>("/api/account/set-password", body),
   keySlot: () =>
     call<{ wrappedGrantKey: string; grantPubkey: string; alg: string }>("/api/account/slot"),
-  totpEnrol: () => post<{ secret: string; uri: string }>("/api/totp/enrol", {}),
-  totpConfirm: (code: string) => post<{ backupCodes: string[] }>("/api/totp/confirm", { code }),
+  // Both TOTP calls demand the password (`authSecret` in the body): adding a
+  // credential is a credential change, and the Worker's `requirePassword` 401s
+  // without it. The enrolment screen derives it and passes the whole body here.
+  totpEnrol: (body: unknown) => post<{ secret: string; uri: string }>("/api/totp/enrol", body),
+  totpConfirm: (body: unknown) => post<{ backupCodes: string[] }>("/api/totp/confirm", body),
 };
