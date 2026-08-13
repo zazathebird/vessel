@@ -50,6 +50,10 @@ Working preferences he stated mid-session, which persist:
 | D | **S-3 — the password check counts itself.** Limiting moved *inside* `assertPassword`, closing the unthrottled oracle in `totpEnrol` / `totpConfirm` | `worker/accounts.ts` | Typecheck + suite |
 | E | **S-4 — the set-password ticket is genuinely single-use.** Its subject now carries the redeemed recovery credential, and the endpoint requires that credential's key slot to still exist. The batch deletes it, so a replay is refused | `worker/accounts.ts` | **The suite already had a test for this and it was failing.** It now passes |
 | F | **C-1 (half) — `predeploy` runs `npm run typecheck`**, so the Worker can no longer deploy with a type error. `wrangler deploy` bundles with esbuild, which strips types without checking them | `package.json` | `npm run predeploy` |
+| G | **S-5 — the Origin allowlist.** A present-and-foreign `Origin` refuses any state-changing request. A *missing* Origin is allowed deliberately — same-origin GETs and non-browser clients omit it, and the harness is one | `worker/index.ts` | Tested four ways: absent → 400, matching → 400, foreign → **403**, foreign-on-GET → 200 |
+| H | **S-7 — `/assets/*` carries the security headers.** New `public/_headers`. Unlike `_redirects` it is valid for both hosts, so `predeploy` need not strip it | `public/_headers` | Wrangler logs "Parsed 1 valid header rule"; a live asset fetch returns `nosniff`, HSTS and immutable caching |
+| I | **S-10 — the handle-rule message** no longer promises `.` and `_`, which the DNS-safe tightening removed | `worker/accounts.ts` | Typecheck |
+| J | **F-14 — the recovery second factor no longer dead-ends.** A non-`signed-in` result was silently ignored, and an expired ticket left the user typing correct codes into a wall | `src/components/SignIn.tsx` | Typecheck + build |
 
 **`npm run test:auth`: 89 checks passed.** `npm run typecheck` and `npm run build` both
 pass. **Committed locally as `1729dfd`. Nothing has been pushed and nothing has been
@@ -62,9 +66,7 @@ this review found independently.
 ### Also done — every frontend finding in §4, plus C-3, C-4 and C-6
 
 All seventeen landed, typecheck and build pass, and they are in the same commit. F-1
-through F-13 are marked FIXED in §4 below. **F-14 was never dispatched and is still
-open** — it is small, and it matters on the one path where the recovery code is already
-spent. Four further notes from that work, all still open:
+through F-13 are marked FIXED in §4 below. F-14 was missed by that agent and has since been fixed separately. Four further notes from that work, all still open:
 
 1. **`interaction.css:126` has a stale comment** — "Nothing in the site can be disabled
    yet, because nothing is asynchronous." Untrue now: `.v-btn:disabled`, the publish
@@ -93,15 +95,17 @@ specification for doing it.
 
 ### Then, in order
 
-1. **Verify whatever the two agents left behind** (above).
-2. **S-5 — the Origin allowlist.** The largest remaining security item, and it must land
-   before per-account subdomains are ever considered.
-3. **S-7 — `dist/_headers` for `/assets/*`**, so hashed JS and CSS carry `nosniff`.
-4. **S-10 — the handle-rule error message** still describes the old pattern. One line.
-5. **C-2 — the harness gaps**: recovery-with-2FA driven through `flows.ts`,
-   change-password, and the four admin routes including both lockout guards.
-6. **Ask the client the questions in §9.** Two of them block work.
-7. Then §7, the improvements list.
+Every security finding from the review is now fixed. What remains:
+
+1. **Verify the docs restructure** if it landed (above).
+2. **C-2 — the harness gaps**, the largest remaining item: recovery-with-2FA driven
+   through `flows.ts` rather than raw `fetch`, change-password, and the four admin
+   routes including both lockout guards. The harness proved its worth this session by
+   catching S-4 independently; the gaps are where the next S-4 hides.
+3. **S-6, S-8, S-9** — the three remaining INFO-grade security items. S-8 in particular
+   must be closed before phase 3, not after.
+4. **Ask the client the questions in §8.** Two of them block work.
+5. Then §7, the improvements list.
 
 Run `npm run test:auth` after each batch. **See §2 first — starting the worker has a
 trap, and a stale instance will make a fix look like it did nothing.**
@@ -292,7 +296,7 @@ session. But the property the comment asserts is not enforced.
 or add a single-use marker. Also worth noting `setPassword` has **no rate limit at
 all** — it relies solely on this ticket.
 
-### S-5 — LOW/MEDIUM. CSRF rests on `SameSite=Lax` alone, with no defence in depth
+### S-5 — LOW/MEDIUM — **FIXED.** CSRF rests on `SameSite=Lax` alone, with no defence in depth
 
 `worker/session.ts:196-215`; no Origin check anywhere in `worker/`.
 
@@ -328,7 +332,7 @@ before the `text.length > MAX_BODY_BYTES` check, and `.length` counts UTF-16 cod
 not bytes. The existing comment justifies not trusting `content-length`, which is fair —
 but the byte/code-unit mismatch is real, if cosmetic while payloads are ASCII base64url.
 
-### S-7 — LOW. `/assets/*` responses carry none of the security headers
+### S-7 — LOW — **FIXED.** `/assets/*` responses carry none of the security headers
 
 `wrangler.toml:52` + `worker/index.ts:98-107`. `run_worker_first = ["/*", "!/assets/*"]`
 means hashed bundles are served by the asset server and never pass `harden()` — no
@@ -357,7 +361,7 @@ password, bounded by the 30-minute TTL and the 12-hour ceiling. Consistent with 
 no-session-table decision, but it should be written down as residual exposure rather
 than assumed.
 
-### S-10 — INFO. Stale user-facing handle rule message
+### S-10 — INFO — **FIXED.** Stale user-facing handle rule message
 
 `worker/accounts.ts:167-171` says handles may contain "`. _ -` after the first", but
 `HANDLE_PATTERN` at line 60 is DNS-safe and permits only `[a-z0-9-]` (commit `e65cbe5`).
@@ -568,7 +572,7 @@ Routing pushes real paths (`src/data/pageIds.ts`) but the title is always "vesse
 (`index.html:6`). History entries, tabs and screen-reader page announcements are
 indistinguishable. One line in the `config.page` effect fixes it.
 
-### F-14 — INFO — **STILL OPEN.** The recovery-path second factor has no expiry escape
+### F-14 — INFO — **FIXED.** The recovery-path second factor has no expiry escape
 
 `SignIn.tsx:302-320` lacks the ticket-timeout reset that `onSecondFactor` (:254-257)
 has, and if `completeSecondFactor` ever resolves with a non-`signed-in` status the

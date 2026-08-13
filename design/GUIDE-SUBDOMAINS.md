@@ -135,8 +135,8 @@ const HANDLE_PATTERN = /^[a-z0-9][a-z0-9-]{2,23}$/i;
 further tightening would now be a breaking migration rather than a one-line change. The tightening
 that matters was made in time; nothing else about handles is free any more.
 
-One loose end: the user-facing error message in `expectHandle` still describes the *old* pattern —
-"letters, numbers, and `. _ -` after the first". `TODO.md` #17.
+The user-facing error message in `expectHandle` went on describing the *old* pattern for a day and
+was corrected on 2026-08-13 (`561e067`). If the pattern moves again, that message moves with it.
 
 **2. It broadcasts every handle, and the spec deliberately hides them.**
 
@@ -170,13 +170,16 @@ current host-only cookie is a security property, not an oversight.
 The right shape is subdomains that are **public and signed-out** — a read-only profile page, no
 session, no cookie. Keep all authenticated surface on the apex.
 
-**Host-only is not enough on its own, and this is the part that has to land first.** `SameSite` is
-scoped to the *site*, not the origin, so an attacker-controlled or XSS'd `evil.mcclevarty.ca` is
-same-site with the apex and **its cross-origin POSTs would carry the session cookie**. CSRF on this
-site currently rests on `SameSite=Lax` alone — there is no `Origin` check anywhere in the Worker —
-so shipping any wildcard subdomain silently converts that into a live CSRF surface against
-`/api/admin/*` and `/api/account/*`. **Close `TODO.md` #14 before the wildcard route exists**, not
-after.
+**Host-only is not enough on its own, and the reason is worth keeping even though it is now
+handled.** `SameSite` is scoped to the *site*, not the origin, so an attacker-controlled or XSS'd
+`evil.mcclevarty.ca` is same-site with the apex and **its cross-origin POSTs would carry the
+session cookie**. CSRF used to rest on `SameSite=Lax` alone, so a wildcard subdomain would have
+silently converted that into a live CSRF surface against `/api/admin/*` and `/api/account/*`.
+
+**Closed on 2026-08-13** (`561e067`): `crossOrigin` in `worker/index.ts` refuses any state-changing
+request whose `Origin` is present and is not the Worker's own host. This analysis is what motivated
+it — see the function's own comment, which cites this file. **Do not remove that check while
+subdomains are on the table.**
 
 **4. Reserved names need a second, larger list.**
 
@@ -199,13 +202,12 @@ jobs in the zone:
 but because of ordering. `CLAUDE.md` is explicit that phase 1 has one non-negotiable internal order,
 authentication before interface, and that phases must not be collapsed. Subdomains are interface.
 
-**The one decision that had to be made while it was free has been made.** `HANDLE_PATTERN` is
-DNS-safe as of `e65cbe5`, so the option stays open and costs nothing to keep open. Three things
-remain outstanding before anything could ship, in this order:
+**The two things that had to be true before this was safe are now true.** `HANDLE_PATTERN` is
+DNS-safe as of `e65cbe5`, so the option stays open and costs nothing to keep open, and the CSRF gap
+that a same-site subdomain would have opened is closed as of `561e067`. Two things remain:
 
-1. **An `Origin` check on mutating `/api/*`** (`TODO.md` #14). Non-negotiable — see *3. Cookies*.
-2. **`mail` and the other DNS-significant names in `RESERVED_HANDLES`.**
-3. **A decision on enumeration** (*2* above), taken knowingly rather than discovered.
+1. **`mail` and the other DNS-significant names in `RESERVED_HANDLES`.** Still not done.
+2. **A decision on enumeration** (*2* above), taken knowingly rather than discovered.
 
 If you want to experiment while waiting, the cheapest satisfying thing is Part A — add a tenth page
 and watch it render through thirteen layouts, twenty-four palettes and five ornaments. That

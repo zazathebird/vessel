@@ -185,8 +185,7 @@ ones most likely to be "fixed" by accident:
   the whole readout coming back
 - **Routing**: the prototype swaps pages in place with no URL change. That is a prototype
   limitation, not a design decision — **twelve** real URLs are wired in `src/data/pageIds.ts`: the
-  nine content pages plus `/signup`, `/signin` and `/admin`. Several code comments still say
-  "nine"
+  spec's nine content pages plus `/signup`, `/signin` and `/admin`
 - **Share codes are base-36 and `FX` order is a wire format.** Effect index 12 is `C`, not `12`;
   `0-0-12-0-7-0` parses `12` as 38, falls through `FX[38] ?? FX[0]` and applies Vessels, which
   looks exactly like a failed deploy. Append to `FX`, never insert
@@ -365,17 +364,23 @@ the story and the rollback.
 
 Rules, each of which cost something to learn:
 
-- **Deploy with `npm run deploy`, never bare `wrangler deploy`.** `predeploy` strips
-  `dist/_redirects`, which Workers static assets otherwise parses as *configuration* and rejects as
-  an infinite loop. The deploy fails outright at the API call.
+- **Deploy with `npm run deploy`, never bare `wrangler deploy`.** `predeploy` typechecks *and*
+  strips `dist/_redirects`, which Workers static assets otherwise parses as *configuration* and
+  rejects as an infinite loop; the deploy fails outright at the API call. The typecheck is not
+  redundant with `npm run build`: `wrangler deploy` bundles `worker/` with esbuild, which strips
+  types without checking them, so a Worker type error could otherwise reach production.
 - **`public/_redirects` stays** until the Pages project is deliberately retired. Pages still
   auto-deploys from `main` and is the rollback. `.assetsignore` does not help — validation happens
   before the upload list is filtered.
+- **`public/_headers` stays and is *not* stripped.** Unlike `_redirects` it is valid for both hosts,
+  and it is the only thing giving `/assets/*` its `nosniff` — see the next bullet. Do not
+  generalise "strip the config files at deploy" from `_redirects` to this one.
 - **The Worker's SPA fallback is `not_found_handling`**, not `_redirects`.
 - **`run_worker_first = ["/*", "!/assets/*"]`** is what lets the Worker inline the published site
   config into HTML. By default a request matching a real file never invokes the Worker, so `/`
   (which *is* index.html) silently got no injection while `/contact` did. The negation keeps the
-  hashed bundles on the fast path — and means `/assets/*` responses never pass through `harden()`.
+  hashed bundles on the fast path — and means `/assets/*` responses never pass through `harden()`,
+  which is why their headers come from `public/_headers` instead.
 - **`workers.dev` is disabled**, since `workers_dev` defaults to false once a route exists. Wanted:
   it closes the signup endpoint that was publicly reachable before cutover. Set `workers_dev = true`
   if you need a non-production URL back, knowing that reopens it.
@@ -392,6 +397,14 @@ HTTPS is forced in `worker/index.ts` and `Strict-Transport-Security`, `x-content
 concatenation **and** compared against the request before being sent, so the worst case is "no
 redirect happens" rather than an infinite loop. Keep that guard. Loopback is exempt or
 `wrangler dev` and `npm run test:auth` break.
+
+**A state-changing request whose `Origin` is present and is not ours is refused** (`crossOrigin` in
+`worker/index.ts`). This is defence in depth — `SameSite=Lax` is what actually stops a cross-site
+POST — covering the two places Lax does not reach: Chromium's two-minute grace on a freshly set
+cookie, and same-site subdomains, which `design/GUIDE-SUBDOMAINS.md` would create. **A missing
+`Origin` is allowed deliberately**: same-origin GETs and non-browser clients omit it, and
+`scripts/auth-e2e.ts` is one of those. Do not tighten that to "require an Origin" without fixing
+the harness first.
 
 **There is deliberately no CSP.** The app shell has the published site config *inlined* as a script
 (`worker/site-config.ts`), so a `script-src` without a nonce plumbed through that injection would

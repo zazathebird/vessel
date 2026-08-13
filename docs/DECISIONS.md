@@ -13,11 +13,60 @@ file records what happened to the codebase.
 
 ---
 
-## 2026-08-13 — Four security fixes in the Worker
+## 2026-08-13 — CSRF, asset headers, and the recovery dead end
 
-Found by two independent adversarial passes over `worker/` and `src/auth/`. No critical or high
-finding: the cryptographic design, authorisation gating and injection handling held up. These four
-were real and are fixed.
+`561e067`, closing three items the review had left open.
+
+### An `Origin` that is present and wrong now refuses a state-changing request
+
+**Defence in depth, not the defence.** `SameSite=Lax` on the session cookie is still what stops a
+cross-site POST — the cookie is simply not sent, so the handler 401s. `crossOrigin` in
+`worker/index.ts` covers the two places Lax does not reach:
+
+1. **The Lax+POST grace window.** Chromium sends a freshly set cookie on a top-level cross-site
+   POST for its first two minutes — the two minutes right after signing in.
+2. **Same-site subdomains.** SameSite is *site*, not *origin*. If per-account subdomains
+   (`design/GUIDE-SUBDOMAINS.md`) are ever built, `anything.mcclevarty.ca` becomes same-site with
+   the apex and its POSTs carry the cookie. This check is what stops that silently becoming account
+   takeover through `/api/admin/*`.
+
+**A missing `Origin` is allowed**, deliberately: same-origin GETs and non-browser clients omit it,
+and `scripts/auth-e2e.ts` is one of those. Refusing only a *present and wrong* origin is the
+standard shape and costs nothing. The comparison is against the request's own host rather than a
+literal, so it stays correct on loopback and on `workers.dev` without a list to maintain.
+
+Verified four ways: absent, matching, foreign, and foreign-on-GET.
+
+### `public/_headers` gives `/assets/*` the headers the Worker never applies
+
+`run_worker_first = ["/*", "!/assets/*"]` keeps the hashed bundles on the asset server's fast path,
+deliberately — they are immutable, never HTML, and there is nothing to inject into them. The cost
+was that they also skipped `harden()`, so `nosniff` was absent from exactly the JavaScript and CSS
+where it matters most.
+
+**Unlike `_redirects`, this file is valid for both hosts and needs no stripping at deploy.** Pages
+applies it too, and Pages is still the rollback. It carries `immutable` caching, which is safe only
+because the filenames contain a content hash: a changed file is a changed URL.
+
+### The recovery second factor no longer dead-ends
+
+A non-`signed-in` result was silently ignored and an expired ticket left the user typing correct
+codes into a wall — on the one path where the code that got them there is **already spent**, so
+escaping costs another of ten.
+
+### The handle-rule error message matches the pattern again
+
+It promised `.` and `_`, which the DNS-safe tightening removed, so the rule the person was told and
+the rule they were held to disagreed and the refusal read as a bug in the site. It now says
+"letters, numbers, and hyphens after the first".
+
+---
+
+## 2026-08-13 — Five auth weaknesses closed, and a drag that ate recovery codes
+
+`1729dfd`. Found by two independent adversarial passes over `worker/` and `src/auth/`, plus a
+frontend pass. No critical or high finding: the cryptographic design, authorisation gating and
+injection handling held up.
 
 ### `challenge`'s decoy iteration count is now the real constant
 
@@ -68,6 +117,16 @@ escalation from session access to grant authority — the thing §5 exists to pr
 
 Putting the counting inside the check means a future caller cannot forget it.
 
+### The set-password ticket is single-use in fact, not only in comment
+
+`worker/session.ts` called the ticket "a one-shot capability for the next request" and
+`src/auth/flows.ts` cleared it — **client-side only**. Nothing on the server enforced it, so the
+same ticket set the password repeatedly for its full fifteen minutes.
+
+The ticket's subject now carries the redeemed recovery credential, and `setPassword` requires that
+credential's key slot to still exist; the write batch deletes it. Presenting the ticket a second
+time finds no slot and is refused. The harness already tested this property and had been failing.
+
 ### `wrangler dev` needed `upstream_protocol = "https"`
 
 The `routes` entry makes `wrangler dev` simulate the request as arriving at
@@ -77,6 +136,37 @@ local request to itself. `npm run test:auth` could not run at all.
 
 `[dev] upstream_protocol = "https"` in `wrangler.toml` makes the simulated request https, which is
 also what the Worker sees in production after edge TLS termination.
+
+### Frontend, in the same pass
+
+- **A leftward drag no longer navigates while the user is selecting text.** The pointer routes had
+  no equivalent of the `isEditable` guard the keyboard routes got, so any 260px horizontal drag
+  fired — including ordinary text selection. On `/signup`'s recovery-codes screen, which renders
+  **once** because the server keeps only hashes, selecting the codes right-to-left unmounted the
+  screen and lost all ten. The same guard is on the operator's drag-right route.
+- **`.v-code` was declared for two different components** and the later import won, so recovery
+  codes rendered at the share row's 12px accent size rather than the size chosen to survive being
+  photographed.
+- **`go()` no longer runs effects inside a `setState` updater.** React requires updaters to be
+  pure; under StrictMode they are double-invoked, so calm navigation ran `commit` twice per click
+  and the iris A/B alternation never alternated in dev.
+- The Konami code no longer pages the site four times mid-entry; `Ctrl+K` is only intercepted when
+  the door will actually open; `.v-btn`, `.v-shuffle` and `.v-panel-close` got the interaction
+  states `interaction.css` exists to provide; the 404 mutes `--a3` along with the other accents; a
+  denied clipboard write no longer reports success.
+- **A `data:` favicon.** Without one, `/favicon.ico` fell through `run_worker_first` to the Worker
+  and was answered with the app shell — a Worker invocation and a D1-cache hit per visitor, for
+  nothing. `href="data:,"` keeps the no-assets rule intact.
+- **`unlocked` is a session-only field.** `loadConfig` sources the published config, which does not
+  carry it, so it is false after every reload. Nothing is gated on it — the door and the panel check
+  `is_operator`. The comments claiming "sticky once true" and "per-browser" were false from the
+  published-config migration onward and are corrected.
+
+### Tooling
+
+**`predeploy` now typechecks.** `wrangler deploy` bundles `worker/index.ts` with esbuild, which
+strips types without checking them, so a type error in `worker/` could reach production while
+`npm run build` — which only compiles the app tsconfig — passed.
 
 ---
 

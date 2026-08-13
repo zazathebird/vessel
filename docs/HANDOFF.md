@@ -71,8 +71,18 @@ curl -s -o /dev/null -w "%{http_code}\n" https://mcclevarty.ca/contact
 Pages has no `/api` and could not answer it at all.
 
 **Step 3 proves the headers on page routes only.** `run_worker_first` excludes
-`/assets/*`, so the hashed bundles never pass through `harden()` and carry none
-of them. That is `TODO.md` #16, not a deploy failure.
+`/assets/*`, so the hashed bundles never pass through `harden()`. They get their
+headers from `public/_headers` instead, which is a separate mechanism worth
+checking separately:
+
+```sh
+curl -s -i https://mcclevarty.ca/assets/$(curl -s https://mcclevarty.ca/ \
+  | grep -o 'index-[A-Za-z0-9_-]*\.js' | head -1) | grep -i 'x-content-type-options'
+```
+
+**`public/_headers` must not be stripped at deploy.** `_redirects` is — it is
+Pages-specific and breaks the Worker — but `_headers` is valid for both hosts
+and is the only thing giving the bundles `nosniff`.
 
 **Give a fresh deploy a few seconds** before testing routes. `/contact` 404s
 briefly while the asset manifest propagates, then settles to 200.
