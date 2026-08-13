@@ -4,13 +4,14 @@ import { useConfig } from "../config/ConfigContext";
 import { saveCalmPreference } from "../config/persistence";
 import { useSession } from "../auth/SessionContext";
 import { NAV, OPERATOR_NAV, PATHS } from "../data/pageIds";
+import { openCommandPalette } from "./CommandPalette";
 
 /**
  * Header: logo (with the five-tap unlock route), nav pills, calm toggle, and
  * the siteconfig button (visible only once the operator door has ever opened).
  */
 export function Header() {
-  const { config, go, update, say, togglePanel, openDoor, panelOpen } = useConfig();
+  const { band, config, go, update, say, togglePanel, openDoor, panelOpen } = useConfig();
   // Operator tabs (404 / Account / Admin / Config) appear only once the session
   // probe answers operator. Like everything session-gated they start hidden and
   // arrive — never flash and vanish (SessionContext's rule).
@@ -97,6 +98,16 @@ export function Header() {
         </nav>
 
         <div className="v-header-right">
+          {band !== "desk" && (
+            // Mobile parity (client request, 2026-08-13): the palette's only
+            // route in is typing `cmd`, which needs a hardware keyboard. Bands
+            // that usually have none get a chip. Desk keeps the typed idiom —
+            // a standing button everywhere would advertise what SPEC-ACCOUNTS
+            // §10 shipped as a shortcut.
+            <button type="button" className="chip" onClick={openCommandPalette}>
+              cmd
+            </button>
+          )}
           <button
             type="button"
             className="chip"

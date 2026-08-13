@@ -82,6 +82,22 @@ Also closed from the continuation file: the three raw-fetch signup fixtures
 now send `slotAlg`, so signup recording the algorithm is proven on the raw
 path too. Harness after all of the above: **178/178**.
 
+**Mobile parity (same session, client request: "add all the features of the
+desktop site to the mobile site").** The phone band's two real feature gaps
+closed; everything else phones "lack" is deliberate adaptation (layout
+collapse) or input modality (hover, keyboard idioms) and was left alone:
+
+- **The ornament renders on phones** — it was hidden three ways (band token
+  `0px`, `display: none`, a component `null`), which also hid the duels and
+  the five-tap sign-in reveal there. Phone `valveSize` is `min(44vw, 190px)`;
+  only Stack can show the slot on phones (console/sheet hide it by layout),
+  where the column hero puts it above the title.
+- **The command palette gets a touch route in**: a `cmd` chip in the header on
+  non-desk bands, raising an event the palette listens for. Desk keeps the
+  typed idiom — a standing button everywhere would advertise what §10 shipped
+  as a shortcut. The door needed nothing: five taps on the logo and the
+  footer `·` are already taps, and both drags are PointerEvents.
+
 ---
 
 ## 2026-08-13 — Second review round: 14 findings fixed, guards move into the writes

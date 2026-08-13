@@ -508,7 +508,9 @@
   animation: none;
 }
 
-.band-phone .v-ornament,
+/* The phone band is deliberately absent here since the mobile-parity pass
+   (2026-08-13): phones render the ornament at the band token's size. Layouts
+   with no room for the slot still hide it everywhere. */
 .layout-sidescroll .v-ornament,
 .layout-terminal .v-ornament,
 .layout-ledger .v-ornament,

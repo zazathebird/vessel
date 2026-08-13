@@ -263,12 +263,12 @@ Found while building; none blocking. Full reasoning in `CLAUDE.md`.
    route, `SPEC-ACCOUNTS.md` §10 makes it the command palette. Both cannot be true.
 4. **Signup discloses handle availability** (409) while `challenge` goes to real
    trouble to hide it. Defensible, but the two should not disagree.
-5. **The findable sign-in affordance does not exist on phones** (review,
-   2026-08-13). The ornament renders `null` on the phone band (and under
-   `ornament: none` and the layouts that hide the slot), so the five-tap
-   reveal cannot be found there; the remaining account routes need a hardware
-   keyboard or a 260px leftward drag that fights touch scrolling. Whether a
-   phone visitor needs a findable route is a product call, not a bug.
+5. ~~**The findable sign-in affordance does not exist on phones**~~ — answered
+   same day: the client asked for full mobile parity. The phone band now
+   renders the ornament (five-tap reveal, duels and all; only Stack shows the
+   slot there, by layout), and non-desk bands get a header `cmd` chip since
+   the palette's typed route needs a hardware keyboard. **Unverified by eye
+   on a real phone.**
 
 ---
 

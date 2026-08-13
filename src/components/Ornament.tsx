@@ -23,7 +23,7 @@ import { DuelOrnament } from "./DuelOrnament";
 const HIDES_ORNAMENT: LayoutId[] = ["sidescroll", "terminal", "ledger", "console", "sheet"];
 
 export function Ornament({ layout }: { layout: LayoutId }) {
-  const { band, config, go, say, signinShown, revealSignin } = useConfig();
+  const { config, go, say, signinShown, revealSignin } = useConfig();
 
   const taps = useRef(0);
   const tapTimer = useRef<number | undefined>(undefined);
@@ -58,7 +58,11 @@ export function Ornament({ layout }: { layout: LayoutId }) {
     [signinShown, revealSignin, say],
   );
 
-  if (band === "phone" || config.ornament === "none" || HIDES_ORNAMENT.includes(layout)) {
+  // The phone band renders the ornament too (mobile parity, client request
+  // 2026-08-13) — it is the findable sign-in affordance and the duels' home,
+  // and hiding it left phones with neither. The layouts with no room for the
+  // slot still hide it, on every band.
+  if (config.ornament === "none" || HIDES_ORNAMENT.includes(layout)) {
     return null;
   }
 

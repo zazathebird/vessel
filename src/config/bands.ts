@@ -66,7 +66,11 @@ export const BAND_TOKENS: Record<Band, BandTokens> = {
     stageHeight: "calc(100vh - 132px)",
     gridColumns: "1fr",
     gridGap: "14px",
-    valveSize: "0px", // hidden
+    // Sized, not hidden (mobile parity, client request 2026-08-13): the
+    // ornament — and with it the duels and the five-tap sign-in reveal —
+    // renders on phones too. Only Stack can show it there (console and sheet
+    // hide the slot by layout), where it sits centred above the copy.
+    valveSize: "min(44vw, 190px)",
     h1Size: "clamp(34px, 10vw, 52px)",
     footerPadding: "26px 0 8px",
     footerSize: "10px",

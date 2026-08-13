@@ -118,7 +118,9 @@ every visitor at once.
   footer for the rest of the visit (`signinShown` in `ConfigContext`) — the account side's mirror
   of the logo's five taps, and like every account route it navigates rather than unlocking
   anything. Radial's orbit pills share the ornament's slot; their clicks are excluded from the
-  count.
+  count. Since the mobile-parity pass (2026-08-13, client request) the ornament renders on the
+  phone band too — do not re-hide it there — and non-desk bands get a header `cmd` chip because
+  the command palette's only other route in is typing `cmd` on a hardware keyboard.
 - `src/hooks/useOperatorRoutes.ts` — the door's six routes, and arrow-key page cycling over `NAV`.
 
 Both keystroke hooks carry an `isEditable` guard: without it, typing in an account form pages the

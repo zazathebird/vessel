@@ -44,6 +44,19 @@ interface Command {
 /** How much typed buffer to keep while watching for `cmd`. */
 const BUFFER = 8;
 
+/**
+ * The touch route in (mobile parity, client request 2026-08-13): a band
+ * without a hardware keyboard cannot type `cmd` anywhere, so the header shows
+ * a chip on those bands that raises this event. An event rather than lifted
+ * state, deliberately — the palette owns `open`, and the header should not
+ * re-render with it.
+ */
+const OPEN_EVENT = "v-open-palette";
+
+export function openCommandPalette(): void {
+  window.dispatchEvent(new Event(OPEN_EVENT));
+}
+
 export function CommandPalette() {
   const { config, update, go, shuffle, say, togglePanel } = useConfig();
   const { me, isOperator, refresh } = useSession();
@@ -76,8 +89,18 @@ export function CommandPalette() {
         setOpen(true);
       }
     };
+    // The header chip's route in — same modal guard as the typed one; the
+    // other guards are about keystrokes and do not apply to a real button.
+    const onOpenEvent = () => {
+      if (isModalOpen()) return;
+      setOpen(true);
+    };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener(OPEN_EVENT, onOpenEvent);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener(OPEN_EVENT, onOpenEvent);
+    };
   }, []);
 
   // Escape closes from anywhere in the palette, including the input. One
