@@ -3,11 +3,14 @@
  * account pages, whose hero copy was written for this build.
  * Copied verbatim from the prototype's PAGES object (Site v2 - Vessel.dc.html:366).
  *
- * COPY CORRECTION, approved by the client (see CLAUDE.md):
- * home's kicker:"the site" block was stale from v1 — "Twenty-four palettes, eight
- * layouts" / "8 layout archetypes" — but v2 ships thirteen layouts. Corrected here
- * to "Twenty-four palettes, thirteen layouts" / "13 layout archetypes". Every other
- * line in this file, including every other stale-looking count, is verbatim.
+ * COPY CHANGES, both approved by the client (see CLAUDE.md):
+ * 1. home's kicker:"the site" block was corrected from v1's stale counts on
+ *    2026-08-13, then REPLACED the same day at the client's request — the
+ *    option-count list told visitors about switches they cannot flip. It is
+ *    jokes now, written for this build; the two palette *gags* (changelog
+ *    v2.4, 404's "consolation") stay.
+ * 2. Every other line in this file, including every other stale-looking
+ *    count, is verbatim from the prototype.
  */
 
 import type { PageId } from "./pageIds";
@@ -65,7 +68,9 @@ export const PAGES: Record<PageId, Page> = {
     blocks: [
       { kicker: "the pitch", title: "Machines get fixed here", body: "Fifteen years of taking things apart and putting most of them back together. Laptops, desktops, drives that stopped spinning, networks that never worked properly to begin with." },
       { kicker: "the catch", title: "There is no catch", body: "No quote form, no ticket system, no chat widget pretending to be a person. You send an email, you get a reply, usually the same day." },
-      { kicker: "the site", title: "Twenty-four palettes, thirteen layouts", body: "Everything visible here is switchable. It is entirely unnecessary. That is the point.", hasList: true, items: ["24 colour palettes", "13 layout archetypes", "12 background modes", "5 type systems"] },
+      // Rewritten at the client's request (2026-08-13): the option-count list
+      // was a spec sheet for switches visitors cannot flip. Jokes instead.
+      { kicker: "the site", title: "Dangerously over-engineered", body: "Built like a flight simulator, used like a business card. It is entirely unnecessary. That is the point.", hasList: true, items: ["No cookies — there is a tin of real ones at the bench", "No AI, just a guy", "The 404 page is load-bearing", "Fixing computers remains the only useful feature"] },
       { kicker: "the honesty", title: "What this is not", body: "Not an agency. Not a startup. Not looking for funding, partnerships, or your synergy. One person and a bench." },
       { kicker: "the rate", title: "Free diagnosis, always", body: "If it can't be fixed you pay nothing and you get it back in the same number of pieces it arrived in." },
       { kicker: "the door", title: "Some of this is hidden", body: "There are six ways into a panel you will never need. Cosmetic to you, load-bearing to me." },

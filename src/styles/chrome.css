@@ -519,6 +519,12 @@
   display: none;
 }
 
+/* The phone hero is a left-aligned column; the ornament centres itself in it
+   (mobile-parity pass) so a 44vw square doesn't hang off the left edge. */
+.band-phone .v-ornament {
+  margin-inline: auto;
+}
+
 .layout-radial .v-ornament {
   width: min(62vw, 540px);
 }

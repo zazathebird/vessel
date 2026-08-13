@@ -287,20 +287,19 @@ All deliberate. Add to this list rather than silently diverging.
    own photos exist; the spec's *no images* rule still holds for design assets — these fill
    slots that were always destined for photographs.
 
-## Copy correction, approved by the client
+## Copy changes, approved by the client
 
-The home page's third block is stale from v1: it reads "Twenty-four palettes, eight layouts" and
-lists "8 layout archetypes", but v2 ships thirteen. **The client has confirmed the full option set
-stays and the copy gets corrected.** In `src/data/pages.ts`, the `home` block with
-`kicker: "the site"` reads:
+The home page's third block (`kicker: "the site"` in `src/data/pages.ts`) is **no longer the
+prototype's**. It was corrected from v1's stale counts on 2026-08-13, then **replaced outright
+the same day at the client's request**: the option-count list ("24 colour palettes", "13 layout
+archetypes"…) was a spec sheet for switches visitors cannot flip. It is now jokes in the site's
+voice ("Dangerously over-engineered" / "No AI, just a guy"). Do not restore the counts.
 
-- title: `Twenty-four palettes, thirteen layouts`
-- list item 2: `13 layout archetypes`
-
-Body text and the other three list items are unchanged. This is the **only** stale count in the
-copy — the 404's "eight other pages" (nine content pages minus itself), "six ways into a panel"
-(six unlock routes), "24 colour palettes", "12 background modes" and "5 type systems" are all
-correct. Every other line of copy is verbatim-only.
+The two palette *gags* stay: changelog v2.4 ("Added six palettes nobody will pick") and the
+404's "consolation" block ("Have a palette instead") are jokes, not spec sheets, and the client
+kept them. The 404's other counts — "eight other pages", "six ways into a panel", "12 background
+modes", "5 type systems" — remain correct and verbatim. Every line of copy outside the replaced
+home block is verbatim-only.
 
 ## Accounts — the invariants
 
