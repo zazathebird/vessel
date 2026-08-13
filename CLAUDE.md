@@ -8,14 +8,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 design handoff. React 18 + Vite + TypeScript.
 
 ```sh
-npm run dev        # dev server on http://localhost:5173
-npm run build      # typecheck + production build
-npm run typecheck  # types only
+npm run dev          # Vite dev server on http://localhost:5173 — no API
+npm run dev:worker   # full stack: Worker + API + local D1, on http://127.0.0.1:8787
+npm run build        # typecheck + production build
+npm run typecheck    # types only, app and worker
+npm run test:auth    # auth end-to-end suite; needs dev:worker running
+npm run deploy       # build, strip dist/_redirects, publish the Worker
 ```
 
-No test suite yet. No runtime dependencies beyond React — the routing, state, and styling are all
+**Deploy with `npm run deploy`, never bare `wrangler deploy`** — see *Deployment*.
+
+The only tests are `scripts/auth-e2e.ts`, which drives the real `src/auth` modules against a live
+Worker and local D1. There is no test suite for the site itself.
+
+No runtime dependencies beyond React — the routing, state, styling **and authentication** are all
 hand-rolled, deliberately (see *Assets* in the spec: no third-party libraries, no webfonts, no
 images).
+
+`TODO.md` is the ordered backlog. `README.md` orients a newcomer. This file is the working notes:
+binding decisions, deliberate deviations, and traps.
 
 ## The spec is authoritative
 
@@ -186,9 +197,23 @@ other line of copy is still verbatim-only.
 
 ## Where this stands, and what is next
 
-The site is finished and live (`main` → Cloudflare Pages → `mcclevarty.ca`). **Phase 1 of the accounts
-work is now in progress** — the spec was approved by the client on 2026-08-12 and the build has
-started.
+> **`TODO.md` is the ordered backlog.** It is the one place that says what to do next; this file says
+> *why* things are the way they are. If the two disagree, `TODO.md` is newer.
+
+The site is finished and live at `mcclevarty.ca`, served by a **Cloudflare Worker** (see
+*Deployment* below — the Pages migration is done, not pending). **Phase 1 of the accounts work is in
+progress**: the spec was approved by the client on 2026-08-12, authentication works end to end, and
+sign-up, sign-in, recovery codes, change-password, `/admin` and operator-published site config are
+all deployed.
+
+Three things are true as of 2026-08-13 and are easy to get wrong from the older notes below:
+
+- **`piratelife` is the operator.** It was created through `/signup` and promoted with step 1 of
+  `docs/BREAK-GLASS.md`. The earlier note saying the only account is `erwerwerwer` and that nobody
+  can open the panel is **obsolete** — `erwerwerwer` was deleted through `/admin`, which is also how
+  that page got its first end-to-end test.
+- **HTTPS is forced and the security headers are on.** See *Security headers* below.
+- **The lightsword duel is withdrawn from the picker**, not built. `docs/DUEL.md` is its spec.
 
 ### `design/SPEC-ACCOUNTS.md` is approved and authoritative
 
@@ -287,7 +312,7 @@ replaced by them. That precedence question is a product decision, not an impleme
 it should be settled before the table is designed. It also depends on sign-in existing, since there
 is no way to be the operator in a browser yet.
 
-### Session of 2026-08-12 (second): sign-in, global config, administration
+### Sign-in, operator-published config, and administration
 
 All deployed to `mcclevarty.ca` and verified live. In order:
 
@@ -321,12 +346,13 @@ All deployed to `mcclevarty.ca` and verified live. In order:
 - **Email recovery was proposed and rejected** in favour of `docs/BREAK-GLASS.md`.
   Reasons recorded there. Do not re-add it without reading that file.
 
-### Session of 2026-08-12 (third): operator bootstrap, recovery-code sign-in
+### Operator bootstrap, and recovery-code sign-in
 
 - **`piratelife` exists and is the operator.** Created through `/signup` by the
   client, promoted with step 1 of `docs/BREAK-GLASS.md`. `/admin` is reachable on
-  the live site for the first time. `erwerwerwer` is still present and is not an
-  operator; deleting it is a job for `/admin` itself.
+  the live site for the first time. The old test account `erwerwerwer` was then
+  deleted **through `/admin`**, which is how that page got its first end-to-end
+  test. `piratelife` is now the only account.
 - **The footer carries `account` and `admin` links, but only for a signed-in
   operator.** The account pages stay unlinked for visitors, which is what was
   asked for — but an operator having to remember a typed word to reach their own
@@ -419,91 +445,6 @@ in `FxId`; only the two `FX` catalogue entries were removed, so nothing else had
 to change and putting them back is two lines. The blade rendering and clash
 sparks are worth keeping; the stance machine is not.
 
-### Superseded notes on the duel, kept only for the traps in them
-
-`src/fx/effects.ts` gained two effects, `duel` and `duelholy`, labelled
-"Lightswords: light & dark" and "Lightswords: saint & serpent". They are live and
-selectable. **The client has seen them and they are not right yet.** Their words,
-on 2026-08-12: *"it is just WAY too slow, and needs to be animated a LOT better."*
-
-**"Lightswords" is the client's own term** and is the name to use. The characters
-asked for were Vader/Luke and Jesus/Devil; the shipped figures are deliberately
-abstract silhouettes (hood/cape, halo/horns) because those are Lucasfilm marks
-and this is a commercial site. The client renamed the weapon themselves, which
-settles the naming question — but the *figures* must stay non-likenesses.
-
-**What the client actually asked for first, and which is still not built.** The
-original request was to replace **the hero ornament** — "the pulsing wye/radar
-looking thing", i.e. the Lens/Valve in `.v-ornament` — with a *tiny* duel
-animation living in that square slot. The background version was built instead.
-The client then said the background is fine too *if* it is better animated. So
-there are two possible homes and the ornament one is untouched:
-
-- `src/data/ornaments.ts` already has five entries and a sixth `ornament` share-code
-  field, so **adding a duel ornament is an established, cheap path** — it is one
-  more entry in a list that already exists, drawn into one square slot every layout
-  already knows how to size or hide.
-- The background version is `EFFECTS.duel` / `EFFECTS.duelholy`.
-
-**Why it looks slow, concretely.** Stance transitions run at `0.35 + rand*0.8`
-per second, so a full stance change takes 1.2–2.9 seconds, and `mixLimbs` eases
-linearly between two static poses with a smoothstep on top. That is a *drift*
-between poses, not a fight. What it needs, roughly in order of payoff:
-
-1. **Strike/recover asymmetry.** A cut should be fast (~120ms) and the recovery
-   slow. One easing curve for both halves is exactly what makes it read as
-   floating. Split the transition into an attack phase and a settle phase.
-2. **Impact.** Blades should stop dead on contact, not pass through. There is
-   already a clash test (`dist < s * 0.16`) that only spawns sparks — it should
-   also arrest the stance and add a recoil.
-3. **More stances, and sequenced rather than uniformly random.** `STANCES` has 9
-   and any can follow any. Real exchanges are chains — a parry *leads to* a
-   riposte. Weighting the next choice by the current one would cost little.
-4. Screen shake / blade-trail smear on the fastest cuts.
-
-**Verified in a browser 2026-08-12**: both effects render, the blades look right
-(glow + bright core), and the scale/opacity was corrected after the first attempt
-put a figure taller than the viewport behind the hero — `s` is now
-`min(h*0.34, w*0.17)` at 0.4 body alpha. **The motion itself was never verified
-in motion**, because an occluded Chrome window freezes rAF (see the memory note).
-The client's "too slow" is the only real motion feedback so far.
-
-**Sound is still not built** and was asked for twice. The site has no audio at
-all. WebAudio synthesis fits the no-assets rule; autoplay does not, so it needs a
-control, a persisted toggle and a share-code field — a spec change, not a patch.
-
-**One trap already paid for:** share codes are **base-36**, not decimal
-(`shareCode.ts`), so effect index 12 is `C`. A test code of `0-0-12-0-7-0` parses
-`12` as base-36 38, falls through `FX[38] ?? FX[0]`, and silently applies Vessels
-— which looks exactly like the new effect failing to ship. The working code for
-the light/dark duel is **`0-0-C-0-7-0`**. Also: new effects are **appended** to
-`FX` after "None", never inserted, because that array's *index* is the share-code
-field and inserting repoints every code already in circulation.
-
-**Next, in order** — nothing below is started:
-
-1. **Operator password reset in `/admin`.** Now unblocked: the endpoint deletes
-   the password credential and its slot, and `setPassword`'s insert branch plus
-   the `challenge` fix already handle the account that results. See the note in
-   `Admin.tsx`.
-2. **TOTP enrolment UI.** The endpoints and tests exist; there is no screen, so
-   nobody can turn on the second factor the sign-in flow already supports. Note
-   `api.totpEnrol()` posts `{}` today and the Worker calls `requirePassword` on
-   it, so the screen must derive and send an `authSecret` or every call 401s.
-3. **Edit mode** — operator-editable page copy and images. Asked for 2026-08-12.
-   Large: `src/data/pages.ts` is currently a static module, so this needs a D1
-   table, the same inject-don't-fetch treatment as site config, and a decision
-   about images, which the spec currently forbids entirely (*Assets*: no images).
-   **That prohibition is a spec change and needs the client, plus R2 or similar.**
-4. **A setup guide** page/download (Tailscale et al). Asked for 2026-08-12.
-5. Passkeys, account/setups pages, the dialog primitive, the command palette.
-
-**Operator bootstrap is outstanding.** As of this session the only production
-account is `erwerwerwer` (a test) and `is_operator = 0` on it, so **nobody can
-open the config panel on the live site**. The client was creating `piratelife`;
-once it exists, run step 1 of `docs/BREAK-GLASS.md` against that handle. Until
-then the panel is unreachable in production by design.
-
 ### Four things the client has not yet signed off
 
 Found while building; none are blocking, all are recorded here rather than slipped in.
@@ -521,13 +462,14 @@ Found while building; none are blocking, all are recorded here rather than slipp
 4. **Signup discloses handle availability** (409) while `challenge` goes to real trouble to hide it.
    Defensible — availability is inherently public — but the two should not disagree.
 
-### Deployment is mid-migration
+### Deployment — the migration is done
 
 **The site moved from Pages to a Worker with static assets** (`wrangler.toml`), because Pages cannot
 define Durable Object classes and this stack needs them twice — rate limiting now, one signalling
 object per paired machine in phase 2.
 
-Nothing is deployed yet, but the groundwork is now done. State as of 2026-08-12:
+**The cutover completed on 2026-08-12 and everything below is now ✅.** The checklist is kept because
+each line records a decision or a trap, not because anything is outstanding:
 
 - ✅ `npx wrangler login` — done by the client. Account `760b80a637d2ffe755b09da3f4a339ff`.
 - ✅ **The real D1 database exists.** `vessel`, region ENAM, id in `wrangler.toml`. Both migrations
