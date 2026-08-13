@@ -47,8 +47,17 @@ import {
  * inventory says so plainly: it is personal "only if they choose their own name
  * — their call, and it is the one field where that is true." So the rules here
  * are about being addressable and unambiguous, not about identity.
+ *
+ * Restricted to DNS label characters on 2026-08-12, while the account count was
+ * still zero and the change was therefore free. `.` and `_` were both permitted
+ * before and neither survives a hostname: a dot makes `ada.smith.mcclevarty.ca`
+ * a two-level name that Universal SSL does not cover, and an underscore is
+ * invalid in the hostname position outright. Keeping handles DNS-safe leaves
+ * per-account subdomains possible later (`design/GUIDE-SUBDOMAINS.md`) instead
+ * of foreclosing them for whichever accounts happened to use those characters.
+ * After the first real signup this would have been a breaking migration.
  */
-const HANDLE_PATTERN = /^[a-z0-9][a-z0-9._-]{2,23}$/i;
+const HANDLE_PATTERN = /^[a-z0-9][a-z0-9-]{2,23}$/i;
 
 /**
  * Reserved so that nobody can sign up as the operator and be believed. The
