@@ -307,9 +307,27 @@ Nothing is deployed yet, but the groundwork is now done. State as of 2026-08-12:
   200 and serve the app shell, with the served bundle hash matching a local `npm run build`.
   Unknown `/api/*` returns the JSON 404. **Give a fresh deploy a few seconds before testing routes**
   — `/contact` 404s briefly while the asset manifest propagates, then settles to 200.
-- ❌ **The cutover of `mcclevarty.ca` from the Pages project to the Worker has not happened**, and is
-  the one remaining outward-facing step. Do it once, deliberately, with the client watching. The
-  Pages project `vessel` still serves the live site and is the rollback.
+- ✅ **The cutover is done.** `mcclevarty.ca` is served by the Worker as of 2026-08-12.
+
+  It was done by adding a `routes` entry to `wrangler.toml` rather than by deleting the Pages custom
+  domain, because **a Workers route is evaluated ahead of a Pages custom domain**. `wrangler pages
+  domain` is not a command in wrangler 4.122, so removing it via CLI was not available anyway — but
+  the route approach is better regardless: the Pages project is untouched and still holds the domain
+  underneath, so **rollback is deleting the `routes` block and running `npm run deploy`**, not
+  rebuilding infrastructure under pressure.
+
+  Verified live: `/api/health` returns `{"ok":true,"tables":6}` — decisive, because Pages has no
+  `/api` and could not answer it at all. `/`, `/contact`, `/work`, `/404` and an unrouted path all
+  200, the served bundle hash matches a local build, and `mcclevarty.com` still 301s to `.ca`.
+
+  **Adding `routes` silently disabled the `workers.dev` URL**, since `workers_dev` defaults to false
+  once a route exists. `vessel.patrickmcclevarty.workers.dev` no longer resolves. That is wanted here
+  — it closes the public signup endpoint that was reachable before cutover — but it means there is no
+  longer a non-production URL to test against. Set `workers_dev = true` if you need one back.
+
+  **`public/_redirects` still has to stay.** Pages continues to auto-deploy from `main` and is the
+  rollback, so it must keep working. `predeploy` strips it from `dist/` for the Worker; leave both in
+  place until the Pages project is deliberately retired.
 
 **`public/_redirects` must stay until cutover, and it is not inert — it breaks the Worker deploy.**
 The earlier note here called it "dead under Workers". That was wrong. Workers static assets treats

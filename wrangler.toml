@@ -17,6 +17,19 @@ main = "worker/index.ts"
 compatibility_date = "2026-08-12"
 compatibility_flags = ["nodejs_compat"]
 
+# The cutover, 2026-08-12. A Workers route is evaluated ahead of a Pages custom
+# domain, so this puts the Worker in front of the Pages project without deleting
+# the Pages custom domain first. That ordering is the whole point: the Pages
+# project stays intact and still holds `mcclevarty.ca`, so rolling back is
+# deleting these two lines and redeploying, not re-creating infrastructure under
+# pressure.
+#
+# Deliberately no `*.mcclevarty.ca` wildcard. Per-account subdomains are not
+# built and not specified — see design/GUIDE-SUBDOMAINS.md.
+routes = [
+  { pattern = "mcclevarty.ca/*", zone_name = "mcclevarty.ca" },
+]
+
 [assets]
 directory = "./dist"
 binding = "ASSETS"
