@@ -1,7 +1,8 @@
 # Handoff
 
-Updated 2026-08-13 (evening), after the session that rebuilt the lightsword duel
-and deployed everything. Read `TODO.md` for what to do and `docs/DECISIONS.md`
+Updated 2026-08-13, after the session that built all of `TODO.md` item 5 —
+passkeys, saved setups, the dialog primitive, the command palette — and
+deployed everything. Read `TODO.md` for what to do and `docs/DECISIONS.md`
 for why things are as they are; this file is how to pick the work up and how to
 prove you have not broken anything.
 
@@ -24,9 +25,11 @@ Paste this to begin:
 > port 8788 and the harness will not find it.
 >
 > If it passes, tell me before moving on. Then work `TODO.md` in order — the
-> first open items need me (redeeming a recovery code in a real browser), so the
-> first buildable one is item 5. Do not deploy without running the verification
-> block in `docs/HANDOFF.md` afterwards.
+> first open items need me (redeeming a recovery code in a real browser, and my
+> eye on the duel's motion and all the new account screens). The next
+> *buildable* items are 7 and 8, and both are spec changes needing my sign-off
+> first, so check with me before starting either. Do not deploy without running
+> the verification block in `docs/HANDOFF.md` afterwards.
 
 ---
 
@@ -34,26 +37,36 @@ Paste this to begin:
 
 - **`piratelife` is the operator**, and is the only account. Promoted with step 1
   of `docs/BREAK-GLASS.md`. The old test account was deleted through `/admin`.
-- **Deployed and working** (verified 2026-08-13 evening, full block below, all
-  green through commit `782d382`): sign-up, sign-in + TOTP, change password,
-  recovery-code sign-in, `/admin` incl. operator password reset, TOTP enrolment,
-  operator-published site config, forced HTTPS, the security-review fixes.
-- **The lightsword duel is rebuilt and live in the ornament slot** (`docs/DUEL.md`
-  status header, `docs/DECISIONS.md` note). Ornaments 6–7 in siteconfig. The
+- **Deployed and working** (verified 2026-08-13, full block below, all green
+  through commit `95cea56`, Worker version `d5fa460b`): sign-up, sign-in + TOTP,
+  change password, recovery-code sign-in, `/admin` incl. operator password
+  reset, TOTP enrolment, **passkeys** (register/list/remove/sign-in, each a key
+  slot on the same grant key), **saved setups**, operator-published site
+  config, forced HTTPS. The harness is at **174 checks** and covers all of it,
+  passkeys included, via a software authenticator.
+- **All of `TODO.md` item 5 is built**: passkeys, saved setups on the `/signin`
+  summary, the dialog primitive (`/admin`'s reset and delete confirm through
+  it; delete types the handle), and the command palette — **opened by typing
+  `cmd`; `⌘K` deliberately unbound** until the client settles its double claim.
+  Four dated notes in `docs/DECISIONS.md` carry the decisions made en route
+  (passkey sign-in has no TOTP stage and no rate limiting; prf-less passkeys
+  get no slot; `/account` stays reserved; visitor-facing calm was not smuggled
+  into the palette).
+- **The lightsword duel is live in the ornament slot** (ornaments 6–7). The
   background `FX` entries stay withdrawn until the client's eye passes the
-  motion — `TODO.md` 6b explains, including the "12 background modes" copy catch.
-- **Unproven in a browser**: recovery-code sign-in, the reset-password button
-  states in `/admin`, the TOTP enrolment screen, and the duel's *motion* (the
-  simulation is proven headlessly; the animation needs the client's eye — pick
-  a Lightswords ornament in siteconfig and watch a match or two). `TODO.md`
-  items 2–4 and 6.
-- **Next buildable work is `TODO.md` item 5**, in its stated order: passkeys,
-  account/setups pages, dialog primitive, command palette. Passkeys: hand-rolled
-  WebAuthn (no libraries — see SPEC-ACCOUNTS §5: a passkey is another key slot
-  wrapping the same grant key). Note `⌘K` is claimed twice (sign-off list) —
-  build the dialog primitive before the palette and do not bind `⌘K` until the
-  client picks. Items 7 (sound) and 8 (edit mode) are spec changes needing the
-  client; 2 needs the client's browser; 13 needs the Cloudflare dashboard.
+  motion — `TODO.md` 6b, including the "12 background modes" copy catch.
+- **Unproven in a browser, needs the client's eye**: recovery-code sign-in
+  (TODO 2), the reset/delete dialogs in `/admin`, the TOTP enrolment screen,
+  the Passkeys and Saved setups sections, the command palette, and the duel's
+  motion. Passkeys additionally need a **real authenticator** — the harness
+  proves the bytes, only the client's device can prove the platform prompt and
+  its `prf` support.
+- **Nothing is buildable without the client now.** Items 7 (sound) and 8 (edit
+  mode) are spec changes needing sign-off; 2–4 and the item-5 screens need the
+  client's browser; 13 needs the Cloudflare dashboard; 6b waits on the duel
+  verdict. The sign-off list at the bottom of `TODO.md` (`totp.last_step`, §3's
+  operator wording, `⌘K`, signup 409) is the highest-leverage thing to put in
+  front of the client next.
 
 ---
 
