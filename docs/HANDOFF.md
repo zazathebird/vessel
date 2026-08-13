@@ -1,10 +1,12 @@
 # Handoff
 
-Updated 2026-08-13, after the session that built all of `TODO.md` item 5 —
-passkeys, saved setups, the dialog primitive, the command palette — and
-deployed everything. Read `TODO.md` for what to do and `docs/DECISIONS.md`
-for why things are as they are; this file is how to pick the work up and how to
-prove you have not broken anything.
+Updated 2026-08-13, after the security-audit session — six fixes shipped and
+verified live (`docs/SECURITY-AUDIT.md`), three DNS items logged for the
+client's dashboards (`TODO.md` 16). The session before it built all of
+`TODO.md` item 5 — passkeys, saved setups, the dialog primitive, the command
+palette. Read `TODO.md` for what to do and `docs/DECISIONS.md` for why things
+are as they are; this file is how to pick the work up and how to prove you have
+not broken anything.
 
 ---
 
@@ -38,12 +40,21 @@ Paste this to begin:
 - **`piratelife` is the operator**, and is the only account. Promoted with step 1
   of `docs/BREAK-GLASS.md`. The old test account was deleted through `/admin`.
 - **Deployed and working** (verified 2026-08-13, full block below, all green
-  through commit `95cea56`, Worker version `d5fa460b`): sign-up, sign-in + TOTP,
-  change password, recovery-code sign-in, `/admin` incl. operator password
-  reset, TOTP enrolment, **passkeys** (register/list/remove/sign-in, each a key
-  slot on the same grant key), **saved setups**, operator-published site
-  config, forced HTTPS. The harness is at **174 checks** and covers all of it,
-  passkeys included, via a software authenticator.
+  through the security-audit commit, Worker version `c562087f`): sign-up,
+  sign-in + TOTP, change password, recovery-code sign-in, `/admin` incl.
+  operator password reset, TOTP enrolment, **passkeys** (register/list/remove/
+  sign-in, each a key slot on the same grant key), **saved setups**,
+  operator-published site config, forced HTTPS. The harness is at **174
+  checks** and covers all of it, passkeys included, via a software
+  authenticator.
+- **The 2026-08-13 security audit shipped and is live**: hardened API error
+  responses, `no-store` on the four secret-carrying responses, the session
+  cookie renamed to `__Host-vessel_session` (anyone signed in at deploy was
+  signed out once — the operator just signs back in), `www.mcclevarty.ca`
+  routed and 301ing to the apex (it was a bare 522 before), the
+  DNS-significant reserved handles, and `Permissions-Policy` + COOP site-wide.
+  `docs/SECURITY-AUDIT.md` is the log, including the deliberate decisions the
+  audit checked and left standing — read it before "fixing" any of those.
 - **All of `TODO.md` item 5 is built**: passkeys, saved setups on the `/signin`
   summary, the dialog primitive (`/admin`'s reset and delete confirm through
   it; delete types the handle), and the command palette — **opened by typing
@@ -63,7 +74,8 @@ Paste this to begin:
   its `prf` support.
 - **Nothing is buildable without the client now.** Items 7 (sound) and 8 (edit
   mode) are spec changes needing sign-off; 2–4 and the item-5 screens need the
-  client's browser; 13 needs the Cloudflare dashboard; 6b waits on the duel
+  client's browser; 13 and **16 (DNSSEC, CAA, DMARC — the audit's remaining
+  third)** need the Cloudflare/Namespro dashboards; 6b waits on the duel
   verdict. The sign-off list at the bottom of `TODO.md` (`totp.last_step`, §3's
   operator wording, `⌘K`, signup 409) is the highest-leverage thing to put in
   front of the client next.
@@ -83,8 +95,12 @@ curl -s https://mcclevarty.ca/ | grep -o 'assets/index-[A-Za-z0-9_-]*\.js' | hea
 # 2. HTTPS is forced, with exactly ONE redirect. More than one is a loop.
 curl -s -L -o /dev/null -w "redirects=%{num_redirects} final=%{url_effective} status=%{http_code}\n" http://mcclevarty.ca/
 
-# 3. All four security headers present.
-curl -s -i https://mcclevarty.ca/ | grep -icE 'strict-transport|x-content-type-options|referrer-policy|x-frame-options'
+# 3. All six security headers present (expect 6; permissions-policy and COOP
+#    joined in the 2026-08-13 audit).
+curl -s -i https://mcclevarty.ca/ | grep -icE 'strict-transport|x-content-type-options|referrer-policy|x-frame-options|permissions-policy|cross-origin-opener'
+
+# 3b. www 301s to the apex, path preserved (it was a bare 522 before the audit).
+curl -s -o /dev/null -w "status=%{http_code} location=%{redirect_url}\n" https://www.mcclevarty.ca/services
 
 # 4. D1 bound, migrated, and the Durable Object answering.
 curl -s https://mcclevarty.ca/api/health          # {"ok":true,"tables":6,...}

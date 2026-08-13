@@ -28,6 +28,12 @@ compatibility_flags = ["nodejs_compat"]
 # built and not specified — see design/GUIDE-SUBDOMAINS.md.
 routes = [
   { pattern = "mcclevarty.ca/*", zone_name = "mcclevarty.ca" },
+  # `www` has a proxied DNS record but had nothing behind it, so every visitor
+  # who typed `www.` got a bare Cloudflare 522 (found 2026-08-13). This route
+  # puts the Worker there, and the Worker's only answer on a `www.` host is a
+  # 301 to the apex (worker/index.ts). Still no `*.mcclevarty.ca` wildcard —
+  # per-account subdomains remain unbuilt and unspecified.
+  { pattern = "www.mcclevarty.ca/*", zone_name = "mcclevarty.ca" },
 ]
 
 # The routes above make `wrangler dev` simulate `http://mcclevarty.ca/...`, so

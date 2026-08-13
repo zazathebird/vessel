@@ -81,6 +81,35 @@ const RESERVED_HANDLES = new Set([
   "share",
   "null",
   "undefined",
+  // Names that already have jobs in the DNS zone or in mail conventions —
+  // recommended by design/GUIDE-SUBDOMAINS.md on 2026-08-12, actioned in the
+  // 2026-08-13 security review. Handles are DNS-safe precisely so per-account
+  // subdomains stay possible; these are the labels such a subdomain must never
+  // be allowed to claim. `mailroot8` is where the MX record actually points.
+  "www",
+  "mail",
+  "mailroot8",
+  "mailadmin",
+  "webmail",
+  "smtp",
+  "imap",
+  "pop",
+  "ftp",
+  "mx",
+  "dns",
+  "ns1",
+  "ns2",
+  "postmaster",
+  "hostmaster",
+  "webmaster",
+  "abuse",
+  "security",
+  "noreply",
+  "no-reply",
+  "dev",
+  "staging",
+  "test",
+  "status",
 ]);
 
 /** §4 and §5 fix these; they are asserted on the wire so a handler can assume them. */
@@ -672,7 +701,9 @@ export async function challenge(request: Request, env: Env): Promise<Response> {
     .first<{ salt: unknown; iterations: number | null; recovery_iterations: number | null }>();
 
   if (row?.salt) {
-    return json({
+    // no-store on both branches: per-account KDF parameters are account state,
+    // and a cached decoy that outlives a real signup is a tell all of its own.
+    return noStore(json({
       kdf: {
         salt: toBase64Url(fromBlob(row.salt)),
         // Null when the password credential is gone. The count only governs a
@@ -682,7 +713,7 @@ export async function challenge(request: Request, env: Env): Promise<Response> {
         iterations: row.iterations ?? DEFAULT_ITERATIONS,
         recoveryIterations: row.recovery_iterations ?? RECOVERY_ITERATIONS_DEFAULT,
       },
-    });
+    }));
   }
 
   // **The decoy must report exactly what a real account reports.**
@@ -701,13 +732,13 @@ export async function challenge(request: Request, env: Env): Promise<Response> {
   // When real counts do start varying, sample this from the same distribution.
   // Until then the only safe decoy is the real value.
   const decoy = new Uint8Array(await hmac(env.AUTH_PEPPER, `decoy-salt:${handleLower}`));
-  return json({
+  return noStore(json({
     kdf: {
       salt: toBase64Url(decoy.slice(0, KDF_SALT_BYTES)),
       iterations: DEFAULT_ITERATIONS,
       recoveryIterations: RECOVERY_ITERATIONS_DEFAULT,
     },
-  });
+  }));
 }
 
 /**
@@ -783,14 +814,17 @@ export async function signin(request: Request, env: Env): Promise<Response> {
     // abandoned attempt would empty the account's last resort in ten tries. The
     // ticket carries which credential is pending so the second factor can finish
     // the job.
-    return json({
+    //
+    // no-store: the ticket is a bearer capability for the second-factor stage,
+    // and five minutes is plenty of life for a cached copy to be worth having.
+    return noStore(json({
       status: "totp-required",
       ticket: await session.mint(
         env.SESSION_SECRET,
         "totp-ticket",
         kind === "recovery" ? `${account.id}:rec:${credential.id}` : account.id,
       ),
-    });
+    }));
   }
 
   return completeSignIn(env, account, kind, credential.id);
@@ -1373,10 +1407,12 @@ export async function totpEnrol(request: Request, env: Env): Promise<Response> {
     ).bind(account.id, toBlob(await encryptSecret(env.TOTP_ENC_KEY, secret)), now),
   ]);
 
-  return json({
+  // no-store: this response IS the shared secret — the one §9 says never
+  // leaves the server except here, once, to be enrolled.
+  return noStore(json({
     secret: base32Encode(secret),
     uri: otpauthUri(secret, account.handle, "Vessel"),
-  });
+  }));
 }
 
 /**
@@ -1423,7 +1459,8 @@ export async function totpConfirm(request: Request, env: Env): Promise<Response>
     auditStatement(env, account.id, "auth.totp.enrolled", null),
   ]);
 
-  return json({ backupCodes: codes });
+  // no-store: the only plaintext appearance the backup codes ever make.
+  return noStore(json({ backupCodes: codes }));
 }
 
 /**

@@ -22,7 +22,17 @@
 import { hmac, timingSafeEqual } from "./crypto";
 import { fromBase64Url, toBase64Url } from "./encoding";
 
-export const SESSION_COOKIE = "vessel_session";
+/**
+ * `__Host-` prefixed (2026-08-13 security review). The prefix makes the browser
+ * refuse to store this name unless the cookie is Secure, has `Path=/`, and sets
+ * no `Domain` — all of which `sessionCookie` below already does — which means no
+ * other host can plant it: a compromised or future sibling subdomain
+ * (`design/GUIDE-SUBDOMAINS.md`) could otherwise set `vessel_session` with
+ * `Domain=mcclevarty.ca` and fix a victim's session to one it controls. Browsers
+ * honour the prefix on localhost/127.0.0.1 (trustworthy origins), so `wrangler
+ * dev` and the harness — whose cookie jar is name-agnostic — are unaffected.
+ */
+export const SESSION_COOKIE = "__Host-vessel_session";
 
 /** Short, because these tokens cannot be revoked. Refreshed on use. */
 const SESSION_TTL_MS = 30 * 60 * 1000;

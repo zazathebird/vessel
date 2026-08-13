@@ -144,6 +144,18 @@ function harden(response: Response): Response {
   // The site is never legitimately framed, and this is the cheap half of the
   // clickjacking defence a CSP `frame-ancestors` would otherwise carry.
   out.headers.set("x-frame-options", "DENY");
+  // Features the site will never use, refused site-wide so a compromised or
+  // injected script cannot quietly ask for them. WebAuthn is deliberately not
+  // listed: `publickey-credentials-get`/`create` keep their default
+  // self-allowlist, which is exactly what the passkey ceremonies need.
+  out.headers.set(
+    "permissions-policy",
+    "camera=(), microphone=(), geolocation=(), payment=(), usb=(), accelerometer=(), gyroscope=(), magnetometer=()",
+  );
+  // The site opens no popups and is opened by none it wants a handle on;
+  // severing any opener relationship costs nothing and keeps a hostile page
+  // that window.open'd us from scripting against the window.
+  out.headers.set("cross-origin-opener-policy", "same-origin");
   return out;
 }
 
@@ -156,6 +168,21 @@ export default {
     // over http regardless of what it contains.
     const upgrade = httpsRedirect(request, url);
     if (upgrade) return upgrade;
+
+    // `www.` is a routed hostname (wrangler.toml) whose only job is to reach
+    // this line: before it was routed, the proxied DNS record had nothing
+    // behind it and served every visitor a bare Cloudflare 522. One canonical
+    // host, same shape as the https redirect above — host-generic, so loopback
+    // and `wrangler dev` (which never see a `www.`) are untouched.
+    if (url.hostname.startsWith("www.")) {
+      return new Response(null, {
+        status: 301,
+        headers: {
+          location: `https://${url.hostname.slice(4)}${url.pathname}${url.search}`,
+          "strict-transport-security": HSTS,
+        },
+      });
+    }
 
     if (!url.pathname.startsWith("/api/")) {
       // The app shell gets the published look inlined into it, so the first
@@ -177,9 +204,12 @@ export default {
       // anything else carries wording that was not, so it becomes a generic 500.
       // §10 requires that failures say what to do next, and "something went
       // wrong" is the honest version of that when we genuinely do not know.
-      if (error instanceof BadRequest) return problem(error.status, error.message);
+      // Hardened like every success path: an error response is still a
+      // response, and a 4xx without HSTS/nosniff is the inconsistency an
+      // audit flags first.
+      if (error instanceof BadRequest) return harden(problem(error.status, error.message));
       console.error("unhandled", error);
-      return problem(500, "Something went wrong at our end. Try again shortly.");
+      return harden(problem(500, "Something went wrong at our end. Try again shortly."));
     }
   },
 } satisfies ExportedHandler<Env>;

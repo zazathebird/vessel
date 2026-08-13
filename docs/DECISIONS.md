@@ -13,6 +13,22 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-13 — Full security audit: six fixes shipped, four dashboard items logged
+
+Client-requested audit of the Worker, both halves of the auth stack, headers, cookies, the client
+bundle and live DNS. `docs/SECURITY-AUDIT.md` is the full log — findings, fixes, the
+dashboard-only DNS work (DNSSEC, CAA, DMARC/SPF), and the list of deliberate decisions the audit
+checked and left standing so the next one does not re-litigate them.
+
+Shipped: `harden()` now covers the API error path and adds `Permissions-Policy` + COOP; the four
+responses carrying secrets that lacked `no-store` (TOTP secret, backup codes, sign-in ticket, KDF
+challenge) have it; the session cookie is `__Host-`-prefixed (subdomain cookie-planting defence —
+everyone signed in at deploy is signed out once); `www.mcclevarty.ca` — previously a proxied DNS
+record with nothing behind it, serving a bare Cloudflare 522 — is now routed to the Worker and
+301s to the apex; and GUIDE-SUBDOMAINS' 2026-08-12 reserved-handles recommendation (`mail`,
+`mailroot8`, `www`, plus the standard infrastructure and mail-convention names) is finally
+actioned. TODO #16 carries the DNS work.
+
 ## 2026-08-13 — The command palette, opened by typing `cmd` — `⌘K` stays unbound
 
 `TODO.md` item 5's last piece (`src/components/CommandPalette.tsx`, z-index 85 in §11's

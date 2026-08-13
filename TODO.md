@@ -166,10 +166,13 @@ braces — but it happens at the edge without costing a Worker invocation.
 
 ## Security — found, reviewed, not fixed
 
-The 2026-08-13 review's findings were fixed in `1729dfd` and `561e067` and are
-recorded in `docs/DECISIONS.md`. These two were left open deliberately, because
-neither is a patch. Neither is exploitable by an anonymous visitor today; each
-becomes worse under a specific future change, which is noted.
+The 2026-08-13 review's findings were fixed in `1729dfd` and `561e067`, and the
+same day's full audit's in the security-audit commit — both recorded in
+`docs/DECISIONS.md`, the audit's log in `docs/SECURITY-AUDIT.md`. Items 14 and
+15 were left open deliberately, because neither is a patch: neither is
+exploitable by an anonymous visitor today, and each becomes worse under a
+specific future change, which is noted. Item 16 is open because it lives in the
+Cloudflare and Namespro dashboards, not in this repository.
 
 ### 14. Password change is not a session-revocation event
 
@@ -187,6 +190,20 @@ and unwrapping needs the password-derived wrapping key, which no session grants.
 It becomes real in phase 3, where §3 requires a fresh user-verification gesture
 per grant signature — a stolen 30-minute session could otherwise fetch the slot.
 Add the password-proof + current-TOTP gate **before phase 3**, not with it.
+
+### 16. DNS hardening — three dashboard changes (2026-08-13 audit)
+
+Found by the full security audit (`docs/SECURITY-AUDIT.md` has records to paste and the order to
+do them in); none can be done from this repository. In priority order:
+
+1. **Enable DNSSEC** — Cloudflare DNS → Settings, then add the DS record at Namespro. No DS
+   record exists at CIRA today.
+2. **Add CAA records** — nothing restricts which CA may issue for `mcclevarty.ca`. The audit doc
+   lists Cloudflare's Universal SSL set.
+3. **Tighten mail records** — DMARC is `p=none` (spoofed mail is delivered, only reported) and
+   SPF ends `~all`. Watch the Cloudflare DMARC reports for two weeks, then `p=quarantine` →
+   `p=reject`. The domain forwards and never sends, so the only legitimate traffic at risk is the
+   forwarding path — which is why this is observe-then-tighten, not a same-day edit.
 
 ---
 
