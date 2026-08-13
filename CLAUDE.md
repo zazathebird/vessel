@@ -372,7 +372,54 @@ but no recovery code has actually been redeemed on the live site. Doing so spend
 one of ten, which is why it was not done casually — but it should be done once,
 deliberately, before it is relied on.
 
-### The duel effect — shipped, and NOT finished. Read this before touching it.
+### Security headers, and the redirect bug worth not repeating
+
+`http://mcclevarty.ca/` used to answer **200 over cleartext** — the browser's
+"not secure" warning — because a Workers route matches both schemes. Fixed in
+`worker/index.ts`. Verified live: `http://` → exactly one 301 → `https://` → 200,
+with `Strict-Transport-Security`, `x-content-type-options`, `referrer-policy` and
+`x-frame-options` on every response.
+
+**The first attempt would have taken the site down**, and the failure is not
+obvious from reading it:
+
+```js
+const secure = new URL(url.toString());
+secure.protocol = "https:";      // silently does nothing in workerd
+```
+
+The setter did not take, so `Location` came back equal to the request URL — an
+infinite redirect loop, caught locally as `redirect count exceeded`. The URL is
+now built by concatenation **and** compared against the request before being
+sent, so the worst case is "no redirect happens" rather than "site down". Keep
+that guard. Loopback is exempt or `wrangler dev` and `npm run test:auth` break.
+
+**There is deliberately no CSP.** The app shell has the published site config
+*inlined* as a script (`worker/site-config.ts`), so a `script-src` without a nonce
+plumbed through that injection would blank the site's appearance on first paint.
+Worth doing properly; not worth doing badly.
+
+Cloudflare's **SSL/TLS → Edge Certificates → Always Use HTTPS** does the same
+redirect at the edge without costing a Worker invocation. Turning it on as well
+is free and is recommended.
+
+### The duel effect — WITHDRAWN. `docs/DUEL.md` is the full spec.
+
+**It is no longer in the effect picker.** The client saw the shipped stick-figure
+version and rejected it: *"that is terrible"*, *"WAY too slow"*. What they want is
+a fast, obviously readable 8/32-bit pixel fight with discrete matches and winners,
+and they supplied a working reference implementation on 2026-08-12 that is the
+authoritative statement of it. **All of that — the reference's design table, why
+the first version failed, the four changes needed to port it into this codebase,
+and the base-36 share-code trap — is written up in `docs/DUEL.md`.** Read that
+file rather than re-deriving any of it.
+
+The code survives in `src/fx/effects.ts` (`EFFECTS.duel`, `EFFECTS.duelholy`) and
+in `FxId`; only the two `FX` catalogue entries were removed, so nothing else had
+to change and putting them back is two lines. The blade rendering and clash
+sparks are worth keeping; the stance machine is not.
+
+### Superseded notes on the duel, kept only for the traps in them
 
 `src/fx/effects.ts` gained two effects, `duel` and `duelholy`, labelled
 "Lightswords: light & dark" and "Lightswords: saint & serpent". They are live and
