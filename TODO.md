@@ -10,24 +10,33 @@ Last updated 2026-08-13.
 
 ## Do this first
 
-### 1. Run the auth harness
+### 1. Close the harness's three coverage gaps
 
 ```sh
 npm run dev:worker      # wait for "Ready on http://127.0.0.1:8787"
 npm run test:auth       # in a second terminal
 ```
 
-`scripts/auth-e2e.ts` gained a **set-password** section on 2026-08-12 — eleven
-checks covering recovery→set-password — and **those checks have never been
-executed.** They are committed and they typecheck, but two `wrangler dev`
-instances fought over local D1 that session, the restart landed on port 8788,
-and the run was abandoned. Until this passes, treat recovery-code sign-in as
-written-but-unproven.
+**The suite passes** — the set-password section written on 2026-08-12 was
+finally executed on 2026-08-13 and is green. The harness prints its own total;
+do not hardcode a count anywhere else. What it does *not* cover is the problem:
 
-The harness prints its own total at the end; do not hardcode a count anywhere
-else.
+- **It never imports `flows.ts` or `api.ts`.** It drives `derive`, `encoding`,
+  `grantKey` and `recoveryCodes` for real and re-implements the rest with raw
+  `fetch`. The whole value of the harness is that it fails when browser and
+  Worker disagree about a byte, and re-implementation reopens exactly that gap.
+- **Recovery-with-2FA has zero coverage**, and that is the path that carried the
+  stranded-wrapping-key bug — which lives in `flows.ts`. Both recovery fixtures
+  have no TOTP enrolled. It can silently regress into a permanently sealed grant
+  key. Add a fixture *with* TOTP, driven through `signInWithRecoveryCode` +
+  `completeSecondFactor`.
+- **Untested endpoints**: `POST /api/account/password` (change-password),
+  `GET`/`POST /api/site-config`, and all four `/api/admin/*` routes —
+  **including** the "cannot remove your own last operator flag" and "cannot
+  delete yourself" guards. An admin section needs an operator fixture; flip
+  `is_operator` in local D1 during setup.
 
-Three known snags:
+Three snags when running it:
 - If the port is not 8787, the harness will not find the server. Kill stray
   `wrangler dev` processes first — a second instance silently takes 8788.
 - `SQLITE_BUSY` / `workerd failed to start` means two instances are running.
@@ -38,7 +47,9 @@ Three known snags:
 ### 2. Redeem one recovery code on the live site, once, deliberately
 
 Nobody has ever completed the flow end to end in a browser. It spends one of ten
-codes, which is why it has not been done casually. Do it after step 1 passes.
+codes, which is why it has not been done casually. The harness proves the bytes;
+it does not prove the screens, and `SignIn.tsx`'s recovery stages were changed
+on 2026-08-13.
 
 ---
 
@@ -147,11 +158,10 @@ braces — but it happens at the edge without costing a Worker invocation.
 
 ## Security — found, reviewed, not fixed
 
-Nine fixes landed on 2026-08-13 across `1729dfd` and `561e067`; they are
-recorded in `docs/DECISIONS.md`. These two were found in the same review and
-left open deliberately, because neither is a patch. Neither is exploitable by an
-anonymous visitor today; each becomes worse under a specific future change,
-which is noted.
+The 2026-08-13 review's findings were fixed in `1729dfd` and `561e067` and are
+recorded in `docs/DECISIONS.md`. These two were left open deliberately, because
+neither is a patch. Neither is exploitable by an anonymous visitor today; each
+becomes worse under a specific future change, which is noted.
 
 ### 14. Password change is not a session-revocation event
 

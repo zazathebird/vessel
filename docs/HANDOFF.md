@@ -1,8 +1,9 @@
 # Handoff
 
-Written 2026-08-13, at the end of the session that shipped recovery-code sign-in
-and the security headers. Read `TODO.md` for what to do; this file is how to pick
-the work up and how to prove you have not broken anything.
+Written 2026-08-13, after the session that shipped recovery-code sign-in and the
+security headers and the review session that followed it. Read `TODO.md` for what
+to do and `docs/DECISIONS.md` for why things are as they are; this file is how to
+pick the work up and how to prove you have not broken anything.
 
 ---
 
@@ -18,11 +19,10 @@ Paste this to begin:
 > in `main` is deployed — verify with the bundle-hash check in
 > `docs/HANDOFF.md` rather than assuming.
 >
-> Start with `TODO.md` item 1: run the auth end-to-end suite. Eleven checks
-> covering recovery→set-password were written on 2026-08-12 and have **never
-> been executed**, so that flow is unproven rather than tested. Kill any stray
-> `wrangler dev` first — a second instance silently takes port 8788 and the
-> harness will not find it.
+> Start by running `npm run test:auth` against `npm run dev:worker` — it should
+> pass. Kill any stray `wrangler dev` first: a second instance silently takes
+> port 8788 and the harness will not find it. Then work `TODO.md` item 1, which
+> is the coverage the suite does *not* have.
 >
 > If those pass, tell me before moving on. After that, work `TODO.md` in order
 > unless I say otherwise. Do not deploy without running the verification block
@@ -39,7 +39,11 @@ Paste this to begin:
 - **Withdrawn**: the lightsword duel. Code survives in `src/fx/effects.ts`; the
   two `FX` catalogue entries were removed. `docs/DUEL.md` is the spec for the
   rebuild.
-- **Unproven**: recovery-code sign-in. See the prompt above.
+- **Not deployed**: everything committed on 2026-08-13. The review session was
+  local-only by instruction, so `main` and the live Worker are behind the working
+  tree. Run the verification block below *after* the first deploy that carries it.
+- **Unproven in a browser**: recovery-code sign-in. The harness covers the bytes;
+  no human has redeemed a code on the live site. `TODO.md` item 2.
 
 ---
 

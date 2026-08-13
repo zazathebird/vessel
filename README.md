@@ -94,10 +94,10 @@ The account pages are **unlinked** at the client's request: reach them by typing
 
 ### Not done
 
-See **`TODO.md`** for the ordered list. The headlines: the auth harness's newest section has never
-been run, the lightsword duel needs rebuilding (`docs/DUEL.md`), operator password reset and TOTP
-enrolment have no UI, edit mode needs a client decision on images, and photo slots are still
-placeholders.
+See **`TODO.md`** for the ordered list. The headlines: the auth harness re-implements `flows.ts`
+instead of driving it and has no coverage for recovery-with-2FA or `/admin`, the lightsword duel
+needs rebuilding (`docs/DUEL.md`), operator password reset and TOTP enrolment have no UI, edit mode
+needs a client decision on images, and photo slots are still placeholders.
 
 ## Deployment
 
@@ -125,7 +125,10 @@ Give a fresh deploy a few seconds before testing routes; asset manifests propaga
 ## Security
 
 - HTTPS is forced and `Strict-Transport-Security`, `x-content-type-options`, `referrer-policy` and
-  `x-frame-options` are on every response. There is deliberately **no CSP** — see `TODO.md` #12.
+  `x-frame-options` are on every response the Worker serves; `public/_headers` covers `/assets/*`,
+  which by design never reaches the Worker. There is deliberately **no CSP** — see `TODO.md` #12.
+- A state-changing request whose `Origin` is present and is not ours is refused, as defence in
+  depth behind the session cookie's `SameSite=Lax`.
 - Secrets (`AUTH_PEPPER`, `SESSION_SECRET`, `RATE_SALT_SEED`, `TOTP_ENC_KEY`) are Cloudflare secrets
   and cannot be read back. **`AUTH_PEPPER` must stay backed up** — losing it invalidates every
   stored auth hash, i.e. every password on the site, unrecoverably.

@@ -378,8 +378,9 @@ live blocker. Corrected 2026-08-13.
 because the zone's MX records live there. `mail` is not in `RESERVED_HANDLES`. `account`,
 `machines` and `share` are.
 
-**The user-facing error message was not updated with the pattern** and still names `. _ -`
-(`worker/accounts.ts`, `expectHandle`). Open — see `TODO.md`.
+**The user-facing error message was not updated with the pattern** and went on promising `. _ -`
+for a day, so the rule the person was told and the rule they were held to disagreed. Corrected
+2026-08-13 (`561e067`).
 
 ---
 

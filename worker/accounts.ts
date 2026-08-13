@@ -101,7 +101,16 @@ const TOTP_BACKUP_CODE_COUNT = 10;
 const MIN_ITERATIONS = 100_000;
 const MAX_ITERATIONS = 5_000_000;
 
-/** Mirrors `RECOVERY_ITERATIONS` in `src/auth/derive.ts`; used only for decoys. */
+/**
+ * Mirrors `RECOVERY_ITERATIONS` in `src/auth/derive.ts`.
+ *
+ * **Both branches of `challenge` must fall back to this one constant**, real and
+ * decoy alike. The real branch used `MIN_ITERATIONS`, which is the same number
+ * today and means something else entirely — a validation floor, which §4 wants
+ * raised over time. Raising it would move the real fallback and leave the decoy
+ * behind, and the gap between them is a handle oracle of exactly the kind the
+ * iteration-count decoy was just fixed to close.
+ */
 const RECOVERY_ITERATIONS_DEFAULT = 100_000;
 
 /**
@@ -671,7 +680,7 @@ export async function challenge(request: Request, env: Env): Promise<Response> {
         // which picks its own — so the default is the honest answer rather than
         // a placeholder.
         iterations: row.iterations ?? DEFAULT_ITERATIONS,
-        recoveryIterations: row.recovery_iterations ?? MIN_ITERATIONS,
+        recoveryIterations: row.recovery_iterations ?? RECOVERY_ITERATIONS_DEFAULT,
       },
     });
   }

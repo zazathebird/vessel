@@ -331,6 +331,10 @@ The design decisions most likely to be broken by someone who has not read it:
   how you proved it. Gated on the session alone, a stolen cookie would become permanent takeover.
   `set-password` is minted only inside `completeSignIn`, only on the recovery path, only after the
   last factor.
+- **That ticket is single-use on the server, not just in the client.** Its subject carries the
+  redeemed recovery credential and `setPassword` requires that credential's key slot to still
+  exist; the write batch deletes it. Clearing the ticket in `flows.ts` is a courtesy, not the
+  enforcement — for fifteen minutes it was the only thing standing there.
 - **Change-password reuses the salt.** Recovery codes derive against the password's salt, so rolling
   it would silently kill all ten.
 - **Set-password re-wraps; it does not unwrap.** `unwrapSlot` returns a deliberately
