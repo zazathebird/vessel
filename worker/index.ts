@@ -19,6 +19,7 @@ import { clientKey } from "./crypto";
 import { BadRequest } from "./encoding";
 import type { Env } from "./env";
 import { RateLimiter } from "./rate-limit";
+import { publishSiteConfig, readSiteConfig, withSiteConfig } from "./site-config";
 
 export { RateLimiter };
 export type { Env };
@@ -28,7 +29,12 @@ export default {
     const url = new URL(request.url);
 
     if (!url.pathname.startsWith("/api/")) {
-      return env.ASSETS.fetch(request);
+      // The app shell gets the published look inlined into it, so the first
+      // render is already the right colour and there is no fetch on the boot
+      // path. Non-HTML assets pass straight through untouched, and a failure
+      // to read the published row serves the site's built-in defaults rather
+      // than serving nothing.
+      return withSiteConfig(await env.ASSETS.fetch(request), env);
     }
 
     try {
@@ -66,6 +72,13 @@ async function route(
       return accounts.signinTotp(request, env);
     case "POST /api/auth/signout":
       return accounts.signout(request, env);
+
+    // The published site appearance. The read is public — it is the look every
+    // visitor is already being served — and the write is operator-only.
+    case "GET /api/site-config":
+      return readSiteConfig(request, env);
+    case "POST /api/site-config":
+      return publishSiteConfig(request, env);
 
     // The signed-in account.
     case "GET /api/me":

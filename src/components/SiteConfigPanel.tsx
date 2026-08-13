@@ -1,6 +1,8 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 
+import { api } from "../auth/api";
+import { publishable } from "../config/siteConfig";
 import { useConfig } from "../config/ConfigContext";
 import { decodeShareCode, encodeShareCode } from "../config/shareCode";
 import { FX, LAYOUTS, MODES, SCOPES, TYPESETS } from "../data/catalog";
@@ -21,8 +23,30 @@ export function SiteConfigPanel() {
   const { config, update, say, panelOpen, closePanel, shuffle, setMode } = useConfig();
   const panelRef = useRef<HTMLElement | null>(null);
   const [pasted, setPasted] = useState("");
+  const [publishState, setPublishState] = useState<"idle" | "publishing" | "published">("idle");
+
+  const publish = async () => {
+    setPublishState("publishing");
+    try {
+      await api.publishSiteConfig(publishable(config));
+      setPublishState("published");
+      say("published to everyone");
+    } catch (cause) {
+      setPublishState("idle");
+      // The Worker's wording is written to be read — a 403 here means this
+      // account is signed in but is not the operator, which is worth saying
+      // rather than flattening into "failed".
+      say(cause instanceof Error ? cause.message : "could not publish");
+    }
+  };
 
   useFocusTrap(panelOpen, panelRef);
+
+  // "Published" stops being true the moment anything changes, and a note that
+  // still claims it is the surest way to publish nothing and believe otherwise.
+  useEffect(() => {
+    setPublishState((state) => (state === "published" ? "idle" : state));
+  }, [config]);
 
   if (!panelOpen) return null;
 
@@ -282,6 +306,35 @@ export function SiteConfigPanel() {
             apply
           </button>
         </form>
+      </section>
+
+      {/*
+       * Publishing is what makes this panel the site's appearance rather than
+       * one browser's. Everything above changes the look locally and instantly;
+       * this is the one control that changes it for everyone, so it is a
+       * separate, deliberate act with its own button rather than an autosave.
+       *
+       * It sits at the bottom, after every control it publishes, because that
+       * is the order the job is done in.
+       */}
+      <section className="v-panel-section">
+        <h2 className="v-panel-label" id="v-publish-label">
+          Publish to everyone
+        </h2>
+        <p className="v-panel-note">
+          {publishState === "published"
+            ? "Published. Every visitor gets this look from now on."
+            : "This changes the site for every visitor, not just you. Unpublished changes are lost when you reload."}
+        </p>
+        <button
+          type="button"
+          className="chip"
+          aria-labelledby="v-publish-label"
+          onClick={publish}
+          disabled={publishState === "publishing"}
+        >
+          {publishState === "publishing" ? "publishing…" : "publish"}
+        </button>
       </section>
 
       <button type="button" className="v-knock" onClick={() => say("you are already inside")}>

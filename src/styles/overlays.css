@@ -95,6 +95,15 @@
   color: var(--faint);
 }
 
+/* The one place in the panel that needs a sentence rather than a label: what
+   publishing does is not guessable from a button called "publish". */
+.v-panel-note {
+  margin: 8px 0 10px;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
 .v-chip-row {
   display: flex;
   flex-wrap: wrap;

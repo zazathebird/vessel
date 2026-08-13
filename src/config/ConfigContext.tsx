@@ -19,6 +19,7 @@ import { adaptLayout, bandForWidth, isAdapted } from "./bands";
 import type { Band } from "./bands";
 import { SAVE_DEBOUNCE_MS, hasVisited, loadConfig, saveConfig } from "./persistence";
 import { describeRoll, roll } from "./randomiser";
+import { useSession } from "../auth/SessionContext";
 import { DEFAULT_CONFIG } from "./types";
 import type { Config } from "./types";
 
@@ -77,6 +78,11 @@ function formatClock(date: Date): string {
 }
 
 export function ConfigProvider({ children }: { children: ReactNode }) {
+  // Reading a context is not fetching: §11's rule that this provider stays
+  // synchronous is about the boot path, and `SessionProvider` sits above it
+  // holding an answer that arrives whenever it arrives.
+  const { isOperator } = useSession();
+
   // Read storage during the first render so there is no flash of default palette.
   const [config, setConfig] = useState<Config>(() => {
     if (typeof window === "undefined") return { ...DEFAULT_CONFIG };
@@ -304,15 +310,45 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     });
   }, [poke]);
 
-  const togglePanel = useCallback(() => setPanelOpen((v) => !v), []);
+  /**
+   * The door and the panel are the operator's, and only the operator's.
+   *
+   * Gated here rather than at each entrance on purpose: there are six unlock
+   * routes — five taps, the footer dot, konami, `sudo`, ⌘K and a rightward drag
+   * — and guarding them one at a time is six chances to miss one, forever, as
+   * routes get added. Everything funnels through `openDoor`, so this is the
+   * only place that has to be right.
+   *
+   * `isOperator` is false until the session check settles, so the door cannot
+   * open in the window before we know. Closed-until-proven is the correct
+   * direction for this: a visitor must never see the panel, not even for the
+   * single frame that an optimistic default would cost.
+   */
+  const togglePanel = useCallback(() => {
+    if (!isOperator) return;
+    setPanelOpen((v) => !v);
+  }, [isOperator]);
   const closePanel = useCallback(() => setPanelOpen(false), []);
 
-  const openDoor = useCallback((via: string) => {
-    setDoorVia(`unlocked via ${via}`);
-    setDoorOpen(true);
-    setPanelOpen(false);
-  }, []);
+  const openDoor = useCallback(
+    (via: string) => {
+      if (!isOperator) return;
+      setDoorVia(`unlocked via ${via}`);
+      setDoorOpen(true);
+      setPanelOpen(false);
+    },
+    [isOperator],
+  );
   const closeDoor = useCallback(() => setDoorOpen(false), []);
+
+  // Gating the openers is not enough: an operator who signs out while the panel
+  // is open would otherwise keep it, and keep publishing from it. Losing the
+  // flag has to take the surfaces with it.
+  useEffect(() => {
+    if (isOperator) return;
+    setPanelOpen(false);
+    setDoorOpen(false);
+  }, [isOperator]);
   const openConfig = useCallback(() => {
     setDoorOpen(false);
     setPanelOpen(true);

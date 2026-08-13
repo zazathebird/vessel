@@ -38,6 +38,19 @@ binding = "ASSETS"
 # This replaces public/_redirects, which was Pages-specific.
 not_found_handling = "single-page-application"
 
+# The Worker must see HTML requests, or it cannot inline the published site
+# appearance into them (worker/site-config.ts).
+#
+# By default a request that matches a real file is answered by the asset server
+# and the Worker is never invoked — that is the whole cost model. `/contact` has
+# no file so it reached the Worker and got the injection; `/` *is* index.html,
+# so it was served straight from disk and silently did not. The site looked
+# right on every URL except the front page, which is the one everybody lands on.
+#
+# The negation keeps the hashed bundles on the fast path: they are immutable,
+# they are never HTML, and there is nothing to inject into them.
+run_worker_first = ["/*", "!/assets/*"]
+
 # D1, not KV. Grants need relational queries and revocation needs
 # read-after-write consistency, which KV's eventual consistency would quietly
 # undermine (§8).

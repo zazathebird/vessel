@@ -93,6 +93,9 @@ export const api = {
   signin: (body: unknown) => post<SignInResult>("/api/auth/signin", body),
   totp: (ticket: string, code: string) => post<SignInResult>("/api/auth/totp", { ticket, code }),
   signout: () => post<{ status: string }>("/api/auth/signout", {}),
+  /** Publish the site's appearance to every visitor. Operator only — 403 otherwise. */
+  publishSiteConfig: (config: unknown) =>
+    post<{ status: string; config: unknown }>("/api/site-config", { config }),
   me: () => call<MeResult>("/api/me"),
   keySlot: () =>
     call<{ wrappedGrantKey: string; grantPubkey: string; alg: string }>("/api/account/slot"),

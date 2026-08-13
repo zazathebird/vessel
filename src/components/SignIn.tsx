@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { useConfig } from "../config/ConfigContext";
+import { useSession } from "../auth/SessionContext";
 import { signIn } from "../auth/flows";
 import { ApiError, api, type MeResult } from "../auth/api";
 
@@ -44,6 +45,11 @@ type Stage =
 
 export function SignIn() {
   const { go, say } = useConfig();
+  // Signing in changes what the rest of the interface is allowed to show — the
+  // operator panel and its door are gated on it. Without telling the session
+  // layer, that gate would stay shut until the next full reload, and the
+  // operator would sign in successfully and find their own panel missing.
+  const { refresh: refreshSession } = useSession();
 
   const [stage, setStage] = useState<Stage>({ name: "checking" });
   const [handle, setHandle] = useState("");
@@ -100,6 +106,7 @@ export function SignIn() {
     setStage({ name: "signed-in", me });
     setPassword("");
     setCode("");
+    await refreshSession();
     say(`Signed in as ${me.account.handle}.`);
   }
 
@@ -163,6 +170,10 @@ export function SignIn() {
       setHandle("");
       setPassword("");
       setCode("");
+      // Closes the operator panel and its door in the same breath, by taking
+      // away the flag they are gated on. Signing out has to actually revoke
+      // what signing in granted.
+      await refreshSession();
     }
   }
 

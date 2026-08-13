@@ -133,7 +133,7 @@ function noStore(response: Response): Response {
   return response;
 }
 
-async function readJson(request: Request): Promise<Record<string, unknown>> {
+export async function readJson(request: Request): Promise<Record<string, unknown>> {
   // Measured after reading rather than trusted from `content-length`, which is
   // absent on a chunked request and arbitrary on a hostile one — either way the
   // header check passes and the whole body is read regardless. Reading the text

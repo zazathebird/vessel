@@ -5,27 +5,33 @@ import { PATHS } from "../data/pageIds";
 import type { PageId } from "../data/pageIds";
 import { DEFAULT_CONFIG } from "./types";
 import type { Config, Scopes } from "./types";
+import { publishedConfig } from "./siteConfig";
 
 export const STORAGE_KEY = "vessel.cfg.v2";
 export const SAVE_DEBOUNCE_MS = 250;
 
 /**
- * Read persisted config. A corrupt, partial, or absent value must fall back to
- * defaults and never throw — storage can also throw on access alone (Safari
- * private mode, disabled cookies), so the read itself is guarded too.
+ * Read the config the site should render.
  *
- * Every field is validated rather than trusted: a stored layout id that no
- * longer exists would otherwise render an unstyled page forever.
+ * **The source is the operator's published look, not this browser's storage.**
+ * The palette, layout, effect, ornament and typeface are the site's appearance
+ * rather than a visitor's preference, so they are set once by the operator and
+ * served to everybody — see `worker/site-config.ts`. The config panel that
+ * changes them is visible only when signed in as the operator, so a visitor has
+ * no way to set these and nothing of theirs to remember.
+ *
+ * One consequence is worth stating plainly, because it is a feature: the
+ * operator sees exactly what a visitor sees. Their unpublished fiddling lives
+ * in React state and is gone on reload, so "it looks right on my machine" and
+ * "it looks right" cannot come apart.
+ *
+ * Every field is still validated rather than trusted, and now it matters more:
+ * a bad layout id used to render one unstyled page for one visitor, and would
+ * now render it for all of them at once. A corrupt, partial or absent value
+ * falls back per field and never throws.
  */
 export function loadConfig(): Config {
-  let raw: unknown = null;
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (!stored) return { ...DEFAULT_CONFIG };
-    raw = JSON.parse(stored);
-  } catch {
-    return { ...DEFAULT_CONFIG };
-  }
+  const raw: unknown = publishedConfig();
   if (typeof raw !== "object" || raw === null) return { ...DEFAULT_CONFIG };
   const saved = raw as Partial<Record<keyof Config, unknown>>;
 
@@ -66,6 +72,16 @@ export function loadConfig(): Config {
   };
 }
 
+/**
+ * Still written, though `loadConfig` no longer reads it.
+ *
+ * Two reasons it is not simply deleted. `hasVisited` is keyed off this entry
+ * and drives the rule that time-of-day must not override a first visit, so
+ * removing the write would make every visit look like a first one. And an
+ * operator mid-edit has somewhere to be restored from if publishing ever grows
+ * a draft state. It is appearance only — no account data has ever been written
+ * here, and none is now.
+ */
 export function saveConfig(config: Config): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
