@@ -35,7 +35,9 @@ export const LAYOUTS: { id: LayoutId; label: string }[] = [
 ];
 
 export const FX: { id: FxId; label: string }[] = [
-  { id: "vessels", label: "Vessels" },
+  // Label renamed from "Vessels" with the rest of the de-branding (2026-08-13,
+  // client request); the id is a stored/share-code wire format and never changes.
+  { id: "vessels", label: "Branches" },
   { id: "flow", label: "Flow" },
   { id: "pressure", label: "Pressure" },
   { id: "rain", label: "Matrix rain" },

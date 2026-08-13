@@ -46,6 +46,19 @@
 
 export type FighterStyle = "hooded" | "caped" | "haloed" | "horned";
 
+/**
+ * The one deliberate literal-colour exception on the site (client request,
+ * 2026-08-13): the good side fights in blue/green and the evil side in red,
+ * in every palette. Everything else in the scene — bodies, sparks, ground,
+ * blade cores — still reads the live palette and recolours with the bleed.
+ */
+export const BLADE_COLORS: Record<FighterStyle, string> = {
+  hooded: "#3d9bff",
+  haloed: "#37d67a",
+  caped: "#ff3b30",
+  horned: "#ff2929",
+};
+
 type Action = "neutral" | "attacking" | "kicking" | "force" | "dead";
 
 /** The reference's world. Everything below is in these units. */
@@ -450,23 +463,58 @@ function drawFighter(
   const bodyAlpha = 0.85 * v.dim;
   ctx.fillStyle = v.ink;
 
-  // Capes and robes hang behind, drawn first so the body covers their top edge.
+  // Capes, robes and wings hang behind, drawn first so the body covers their
+  // top edge. Each style's back layer is half its likeness; the head block and
+  // the chest dressing below do the other half.
   if (f.style === "caped") {
-    ctx.globalAlpha = 0.35 * v.dim;
+    // Floor-length cape, wide enough to read as a garment rather than a fin.
+    ctx.globalAlpha = 0.4 * v.dim;
     ctx.beginPath();
-    ctx.moveTo(cx - facing * 6, f.y + 4);
-    ctx.lineTo(cx - facing * 26, f.y + BODY_H - 4);
-    ctx.lineTo(cx - facing * 8, f.y + BODY_H);
+    ctx.moveTo(cx - facing * 4, f.y + 2);
+    ctx.lineTo(cx - facing * 30, f.y + BODY_H * 0.55);
+    ctx.lineTo(cx - facing * 24, FEET_Y);
+    ctx.lineTo(cx - facing * 6, f.y + BODY_H);
     ctx.closePath();
     ctx.fill();
   } else if (f.style === "haloed") {
-    // The robe: the body block flares to the feet.
-    ctx.globalAlpha = 0.5 * v.dim;
+    // The aura: a faint disc of the figure's own light, behind everything.
+    ctx.globalAlpha = 0.08 * v.dim;
+    ctx.fillStyle = blade;
     ctx.beginPath();
-    ctx.moveTo(cx - BODY_W / 2, f.y + BODY_H * 0.45);
-    ctx.lineTo(cx - BODY_W / 2 - 7, FEET_Y);
-    ctx.lineTo(cx + BODY_W / 2 + 7, FEET_Y);
-    ctx.lineTo(cx + BODY_W / 2, f.y + BODY_H * 0.45);
+    ctx.arc(cx, f.y + 22, 46, 0, TAU);
+    ctx.fill();
+    // The robe: the body block flares to the feet.
+    ctx.globalAlpha = 0.6 * v.dim;
+    ctx.fillStyle = v.ink;
+    ctx.beginPath();
+    ctx.moveTo(cx - BODY_W / 2, f.y + BODY_H * 0.4);
+    ctx.lineTo(cx - BODY_W / 2 - 8, FEET_Y);
+    ctx.lineTo(cx + BODY_W / 2 + 8, FEET_Y);
+    ctx.lineTo(cx + BODY_W / 2, f.y + BODY_H * 0.4);
+    ctx.closePath();
+    ctx.fill();
+  } else if (f.style === "horned") {
+    // One bat wing on the trailing side — the scalloped edge is what stops it
+    // reading as a cape.
+    ctx.globalAlpha = 0.3 * v.dim;
+    ctx.beginPath();
+    ctx.moveTo(cx - facing * 5, f.y + 8);
+    ctx.lineTo(cx - facing * 36, f.y - 10);
+    ctx.lineTo(cx - facing * 28, f.y + 10);
+    ctx.lineTo(cx - facing * 38, f.y + 18);
+    ctx.lineTo(cx - facing * 26, f.y + 26);
+    ctx.lineTo(cx - facing * 30, f.y + 36);
+    ctx.lineTo(cx - facing * 6, f.y + 24);
+    ctx.closePath();
+    ctx.fill();
+  } else if (f.style === "hooded") {
+    // The tunic skirt below the belt — the robe's lower half.
+    ctx.globalAlpha = 0.35 * v.dim;
+    ctx.beginPath();
+    ctx.moveTo(cx - BODY_W / 2, f.y + BODY_H * 0.55);
+    ctx.lineTo(cx - BODY_W / 2 - 5, FEET_Y);
+    ctx.lineTo(cx + BODY_W / 2 + 5, FEET_Y);
+    ctx.lineTo(cx + BODY_W / 2, f.y + BODY_H * 0.55);
     ctx.closePath();
     ctx.fill();
   }
@@ -479,38 +527,94 @@ function drawFighter(
   const headY = f.y - 15;
   ctx.fillRect(cx - 9, headY, 18, 15);
   if (f.style === "hooded") {
+    // The hood, deep enough to shadow the face at silhouette scale.
     ctx.beginPath();
-    ctx.moveTo(cx - facing * 13, headY + 15);
-    ctx.lineTo(cx + facing * 2, headY - 9);
-    ctx.lineTo(cx + facing * 12, headY + 10);
+    ctx.moveTo(cx - facing * 14, headY + 15);
+    ctx.lineTo(cx + facing * 2, headY - 10);
+    ctx.lineTo(cx + facing * 13, headY + 11);
     ctx.closePath();
     ctx.fill();
   } else if (f.style === "caped") {
-    // Helmet: a wider dome and the flared jaw line.
-    ctx.fillRect(cx - 12, headY - 4, 24, 6);
+    // The helmet: a rounded dome over the flared jaw line.
     ctx.beginPath();
-    ctx.moveTo(cx - 12, headY + 10);
-    ctx.lineTo(cx - 16, headY + 17);
-    ctx.lineTo(cx + 16, headY + 17);
-    ctx.lineTo(cx + 12, headY + 10);
+    ctx.arc(cx, headY + 2, 13, Math.PI, 0);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(cx - 12, headY + 9);
+    ctx.lineTo(cx - 17, headY + 17);
+    ctx.lineTo(cx + 17, headY + 17);
+    ctx.lineTo(cx + 12, headY + 9);
     ctx.closePath();
     ctx.fill();
   } else if (f.style === "haloed") {
-    ctx.globalAlpha = 0.9 * v.dim;
+    // Shoulder-length hair, wider than the head so it survives silhouette.
+    ctx.fillRect(cx - 14, headY, 5, 23);
+    ctx.fillRect(cx + 9, headY, 5, 23);
+    ctx.fillRect(cx - 10, headY - 3, 20, 5);
+    // The halo floats clear of the head: a bright ring inside a soft glow.
     ctx.strokeStyle = blade;
+    ctx.globalAlpha = 0.35 * v.dim;
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.ellipse(cx, headY - 10, 14, 5, 0, 0, TAU);
+    ctx.stroke();
+    ctx.globalAlpha = 0.95 * v.dim;
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.ellipse(cx, headY - 7, 13, 4, 0, 0, TAU);
+    ctx.ellipse(cx, headY - 10, 14, 5, 0, 0, TAU);
     ctx.stroke();
   } else {
+    // Horns that curve back the way stick-on triangles don't.
     ctx.beginPath();
-    ctx.moveTo(cx - 7, headY + 2);
-    ctx.lineTo(cx - 13, headY - 12);
-    ctx.lineTo(cx - 3, headY - 2);
+    ctx.moveTo(cx - 8, headY + 2);
+    ctx.quadraticCurveTo(cx - 15, headY - 6, cx - 11, headY - 15);
+    ctx.quadraticCurveTo(cx - 9, headY - 6, cx - 4, headY - 1);
     ctx.closePath();
-    ctx.moveTo(cx + 7, headY + 2);
-    ctx.lineTo(cx + 13, headY - 12);
-    ctx.lineTo(cx + 3, headY - 2);
+    ctx.moveTo(cx + 8, headY + 2);
+    ctx.quadraticCurveTo(cx + 15, headY - 6, cx + 11, headY - 15);
+    ctx.quadraticCurveTo(cx + 9, headY - 6, cx + 4, headY - 1);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // The front-of-body dressing that names each figure at chest height. Ink on
+  // ink is invisible, so everything here borrows a colour the palette already
+  // assigned to this fighter.
+  if (f.style === "caped") {
+    // The lit chest panel and belt boxes, in the spark colour.
+    ctx.fillStyle = v.spark;
+    ctx.globalAlpha = 0.9 * v.dim;
+    for (let row = 0; row < 3; row += 1) {
+      for (let col = 0; col < 2; col += 1) {
+        ctx.fillRect(cx - 6 + col * 8, f.y + 15 + row * 6, 3, 3);
+      }
+    }
+    ctx.globalAlpha = 0.6 * v.dim;
+    ctx.fillRect(cx - 10, f.y + 42, 5, 5);
+    ctx.fillRect(cx + 5, f.y + 42, 5, 5);
+    ctx.fillStyle = v.ink;
+  } else if (f.style === "hooded") {
+    // The belt, in the fighter's own blade colour.
+    ctx.fillStyle = blade;
+    ctx.globalAlpha = 0.5 * v.dim;
+    ctx.fillRect(f.x, f.y + 36, BODY_W, 4);
+    ctx.fillStyle = v.ink;
+  } else if (f.style === "horned") {
+    // The tail sways behind and ends in the spade tip.
+    const sway = Math.sin(st.idle * 0.06 + f.phase) * 5;
+    const tailTipX = cx - facing * 32;
+    const tailTipY = f.y + BODY_H - 26 + sway;
+    ctx.strokeStyle = v.ink;
+    ctx.globalAlpha = 0.7 * v.dim;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(cx - facing * 10, f.y + BODY_H - 6);
+    ctx.quadraticCurveTo(cx - facing * 36, f.y + BODY_H + 10, tailTipX, tailTipY);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(tailTipX - 5, tailTipY - 2);
+    ctx.lineTo(tailTipX + 5, tailTipY - 2);
+    ctx.lineTo(tailTipX, tailTipY - 11);
     ctx.closePath();
     ctx.fill();
   }

@@ -12,6 +12,7 @@
 import type { FxId } from "../data/catalog";
 import type { Palette } from "../data/palettes";
 import {
+  BLADE_COLORS,
   FEET_Y as DUEL_FEET_Y,
   WORLD_H as DUEL_WORLD_H,
   WORLD_W as DUEL_WORLD_W,
@@ -538,8 +539,10 @@ function duelling(left: FighterStyle, right: FighterStyle): Effect {
       y: h * 0.8 - DUEL_FEET_Y * scale,
       scale,
       ink: p.fg,
-      bladeA: p.a1,
-      bladeB: p.a3,
+      // The blades keep their alignment colours in every palette — the one
+      // literal-colour carve-out on the site (see BLADE_COLORS in fx/duel.ts).
+      bladeA: BLADE_COLORS[left],
+      bladeB: BLADE_COLORS[right],
       core: p.fg,
       spark: p.a2,
       line: p.line,

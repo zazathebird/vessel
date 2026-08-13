@@ -13,6 +13,77 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-13 (late) — De-branding, duel likeness + blade colours, placeholder photos; the app-shell review finally runs
+
+Four client requests landed in one session, plus the review that
+`docs/REVIEW-CONTINUATION.md` had been holding open (that file is now deleted,
+per its own instruction — this entry is the durable record).
+
+**Client requests, all shipped:**
+
+- **"Remove the word vessel from the site."** Every user-visible occurrence is
+  gone: wordmark, `<title>`/document titles, Terminal's termbar, the TOTP
+  issuer, the passkey rp name — all now `mcclevarty.ca` — and the "Vessels"
+  effect label is "Branches". Internal identifiers (`.vessel` class, storage
+  keys, session cookie, HKDF info strings, Worker/D1 names, effect id) keep
+  the old name deliberately: renaming them breaks live sessions, stored
+  config, key derivation or share codes for zero visible change. CLAUDE.md
+  deviation 10. `mcclevarty` joined the reserved handles.
+- **The favicon** is no longer the empty `data:` icon: an inline SVG (still no
+  file) of the client's chosen drawing — the finger, offered to a small
+  four-pane window. No trademarked mark anywhere near it.
+- **Duel likeness + alignment colours.** The four silhouettes now carry their
+  characters (haloed: hair, floating halo, aura, fuller robe; horned: curved
+  horns, scalloped bat wing, swaying spade tail; hooded: deeper hood, belt,
+  tunic skirt; caped: domed helmet, lit chest panel, floor-length cape), and
+  the blades hold fixed colours in every palette — blue/green for good, red
+  for evil (`BLADE_COLORS`, the site's one literal-colour carve-out, CLAUDE.md
+  deviation 9). Motion and likeness still need the client's eye.
+- **Placeholder photos** fill all eight photo-slot tiles: Wikimedia Commons
+  PD/CC0 only, re-encoded to strip EXIF (the gallery copy promises it),
+  desaturated under the tile chrome so the palettes keep authority
+  (`.v-tile-img`). `docs/PHOTOS.md` is the source/license ledger. CLAUDE.md
+  deviation 11.
+
+**The app-shell/UI review** (the slice the second round's third agent never
+returned) ran over App/theme/config/hooks/components/data/fx/styles. Eight
+findings, all verified and fixed:
+
+1. Radial's orbit rendered six pills on seven enumerated positions — a
+   regression from the 404 pill leaving `NAV` — leaving a visible hole in the
+   ring. Recomputed for six.
+2. "Leave operator mode" never reset `leaving`, so the button stayed disabled
+   as "leaving…" for the next sign-in (the panel stays mounted while closed).
+   Now reset in a `finally`.
+3. `shuffle`, `setMode("visit")` and the boot roll ran `roll()`/`say()`
+   *inside* `setConfig` updaters — the exact impurity `go()` was fixed for;
+   StrictMode double-invokes updaters, so the toast could announce a different
+   combination than the one applied. Rolls moved out, updaters pure.
+4. The three deliberate calm toggles disagreed, and the header/panel pair
+   overwrote the *published* grain/breathe values on every calm round-trip
+   (`update({ calm, breathe: !calm, grain: !calm })`). `themeClasses` already
+   suppresses both under calm, so all three toggles now flip `calm` alone.
+5. Two clipboard writes still toasted success unconditionally (`copyCode`,
+   `revealMail`) against the honest-clipboard convention; both now await the
+   write and say what actually happened.
+6. Scroll velocity was dead in Terminal — the listener bound to `.v-stage`,
+   but Terminal scrolls the document. A `window` scroll listener joins it.
+7. `.v-setup-row` was referenced and styled nowhere; the saved-setups row now
+   has its flex rule.
+8. The logo's five-tap countdown toasted "2 more"/"1 more" at visitors whose
+   fifth tap would be refused (`openDoor` is operator-gated). The countdown is
+   now gated on `isOperator` too.
+
+A ninth, product-level finding — the findable sign-in affordance does not
+exist on phones (the ornament is `null` there) — went to TODO's *Awaiting
+client sign-off* rather than being "fixed" unasked.
+
+Also closed from the continuation file: the three raw-fetch signup fixtures
+now send `slotAlg`, so signup recording the algorithm is proven on the raw
+path too. Harness after all of the above: **178/178**.
+
+---
+
 ## 2026-08-13 — Second review round: 14 findings fixed, guards move into the writes
 
 Two fresh end-to-end review agents (Worker + client auth) ran after the morning audits; every

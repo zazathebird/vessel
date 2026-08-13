@@ -59,7 +59,7 @@ export default function App() {
   useEffect(() => {
     if (stageRef.current) stageRef.current.scrollTop = 0;
     window.scrollTo(0, 0);
-    document.title = `${PAGES[config.page].title} · vessel`;
+    document.title = `${PAGES[config.page].title} · mcclevarty.ca`;
   }, [config.page]);
 
   const stageAnimation = config.calm
@@ -130,7 +130,7 @@ export default function App() {
                 <span className="v-termbar-dot" style={{ background: "var(--a3)" }} />
                 <span className="v-termbar-dot" style={{ background: "var(--a2)" }} />
                 <span className="v-termbar-dot" style={{ background: "var(--a1)" }} />
-                <span className="v-termbar-title">vessel — /{config.page}</span>
+                <span className="v-termbar-title">mcclevarty.ca — /{config.page}</span>
               </div>
               <div className="v-termbody">{body}</div>
             </>

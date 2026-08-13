@@ -675,6 +675,7 @@ async function main(): Promise<void> {
         authSecret: credential.authSecret,
         grantPubkey: toBase64Url(grant.publicKeyRaw),
         passwordSlot: toBase64Url(await wrapSlot(grant.scalar, credential.wrappingKey)),
+        slotAlg: SLOT_ALG,
         recovery,
       },
     });
@@ -777,6 +778,7 @@ async function main(): Promise<void> {
         authSecret: credential.authSecret,
         grantPubkey: toBase64Url(grant.publicKeyRaw),
         passwordSlot: toBase64Url(await wrapSlot(grant.scalar, credential.wrappingKey)),
+        slotAlg: SLOT_ALG,
         recovery,
       },
     });
@@ -1596,6 +1598,7 @@ async function main(): Promise<void> {
       authSecret: credential.authSecret,
       grantPubkey: toBase64Url(grant.publicKeyRaw),
       passwordSlot: toBase64Url(await wrapSlot(grant.scalar, credential.wrappingKey)),
+      slotAlg: SLOT_ALG,
       recovery,
     };
     const setup = new Client();

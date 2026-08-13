@@ -213,8 +213,9 @@ ones most likely to be "fixed" by accident:
   which collapses the tabs, the panel and the door in one motion, and clears `unlocked` so the
   header's siteconfig button retires with them
 - **Share codes are base-36 and `FX` order is a wire format.** Effect index 12 is `C`, not `12`;
-  `0-0-12-0-7-0` parses `12` as 38, falls through `FX[38] ?? FX[0]` and applies Vessels, which
-  looks exactly like a failed deploy. Append to `FX`, never insert
+  `0-0-12-0-7-0` parses `12` as 38, falls through `FX[38] ?? FX[0]` and applies the default effect (id `vessels`,
+  labelled "Branches" since the de-branding), which looks exactly like a failed deploy. Append to
+  `FX`, never insert
 
 ## Known deviations from the prototype
 
@@ -260,6 +261,29 @@ All deliberate. Add to this list rather than silently diverging.
    to see — *show the layout, do not caption it.* The 404's `pressure lost` variant and the
    ` · adapted` suffix went with it; see the adapted-layouts trap above for what that costs.
    `docs/DECISIONS.md` has the full note.
+9. **The duel blades are literal colours** (client request, 2026-08-13): the good side fights in
+   blue/green (`hooded` blue, `haloed` green) and the evil side in red, in **every** palette —
+   `BLADE_COLORS` in `src/fx/duel.ts`. This is the one deliberate exception to "no component
+   should contain a literal colour"; everything else in the duel scene (bodies, sparks, ground,
+   blade cores, health-bar tracks) still reads the live palette and recolours with the bleed. The
+   same day the four silhouettes were upgraded to read unmistakably — hair/halo/aura/robe,
+   curved horns/bat wing/spade tail, hood/belt/tunic, dome helmet/chest panel/floor cape — with
+   every non-blade colour still palette-supplied.
+10. **All visible "vessel" branding is gone** (client request, 2026-08-13). The wordmark, page
+   titles, termbar, TOTP issuer and passkey rp name now read `mcclevarty.ca`; the "Vessels"
+   effect *label* is "Branches"; the favicon is an inline SVG data: URI (the finger, offered to
+   a small four-pane window — the client's choice, and still no image file). **Internal
+   identifiers deliberately keep the old name** — the `.vessel` CSS class, `vessel.*` storage
+   keys, the `__Host-vessel_session` cookie, the `vessel/…` HKDF info strings, the Worker/D1
+   names and the effect id `vessels` — because renaming them breaks live sessions, stored
+   config, key derivation or share codes for zero visible change. Do not "finish the job".
+11. **The photo slots hold placeholder photographs** (client request, 2026-08-13):
+   `public/photos/*.jpg`, all Wikimedia Commons public-domain/CC0 (ledger with sources in
+   `docs/PHOTOS.md` — keep it in sync if any are swapped), re-encoded to strip EXIF so the
+   gallery's "EXIF stripped" line stays true, and rendered desaturated under the tile chrome
+   (`.v-tile-img`, `chrome.css`) so the palettes stay in charge. Temporary until the operator's
+   own photos exist; the spec's *no images* rule still holds for design assets — these fill
+   slots that were always destined for photographs.
 
 ## Copy correction, approved by the client
 

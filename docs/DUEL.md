@@ -1,5 +1,17 @@
 # The lightsword duel — specification and state
 
+**Update 2026-08-13, later the same day:** two client requests landed on top of
+the rebuild. (1) The four silhouettes were upgraded so each pairing reads
+unmistakably — the haloed figure gained shoulder-length hair, a floating
+two-pass halo, a light aura and a fuller robe; the horned one curved horns, a
+scalloped bat wing and a swaying spade-tipped tail; the hooded one a deeper
+hood, a belt in its blade colour and a tunic skirt; the caped one a domed
+helmet, a lit chest panel with belt boxes and a floor-length cape. (2) **Blades
+are now literal colours** — good fights in blue/green, evil in red, in every
+palette (`BLADE_COLORS` in `src/fx/duel.ts`). That is the site's one deliberate
+literal-colour carve-out; everything else in the scene still recolours with the
+palette bleed. CLAUDE.md *Known deviations* 9 records both.
+
 **Status: rebuilt 2026-08-13, live in the hero-ornament slot.** The match
 engine is `src/fx/duel.ts`, the ornament host is
 `src/components/DuelOrnament.tsx`, and both pairings are pickable in

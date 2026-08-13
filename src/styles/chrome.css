@@ -779,9 +779,12 @@
   animation: none;
 }
 
-/* Radial orbit: seven pills distributed evenly from -90°, offset by 160% of a
+/* Radial orbit: six pills distributed evenly from -90°, offset by 160% of a
  * pill's own size. NAV has a fixed length, so this is enumerated rather than
- * computed — which is only safe because .v-orbit holds nothing but the pills. */
+ * computed — which is only safe because .v-orbit holds nothing but the pills.
+ * The count was seven until the 404 pill moved behind sign-in (2026-08-13);
+ * these are the six-way positions, so if NAV's length ever changes again this
+ * block has to change with it. */
 .v-orbit {
   position: absolute;
   inset: 0;
@@ -798,22 +801,19 @@
   transform: translate(-50%, -50%) translate(0%, -160%);
 }
 .v-orbit-pill:nth-child(2) {
-  transform: translate(-50%, -50%) translate(125.09%, -99.76%);
+  transform: translate(-50%, -50%) translate(138.56%, -80%);
 }
 .v-orbit-pill:nth-child(3) {
-  transform: translate(-50%, -50%) translate(155.99%, 35.6%);
+  transform: translate(-50%, -50%) translate(138.56%, 80%);
 }
 .v-orbit-pill:nth-child(4) {
-  transform: translate(-50%, -50%) translate(69.42%, 144.16%);
+  transform: translate(-50%, -50%) translate(0%, 160%);
 }
 .v-orbit-pill:nth-child(5) {
-  transform: translate(-50%, -50%) translate(-69.42%, 144.16%);
+  transform: translate(-50%, -50%) translate(-138.56%, 80%);
 }
 .v-orbit-pill:nth-child(6) {
-  transform: translate(-50%, -50%) translate(-155.99%, 35.6%);
-}
-.v-orbit-pill:nth-child(7) {
-  transform: translate(-50%, -50%) translate(-125.09%, -99.76%);
+  transform: translate(-50%, -50%) translate(-138.56%, -80%);
 }
 
 /* Content grid + blocks -------------------------------------------------- */
@@ -1036,6 +1036,27 @@
   border-radius: inherit;
   box-shadow: inset 0 0 50px color-mix(in oklab, var(--a1) 26%, transparent);
   pointer-events: none;
+}
+
+/* Placeholder photos (2026-08-13, client request). The image sits under the
+   tile's glow and caption, desaturated so twenty-four palettes don't have to
+   fight a photograph's own colour cast; the caption gets a bg scrim so it
+   stays legible over one. Temporary until the operator's own photos exist. */
+.v-tile-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+  filter: grayscale(0.85) contrast(1.05);
+  opacity: 0.8;
+}
+
+.v-tile.has-img .v-tile-caption {
+  background: color-mix(in oklab, var(--bg) 72%, transparent);
+  padding: 3px 8px;
+  border-radius: 4px;
 }
 
 .v-tile-caption {
@@ -1272,6 +1293,23 @@
    two-column code grid — each is one long string, not one of a pair. */
 .v-codes-single {
   grid-template-columns: 1fr;
+}
+
+/* A saved setup's row: the name + code fills the row and the apply/delete
+   links sit together at its end, wrapping under on narrow bands. The class
+   existed unstyled (review 2026-08-13) and fell back to the bare code-chip
+   block with the links run on inline. */
+.v-setup-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.v-setup-row > span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 /* The URI especially has no natural break points, so it breaks anywhere rather

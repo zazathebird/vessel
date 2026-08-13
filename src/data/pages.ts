@@ -35,6 +35,13 @@ export interface PageBlock {
   items?: string[];
   hasTile?: boolean;
   tile?: string;
+  /**
+   * Placeholder photograph for a tile (2026-08-13, client request): a real
+   * image behind the tile chrome until the operator's own photos exist.
+   * Sourced under public-domain/CC0 only — docs/PHOTOS.md has the ledger.
+   */
+  img?: string;
+  imgAlt?: string;
   hasMail?: boolean;
 }
 
@@ -85,11 +92,11 @@ export const PAGES: Record<PageId, Page> = {
     lede: "No client names, no photos of anyone's living room. What came in, what was wrong, what happened next.",
     ctas: [{ label: "Bring me yours", to: "contact", primary: true }],
     blocks: [
-      { kicker: "recovery", title: "4TB out of a flooded drive", body: "Dried, cleaned, imaged in a single pass. 94% recovered, including the only copy of eleven years of photos.", hasTile: true, tile: "drive teardown · photo slot" },
+      { kicker: "recovery", title: "4TB out of a flooded drive", body: "Dried, cleaned, imaged in a single pass. 94% recovered, including the only copy of eleven years of photos.", hasTile: true, tile: "drive teardown · photo slot", img: "/photos/drive-teardown.jpg", imgAlt: "An opened hard disk drive on a white background, platter and read arm exposed" },
       { kicker: "board", title: "Reflowed a GPU everyone wrote off", body: "Two cold joints. Still running two years later — two years longer than the shop that quoted a new machine predicted." },
-      { kicker: "network", title: "A house with three routers fighting", body: "Removed two. The third works perfectly and always did.", hasTile: true, tile: "cabinet before/after · photo slot" },
+      { kicker: "network", title: "A house with three routers fighting", body: "Removed two. The third works perfectly and always did.", hasTile: true, tile: "cabinet before/after · photo slot", img: "/photos/network-cabinet.jpg", imgAlt: "A wiring rack buried under a chaotic curtain of blue patch cables" },
       { kicker: "forensics", title: "Ransomware, no ransom", body: "An offline backup existed. Nobody knew. Restored in an afternoon." },
-      { kicker: "absurd", title: "A laptop full of sand", body: "Beach holiday. Every key. It lives.", hasTile: true, tile: "keyboard, disassembled · photo slot" },
+      { kicker: "absurd", title: "A laptop full of sand", body: "Beach holiday. Every key. It lives.", hasTile: true, tile: "keyboard, disassembled · photo slot", img: "/photos/keyboard-disassembled.jpg", imgAlt: "A beige mechanical keyboard with most keycaps pulled, bare switch stems showing" },
       { kicker: "ongoing", title: "Twelve machines kept alive past 2019", body: "Small office, no budget. SSDs and RAM instead of a purchase order." },
     ],
   },
@@ -99,12 +106,12 @@ export const PAGES: Record<PageId, Page> = {
     lede: "Dead hardware, screenshots of things that should not compile, and photographs of cable drawers. Lazy-loaded, EXIF stripped, no lightbox library.",
     ctas: [{ label: "Contact instead", to: "contact" }],
     blocks: [
-      { kicker: "img_01", title: "Exploded ThinkPad", body: "Every screw laid out in order. It went back together.", hasTile: true, tile: "4:5 · photo slot" },
-      { kicker: "img_02", title: "Burnt capacitor, close", body: "Macro. You can see where it gave up.", hasTile: true, tile: "16:9 · photo slot" },
+      { kicker: "img_01", title: "Exploded ThinkPad", body: "Every screw laid out in order. It went back together.", hasTile: true, tile: "4:5 · photo slot", img: "/photos/thinkpad-exploded.jpg", imgAlt: "A laptop opened on a wooden bench, battery and mainboard exposed, screwdrivers alongside" },
+      { kicker: "img_02", title: "Burnt capacitor, close", body: "Macro. You can see where it gave up.", hasTile: true, tile: "16:9 · photo slot", img: "/photos/burnt-capacitor.jpg", imgAlt: "Bulged and vented electrolytic capacitors on a dusty motherboard, one shedding its sleeve" },
       { kicker: "clip_01", title: "Fan bearing screaming", body: "Eight seconds. Muted by default, obviously.", hasTile: true, tile: "video · muted loop" },
-      { kicker: "img_03", title: "Forty drives, one works", body: "A shelf of maybes.", hasTile: true, tile: "3:4 · photo slot" },
-      { kicker: "img_04", title: "CRT still alive", body: "Refuses to die. Respect.", hasTile: true, tile: "1:1 · photo slot" },
-      { kicker: "img_05", title: "Cable drawer, unsolved", body: "An ongoing situation.", hasTile: true, tile: "4:5 · photo slot" },
+      { kicker: "img_03", title: "Forty drives, one works", body: "A shelf of maybes.", hasTile: true, tile: "3:4 · photo slot", img: "/photos/drive-shelf.jpg", imgAlt: "Five PATA hard drives stacked on a scuffed wooden desk, connectors facing out" },
+      { kicker: "img_04", title: "CRT still alive", body: "Refuses to die. Respect.", hasTile: true, tile: "1:1 · photo slot", img: "/photos/crt-alive.jpg", imgAlt: "A CRT monitor glowing amber in a dark room, text faintly burned into the phosphor" },
+      { kicker: "img_05", title: "Cable drawer, unsolved", body: "An ongoing situation.", hasTile: true, tile: "4:5 · photo slot", img: "/photos/cable-drawer.jpg", imgAlt: "A dense tangle of power and data cables jammed beneath a desk shelf" },
     ],
   },
   // The form itself is a component, not data — `App` renders `SignUp` in place

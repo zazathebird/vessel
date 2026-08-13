@@ -27,11 +27,14 @@ export function Header() {
       openDoor("five taps");
       return;
     }
-    if (taps.current > 2) say(String(5 - taps.current) + " more");
+    // The countdown is gated the way the door itself is: openDoor refuses
+    // non-operators, so teasing a visitor with "2 more" counts them down to
+    // silently nothing (review 2026-08-13).
+    if (taps.current > 2 && isOperator) say(String(5 - taps.current) + " more");
     tapTimer.current = window.setTimeout(() => {
       taps.current = 0;
     }, 1400);
-  }, [openDoor, say]);
+  }, [openDoor, say, isOperator]);
 
   return (
     <header className="v-header">
@@ -40,13 +43,13 @@ export function Header() {
       </div>
 
       <div className="v-header-row">
-        <button type="button" className="v-logo" onClick={onLogoTap} aria-label="vessel — tap for operator access">
+        <button type="button" className="v-logo" onClick={onLogoTap} aria-label="mcclevarty.ca — tap for operator access">
           <span className="v-logo-mark">
             <span className="v-logo-ring a" />
             <span className="v-logo-ring b" />
             <span className="v-logo-dot" />
           </span>
-          <span className="v-wordmark">vessel</span>
+          <span className="v-wordmark">mcclevarty.ca</span>
         </button>
 
         <nav className="v-nav" aria-label="Primary">
@@ -100,7 +103,11 @@ export function Header() {
             aria-pressed={config.calm}
             onClick={() => {
               const calm = !config.calm;
-              update({ calm, breathe: !calm, grain: !calm });
+              // Calm alone: `themeClasses` already suppresses grain/breathe
+              // under calm, and writing them here overwrote the *published*
+              // values once calm round-tripped (review 2026-08-13). The
+              // command palette's toggle always did it this way.
+              update({ calm });
               // Calm is the one setting that follows the visitor home —
               // an accessibility escape hatch that resets every visit is
               // a button someone has to find again every visit.

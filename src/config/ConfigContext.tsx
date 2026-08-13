@@ -140,16 +140,17 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const shuffle = useCallback(() => {
-    setConfig((previous) => {
-      const result = roll(previous);
-      if (!result) {
-        // 60 attempts all blocked — the scope switches have painted into a corner.
-        say("nothing legal to roll");
-        return previous;
-      }
-      say(describeRoll(result));
-      return { ...previous, ...result };
-    });
+    // roll() is random and say() dispatches state — neither may live inside a
+    // setConfig updater, which StrictMode double-invokes (the same purity rule
+    // `go` was already fixed for). The roll happens here; the updater applies it.
+    const result = roll(live.current.config);
+    if (!result) {
+      // 60 attempts all blocked — the scope switches have painted into a corner.
+      say("nothing legal to roll");
+      return;
+    }
+    say(describeRoll(result));
+    setConfig((previous) => ({ ...previous, ...result }));
   }, [say]);
 
   /**
@@ -158,8 +159,17 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
    */
   const revealMail = useCallback(() => {
     setMailShown(true);
-    navigator.clipboard?.writeText(MAIL).catch(() => {});
-    say("address copied");
+    // Never claim a success that did not happen (the TotpEnrol convention).
+    // The address is on screen either way; the toast says which it was.
+    const written = navigator.clipboard?.writeText(MAIL);
+    if (!written) {
+      say("address revealed — copy it by hand");
+      return;
+    }
+    written.then(
+      () => say("address copied"),
+      () => say("address revealed — copy it by hand"),
+    );
   }, [say]);
 
   // Unlike the address, a found sign-in link does not un-find itself on
@@ -169,16 +179,17 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
 
   const setMode = useCallback(
     (mode: ModeId) => {
-      setConfig((previous) => {
-        const next = { ...previous, mode };
-        // Picking a mode applies it immediately, so the operator sees what they chose.
-        if (mode === "tod") return { ...next, pal: paletteIndexForHour(new Date().getHours()) };
-        if (mode === "visit") {
-          const result = roll(next);
-          return result ? { ...next, ...result } : next;
-        }
-        return next;
-      });
+      // The roll and the clock read stay outside the updater — same purity
+      // rule as `go` and `shuffle`.
+      let patch: Partial<Config> = { mode };
+      // Picking a mode applies it immediately, so the operator sees what they chose.
+      if (mode === "tod") {
+        patch = { mode, pal: paletteIndexForHour(new Date().getHours()) };
+      } else if (mode === "visit") {
+        const result = roll({ ...live.current.config, mode });
+        if (result) patch = { mode, ...result };
+      }
+      setConfig((previous) => ({ ...previous, ...patch }));
       say(MODES.find((m) => m.id === mode)?.label ?? mode);
     },
     [say],
@@ -236,16 +247,17 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   const bootHour = useRef<number>(new Date().getHours());
   useEffect(() => {
     const returning = hasVisited();
-    setConfig((previous) => {
-      if (previous.mode === "visit") {
-        const result = roll(previous);
-        return result ? { ...previous, ...result } : previous;
-      }
-      if (previous.mode === "tod" && returning) {
-        return { ...previous, pal: paletteIndexForHour(new Date().getHours()) };
-      }
-      return previous;
-    });
+    // The roll happens out here and the updater stays pure — StrictMode
+    // double-invokes updaters, and a roll inside one applies a different
+    // combination than it announces.
+    const cfg = live.current.config;
+    if (cfg.mode === "visit") {
+      const result = roll(cfg);
+      if (result) setConfig((previous) => ({ ...previous, ...result }));
+    } else if (cfg.mode === "tod" && returning) {
+      const pal = paletteIndexForHour(new Date().getHours());
+      setConfig((previous) => ({ ...previous, pal }));
+    }
     // Intentionally runs once, on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

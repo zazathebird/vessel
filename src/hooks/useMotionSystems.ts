@@ -92,14 +92,22 @@ export function useMotionSystems({
     if (!stage) return;
     let last = stage.scrollTop;
     let lastAt = performance.now();
-    const onScroll = () => {
+    const bump = (y: number) => {
       const now = performance.now();
-      const y = stage.scrollTop;
       motion.scrollV = Math.min(3, (Math.abs(y - last) / Math.max(16, now - lastAt)) * 8);
       last = y;
       lastAt = now;
     };
-    stage.addEventListener("scroll", onScroll, { passive: true });
-    return () => stage.removeEventListener("scroll", onScroll);
+    const onStage = () => bump(stage.scrollTop);
+    // Terminal scrolls the *document* — the stage is height:auto there (see
+    // chrome.css) — so the stage listener alone left scrollV permanently zero
+    // in that one layout. Only one of these ever fires for a given layout.
+    const onWindow = () => bump(window.scrollY);
+    stage.addEventListener("scroll", onStage, { passive: true });
+    window.addEventListener("scroll", onWindow, { passive: true });
+    return () => {
+      stage.removeEventListener("scroll", onStage);
+      window.removeEventListener("scroll", onWindow);
+    };
   }, [stageRef, gridKey]);
 }

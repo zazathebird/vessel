@@ -70,6 +70,7 @@ const RESERVED_HANDLES = new Set([
   "administrator",
   "operator",
   "vessel",
+  "mcclevarty",
   "root",
   "system",
   "support",
@@ -1456,7 +1457,7 @@ export async function totpEnrol(request: Request, env: Env): Promise<Response> {
   // leaves the server except here, once, to be enrolled.
   return noStore(json({
     secret: base32Encode(secret),
-    uri: otpauthUri(secret, account.handle, "Vessel"),
+    uri: otpauthUri(secret, account.handle, "mcclevarty.ca"),
   }));
 }
 

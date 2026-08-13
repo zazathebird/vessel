@@ -37,7 +37,10 @@ export function ContentBlock({
       )}
 
       {block.hasTile && (
-        <div className="v-tile">
+        <div className={`v-tile${block.img ? " has-img" : ""}`}>
+          {block.img && (
+            <img className="v-tile-img" src={block.img} alt={block.imgAlt ?? ""} loading="lazy" />
+          )}
           <span className="v-tile-glow" aria-hidden="true" />
           <span className="v-tile-caption">{block.tile}</span>
         </div>

@@ -79,7 +79,7 @@ export const platformAuthenticator: Authenticator = {
       created = await navigator.credentials.create({
         publicKey: {
           challenge: challenge as BufferSource,
-          rp: { name: "Vessel" },
+          rp: { name: "mcclevarty.ca" },
           // The user id is the account id: stable, so re-registering on the
           // same authenticator replaces rather than multiplies, and §9-clean —
           // it is the same opaque id the server already holds.

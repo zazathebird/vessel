@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 import { useConfig } from "../config/ConfigContext";
 import { PALETTES } from "../data/palettes";
 import {
+  BLADE_COLORS,
   FEET_Y,
   WORLD_H,
   WORLD_W,
@@ -82,8 +83,10 @@ export function DuelOrnament({ pairing }: { pairing: "duel" | "duelholy" }) {
         y: (h - WORLD_H * scale) / 2 + (WORLD_H - FEET_Y) * scale * 0.3,
         scale,
         ink: p.fg,
-        bladeA: p.a1,
-        bladeB: p.a3,
+        // Blades are the site's one literal-colour carve-out (see BLADE_COLORS):
+        // good is blue/green, evil is red, whatever the palette says.
+        bladeA: BLADE_COLORS[PAIRINGS[pairing][0]],
+        bladeB: BLADE_COLORS[PAIRINGS[pairing][1]],
         core: p.fg,
         spark: p.a2,
         line: p.line,

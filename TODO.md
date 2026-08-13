@@ -4,9 +4,9 @@ The single ordered backlog. `CLAUDE.md` explains *why* things are the way they
 are, and `docs/DECISIONS.md` records what was decided when; this file is only
 what is left to do.
 
-Last updated 2026-08-13 (evening — second review round fixed and deployed; operator tabs,
-leave-operator-mode and the ornament sign-in unlock shipped; `docs/REVIEW-CONTINUATION.md` holds
-the one unfinished review and the next-session prompt).
+Last updated 2026-08-13 (late — app-shell/UI review ran and its eight findings are fixed;
+de-branding to `mcclevarty.ca`, duel silhouettes + literal blade colours, placeholder photos and
+the new favicon shipped; `docs/REVIEW-CONTINUATION.md` completed and deleted per its own note).
 
 ---
 
@@ -42,13 +42,16 @@ codes, which is why it has not been done casually. The harness proves the bytes;
 it does not prove the screens, and `SignIn.tsx`'s recovery stages were changed
 on 2026-08-13.
 
-### 2b. Finish the review round: re-run the app-shell/UI review
+### 2b. ~~Finish the review round: re-run the app-shell/UI review~~ — done 2026-08-13
 
-The 2026-08-13 second review round covered the Worker and the client auth stack
-end to end (all findings fixed — `docs/DECISIONS.md`); the third agent, covering
-`src/` outside auth plus the stylesheets and fx, died at a session limit before
-returning anything. Scope and rules are in `docs/REVIEW-CONTINUATION.md`. Also
-still open from that round: the raw signup fixtures omit `slotAlg`.
+Ran late 2026-08-13 over the full app-shell scope; eight findings confirmed and
+fixed (Radial's six-pills-on-seven-slots orbit, the stuck "leaving…" button,
+impure `setConfig` updaters, calm toggles overwriting published grain/breathe,
+two dishonest clipboard toasts, Terminal's dead scroll boost, the unstyled
+`.v-setup-row`, the logo countdown teasing visitors). One product-level finding
+moved to *Awaiting client sign-off* (5). The `slotAlg` fixtures are fixed too —
+178/178. `docs/DECISIONS.md` has the note; `docs/REVIEW-CONTINUATION.md` is
+deleted per its own instruction.
 
 ### 2c. By eye, in a real browser (needs the client)
 
@@ -119,9 +122,12 @@ cross-references hold.
 The new match engine (`src/fx/duel.ts`) keeps the client's reference verbatim:
 blocky fighters, frame-count timers, the damage table, and **discrete matches
 with winners**. Ships as ornaments 6 and 7 (`src/components/DuelOrnament.tsx`);
-`docs/DECISIONS.md` has the note. **Unverified by eye: the motion** — that is
-the one thing this environment cannot check, and the client's verdict decides
-the remaining half of this item:
+`docs/DECISIONS.md` has the note. Later the same day the four silhouettes were
+upgraded (hair/halo/aura, horns/wing/spade tail, hood/belt, helmet/chest panel)
+and the blades went to fixed alignment colours — blue/green good, red evil —
+per the client (`CLAUDE.md` deviation 9). **Unverified by eye: the motion and
+the new silhouettes** — this environment cannot check either, and the client's
+verdict decides the remaining half of this item:
 
 - **6b. Re-add the background `FX` entries once the client passes the ornament.**
   Append at indices 12/13 (never insert — share-code wire format);
@@ -151,10 +157,14 @@ needs a D1 table and the same inject-don't-fetch treatment as site config.
 
 Asked for 2026-08-12.
 
-### 10. Photo slots are still placeholders
+### 10. Photo slots hold stand-in photos, not yet the operator's own
 
-When real images arrive: strip EXIF, lazy-load, keep the aspect ratios in each
-caption, and do not add a lightbox library.
+Since 2026-08-13 the eight tiles show Wikimedia Commons PD/CC0 photographs
+(`public/photos/`, ledger in `docs/PHOTOS.md`), EXIF stripped, lazy-loaded,
+desaturated under the tile chrome. Two are approximate fits (flagged in
+PHOTOS.md). When the operator's real images arrive: same treatment — strip
+EXIF, lazy-load, keep the aspect ratios in each caption, no lightbox library —
+and update PHOTOS.md.
 
 ---
 
@@ -253,6 +263,12 @@ Found while building; none blocking. Full reasoning in `CLAUDE.md`.
    route, `SPEC-ACCOUNTS.md` §10 makes it the command palette. Both cannot be true.
 4. **Signup discloses handle availability** (409) while `challenge` goes to real
    trouble to hide it. Defensible, but the two should not disagree.
+5. **The findable sign-in affordance does not exist on phones** (review,
+   2026-08-13). The ornament renders `null` on the phone band (and under
+   `ornament: none` and the layouts that hide the slot), so the five-tap
+   reveal cannot be found there; the remaining account routes need a hardware
+   keyboard or a 260px leftward drag that fights touch scrolling. Whether a
+   phone visitor needs a findable route is a product call, not a bug.
 
 ---
 

@@ -44,9 +44,12 @@ export function SiteConfigPanel() {
       await api.signout();
     } catch {
       // Offline, the cookie survives — say so instead of pretending.
-      setLeaving(false);
       say("could not reach the server — still signed in");
       return;
+    } finally {
+      // Both paths: the panel stays mounted while closed, so a `leaving` left
+      // true would keep the button disabled at "leaving…" on the next sign-in.
+      setLeaving(false);
     }
     update({ unlocked: false });
     closePanel();
@@ -85,8 +88,17 @@ export function SiteConfigPanel() {
     update({ scope: { ...config.scope, [id]: !config.scope[id] } });
 
   const copyCode = () => {
-    navigator.clipboard?.writeText(code).catch(() => {});
-    say(`copied ${code}`);
+    // Never claim a success that did not happen (the TotpEnrol convention):
+    // the code is visible in the field either way.
+    const written = navigator.clipboard?.writeText(code);
+    if (!written) {
+      say("copying unavailable — select the code by hand");
+      return;
+    }
+    written.then(
+      () => say(`copied ${code}`),
+      () => say("copying refused — select the code by hand"),
+    );
   };
 
   const applyCode = (raw: string) => {
@@ -298,7 +310,10 @@ export function SiteConfigPanel() {
             aria-pressed={config.calm}
             onClick={() => {
               const calm = !config.calm;
-              update({ calm, breathe: !calm, grain: !calm });
+              // Calm alone — `themeClasses` suppresses grain/breathe under
+              // calm; writing them here would overwrite the published values
+              // (review 2026-08-13). Matches the header and the palette.
+              update({ calm });
               // Recorded like the header's toggle: a deliberate calm choice
               // survives reload, whoever makes it.
               saveCalmPreference(calm);
