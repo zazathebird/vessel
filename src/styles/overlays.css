@@ -85,6 +85,77 @@
   gap: 10px;
 }
 
+/* command palette (SPEC-ACCOUNTS §10) ----------------------------------------
+ *
+ * z-index 85: above the door's scrim (80), below toasts (90). Anchored to the
+ * upper third rather than centred — the list below the input grows and
+ * shrinks with the query, and a centred box would jump vertically with every
+ * keystroke.
+ */
+
+.v-cmd-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 85;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 12vh 24px 24px;
+  background: color-mix(in oklab, var(--bg) 55%, transparent);
+  backdrop-filter: blur(22px);
+  animation: v-fade-in 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.v-cmd {
+  width: min(92vw, 560px);
+  max-height: min(64vh, 520px);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in oklab, var(--surface) 94%, transparent);
+  box-shadow: 0 40px 90px rgba(0, 0, 0, 0.55);
+  animation: v-dialog-in 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  overflow: hidden;
+}
+
+.v-cmd-input {
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  padding: 16px 18px;
+  background: transparent;
+}
+
+.v-cmd-list {
+  list-style: none;
+  margin: 0;
+  padding: 8px;
+  overflow-y: auto;
+}
+
+.v-cmd-item {
+  padding: 9px 12px;
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: color-mix(in oklab, var(--fg) 82%, transparent);
+  cursor: pointer;
+}
+
+.v-cmd-item.is-selected {
+  color: var(--a1);
+  background: color-mix(in oklab, var(--a1) 12%, transparent);
+}
+
+.v-cmd-empty {
+  padding: 14px 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: color-mix(in oklab, var(--fg) 55%, transparent);
+}
+
 /* siteconfig drawer --------------------------------------------------------- */
 
 .v-panel {

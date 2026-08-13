@@ -18,6 +18,7 @@ import { SiteConfigPanel } from "./components/SiteConfigPanel";
 import { OperatorDoor } from "./components/OperatorDoor";
 import { Screensaver } from "./components/Screensaver";
 import { OverlayHostContext } from "./components/Dialog";
+import { CommandPalette } from "./components/CommandPalette";
 
 /**
  * The whole site: one chrome — header, hero with the valve, content grid,
@@ -142,6 +143,7 @@ export default function App() {
       <Screensaver />
       <SiteConfigPanel />
       <OperatorDoor />
+      <CommandPalette />
       <Toast />
     </div>
     </OverlayHostContext.Provider>

@@ -64,10 +64,16 @@ honest-clipboard copy. The harness drives the flow, both refusals included.
 **Unverified by eye:** the screen itself, like every account screen — the
 client walks it in a real browser.
 
-### 5. Passkeys, account/setups pages, dialog primitive, command palette
+### 5. ~~Passkeys, account/setups pages, dialog primitive, command palette~~ — done 2026-08-13
 
-In that order. Note `⌘K` is claimed twice — see *Unsigned-off* below.
+All four built, in order, each with its own note in `docs/DECISIONS.md`. `⌘K`
+remains unbound (claimed twice — see *Awaiting client sign-off*); the palette
+opens by typing `cmd` until the client picks. The number stays so
+cross-references hold.
 
+- **Command palette — done 2026-08-13.** Typed `cmd` route, z 85; commands are
+  what the caller could already do, operator vocabulary gated on `isOperator`.
+  **Unverified by eye:** all of it.
 - **Dialog primitive — done 2026-08-13.** `src/components/Dialog.tsx` per §10:
   focus trap, Escape, focus return, 22px blur, 340ms standard curve, z 75,
   portals into the themed wrapper (`OverlayHostContext` — body has no palette).

@@ -13,6 +13,27 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-13 — The command palette, opened by typing `cmd` — `⌘K` stays unbound
+
+`TODO.md` item 5's last piece (`src/components/CommandPalette.tsx`, z-index 85 in §11's
+ladder). **`⌘K` is not bound**, and that is the point of this note: the shortcut is
+claimed twice — `SPEC.md` gives it to the door, §10 gives it to the palette — and the
+contradiction sits on the client's sign-off list. Binding it would have settled the
+question by accident. Until the client picks, the palette opens by typing `cmd` anywhere,
+the same idiom as `whoami`/`login`, with the same `isEditable` and modifier guards;
+when the decision lands the binding is two lines in the palette's key listener.
+
+The command set is deliberately **what the caller could already do, gated as it already
+is**: navigation and the account pages for everyone; saved setups and sign-out signed in;
+the full siteconfig vocabulary — 24 palettes, 13 layouts, 12 backgrounds, 5 type systems,
+7 ornaments, 4 toggles, the dice, the panel — for the operator only, mirroring the
+panel's gate. Calm mode is *not* offered to visitors even though it is the accessibility
+remedy, because today it is panel-only and widening it is a product decision, not a
+shortcut. If the client wants visitor-facing calm, that is one line here plus the
+conversation it deserves.
+
+**Unverified by eye**, entrance motion included, like the rest of this session's UI.
+
 ## 2026-08-13 — The dialog primitive, and /admin's destructive actions moved onto it
 
 `TODO.md` item 5's third piece, to §10's letter: `src/components/Dialog.tsx` exports
