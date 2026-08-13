@@ -217,11 +217,14 @@ All deliberate. Add to this list rather than silently diverging.
 7. **The hero ornament is a setting, not a fixture** (`src/data/ornaments.ts`). The spec ships only
    the valve, and the client's objection to it was specific and right: `v-dilate` scales the rings
    as well as brightening them, so the whole assembly physically pumps and reads as a speaker cone.
-   There are now five — **Lens** (the default: a recessed eye where the geometry is dead still and
-   only the light moves), Valve (unchanged), Aperture, Orrery, None — pickable in siteconfig,
-   rollable under a sixth `ornament` scope, and carried as a sixth share-code field. All five sit in
-   one square slot (`.v-ornament`), so the layouts that resize it and the ones that hide it need no
-   knowledge of which is showing, and Radial's orbiting nav pills work over any of them.
+   There are now seven — **Lens** (the default: a recessed eye where the geometry is dead still and
+   only the light moves), Valve (unchanged), Aperture, Orrery, None, and (2026-08-13) the two
+   **lightsword duels** from `docs/DUEL.md`, the only canvas ornament
+   (`src/components/DuelOrnament.tsx`) — pickable in siteconfig, rollable under a sixth `ornament`
+   scope, and carried as a sixth share-code field. All seven sit in one square slot (`.v-ornament`),
+   so the layouts that resize it and the ones that hide it need no knowledge of which is showing,
+   and Radial's orbiting nav pills work over any of them. The duels' `FX` background entries remain
+   withdrawn until the client's eye passes the ornament — see `TODO.md` 6b.
 
    Two consequences worth knowing: `SCOPES` now has six entries, not the spec's five; and share
    codes are six fields, with five-field codes still decoding and simply leaving the ornament alone.

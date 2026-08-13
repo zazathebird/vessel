@@ -1,6 +1,7 @@
 import { useConfig } from "../config/ConfigContext";
 import { NAV } from "../data/pageIds";
 import type { LayoutId } from "../data/catalog";
+import { DuelOrnament } from "./DuelOrnament";
 
 /**
  * The hero ornament slot.
@@ -10,8 +11,9 @@ import type { LayoutId } from "../data/catalog";
  * hide it entirely need no knowledge of which is showing. Radial's orbiting nav
  * pills live in this slot too, and work over any of them.
  *
- * Every ornament is drawn from palette tokens in CSS — see chrome.css — so they
- * all recolour with the palette bleed and all fall still in calm.
+ * Every ornament recolours with the palette bleed and falls still in calm. All
+ * but the duels are drawn from palette tokens in CSS — see chrome.css; the
+ * duels are a canvas (DuelOrnament.tsx) that honours the same two promises.
  */
 
 /** Layouts with no room for it: the windowed, sideways and row layouts. */
@@ -30,6 +32,11 @@ export function Ornament({ layout }: { layout: LayoutId }) {
       {config.ornament === "lens" && <Lens />}
       {config.ornament === "aperture" && <Aperture />}
       {config.ornament === "orrery" && <Orrery />}
+      {(config.ornament === "duel" || config.ornament === "duelholy") && (
+        // The one ornament that is a canvas rather than CSS — an endless run of
+        // little lightsword matches. See docs/DUEL.md and DuelOrnament.tsx.
+        <DuelOrnament pairing={config.ornament} />
+      )}
 
       {layout === "radial" && (
         // The pills get their own container so their positions can be addressed

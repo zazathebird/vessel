@@ -1,8 +1,17 @@
 # The lightsword duel — specification and state
 
-**Status: withdrawn from the effect picker, not deleted.** Read this before
-rebuilding it, and read the *Why the first one failed* section before writing a
-line of renderer.
+**Status: rebuilt 2026-08-13, live in the hero-ornament slot.** The match
+engine is `src/fx/duel.ts`, the ornament host is
+`src/components/DuelOrnament.tsx`, and both pairings are pickable in
+siteconfig's Ornament section (`Lightswords: light & dark`,
+`Lightswords: saint & serpent` — ornament share-code indices 5 and 6). The
+**background-effect home is still withdrawn from `FX`**: two background
+versions were rejected, motion cannot be verified from this side, and
+re-listing dates the 404's "12 background modes" copy. When the client's eye
+passes the ornament, re-adding is an append at `FX` indices 12/13 — the
+`EFFECTS` record already points at the new engine. `docs/DECISIONS.md`
+2026-08-13 has the build note; the sections below remain the spec the rebuild
+was built to.
 
 ## What the client asked for
 

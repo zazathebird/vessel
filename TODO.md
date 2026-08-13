@@ -72,21 +72,20 @@ In that order. Note `⌘K` is claimed twice — see *Unsigned-off* below.
 
 ## The lightsword duel
 
-### 6. Rebuild it per `docs/DUEL.md`
+### 6. ~~Rebuild it per `docs/DUEL.md`~~ — ornament home done 2026-08-13
 
-**Withdrawn from the effect picker on 2026-08-12**, after the client rejected the
-stick-figure version: *"that is terrible"*, *"WAY too slow"*. The code survives in
-`src/fx/effects.ts`; only the two `FX` entries were removed.
+The new match engine (`src/fx/duel.ts`) keeps the client's reference verbatim:
+blocky fighters, frame-count timers, the damage table, and **discrete matches
+with winners**. Ships as ornaments 6 and 7 (`src/components/DuelOrnament.tsx`);
+`docs/DECISIONS.md` has the note. **Unverified by eye: the motion** — that is
+the one thing this environment cannot check, and the client's verdict decides
+the remaining half of this item:
 
-`docs/DUEL.md` is the full spec and should be read before writing any renderer.
-Short version: the client supplied a working reference implementation, and the
-idea the first attempt missed is that the fight is made of **discrete matches
-with winners**, not one continuous exchange.
-
-Build the **hero-ornament version first** — that was the original request, it is
-the cheaper path (`src/data/ornaments.ts` is already a list with a share-code
-field), and a small square slot is a far more forgiving canvas than a full-page
-background sitting behind body copy.
+- **6b. Re-add the background `FX` entries once the client passes the ornament.**
+  Append at indices 12/13 (never insert — share-code wire format);
+  `EFFECTS.duel` / `EFFECTS.duelholy` already point at the new engine. Doing so
+  dates the 404's "12 background modes" line, which is a copy correction that
+  needs the client's sign-off at the same time.
 
 ### 7. Sound
 

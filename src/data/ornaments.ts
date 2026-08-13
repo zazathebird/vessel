@@ -14,7 +14,8 @@
  * outright keep working without knowing which is on.
  */
 
-export type OrnamentId = "lens" | "valve" | "aperture" | "orrery" | "none";
+export type OrnamentId =
+  | "lens" | "valve" | "aperture" | "orrery" | "none" | "duel" | "duelholy";
 
 export const ORNAMENTS: { id: OrnamentId; label: string }[] = [
   { id: "lens", label: "Lens" },
@@ -22,6 +23,16 @@ export const ORNAMENTS: { id: OrnamentId; label: string }[] = [
   { id: "aperture", label: "Aperture" },
   { id: "orrery", label: "Orrery" },
   { id: "none", label: "None" },
+  // The two lightsword duels — the client's original request for this slot
+  // (docs/DUEL.md), rebuilt as discrete matches with winners. Unlike the other
+  // five these are a canvas, not CSS: see src/components/DuelOrnament.tsx.
+  //
+  // **Appended after "None", never inserted**, even though that reads oddly in
+  // the panel: shareCode.ts encodes the ornament as this array's *index*, so
+  // putting anything ahead of an existing entry silently repoints every share
+  // code in circulation — the same wire-format rule as FX.
+  { id: "duel", label: "Lightswords: light & dark" },
+  { id: "duelholy", label: "Lightswords: saint & serpent" },
 ];
 
 /** Lens is the default: it holds still and lets only the light move. */

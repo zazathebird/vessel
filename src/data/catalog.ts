@@ -47,18 +47,19 @@ export const FX: { id: FxId; label: string }[] = [
   { id: "bokeh", label: "Bokeh" },
   { id: "orbits", label: "Orbits" },
   { id: "off", label: "None" },
-  // **The two lightsword duels are withdrawn, not deleted.** The client saw the
-  // shipped version and rejected it in the right terms: the stick figures are
-  // terrible, and what was asked for is a fast, obviously-readable 8/32-bit
-  // pixel fight. That is a different renderer, not a tuning pass, so the effects
-  // stay out of this list until it exists rather than shipping something the
-  // owner of the site does not want on it. `EFFECTS.duel` / `EFFECTS.duelholy`
-  // in `src/fx/effects.ts` still hold the stance machine, the clash detection
-  // and the blade rendering, which are the reusable parts.
+  // **The two lightsword duels stay out of this list for now.** The renderer
+  // was rebuilt 2026-08-13 to docs/DUEL.md — blocky fighters, discrete matches
+  // with winners (`src/fx/duel.ts`) — and ships in the hero-ornament slot, the
+  // client's original request. The client rejected two background versions from
+  // this side and motion cannot be verified here, so the background entries
+  // return only after their eye passes the ornament. Re-listing also dates the
+  // 404's "12 background modes" line, a copy correction needing sign-off.
   //
-  // **Appended, never inserted**, when they come back. `shareCode.ts` encodes the
-  // effect as this array's *index*, so putting anything ahead of an existing
-  // entry silently repoints every share code already in the wild.
+  // **Appended, never inserted**, when they come back — at indices 12 and 13,
+  // labels "Lightswords: light & dark" / "Lightswords: saint & serpent".
+  // `shareCode.ts` encodes the effect as this array's *index*, so putting
+  // anything ahead of an existing entry silently repoints every share code
+  // already in the wild.
 ];
 
 export interface TypeSet {

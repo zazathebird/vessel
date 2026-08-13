@@ -13,6 +13,36 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-13 — The lightsword duel returns, as little matches in the ornament slot
+
+`TODO.md` item 6, built to `docs/DUEL.md`. The engine is new (`src/fx/duel.ts`): blocky
+30×70 fighters, the reference's frame-count timers, physics and damage table kept in its own
+700×350 world units behind a fixed 60Hz timestep, and — the idea the stick-figure version
+missed — **discrete matches with winners**. Attacks land at a specific frame of their
+animation so the damage, the sparks and the visible strike are one instant; a death tips the
+loser over, the winner holds a raised blade for two seconds, and both reset with re-rolled
+powers. A headless 90-second simulation showed nine completed matches using the full move
+vocabulary (slash, kick, force push, leap, retreat).
+
+**It ships in the hero-ornament slot only** — the client's original request — as ornaments
+6 and 7, `Lightswords: light & dark` and `Lightswords: saint & serpent`, appended after
+"None" because the ornament share-code field is an index, the same wire rule as `FX`. The
+ornament is the first that is a canvas (`src/components/DuelOrnament.tsx`), run the way
+`FxCanvas` runs: fixed internal resolution, palette read live each frame, delta clamped.
+Calm freezes the simulation but keeps drawing, so the palette bleed still recolours the
+stilled scene.
+
+**The background `FX` entries stay withdrawn.** Two background versions have been rejected
+from this side, motion cannot be verified in this environment, and re-listing would date the
+404's "12 background modes" line — a copy correction needing sign-off. When the client's eye
+passes the ornament, re-adding is three lines (append at `FX` 12/13; `EFFECTS.duel` /
+`EFFECTS.duelholy` already point at the new engine).
+
+**No winner text and no match counter**, in either home: the vitals strip was removed for
+captioning state instead of showing it, and the same reasoning applies harder in a 180px
+slot. The fallen fighter, the spark burst and the raised blade are the announcement. Health
+bars are ornament-only (`DuelView.bars`), per the split `docs/DUEL.md` flags.
+
 ## 2026-08-13 — The second factor can finally be turned on
 
 `TODO.md` item 4. The endpoints existed and were tested; nobody could reach them. The screen is
