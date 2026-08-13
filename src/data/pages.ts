@@ -106,6 +106,18 @@ export const PAGES: Record<PageId, Page> = {
       { kicker: "img_05", title: "Cable drawer, unsolved", body: "An ongoing situation.", hasTile: true, tile: "4:5 · photo slot" },
     ],
   },
+  // The form itself is a component, not data — `App` renders `SignUp` in place
+  // of the block grid for this page. `blocks` stays empty so the hero, the
+  // layout adaptation and the entrance motion all behave exactly as they do
+  // everywhere else.
+  signup: {
+    eyebrow: "accounts",
+    title: "Make an account.",
+    lede: "For saving setups and, later, reaching your own machines. No email, no name, nothing that identifies you — a handle and a password, and the password never leaves your browser.",
+    ctas: [],
+    blocks: [],
+  },
+
   contact: {
     eyebrow: "the useful page",
     title: "Computer repair.",

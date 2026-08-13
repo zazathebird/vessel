@@ -10,6 +10,7 @@ import { Header } from "./components/Header";
 import { Hero } from "./components/Hero";
 import { ContentBlock } from "./components/ContentBlock";
 import { Footer } from "./components/Footer";
+import { SignUp } from "./components/SignUp";
 import { SiteConfigPanel } from "./components/SiteConfigPanel";
 import { OperatorDoor } from "./components/OperatorDoor";
 import { Screensaver } from "./components/Screensaver";
@@ -77,10 +78,12 @@ export default function App() {
     [page, staggerMs],
   );
 
+  // Signup renders a form where the block grid would go. Everything around it —
+  // hero, layout adaptation, entrance motion, palette bleed — is unchanged.
   const body = (
     <>
       <Hero page={page} layout={layout} />
-      {grid}
+      {config.page === "signup" ? <SignUp /> : grid}
       <Footer />
     </>
   );

@@ -8,7 +8,7 @@
 
 export type PageId =
   | "home" | "about" | "work" | "gallery" | "contact"
-  | "guestbook" | "now" | "changelog" | "notfound";
+  | "guestbook" | "now" | "changelog" | "notfound" | "signup";
 
 /** Header nav — seven pills, in order. "404" is genuinely in the nav; that is the joke. */
 export const NAV: { id: PageId; label: string }[] = [
@@ -21,10 +21,17 @@ export const NAV: { id: PageId; label: string }[] = [
   { id: "notfound", label: "404" },
 ];
 
-/** Now and Changelog are footer links, not main nav. A settled decision. */
+/**
+ * Now and Changelog are footer links, not main nav. A settled decision.
+ *
+ * Account joins them rather than `NAV` deliberately: `useOperatorRoutes` cycles
+ * `NAV` only, so adding a pill there would change the operator door's cycling as
+ * a side effect (SPEC-ACCOUNTS.md §680).
+ */
 export const FOOTER_NAV: { id: PageId; label: string }[] = [
   { id: "now", label: "Now" },
   { id: "changelog", label: "Changelog" },
+  { id: "signup", label: "Account" },
 ];
 
 export const PATHS: Record<PageId, string> = {
@@ -37,6 +44,7 @@ export const PATHS: Record<PageId, string> = {
   now: "/now",
   changelog: "/changelog",
   notfound: "/404",
+  signup: "/signup",
 };
 
 const BY_PATH = new Map<string, PageId>(
