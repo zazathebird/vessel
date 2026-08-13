@@ -76,6 +76,14 @@ export function useAccountRoutes(): void {
 
       if (buffer.includes("whoami")) enter("who indeed");
       else if (buffer.includes("login")) enter("the front door, sort of");
+      else if (buffer.includes("admin")) {
+        // Goes to the account page, not straight to administration: signed out,
+        // /admin has nothing to say, and sign-in is the step that was missing
+        // anyway. Signed in as an operator, the summary links straight on.
+        keys.current.length = 0;
+        say("through the back");
+        go("admin");
+      }
     };
 
     const onDown = (event: PointerEvent) => {

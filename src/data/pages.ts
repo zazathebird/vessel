@@ -118,6 +118,14 @@ export const PAGES: Record<PageId, Page> = {
     blocks: [],
   },
 
+  admin: {
+    eyebrow: "operator",
+    title: "Administration.",
+    lede: "Accounts, and what may be done to them. Visible only to an operator, and every action behind it is refused by the server for anybody else — this page being hidden is a courtesy, not the lock.",
+    ctas: [],
+    blocks: [],
+  },
+
   signin: {
     eyebrow: "accounts",
     title: "Sign in.",

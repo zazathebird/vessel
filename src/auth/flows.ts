@@ -24,7 +24,7 @@ import {
   type KdfParams,
 } from "./derive";
 import { fromBase64Url, toBase64Url } from "./encoding";
-import { SLOT_ALG, destroy, generateGrantKey, unwrapSlot, wrapSlot } from "./grantKey";
+import { SLOT_ALG, destroy, generateGrantKey, rewrapSlot, unwrapSlot, wrapSlot } from "./grantKey";
 import { newRecoveryCodes } from "./recoveryCodes";
 
 /**
@@ -163,6 +163,58 @@ export async function signInWithRecoveryCode(
       : null;
 
   return { result, grantKey };
+}
+
+/**
+ * Change the password on a signed-in account.
+ *
+ * The grant key does not change and must not: every slot holds the same key, and
+ * replacing it would orphan the recovery codes and invalidate anything it has
+ * ever signed. What changes is the lock on the password's copy of it, which is
+ * why this is a re-wrap rather than a fresh generation.
+ *
+ * **The salt is deliberately reused.** At signup the recovery codes are derived
+ * with the *password's* salt (`recoveryParams` above) and `challenge` hands that
+ * one salt back for both derivations. Rolling a new salt here would therefore
+ * leave every recovery code deriving against a salt nothing uses any more — ten
+ * codes silently dead, discovered by the person who needed one. The iteration
+ * count is free to rise, because recovery carries its own count.
+ *
+ * A wrong current password fails in `rewrapSlot`, locally, before anything is
+ * sent anywhere.
+ */
+export async function changePassword(
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> {
+  if (newPassword.length < MIN_PASSWORD_LENGTH) {
+    throw new Error(`Use at least ${MIN_PASSWORD_LENGTH} characters.`);
+  }
+  if (newPassword === currentPassword) {
+    throw new Error("That is the password you already have.");
+  }
+
+  const { account } = await api.me();
+  const { kdf } = await api.challenge(account.handle);
+  const salt = fromBase64Url(kdf.salt);
+
+  const current = await deriveFromPassword(currentPassword, { salt, iterations: kdf.iterations });
+  const next = await deriveFromPassword(newPassword, { salt, iterations: DEFAULT_ITERATIONS });
+
+  const slot = await api.keySlot();
+  const rewrapped = await rewrapSlot(
+    fromBase64Url(slot.wrappedGrantKey),
+    current.wrappingKey,
+    next.wrappingKey,
+  );
+
+  await api.changePassword({
+    currentAuthSecret: current.authSecret,
+    authSecret: next.authSecret,
+    iterations: DEFAULT_ITERATIONS,
+    passwordSlot: toBase64Url(rewrapped),
+    slotAlg: SLOT_ALG,
+  });
 }
 
 /**

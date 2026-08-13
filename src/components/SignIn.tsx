@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 import { useConfig } from "../config/ConfigContext";
 import { useSession } from "../auth/SessionContext";
-import { signIn } from "../auth/flows";
+import { MIN_PASSWORD_LENGTH, changePassword, signIn } from "../auth/flows";
 import { ApiError, api, type MeResult } from "../auth/api";
 
 /**
@@ -27,15 +27,108 @@ import { ApiError, api, type MeResult } from "../auth/api";
  * No literal colours: every surface reads the palette custom properties, so the
  * 0.9s bleed crosses this page like any other.
  *
- * **Recovery codes are deliberately not offered here yet.** The Worker supports
- * redeeming one and `signInWithRecoveryCode` is written and tested, but
- * redeeming a code spends it, and the flow that makes spending it worthwhile —
- * setting a fresh password, which writes a new password slot from the grant key
- * the code just opened — is the next piece of work and does not exist. Offering
- * it now would cost someone one of ten codes and hand them nothing they could
- * not already do. The note in the signed-out view says so, so that a person who
- * has lost their password waits rather than burning codes discovering this.
+ * **Signing in with a recovery code is deliberately not offered here yet.** The
+ * Worker supports redeeming one and `signInWithRecoveryCode` is written and
+ * tested. What is still missing is the screen that turns a redeemed code into a
+ * fresh password: `changePassword` below needs the *current* password, and
+ * someone arriving by recovery code is precisely the person who does not have
+ * one. Until that variant exists, offering recovery here would spend one of ten
+ * codes and leave the account no better off, so the signed-out view says to wait
+ * rather than letting people discover it by burning codes.
  */
+
+/**
+ * Change the password, from inside the account.
+ *
+ * Its own component and its own `<form>` rather than more fields on the summary,
+ * so Enter submits this and only this. The heavy lifting is two PBKDF2 runs and
+ * a re-wrap in `changePassword` — the grant key is untouched, only the lock on
+ * its password copy changes, which is what keeps the recovery codes working.
+ */
+function ChangePassword() {
+  const { say } = useConfig();
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+
+  const ready = current.length > 0 && next.length >= MIN_PASSWORD_LENGTH && !busy;
+
+  async function onSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!ready) return;
+
+    setBusy(true);
+    setError(null);
+    try {
+      await changePassword(current, next);
+      setCurrent("");
+      setNext("");
+      setDone(true);
+      say("Password changed.");
+    } catch (cause) {
+      setError(
+        cause instanceof ApiError || cause instanceof Error
+          ? cause.message
+          : "Could not change the password.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className="v-account-form" onSubmit={onSubmit}>
+      <h3 className="v-field-label">Change password</h3>
+
+      <label className="v-field">
+        <span className="v-field-label">Current password</span>
+        <input
+          className="v-input"
+          type="password"
+          value={current}
+          onChange={(e) => {
+            setCurrent(e.target.value);
+            setDone(false);
+          }}
+          autoComplete="current-password"
+        />
+      </label>
+
+      <label className="v-field">
+        <span className="v-field-label">New password</span>
+        <input
+          className="v-input"
+          type="password"
+          value={next}
+          onChange={(e) => {
+            setNext(e.target.value);
+            setDone(false);
+          }}
+          autoComplete="new-password"
+        />
+        <span className="v-field-hint">
+          At least {MIN_PASSWORD_LENGTH} characters. Your recovery codes keep working — they are
+          not tied to the password.
+        </span>
+      </label>
+
+      {error ? (
+        <p className="v-account-error" role="alert">{error}</p>
+      ) : null}
+      {done ? (
+        <p className="v-account-note" role="status">
+          Changed. The old password no longer works anywhere.
+        </p>
+      ) : null}
+
+      <button type="submit" className="v-btn" disabled={!ready}>
+        {busy ? "Changing…" : "Change password"}
+      </button>
+    </form>
+  );
+}
 
 type Stage =
   | { name: "checking" }
@@ -224,11 +317,22 @@ export function SignIn() {
           </div>
         </dl>
 
-        <p className="v-account-note">
-          There is nothing else to do in here yet — no setups to save, no machines to reach. That
-          is the honest state of it: the account works, and the things an account is <em>for</em>{" "}
-          are being built behind it.
-        </p>
+        {account.isOperator ? (
+          <p className="v-account-aside">
+            <button type="button" className="v-account-link" onClick={() => go("admin")}>
+              Administration
+            </button>{" "}
+            — accounts, and what may be done to them.
+          </p>
+        ) : (
+          <p className="v-account-note">
+            There is nothing else to do in here yet — no setups to save, no machines to reach.
+            That is the honest state of it: the account works, and the things an account is{" "}
+            <em>for</em> are being built behind it.
+          </p>
+        )}
+
+        <ChangePassword />
 
         <button type="button" className="v-btn" onClick={onSignOut} disabled={busy}>
           {busy ? "Signing out…" : "Sign out"}

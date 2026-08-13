@@ -287,6 +287,62 @@ replaced by them. That precedence question is a product decision, not an impleme
 it should be settled before the table is designed. It also depends on sign-in existing, since there
 is no way to be the operator in a browser yet.
 
+### Session of 2026-08-12 (second): sign-in, global config, administration
+
+All deployed to `mcclevarty.ca` and verified live. In order:
+
+- **Sign-in exists** (`src/components/SignIn.tsx`, `/signin`). Handle + password,
+  the TOTP second factor, the account summary, sign-out, and change-password. One
+  page for both states — `api.me()` on mount decides form or summary.
+- **Change password** (`changePassword` in `flows.ts` + `worker/accounts.ts`).
+  Re-wraps the key slot rather than regenerating the grant key, via `rewrapSlot`,
+  where the scalar never becomes bytes in JS. **The salt is reused deliberately** —
+  recovery codes derive against the password's salt, so rolling it would silently
+  kill all ten. Verified: old password rejected, new one works.
+- **The operator's config is now the site's** (`worker/site-config.ts`, migration
+  `0003`). Published to D1, **inlined into the app shell by the Worker** rather
+  than fetched, so there is no palette flash and no network dependency on boot.
+  Needed `run_worker_first` in `wrangler.toml`: by default a request matching a
+  real file never invokes the Worker, so `/` (which *is* index.html) silently got
+  no injection while `/contact` did.
+- **The panel and door are operator-only.** Gated once at `openDoor`/`togglePanel`
+  in `ConfigContext`, not at each of the six unlock routes. Visitors cannot see or
+  change anything; `loadConfig` no longer reads visitor localStorage.
+- **`/admin`** (`src/components/Admin.tsx`, `worker/admin.ts`): list accounts,
+  grant/revoke operator, reset 2FA, delete. Guards against removing your own last
+  operator flag and against deleting yourself.
+- **The account pages are unlinked**, at the client's request. Reached by typing
+  `whoami`, `login` or `admin`, or dragging **left** — mirroring the door's
+  rightward drag. These never call `openDoor`; the door stays theatre.
+- **Two real bugs fixed**: the screensaver faded out the recovery-codes screen
+  mid-transcription (`holdSaver`, reference-counted), and `useOperatorRoutes` paged
+  the site on arrow keys and opened the door on `sudo` from inside the new text
+  inputs (`isEditable` guard).
+- **Email recovery was proposed and rejected** in favour of `docs/BREAK-GLASS.md`.
+  Reasons recorded there. Do not re-add it without reading that file.
+
+**Next, in order** — nothing below is started:
+
+1. **Sign in with a recovery code**, and the set-password variant it needs.
+   `changePassword` requires the *current* password, which is exactly what a
+   person arriving by recovery code does not have. Until this exists, operator
+   password reset must stay absent from `/admin` — see the note in `Admin.tsx`.
+2. **TOTP enrolment UI.** The endpoints and tests exist; there is no screen, so
+   nobody can turn on the second factor the sign-in flow already supports.
+3. **Edit mode** — operator-editable page copy and images. Asked for 2026-08-12.
+   Large: `src/data/pages.ts` is currently a static module, so this needs a D1
+   table, the same inject-don't-fetch treatment as site config, and a decision
+   about images, which the spec currently forbids entirely (*Assets*: no images).
+   **That prohibition is a spec change and needs the client, plus R2 or similar.**
+4. **A setup guide** page/download (Tailscale et al). Asked for 2026-08-12.
+5. Passkeys, account/setups pages, the dialog primitive, the command palette.
+
+**Operator bootstrap is outstanding.** As of this session the only production
+account is `erwerwerwer` (a test) and `is_operator = 0` on it, so **nobody can
+open the config panel on the live site**. The client was creating `piratelife`;
+once it exists, run step 1 of `docs/BREAK-GLASS.md` against that handle. Until
+then the panel is unreachable in production by design.
+
 ### Four things the client has not yet signed off
 
 Found while building; none are blocking, all are recorded here rather than slipped in.

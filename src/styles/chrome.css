@@ -1298,3 +1298,67 @@
   font-size: 12px;
   color: var(--fg);
 }
+
+/* Administration. Wider than the account forms because it is a list of rows
+   with actions, not a column of fields — but still capped, so it does not
+   become a full-bleed table on a wide screen while every other page is a
+   measured column. */
+.v-admin {
+  max-width: 68ch;
+}
+
+.v-admin-list {
+  list-style: none;
+  margin: 16px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.v-admin-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in oklab, var(--bg) 60%, transparent);
+}
+
+.v-admin-who {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  /* min-width: 0 so a long handle wraps instead of forcing the row wider than
+     its container — the same flex trap `.v-code` already documents. */
+  min-width: 0;
+}
+
+.v-admin-handle {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--fg);
+}
+
+.v-admin-facts {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.v-admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* The armed delete. Colour only — the lift and press come from interaction.css
+   with everything else, because a destructive button that moves differently
+   from its neighbours reads as a different kind of control. */
+.v-admin .chip.is-danger {
+  border-color: var(--a3);
+  color: var(--a3);
+}

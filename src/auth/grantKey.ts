@@ -138,6 +138,42 @@ export async function unwrapSlot(
   }
 }
 
+/**
+ * Move a slot from one credential's wrapping key to another's, without the
+ * scalar ever existing as bytes in this program.
+ *
+ * This is what a password change is: the grant key does not change — it must
+ * not, or every grant ever signed by it stops verifying — only the lock on the
+ * copy that the password opens. So the old slot is opened and its contents
+ * re-sealed under the new key.
+ *
+ * `unwrapKey` and `wrapKey` hand the material between each other as a
+ * `CryptoKey`, so unlike `unwrapSlot` there is no `exportKey` here and nothing
+ * to `destroy` afterwards. The scalar goes from ciphertext to ciphertext inside
+ * WebCrypto. That is strictly better than the signup path can manage, and it is
+ * why this is its own function rather than unwrap-then-wrap at the call site.
+ *
+ * A wrong current password fails here, in the browser, with an integrity error
+ * from AES-KW — before anything is sent. The server checks the old credential
+ * too, because a check only the browser makes is not a check.
+ */
+export async function rewrapSlot(
+  wrapped: Uint8Array,
+  oldWrappingKey: CryptoKey,
+  newWrappingKey: CryptoKey,
+): Promise<Uint8Array> {
+  const carrier = await crypto.subtle.unwrapKey(
+    "raw",
+    wrapped as BufferSource,
+    oldWrappingKey,
+    "AES-KW",
+    "AES-GCM",
+    true,
+    ["encrypt"],
+  );
+  return new Uint8Array(await crypto.subtle.wrapKey("raw", carrier, newWrappingKey, "AES-KW"));
+}
+
 async function importPrivateKey(scalar: Uint8Array, publicKeyRaw: Uint8Array): Promise<CryptoKey> {
   return crypto.subtle.importKey(
     "jwk",

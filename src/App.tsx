@@ -13,6 +13,7 @@ import { ContentBlock } from "./components/ContentBlock";
 import { Footer } from "./components/Footer";
 import { SignUp } from "./components/SignUp";
 import { SignIn } from "./components/SignIn";
+import { Admin } from "./components/Admin";
 import { SiteConfigPanel } from "./components/SiteConfigPanel";
 import { OperatorDoor } from "./components/OperatorDoor";
 import { Screensaver } from "./components/Screensaver";
@@ -87,7 +88,15 @@ export default function App() {
   const body = (
     <>
       <Hero page={page} layout={layout} />
-      {config.page === "signup" ? <SignUp /> : config.page === "signin" ? <SignIn /> : grid}
+      {config.page === "signup" ? (
+        <SignUp />
+      ) : config.page === "signin" ? (
+        <SignIn />
+      ) : config.page === "admin" ? (
+        <Admin />
+      ) : (
+        grid
+      )}
       <Footer />
     </>
   );

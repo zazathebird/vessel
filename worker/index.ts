@@ -15,6 +15,7 @@
  */
 
 import * as accounts from "./accounts";
+import * as admin from "./admin";
 import { clientKey } from "./crypto";
 import { BadRequest } from "./encoding";
 import type { Env } from "./env";
@@ -80,9 +81,22 @@ async function route(
     case "POST /api/site-config":
       return publishSiteConfig(request, env);
 
+    // Operator administration of accounts. Every one of these refuses a caller
+    // who is not a signed-in operator; none of them can read key material.
+    case "GET /api/admin/accounts":
+      return admin.listAccounts(request, env);
+    case "POST /api/admin/operator":
+      return admin.setOperator(request, env);
+    case "POST /api/admin/reset-totp":
+      return admin.resetTotp(request, env);
+    case "POST /api/admin/delete-account":
+      return admin.deleteAccount(request, env);
+
     // The signed-in account.
     case "GET /api/me":
       return accounts.me(request, env);
+    case "POST /api/account/password":
+      return accounts.changePassword(request, env);
     case "GET /api/account/slot":
       return accounts.keySlot(request, env);
     case "POST /api/totp/enrol":

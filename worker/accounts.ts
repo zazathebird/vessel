@@ -299,7 +299,7 @@ async function recordSuccess(env: Env, names: string[]): Promise<void> {
  * written on the same code path as the thing it records rather than best-effort
  * afterwards.
  */
-function auditStatement(env: Env, actorId: string | null, action: string, target: string | null) {
+export function auditStatement(env: Env, actorId: string | null, action: string, target: string | null) {
   return env.DB.prepare("INSERT INTO audit (id, actor_id, action, target, at) VALUES (?, ?, ?, ?, ?)").bind(
     newId(),
     actorId,
@@ -1017,6 +1017,74 @@ export async function keySlot(request: Request, env: Env): Promise<Response> {
       alg: row.alg,
     }),
   );
+}
+
+/**
+ * Change the password: replace the credential and re-seal its key slot.
+ *
+ * The old password is presented as its derived `authSecret` and checked here as
+ * well as in the browser — the browser's check is real (a wrong password cannot
+ * open the slot to re-wrap it) but it is the *browser's*, and an endpoint that
+ * trusts the caller to have already verified itself is not an endpoint that
+ * verifies anything.
+ *
+ * **Both writes are one batch.** The credential and its slot must move together
+ * or the account becomes unopenable: a new auth hash beside an old slot means a
+ * password that signs in and then cannot decrypt its own grant key, and the
+ * reverse means a slot nothing can open. D1 batches are transactional, which is
+ * the only reason this is safe to do at all.
+ *
+ * The salt is not touched, and that is load-bearing rather than lazy — the
+ * recovery codes derive against it too. See `changePassword` in
+ * `src/auth/flows.ts` for the full reasoning.
+ *
+ * `reset_at` is cleared: the operator reset that set it has now been answered by
+ * the account's owner choosing a new password, so the notice on their account
+ * page should stop.
+ */
+export async function changePassword(request: Request, env: Env): Promise<Response> {
+  const account = await requireAccount(request, env);
+  const body = await readJson(request);
+
+  const presented = expectBytes(body.currentAuthSecret, AUTH_SECRET_BYTES, "Current password");
+  const nextSecret = expectBytes(body.authSecret, AUTH_SECRET_BYTES, "New password");
+  const slot = expectBytes(body.passwordSlot, WRAPPED_KEY_BYTES, "Key slot");
+  const iterations = expectIterations(body.iterations);
+  const alg = typeof body.slotAlg === "string" ? body.slotAlg : "";
+  if (!alg) throw new BadRequest("Missing key slot algorithm.");
+
+  // A wrong current password is a failed authentication and is counted as one.
+  const names = await buckets(request, env, account.handle.toLowerCase());
+  await assertAllowed(env, names);
+
+  const credential = await env.DB.prepare(
+    "SELECT id, auth_hash FROM credentials WHERE account_id = ? AND kind = 'password'",
+  )
+    .bind(account.id)
+    .first<{ id: string; auth_hash: unknown }>();
+  if (!credential) throw new BadRequest("This account has no password to change.", 409);
+
+  const hash = new Uint8Array(await authHash(env.AUTH_PEPPER, toBase64Url(presented)));
+  if (!timingSafeEqual(hash, fromBlob(credential.auth_hash))) {
+    await recordFailure(env, names);
+    throw new BadRequest("That is not your current password.", 401);
+  }
+  await recordSuccess(env, names);
+
+  const nextHash = new Uint8Array(await authHash(env.AUTH_PEPPER, toBase64Url(nextSecret)));
+
+  await env.DB.batch([
+    env.DB.prepare(
+      "UPDATE credentials SET auth_hash = ?, kdf_iterations = ?, last_used_at = ? WHERE id = ?",
+    ).bind(toBlob(nextHash), iterations, Date.now(), credential.id),
+    env.DB.prepare(
+      "UPDATE key_slots SET wrapped_grant_key = ?, alg = ? WHERE credential_id = ?",
+    ).bind(toBlob(slot), alg, credential.id),
+    env.DB.prepare("UPDATE accounts SET reset_at = NULL WHERE id = ?").bind(account.id),
+    auditStatement(env, account.id, "auth.password.changed", null),
+  ]);
+
+  return json({ status: "changed" });
 }
 
 // Two-factor enrolment --------------------------------------------------------

@@ -87,6 +87,17 @@ export interface MeResult {
   totp: { enrolled: boolean; confirmed: boolean };
 }
 
+/** One account, as the administration screen sees it. No secrets, by design. */
+export interface AdminAccount {
+  id: string;
+  handle: string;
+  isOperator: boolean;
+  createdAt: number;
+  resetAt: number | null;
+  credentials: { password: boolean; passkeys: number; recoveryCodesRemaining: number };
+  totp: { confirmed: boolean };
+}
+
 export const api = {
   signup: (body: unknown) => post<{ account: PublicAccount }>("/api/auth/signup", body),
   challenge: (handle: string) => post<{ kdf: KdfDescriptor }>("/api/auth/challenge", { handle }),
@@ -96,7 +107,19 @@ export const api = {
   /** Publish the site's appearance to every visitor. Operator only — 403 otherwise. */
   publishSiteConfig: (config: unknown) =>
     post<{ status: string; config: unknown }>("/api/site-config", { config }),
+
+  // Operator administration. Each refuses a caller who is not an operator, so a
+  // non-operator reaching these gets the Worker's 403 wording rather than a
+  // silently empty screen.
+  adminAccounts: () => call<{ accounts: AdminAccount[] }>("/api/admin/accounts"),
+  adminSetOperator: (id: string, isOperator: boolean) =>
+    post<{ status: string }>("/api/admin/operator", { id, isOperator }),
+  adminResetTotp: (id: string) => post<{ status: string }>("/api/admin/reset-totp", { id }),
+  adminDeleteAccount: (id: string) =>
+    post<{ status: string }>("/api/admin/delete-account", { id }),
   me: () => call<MeResult>("/api/me"),
+  /** Replace the password credential and re-seal its key slot under the new password. */
+  changePassword: (body: unknown) => post<{ status: string }>("/api/account/password", body),
   keySlot: () =>
     call<{ wrappedGrantKey: string; grantPubkey: string; alg: string }>("/api/account/slot"),
   totpEnrol: () => post<{ secret: string; uri: string }>("/api/totp/enrol", {}),

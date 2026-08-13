@@ -8,7 +8,7 @@
 
 export type PageId =
   | "home" | "about" | "work" | "gallery" | "contact"
-  | "guestbook" | "now" | "changelog" | "notfound" | "signup" | "signin";
+  | "guestbook" | "now" | "changelog" | "notfound" | "signup" | "signin" | "admin";
 
 /** Header nav — seven pills, in order. "404" is genuinely in the nav; that is the joke. */
 export const NAV: { id: PageId; label: string }[] = [
@@ -55,6 +55,7 @@ export const PATHS: Record<PageId, string> = {
   notfound: "/404",
   signup: "/signup",
   signin: "/signin",
+  admin: "/admin",
 };
 
 const BY_PATH = new Map<string, PageId>(
