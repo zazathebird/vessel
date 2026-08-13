@@ -172,3 +172,21 @@
   opacity: 0.45;
   cursor: not-allowed;
 }
+
+/* The account cross-links are type, not buttons, so they lift and never glow —
+   same reasoning as the logo and the footer links above. They also need their
+   own transition declaration: they are not in that rule's selector list, and
+   without one here the lift would inherit nothing and simply snap. */
+.vessel .v-account-link {
+  transition: color 0.9s ease,
+    translate var(--t-hover) var(--ease-ui), scale var(--t-press) var(--ease-ui);
+}
+
+.vessel .v-account-link:hover:not(:disabled) {
+  translate: 0 -1px;
+}
+
+.vessel .v-account-link:active:not(:disabled) {
+  translate: 0 0;
+  scale: 0.97;
+}

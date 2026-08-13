@@ -6,11 +6,13 @@ import { themeClasses, themeVars } from "./theme";
 import { FxCanvas } from "./fx/FxCanvas";
 import { useMotionSystems } from "./hooks/useMotionSystems";
 import { useOperatorRoutes } from "./hooks/useOperatorRoutes";
+import { useAccountRoutes } from "./hooks/useAccountRoutes";
 import { Header } from "./components/Header";
 import { Hero } from "./components/Hero";
 import { ContentBlock } from "./components/ContentBlock";
 import { Footer } from "./components/Footer";
 import { SignUp } from "./components/SignUp";
+import { SignIn } from "./components/SignIn";
 import { SiteConfigPanel } from "./components/SiteConfigPanel";
 import { OperatorDoor } from "./components/OperatorDoor";
 import { Screensaver } from "./components/Screensaver";
@@ -46,6 +48,7 @@ export default function App() {
   // card list has been rebuilt under it.
   useMotionSystems({ hostRef, glowRef, stageRef, gridKey: `${config.page}:${layout}:${band}` });
   useOperatorRoutes();
+  useAccountRoutes();
 
   // A new page starts at the top. The stage is the scroll container, not the
   // window, so this cannot be left to the browser.
@@ -78,12 +81,13 @@ export default function App() {
     [page, staggerMs],
   );
 
-  // Signup renders a form where the block grid would go. Everything around it —
-  // hero, layout adaptation, entrance motion, palette bleed — is unchanged.
+  // The two account pages render a form where the block grid would go.
+  // Everything around them — hero, layout adaptation, entrance motion, palette
+  // bleed — is unchanged.
   const body = (
     <>
       <Hero page={page} layout={layout} />
-      {config.page === "signup" ? <SignUp /> : grid}
+      {config.page === "signup" ? <SignUp /> : config.page === "signin" ? <SignIn /> : grid}
       <Footer />
     </>
   );

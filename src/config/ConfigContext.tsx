@@ -58,6 +58,8 @@ interface ConfigContextValue {
   saver: boolean;
   /** Restart the idle clock. Called on click and keypress — never on movement. */
   poke: () => void;
+  /** Hold the screensaver off while something is being read rather than used. Reference-counted. */
+  holdSaver: (held: boolean) => void;
   /** Has the address been revealed on this page. Resets on every page change. */
   mailShown: boolean;
   /** Reveal the address, copy it to the clipboard, and toast. */
@@ -98,17 +100,19 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   const [doorVia, setDoorVia] = useState("");
   const [saver, setSaver] = useState(false);
   const [mailShown, setMailShown] = useState(false);
+  const [saverHeld, setSaverHeld] = useState(false);
 
   const toastTimer = useRef<number | undefined>(undefined);
   const saveTimer = useRef<number | undefined>(undefined);
   const diveTimer = useRef<number | undefined>(undefined);
   const idleTimer = useRef<number | undefined>(undefined);
+  const saverHolds = useRef(0);
 
   // The idle timer fires a minute after the last click, long after the render
   // that armed it, so it reads current state from a ref rather than a closure.
-  const live = useRef({ calm: config.calm, panelOpen, doorOpen });
+  const live = useRef({ calm: config.calm, panelOpen, doorOpen, saverHeld });
   useEffect(() => {
-    live.current = { calm: config.calm, panelOpen, doorOpen };
+    live.current = { calm: config.calm, panelOpen, doorOpen, saverHeld };
   });
 
   const say = useCallback((message: string) => {
@@ -170,18 +174,42 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     window.clearTimeout(idleTimer.current);
     setSaver((sleeping) => (sleeping ? false : sleeping));
     idleTimer.current = window.setTimeout(() => {
-      const { calm, panelOpen: panel, doorOpen: door } = live.current;
-      if (calm || panel || door) return;
+      const { calm, panelOpen: panel, doorOpen: door, saverHeld: held } = live.current;
+      if (calm || panel || door || held) return;
       setSaver(true);
     }, 60_000);
+  }, []);
+
+  /**
+   * Hold the screensaver off while something on screen is being *read* rather
+   * than used.
+   *
+   * The idle clock counts clicks and keypresses, never movement, which is right
+   * for a site you browse — and wrong for the one screen that exists to be
+   * copied down by hand. Ten recovery codes take well over a minute to
+   * transcribe, during which a person touches nothing, and the reward for doing
+   * it carefully was watching the codes fade out. They come back on a click and
+   * nothing is lost, but losing your place mid-transcription on the screen that
+   * only ever renders once is a poor joke to play.
+   *
+   * A counter rather than a boolean because two holders must not be able to
+   * cancel each other by unmounting in the wrong order. The panel and the door
+   * stay separate rather than moving to this: they suppress the saver as a
+   * consequence of being open, which the existing check already reads directly.
+   */
+  const holdSaver = useCallback((held: boolean) => {
+    saverHolds.current = Math.max(0, saverHolds.current + (held ? 1 : -1));
+    setSaverHeld(saverHolds.current > 0);
   }, []);
 
   useEffect(() => {
     poke();
     return () => window.clearTimeout(idleTimer.current);
     // Opening or closing an overlay restarts the clock, so it can never be left
-    // armed from before the panel opened.
-  }, [poke, panelOpen, doorOpen]);
+    // armed from before the panel opened. A hold does the same, and it also
+    // wakes an already-sleeping interface — a hold that began while the chrome
+    // was faded out would otherwise keep it faded until the next click.
+  }, [poke, panelOpen, doorOpen, saverHeld]);
 
   // ---- first load: per-visit and time-of-day ----
   // Time of day must NOT override a first visit: Nebula Drift wins on load, and
@@ -323,6 +351,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       openConfig,
       saver,
       poke,
+      holdSaver,
       setMode,
       mailShown,
       revealMail,
@@ -348,6 +377,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       openConfig,
       saver,
       poke,
+      holdSaver,
       setMode,
       mailShown,
       revealMail,

@@ -8,7 +8,7 @@
 
 export type PageId =
   | "home" | "about" | "work" | "gallery" | "contact"
-  | "guestbook" | "now" | "changelog" | "notfound" | "signup";
+  | "guestbook" | "now" | "changelog" | "notfound" | "signup" | "signin";
 
 /** Header nav — seven pills, in order. "404" is genuinely in the nav; that is the joke. */
 export const NAV: { id: PageId; label: string }[] = [
@@ -27,11 +27,20 @@ export const NAV: { id: PageId; label: string }[] = [
  * Account joins them rather than `NAV` deliberately: `useOperatorRoutes` cycles
  * `NAV` only, so adding a pill there would change the operator door's cycling as
  * a side effect (SPEC-ACCOUNTS.md §680).
+ *
+ * **The account pages are deliberately unlinked.** `/signin` and `/signup` are
+ * real, routable pages, but nothing on the site points at them while accounts
+ * are still being built: there is nothing behind an account yet, so a visible
+ * link would be an invitation to sign up for nothing. They are reached by the
+ * hidden routes in `useAccountRoutes` — type `whoami` or `login`, or drag the
+ * page leftward — or by typing the URL.
+ *
+ * Restoring the link is one entry in this array and nothing else, which is the
+ * point: hiding it is a product decision about timing, not an architectural one.
  */
 export const FOOTER_NAV: { id: PageId; label: string }[] = [
   { id: "now", label: "Now" },
   { id: "changelog", label: "Changelog" },
-  { id: "signup", label: "Account" },
 ];
 
 export const PATHS: Record<PageId, string> = {
@@ -45,6 +54,7 @@ export const PATHS: Record<PageId, string> = {
   changelog: "/changelog",
   notfound: "/404",
   signup: "/signup",
+  signin: "/signin",
 };
 
 const BY_PATH = new Map<string, PageId>(

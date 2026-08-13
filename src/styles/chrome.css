@@ -1238,3 +1238,63 @@
   letter-spacing: 0.06em;
   color: var(--fg);
 }
+
+/* The cross-links between the two account pages, and the note under each form.
+   Set as prose rather than as another button row: "no account? make one" is a
+   sentence with a control in it, and a second bordered button next to the
+   primary one would read as an equal choice, which it is not. */
+.v-account-aside {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.v-account-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--a1);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+/* The account summary. A <dl> because it is genuinely term-and-value pairs, and
+   a screen reader announcing "password, set" beats it announcing two loose
+   fragments of a table. */
+.v-facts {
+  margin: 16px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--line);
+}
+
+.v-fact {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 12px;
+  background: color-mix(in oklab, var(--bg) 82%, transparent);
+}
+
+.v-fact dt {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+
+.v-fact dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--fg);
+}

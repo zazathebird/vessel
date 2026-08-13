@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useConfig } from "../config/ConfigContext";
 import { MIN_PASSWORD_LENGTH, signUp } from "../auth/flows";
@@ -21,13 +21,22 @@ import { ApiError } from "../auth/api";
  * properties, so a palette change still bleeds across this page at 0.9s.
  */
 export function SignUp() {
-  const { say } = useConfig();
+  const { go, say, holdSaver } = useConfig();
 
   const [handle, setHandle] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ handle: string; codes: string[] } | null>(null);
+
+  // Writing ten codes down by hand takes minutes of touching nothing, and the
+  // idle clock counts only clicks and keypresses — so without this the codes
+  // fade out mid-transcription, on the one screen that renders exactly once.
+  useEffect(() => {
+    if (!result) return;
+    holdSaver(true);
+    return () => holdSaver(false);
+  }, [result, holdSaver]);
 
   const tooShort = password.length > 0 && password.length < MIN_PASSWORD_LENGTH;
   const ready = handle.trim().length >= 3 && password.length >= MIN_PASSWORD_LENGTH && !busy;
@@ -80,6 +89,19 @@ export function SignUp() {
         >
           Copy all ten
         </button>
+
+        {/* Signup signs you in — the Worker attaches a session to the 201
+            (`accounts.ts`, `withSession`) — so this is "go to your account",
+            not "sign in". Deliberately a link and not an automatic redirect:
+            leaving this screen is the one thing here that cannot be undone,
+            and the codes are only on it once. */}
+        <p className="v-account-aside">
+          You are signed in already. Once those are written down,{" "}
+          <button type="button" className="v-account-link" onClick={() => go("signin")}>
+            go to your account
+          </button>
+          .
+        </p>
       </section>
     );
   }
@@ -126,6 +148,14 @@ export function SignUp() {
         <button type="submit" className="v-btn v-btn-primary" disabled={!ready}>
           {busy ? "Creating…" : "Create account"}
         </button>
+
+        <p className="v-account-aside">
+          Already have one?{" "}
+          <button type="button" className="v-account-link" onClick={() => go("signin")}>
+            Sign in
+          </button>
+          .
+        </p>
       </form>
     </section>
   );

@@ -118,6 +118,14 @@ export const PAGES: Record<PageId, Page> = {
     blocks: [],
   },
 
+  signin: {
+    eyebrow: "accounts",
+    title: "Sign in.",
+    lede: "Handle and password. The password is turned into a key here in your browser and the plain text never leaves it — the server is sent something derived from it and cannot work backwards.",
+    ctas: [],
+    blocks: [],
+  },
+
   contact: {
     eyebrow: "the useful page",
     title: "Computer repair.",

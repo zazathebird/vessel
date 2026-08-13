@@ -30,6 +30,24 @@ const KONAMI = [
 
 const DRAG_THRESHOLD = 260;
 
+/**
+ * Is the keystroke going into a field the visitor is typing in?
+ *
+ * This used to be answerable with `panelOpen`, because the share-code box was
+ * the only text input on the entire site and it lived in the panel. The account
+ * pages put inputs in the page itself, and without this guard the consequences
+ * are immediate: ArrowLeft to move the cursor inside a password pages the site
+ * sideways, and a handle containing `sudo` opens the operator door.
+ *
+ * Exported because the account routes need exactly the same answer.
+ */
+export function isEditable(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el || !el.tagName) return false;
+  const tag = el.tagName.toLowerCase();
+  return tag === "input" || tag === "textarea" || tag === "select" || el.isContentEditable;
+}
+
 export function useOperatorRoutes(): void {
   const { config, go, openDoor, closeDoor, closePanel, panelOpen, poke } = useConfig();
 
@@ -56,6 +74,13 @@ export function useOperatorRoutes(): void {
         closePanel();
         return;
       }
+
+      // Everything below this line is a shortcut that steals a keystroke, so
+      // none of it may run while the visitor is typing into a field. Esc and
+      // ⌘K stay above it deliberately: both are wanted *from* a focused input,
+      // one to leave and one because it is a global command.
+      if (isEditable(event.target)) return;
+
       if ((key === "arrowright" || key === "arrowleft") && !live.current.panelOpen) {
         const i = NAV.findIndex((n) => n.id === live.current.page);
         if (i > -1) {
