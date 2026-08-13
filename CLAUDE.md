@@ -372,6 +372,67 @@ but no recovery code has actually been redeemed on the live site. Doing so spend
 one of ten, which is why it was not done casually — but it should be done once,
 deliberately, before it is relied on.
 
+### The duel effect — shipped, and NOT finished. Read this before touching it.
+
+`src/fx/effects.ts` gained two effects, `duel` and `duelholy`, labelled
+"Lightswords: light & dark" and "Lightswords: saint & serpent". They are live and
+selectable. **The client has seen them and they are not right yet.** Their words,
+on 2026-08-12: *"it is just WAY too slow, and needs to be animated a LOT better."*
+
+**"Lightswords" is the client's own term** and is the name to use. The characters
+asked for were Vader/Luke and Jesus/Devil; the shipped figures are deliberately
+abstract silhouettes (hood/cape, halo/horns) because those are Lucasfilm marks
+and this is a commercial site. The client renamed the weapon themselves, which
+settles the naming question — but the *figures* must stay non-likenesses.
+
+**What the client actually asked for first, and which is still not built.** The
+original request was to replace **the hero ornament** — "the pulsing wye/radar
+looking thing", i.e. the Lens/Valve in `.v-ornament` — with a *tiny* duel
+animation living in that square slot. The background version was built instead.
+The client then said the background is fine too *if* it is better animated. So
+there are two possible homes and the ornament one is untouched:
+
+- `src/data/ornaments.ts` already has five entries and a sixth `ornament` share-code
+  field, so **adding a duel ornament is an established, cheap path** — it is one
+  more entry in a list that already exists, drawn into one square slot every layout
+  already knows how to size or hide.
+- The background version is `EFFECTS.duel` / `EFFECTS.duelholy`.
+
+**Why it looks slow, concretely.** Stance transitions run at `0.35 + rand*0.8`
+per second, so a full stance change takes 1.2–2.9 seconds, and `mixLimbs` eases
+linearly between two static poses with a smoothstep on top. That is a *drift*
+between poses, not a fight. What it needs, roughly in order of payoff:
+
+1. **Strike/recover asymmetry.** A cut should be fast (~120ms) and the recovery
+   slow. One easing curve for both halves is exactly what makes it read as
+   floating. Split the transition into an attack phase and a settle phase.
+2. **Impact.** Blades should stop dead on contact, not pass through. There is
+   already a clash test (`dist < s * 0.16`) that only spawns sparks — it should
+   also arrest the stance and add a recoil.
+3. **More stances, and sequenced rather than uniformly random.** `STANCES` has 9
+   and any can follow any. Real exchanges are chains — a parry *leads to* a
+   riposte. Weighting the next choice by the current one would cost little.
+4. Screen shake / blade-trail smear on the fastest cuts.
+
+**Verified in a browser 2026-08-12**: both effects render, the blades look right
+(glow + bright core), and the scale/opacity was corrected after the first attempt
+put a figure taller than the viewport behind the hero — `s` is now
+`min(h*0.34, w*0.17)` at 0.4 body alpha. **The motion itself was never verified
+in motion**, because an occluded Chrome window freezes rAF (see the memory note).
+The client's "too slow" is the only real motion feedback so far.
+
+**Sound is still not built** and was asked for twice. The site has no audio at
+all. WebAudio synthesis fits the no-assets rule; autoplay does not, so it needs a
+control, a persisted toggle and a share-code field — a spec change, not a patch.
+
+**One trap already paid for:** share codes are **base-36**, not decimal
+(`shareCode.ts`), so effect index 12 is `C`. A test code of `0-0-12-0-7-0` parses
+`12` as base-36 38, falls through `FX[38] ?? FX[0]`, and silently applies Vessels
+— which looks exactly like the new effect failing to ship. The working code for
+the light/dark duel is **`0-0-C-0-7-0`**. Also: new effects are **appended** to
+`FX` after "None", never inserted, because that array's *index* is the share-code
+field and inserting repoints every code already in circulation.
+
 **Next, in order** — nothing below is started:
 
 1. **Operator password reset in `/admin`.** Now unblocked: the endpoint deletes
@@ -482,18 +543,6 @@ cutover, delete `public/_redirects` and both scripts together.
 
 Also queued, after phase 1:
 
-- **Duelling-figures background effects, with sound.** Raised and then withdrawn by
-  the client on 2026-08-12 ("that is dumb, ignore it"), recorded because the
-  constraints are the interesting part and will apply to any animated-figure
-  effect, not just this one. Three things make it much larger than "one more
-  entry in `FX`": the named characters asked for (Vader, Luke, and "lightsaber"
-  itself) are Lucasfilm marks and this is a **commercial** site, so any shipped
-  version has to be abstract duellists with glowing blades rather than
-  recognisable likenesses; `MODES` is a share-code field, so going from 12 to 14
-  entries touches `guardrails.ts`, persistence validation and share-code decoding
-  together; and **the site has no audio at all today** — WebAudio synthesis fits
-  the no-assets rule, but autoplaying sound does not, so it would need to be
-  off by default with its own control, which is a spec change.
 - **Richer transitions, slide-overs and typewriter effects.** The hard part is the constraint: every
   layout, palette and ornament has to stay visually distinct. That points at a small set of motion
   primitives each layout composes differently, rather than bespoke animation per layout — but confirm

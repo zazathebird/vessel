@@ -709,7 +709,7 @@ function drawFighter(
   // The cape hangs behind the shoulders and drags — drawn first so the body
   // covers its top edge.
   if (style === "caped") {
-    ctx.globalAlpha = 0.32;
+    ctx.globalAlpha = 0.14;
     ctx.fillStyle = ink;
     ctx.beginPath();
     ctx.moveTo(shX, shY - s * 0.02);
@@ -720,7 +720,9 @@ function drawFighter(
     ctx.fill();
   }
 
-  ctx.globalAlpha = 0.92;
+  // The bodies sit well back. The blades carry the effect — a figure drawn at
+  // full strength reads as a diagram over the copy rather than as a background.
+  ctx.globalAlpha = 0.4;
   ctx.strokeStyle = ink;
 
   ctx.lineWidth = Math.max(2, s * 0.026);
@@ -870,10 +872,15 @@ function duelling(left: FighterStyle, right: FighterStyle): Effect {
     const la = mixLimbs(st.from.a, st.to.a, k);
     const lb = mixLimbs(st.from.b, st.to.b, k);
 
-    const s = Math.min(h * 0.5, w * 0.34);
-    const groundY = h * 0.8;
+    // **Sized as a background, not as a subject.** The first attempt used
+    // `min(h*0.5, w*0.34)`, which on a laptop put a figure taller than the
+    // viewport behind the hero — the cape alone covered the headline. Everything
+    // else in this file stays behind the text, and the duel has to earn its place
+    // the same way: readable if you look for it, invisible if you are reading.
+    const s = Math.min(h * 0.34, w * 0.17);
+    const groundY = h * 0.78;
     const cx = w / 2;
-    const gap = s * 0.62;
+    const gap = s * 0.78;
 
     ctx.globalAlpha = 0.25;
     ctx.strokeStyle = p.line;
