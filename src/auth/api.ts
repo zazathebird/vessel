@@ -121,6 +121,9 @@ export const api = {
   adminSetOperator: (id: string, isOperator: boolean) =>
     post<{ status: string }>("/api/admin/operator", { id, isOperator }),
   adminResetTotp: (id: string) => post<{ status: string }>("/api/admin/reset-totp", { id }),
+  /** Delete the password credential and its key slot. Returns status only — never key material. */
+  adminResetPassword: (id: string) =>
+    post<{ status: string }>("/api/admin/reset-password", { id }),
   adminDeleteAccount: (id: string) =>
     post<{ status: string }>("/api/admin/delete-account", { id }),
   me: () => call<MeResult>("/api/me"),

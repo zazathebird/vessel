@@ -44,16 +44,15 @@ on 2026-08-13.
 
 ## Accounts (phase 1 continues)
 
-### 3. Operator password reset in `/admin`
+### 3. ~~Operator password reset in `/admin`~~ — done 2026-08-13
 
-**Now unblocked.** It was held back because a reset with no way to set a new
-password strands the account permanently. `setPassword`'s insert branch and the
-`challenge` salt fallback both exist specifically to make the post-reset account
-recoverable. See the note in `src/components/Admin.tsx`.
-
-The endpoint deletes the password credential and its key slot and sets
-`reset_at`. It must **never** return a key slot — §5, and `worker/admin.ts`
-explains why no route hands back another account's slot.
+`POST /api/admin/reset-password` deletes the password credential and its key
+slot, stamps `reset_at`, and returns status only — never key material (§5). Two
+refusals: self-reset (change-password is the right tool) and an account with no
+unspent recovery codes, where reset would seal the grant key for good. The
+harness drives the whole loop — reset → recovery code → `setPassword`'s insert
+branch → same grant key — and both refusals. The `/admin` button asks twice,
+like delete. **Unverified by eye:** the button states in a real browser.
 
 ### 4. TOTP enrolment screen
 

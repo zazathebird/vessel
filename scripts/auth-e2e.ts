@@ -1166,6 +1166,85 @@ async function main(): Promise<void> {
       ),
     );
 
+    // Operator password reset — §4's recovery path, survivable end to end.
+    // Reset deletes the password credential and its key slot; the way back is a
+    // recovery code (whose slot carries its own copy of the grant key) into
+    // setPassword's INSERT branch. This drives the entire loop and finishes on
+    // the §5 property that makes reset safe: the grant key never moved, and at
+    // no point did the operator hold anything that could open it.
+    asBrowser(operatorSession);
+    const selfReset = await refusal(() => api.adminResetPassword(self!.id));
+    check("an operator cannot reset their own password", selfReset?.status === 400, selfReset?.message);
+
+    const resetResult = await api.adminResetPassword(flowsRow!.id);
+    check(
+      "reset returns status only — no key material, ever",
+      resetResult.status === "ok" &&
+        !("wrappedGrantKey" in resetResult) &&
+        !("grantPubkey" in resetResult) &&
+        !("keySlot" in resetResult),
+      JSON.stringify(resetResult).slice(0, 120),
+    );
+    listed = (await api.adminAccounts()).accounts.find((row) => row.id === flowsRow!.id);
+    check("the listing shows the password gone", listed?.credentials.password === false);
+    check(
+      "the listing shows the account awaiting a new password",
+      typeof listed?.resetAt === "number",
+    );
+
+    asBrowser(new BrowserSession());
+    const deadPassword = await refusal(() => signInFlow(flowsHandle, finalPassword));
+    check("the reset password no longer signs in", deadPassword?.status === 401, deadPassword?.message);
+
+    // The challenge salt fallback is what this leans on: with no password row,
+    // the salt must come from a recovery credential or the code below derives
+    // against a decoy and turns a working code into a wrong one.
+    const afterReset = await signInWithRecoveryCode(flowsHandle, flowsCodes[1]);
+    check(
+      "a recovery code still signs in after the reset",
+      afterReset.result.status === "signed-in",
+      JSON.stringify(afterReset.result).slice(0, 140),
+    );
+    check(
+      "the sign-in discloses the reset to the owner",
+      afterReset.result.status === "signed-in" && typeof afterReset.result.resetAt === "number",
+    );
+    check("slot and ticket are in hand for the new password", afterReset.canSetPassword() === true);
+
+    const postResetPassword = `${password}, after the reset`;
+    await afterReset.setPassword(postResetPassword);
+
+    asBrowser(new BrowserSession());
+    const backIn = await signInFlow(flowsHandle, postResetPassword);
+    check(
+      "setPassword's INSERT branch gives the account a password again",
+      backIn.status === "signed-in",
+      JSON.stringify(backIn).slice(0, 140),
+    );
+    check(
+      "the reset notice clears once the owner chooses a password",
+      backIn.status === "signed-in" && backIn.resetAt === null,
+    );
+    check(
+      "the grant public key survived the operator reset too",
+      (await api.keySlot()).grantPubkey === grantPubkeyAtSignup,
+    );
+
+    // The refusal that keeps reset honest: with no unspent recovery code, the
+    // password slot is the last openable copy of the grant key, and deleting it
+    // is account destruction under a milder name.
+    await d1(
+      `UPDATE credentials SET used_at = ${Date.now()} WHERE account_id = (SELECT id FROM accounts WHERE handle = '${handle}') AND kind = 'recovery'`,
+    );
+    asBrowser(operatorSession);
+    const firstFixture = (await api.adminAccounts()).accounts.find((row) => row.handle === handle);
+    const sealed = await refusal(() => api.adminResetPassword(firstFixture!.id));
+    check(
+      "reset is refused when it would seal the account for good",
+      sealed?.status === 400,
+      sealed?.message,
+    );
+
     // Site config, the remaining untested pair of routes. Reads go through a
     // raw Client: the app deliberately has no fetching reader — the browser
     // gets this injected as `window.__VESSEL_SITE__` — so there is no

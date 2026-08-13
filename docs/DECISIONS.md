@@ -13,6 +13,28 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-13 — Operator password reset ships, with two refusals
+
+`TODO.md` item 3, unblocked since `setPassword` grew its insert branch and `challenge` its salt
+fallback. `POST /api/admin/reset-password` deletes the password credential and its key slot,
+stamps `reset_at`, and returns `{status, handle}` — **never key material**, which is the §5 line
+`worker/admin.ts` exists to hold: reset deletes a slot and cannot open one, so grant authority
+never passes through the operator.
+
+The two refusals are against permanence, not malice:
+
+- **Self-reset is refused.** An operator with a working session has change-password; a reset of
+  their own row can only be a slip, and it deletes their own key slot.
+- **An account with no unspent recovery codes cannot be reset**, only deleted. Its password slot
+  is the last openable copy of its grant key, so "reset" there is deletion under a milder name —
+  refusing makes the operator choose the honest button. The count includes `passkey` rows so the
+  guard stays correct when passkeys arrive.
+
+The `/admin` button uses the same two-press confirm as delete, hides for self, and disables at
+zero codes — mirrors of the Worker's refusals, not the enforcement. The harness drives the whole
+loop: reset → old password 401s → recovery code signs in (leaning on the challenge salt fallback)
+→ insert branch → the original grant key reopens under the new password.
+
 ## 2026-08-13 — The harness now drives the real browser modules
 
 `TODO.md` item 1, closed. The suite grew from 89 to 131 checks, and the growth is in kind, not

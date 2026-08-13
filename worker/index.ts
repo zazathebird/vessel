@@ -219,6 +219,8 @@ async function route(
       return admin.setOperator(request, env);
     case "POST /api/admin/reset-totp":
       return admin.resetTotp(request, env);
+    case "POST /api/admin/reset-password":
+      return admin.resetPassword(request, env);
     case "POST /api/admin/delete-account":
       return admin.deleteAccount(request, env);
 

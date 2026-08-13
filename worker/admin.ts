@@ -11,11 +11,8 @@
  * to *reset* a password and §5 rejects escrow permanently: an operator who could
  * hand themselves a working credential could sign grants in a user's name, which
  * is the exact thing the key-slot design exists to prevent. Reset deletes a slot
- * and cannot open it.
- *
- * Password reset is not here either, and that is a timing decision rather than a
- * principle — see `resetTotp` for the reasoning, which applies doubly to
- * passwords while there is still no way to set a new one.
+ * and cannot open it — `resetPassword` below is exactly that shape, and it must
+ * stay it: the route returns handles and status, never key material.
  */
 
 import { BadRequest } from "./encoding";
@@ -151,6 +148,65 @@ export async function resetTotp(request: Request, env: Env): Promise<Response> {
   await env.DB.batch([
     env.DB.prepare("DELETE FROM totp WHERE account_id = ?").bind(account.id),
     auditStatement(env, caller.id, "admin.totp.reset", account.handle),
+  ]);
+
+  return json({ status: "ok", handle: account.handle });
+}
+
+/**
+ * Reset an account's password — §4's operator recovery path, shippable only now
+ * that the way back exists end to end (`setPassword`'s insert branch, and the
+ * `challenge` salt fallback that keeps recovery codes derivable afterwards).
+ *
+ * What it does is delete: the password credential and its key slot go, and
+ * `reset_at` is stamped so the owner's next sign-in says so. What it must
+ * **never** do is return a slot or mint a credential — §5 rejects operator
+ * escrow permanently, and this route staying deletion-only is what makes reset
+ * safe at all. The owner gets back in with a recovery code, which carries its
+ * own copy of the grant key; `setPassword` re-seals that same key under the
+ * password they choose. Grant authority never passes through the operator.
+ *
+ * Two refusals, both against permanence rather than malice:
+ *
+ * - **Not the caller.** An operator with a working session has `changePassword`;
+ *   a reset of their own row can only be a slip, and it is a slip that deletes
+ *   their own key slot.
+ * - **Not an account with no other way in.** The password slot being deleted may
+ *   be the last openable copy of the grant key. If no unspent recovery code (or,
+ *   later, passkey) remains, reset does not put the account into recovery — it
+ *   seals the grant key for ever, quietly, which is deletion wearing a milder
+ *   name. Refusing makes the operator choose the honest button.
+ */
+export async function resetPassword(request: Request, env: Env): Promise<Response> {
+  const caller = await operator(request, env);
+  const body = await readJson(request);
+  const account = await target(env, body);
+
+  if (account.id === caller.id) {
+    throw new BadRequest("Change your own password from your account instead.");
+  }
+
+  const waysBack = await env.DB.prepare(
+    "SELECT count(*) AS n FROM credentials WHERE account_id = ? AND kind IN ('recovery', 'passkey') AND used_at IS NULL",
+  )
+    .bind(account.id)
+    .first<{ n: number }>();
+  if ((waysBack?.n ?? 0) === 0) {
+    throw new BadRequest(
+      "That account has no recovery codes left, so a reset would seal it for good. Delete it instead, or leave it be.",
+    );
+  }
+
+  await env.DB.batch([
+    // Slots before credentials: the subquery needs the rows it names.
+    env.DB.prepare(
+      "DELETE FROM key_slots WHERE credential_id IN (SELECT id FROM credentials WHERE account_id = ? AND kind = 'password')",
+    ).bind(account.id),
+    env.DB.prepare("DELETE FROM credentials WHERE account_id = ? AND kind = 'password'").bind(
+      account.id,
+    ),
+    env.DB.prepare("UPDATE accounts SET reset_at = ? WHERE id = ?").bind(Date.now(), account.id),
+    auditStatement(env, caller.id, "admin.password.reset", account.handle),
   ]);
 
   return json({ status: "ok", handle: account.handle });

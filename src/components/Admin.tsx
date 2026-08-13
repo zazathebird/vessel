@@ -12,14 +12,15 @@ import { ApiError, api, type AdminAccount } from "../auth/api";
  * nothing — the Worker refuses every call behind it regardless, so this is a
  * courtesy rather than the security boundary. The boundary is `worker/admin.ts`.
  *
- * **What is missing is deliberate and worth reading before adding it.** There is
- * no "reset password" button. The Worker has no route for it either, and the
- * reason is timing rather than principle: an operator reset deletes the password
- * and its key slot, and the flow that lets the user set a new one — which needs
- * the grant key a recovery code opens — is not built. Shipping reset first would
- * mean an operator could put an account into a state where the only way in is a
- * recovery code, each sign-in spends one of ten, and after the tenth the account
- * is gone for good. A button that can do that is worse than no button.
+ * **Reset password arrived once it was survivable** (2026-08-13). It was held
+ * back not on principle but because a reset with no way to set a new password
+ * strands the account: reset deletes the password credential and its key slot,
+ * and the way back — recovery-code sign-in into `setPassword`'s insert branch —
+ * had to exist end to end first. It does now, and the harness drives the whole
+ * loop. The Worker still refuses a reset that would seal an account with no
+ * recovery codes left, and refuses self-reset (change-password is the right
+ * tool); the buttons below mirror both refusals as disabled states, but the
+ * Worker's word is the one that counts.
  */
 export function Admin() {
   const { say, go } = useConfig();
@@ -127,6 +128,7 @@ export function Admin() {
                     {account.totp.confirmed ? "2FA on" : "2FA off"} ·{" "}
                     {account.credentials.recoveryCodesRemaining} codes ·{" "}
                     {account.credentials.passkeys} passkeys
+                    {account.resetAt ? " · awaiting a new password" : ""}
                   </span>
                 </div>
 
@@ -159,12 +161,45 @@ export function Admin() {
                     reset 2FA
                   </button>
 
+                  {/* Reset forces the owner onto their recovery codes, so it
+                      asks twice the same way delete does. Self is hidden
+                      (change-password is the right tool) and an account with no
+                      codes left is disabled — the Worker refuses both anyway;
+                      these states just say so before the click. */}
+                  {self ? null : confirming === `reset:${account.id}` ? (
+                    <button
+                      type="button"
+                      className="chip is-danger"
+                      disabled={working}
+                      onClick={() =>
+                        act(account.id, `password reset for ${account.handle}`, () =>
+                          api.adminResetPassword(account.id),
+                        )
+                      }
+                    >
+                      {working ? "resetting…" : "really reset"}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="chip"
+                      disabled={
+                        working ||
+                        !account.credentials.password ||
+                        account.credentials.recoveryCodesRemaining === 0
+                      }
+                      onClick={() => setConfirming(`reset:${account.id}`)}
+                    >
+                      reset password
+                    </button>
+                  )}
+
                   {/* Deleting is irreversible and takes the account's grant key
                       with it, so it asks twice. The second press is a different
                       button in the same place, which is the cheapest way to make
                       a slip impossible without a dialog primitive that does not
                       exist yet. */}
-                  {self ? null : confirming === account.id ? (
+                  {self ? null : confirming === `delete:${account.id}` ? (
                     <button
                       type="button"
                       className="chip is-danger"
@@ -182,7 +217,7 @@ export function Admin() {
                       type="button"
                       className="chip"
                       disabled={working}
-                      onClick={() => setConfirming(account.id)}
+                      onClick={() => setConfirming(`delete:${account.id}`)}
                     >
                       delete
                     </button>
@@ -195,10 +230,10 @@ export function Admin() {
       )}
 
       <p className="v-account-note">
-        Resetting a password is not here yet, on purpose. It would delete the password and its
-        key slot, and there is still no screen that lets someone set a new one — so the account
-        would be reachable only by recovery codes, one spent per sign-in, ten in total. That
-        button arrives with the one that makes it survivable.
+        Resetting a password deletes it along with its key slot — nothing here can read or set
+        one, by design. The owner signs back in with a recovery code, which carries its own copy
+        of their key, and chooses a new password from there. An account with no codes left cannot
+        be reset, only deleted: a reset would seal it for good under a milder name.
       </p>
     </section>
   );
