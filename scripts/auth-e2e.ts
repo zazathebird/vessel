@@ -176,6 +176,14 @@ class Client {
   private cookie: string | null = null;
   lastStatus = 0;
 
+  /**
+   * Almost every client shares the run's bucket. The exception is the signup
+   * quota check at the end, which needs an address of its own to trip signup
+   * backoff without blocking the rest of this section — same RFC 5737 trick,
+   * different documentation range.
+   */
+  constructor(private ip: string = CLIENT_IP) {}
+
   async call(
     path: string,
     init: { method?: string; body?: unknown } = {},
@@ -195,7 +203,7 @@ class Client {
       // choose its own bucket. The address is fictional — 203.0.113.0/24 is
       // reserved by RFC 5737 for exactly this — and it is HMAC'd under a
       // rotating salt before it names anything anyway (§9).
-      "cf-connecting-ip": CLIENT_IP,
+      "cf-connecting-ip": this.ip,
     };
     if (this.cookie) headers.cookie = this.cookie;
 
@@ -1484,6 +1492,32 @@ async function main(): Promise<void> {
       }),
     );
     check("a registration from a foreign origin is refused", foreignRefused?.status === 400, foreignRefused?.message);
+
+    // UV is the passkey's second factor: the no-TOTP and no-rate-limit
+    // decisions on passkey sign-in rest entirely on the Worker refusing an
+    // assertion without it. Until now that refusal was verified by code
+    // reading only — a regression deleting the UV check would have passed this
+    // whole suite. Proved here instead.
+    authenticator.userVerification = false;
+    const noUv = await refusal(() => signInWithPasskey(authenticator));
+    check(
+      "an assertion without user verification is refused",
+      noUv !== null && (noUv.status === 400 || noUv.status === 401),
+      noUv?.message,
+    );
+    authenticator.userVerification = true;
+
+    // Valid cryptography over the wrong RP ID hash — a signature minted for
+    // some other site. Foreign origin is already refused via clientDataJSON
+    // above; this is the authData half of the same boundary.
+    authenticator.rpIdOverride = "evil.example";
+    const wrongRp = await refusal(() => signInWithPasskey(authenticator));
+    check(
+      "an assertion over a wrong RP ID hash is refused",
+      wrongRp !== null && (wrongRp.status === 400 || wrongRp.status === 401),
+      wrongRp?.message,
+    );
+    authenticator.rpIdOverride = null;
   }
 
   section("Saved setups (§11) — a name and a share code");
@@ -1552,21 +1586,20 @@ async function main(): Promise<void> {
         slot: toBase64Url(await wrapSlot(grant.scalar, derived.wrappingKey)),
       });
     }
-    const setup = new Client();
-    await setup.call("/api/auth/signup", {
-      body: {
-        handle: victim,
-        kdf: {
-          salt: toBase64Url(params.salt),
-          iterations: params.iterations,
-          recoveryIterations: 100_000,
-        },
-        authSecret: credential.authSecret,
-        grantPubkey: toBase64Url(grant.publicKeyRaw),
-        passwordSlot: toBase64Url(await wrapSlot(grant.scalar, credential.wrappingKey)),
-        recovery,
+    const fixturePayload = {
+      handle: victim,
+      kdf: {
+        salt: toBase64Url(params.salt),
+        iterations: params.iterations,
+        recoveryIterations: 100_000,
       },
-    });
+      authSecret: credential.authSecret,
+      grantPubkey: toBase64Url(grant.publicKeyRaw),
+      passwordSlot: toBase64Url(await wrapSlot(grant.scalar, credential.wrappingKey)),
+      recovery,
+    };
+    const setup = new Client();
+    await setup.call("/api/auth/signup", { body: fixturePayload });
     check("the rate-limit fixture account was created", setup.lastStatus === 201, setup.lastStatus === 201 ? "" : "signup was itself rate limited — run against a fresh .wrangler state");
 
     const attacker = new Client();
@@ -1588,6 +1621,31 @@ async function main(): Promise<void> {
     });
     check("while blocked, even the right password is refused", attacker.lastStatus === 429, locked.error);
     check("the refusal says when to come back", /try again in about/i.test(locked.error ?? ""), locked.error);
+
+    // The signup quota (2026-08-13 audit): account creation counts against a
+    // dedicated `signup:` bucket, not only the shared client bucket whose
+    // allowance of fifty is sized for a household's sign-in typos. A handle
+    // collision records a failure on it, which makes the quota testable without
+    // minting a dozen real accounts: collide from a fresh address until refused.
+    // With SIGNUP_FREE_ATTEMPTS = 12, a clean bucket refuses attempt 14 (the
+    // thirteenth failure is what arms the block); earlier only if a previous
+    // run happened to draw the same address inside the window.
+    const creator = new Client(`198.51.100.${1 + Math.floor(Math.random() * 254)}`);
+    let signupBlockedAt = -1;
+    for (let attempt = 1; attempt <= 15 && signupBlockedAt < 0; attempt += 1) {
+      await creator.call("/api/auth/signup", { body: fixturePayload });
+      if (creator.lastStatus === 429) signupBlockedAt = attempt;
+    }
+    check(
+      "account creation from one address meets backoff",
+      signupBlockedAt > 0,
+      `not blocked after 15 attempts`,
+    );
+    check(
+      "the signup allowance is tighter than the client bucket's fifty",
+      signupBlockedAt > 1 && signupBlockedAt <= 14,
+      `blocked at attempt ${signupBlockedAt}`,
+    );
   }
 
   // Result ---------------------------------------------------------------------

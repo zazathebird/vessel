@@ -19,7 +19,7 @@
  */
 
 import { api, type PasskeySignInResult } from "./api";
-import { deriveFromPassword } from "./derive";
+import { DEFAULT_ITERATIONS, checkIterations, deriveFromPassword } from "./derive";
 import { fromBase64Url, randomBytes, toBase64Url } from "./encoding";
 import { SLOT_ALG, rewrapSlot } from "./grantKey";
 
@@ -215,7 +215,7 @@ export async function addPasskey(
   const { kdf } = await api.challenge(account.handle);
   const derived = await deriveFromPassword(password, {
     salt: fromBase64Url(kdf.salt),
-    iterations: kdf.iterations,
+    iterations: checkIterations(kdf.iterations, DEFAULT_ITERATIONS),
   });
 
   const { token, challenge } = await api.passkeyChallenge();
@@ -228,13 +228,15 @@ export async function addPasskey(
   let slot: string | undefined;
   if (created.prfOutput) {
     const source = await api.keySlot();
+    // Decoding and the prf key derivation happen *outside* the try: a slot that
+    // will not even parse is corrupt data from the server, and reporting it as
+    // "wrong password" points the user at exactly the wrong remedy (a reset —
+    // which deletes this slot). Only the AES-KW re-wrap itself means that.
+    const sourceBytes = fromBase64Url(source.wrappedGrantKey);
+    const prfKey = await prfWrappingKey(created.prfOutput);
     let rewrapped: Uint8Array;
     try {
-      rewrapped = await rewrapSlot(
-        fromBase64Url(source.wrappedGrantKey),
-        derived.wrappingKey,
-        await prfWrappingKey(created.prfOutput),
-      );
+      rewrapped = await rewrapSlot(sourceBytes, derived.wrappingKey, prfKey);
     } catch {
       // AES-KW fails closed on a wrong key, which here means a wrong password —
       // the same local refusal `changePassword` relies on.
@@ -266,7 +268,7 @@ export async function removePasskey(password: string, id: string): Promise<void>
   const { kdf } = await api.challenge(account.handle);
   const derived = await deriveFromPassword(password, {
     salt: fromBase64Url(kdf.salt),
-    iterations: kdf.iterations,
+    iterations: checkIterations(kdf.iterations, DEFAULT_ITERATIONS),
   });
   await api.passkeyRemove({ authSecret: derived.authSecret, id });
 }

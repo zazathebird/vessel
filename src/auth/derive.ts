@@ -50,6 +50,29 @@ export const RECOVERY_ITERATIONS = 100_000;
 
 const SALT_BYTES = 16;
 
+/**
+ * The browser derives with whatever iteration count `challenge` hands back, so
+ * anything that can forge that one response could otherwise say `iterations: 1`
+ * and quietly strip the whole stretch — an *active* downgrade, strictly worse
+ * than the logged-authSecret grinding already flagged for client sign-off
+ * (CLAUDE.md item 2). Refuse rather than clamp: a count we silently "corrected"
+ * would derive a secret the server does not hold and fail as a wrong password,
+ * and this failure should say what it actually is.
+ *
+ * The floor is the constant each credential kind has always used; if a default
+ * ever rises, the floor stays at the oldest count ever deployed, or existing
+ * accounts stop signing in. The ceiling stops a hostile `iterations: 1e9` from
+ * hanging the tab.
+ */
+const MAX_ITERATIONS = 10_000_000;
+
+export function checkIterations(iterations: number, floor: number): number {
+  if (!Number.isInteger(iterations) || iterations < floor || iterations > MAX_ITERATIONS) {
+    throw new Error("The server sent implausible key-derivation parameters. Refusing.");
+  }
+  return iterations;
+}
+
 /** The stored, per-account KDF parameters. Sent to the browser before sign-in. */
 export interface KdfParams {
   salt: Uint8Array;
@@ -76,9 +99,15 @@ async function pbkdf2(
   salt: Uint8Array,
   iterations: number,
 ): Promise<ArrayBuffer> {
+  // NFKC before encoding (NIST 800-63B §5.1.1.2): é typed composed on one
+  // platform and decomposed on another is the same password to its owner and
+  // must be the same bytes here — there is no email reset behind a mismatch.
+  // A no-op for ASCII, so recovery codes are unaffected. Added 2026-08-13; a
+  // pre-existing password containing *non-normalised* non-ASCII would derive
+  // differently from that day — recovery codes are the way back in.
   const material = await crypto.subtle.importKey(
     "raw",
-    new TextEncoder().encode(secret),
+    new TextEncoder().encode(secret.normalize("NFKC")),
     "PBKDF2",
     false,
     ["deriveBits"],

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useConfig } from "../config/ConfigContext";
 import { ApiError, type MeResult } from "../auth/api";
@@ -31,7 +31,7 @@ interface Props {
 }
 
 export function TotpEnrol({ me, onChanged }: Props) {
-  const { say } = useConfig();
+  const { say, holdSaver } = useConfig();
 
   const [enrolment, setEnrolment] = useState<TotpEnrolment | null>(null);
   const [backupCodes, setBackupCodes] = useState<string[] | null>(null);
@@ -39,6 +39,16 @@ export function TotpEnrol({ me, onChanged }: Props) {
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // The same hold SignUp takes for the same screen: ten codes, shown once,
+  // transcribed by hand while touching nothing — and the idle clock counts
+  // only clicks and keypresses, so without this the chrome (which contains
+  // this screen) fades out a minute into writing them down.
+  useEffect(() => {
+    if (!backupCodes) return;
+    holdSaver(true);
+    return () => holdSaver(false);
+  }, [backupCodes, holdSaver]);
 
   function fail(cause: unknown) {
     setError(

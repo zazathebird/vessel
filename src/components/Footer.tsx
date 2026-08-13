@@ -3,13 +3,18 @@ import { useSession } from "../auth/SessionContext";
 import { FOOTER_NAV } from "../data/pageIds";
 
 export function Footer() {
-  const { config, go, clock, openDoor } = useConfig();
-  // Operator-only, and that is what makes it compatible with the account pages
-  // being unlinked. The request was that *visitors* find no way in; a signed-in
-  // operator having to remember a typed word to reach their own administration
-  // is not privacy, it is a trapdoor that locks from the inside. Signed out,
-  // `isOperator` is false and this renders nothing at all.
-  const { isOperator } = useSession();
+  const { config, go, clock, openDoor, signinShown } = useConfig();
+  // The account/admin pair is operator-only, and that is what makes it
+  // compatible with the account pages being unlinked. The request was that
+  // *visitors* find no standing way in; a signed-in operator having to
+  // remember a typed word to reach their own administration is not privacy,
+  // it is a trapdoor that locks from the inside. Signed out, `isOperator` is
+  // false and the pair renders nothing at all.
+  //
+  // `signinShown` is the one exception, added at the client's request
+  // (2026-08-13): five taps on the hero ornament reveal a sign-in link here
+  // for the rest of the visit. Findable, not advertised.
+  const { isOperator, me } = useSession();
 
   return (
     <footer className="v-footer">
@@ -26,6 +31,15 @@ export function Footer() {
             {item.label}
           </button>
         ))}
+        {signinShown && !isOperator ? (
+          <button
+            type="button"
+            className={`v-footer-link is-found${config.page === "signin" ? " is-active" : ""}`}
+            onClick={() => go("signin")}
+          >
+            {me ? "account" : "sign in"}
+          </button>
+        ) : null}
         {isOperator ? (
           <>
             <button

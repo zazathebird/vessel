@@ -18,6 +18,7 @@ import { api, type PublicAccount, type SignInResult } from "./api";
 import {
   DEFAULT_ITERATIONS,
   RECOVERY_ITERATIONS,
+  checkIterations,
   deriveFromPassword,
   deriveFromRecoveryCode,
   newKdfParams,
@@ -119,7 +120,7 @@ export async function signIn(handle: string, password: string): Promise<SignInRe
   const { kdf } = await api.challenge(handle);
   const derived = await deriveFromPassword(password, {
     salt: fromBase64Url(kdf.salt),
-    iterations: kdf.iterations,
+    iterations: checkIterations(kdf.iterations, DEFAULT_ITERATIONS),
   });
   return api.signin({ handle, authSecret: derived.authSecret });
 }
@@ -178,7 +179,7 @@ export async function signInWithRecoveryCode(
   const salt = fromBase64Url(kdf.salt);
   const derived = await deriveFromRecoveryCode(code, {
     salt,
-    iterations: kdf.recoveryIterations,
+    iterations: checkIterations(kdf.recoveryIterations, RECOVERY_ITERATIONS),
   });
   const result = await api.signin({ handle, authSecret: derived.authSecret, kind: "recovery" });
 
@@ -279,7 +280,7 @@ export async function beginTotpEnrolment(password: string): Promise<TotpEnrolmen
   const { kdf } = await api.challenge(account.handle);
   const derived = await deriveFromPassword(password, {
     salt: fromBase64Url(kdf.salt),
-    iterations: kdf.iterations,
+    iterations: checkIterations(kdf.iterations, DEFAULT_ITERATIONS),
   });
   const { secret, uri } = await api.totpEnrol({ authSecret: derived.authSecret });
 
@@ -329,7 +330,10 @@ export async function changePassword(
   const { kdf } = await api.challenge(account.handle);
   const salt = fromBase64Url(kdf.salt);
 
-  const current = await deriveFromPassword(currentPassword, { salt, iterations: kdf.iterations });
+  const current = await deriveFromPassword(currentPassword, {
+    salt,
+    iterations: checkIterations(kdf.iterations, DEFAULT_ITERATIONS),
+  });
   const next = await deriveFromPassword(newPassword, { salt, iterations: DEFAULT_ITERATIONS });
 
   const slot = await api.keySlot();
@@ -354,9 +358,12 @@ export async function changePassword(
  * §3's first mitigation against a compromised frontend: the key is unwrapped for
  * a single signature and not held unwrapped for the session, and the password is
  * re-entered to do it. Hostile code in this origin therefore cannot sign a grant
- * at a moment of its own choosing — it has to wait for the user to decide to,
- * and what it gets is a handle that stops working the moment this promise
- * settles.
+ * at a moment of its own choosing — it has to wait for the user to decide to.
+ * Be honest about the scope of that: WebCrypto has no revocation, so what it
+ * captures at that moment is a live `CryptoKey` that signs for as long as the
+ * tab does. The mitigation is *timing* (no standing unwrapped key to steal
+ * between gestures), not containment. If phase 3 wants containment, the shape
+ * is a `signOnce(password, code, payload)` that never returns the key at all.
  *
  * Phase 3 is what calls this. It is here now because a key slot that has never
  * been reopened is a slot nobody has really tested.
@@ -381,7 +388,7 @@ export async function openGrantKey(password: string, totpCode: string): Promise<
   ]);
   const derived = await deriveFromPassword(password, {
     salt: fromBase64Url(kdf.salt),
-    iterations: kdf.iterations,
+    iterations: checkIterations(kdf.iterations, DEFAULT_ITERATIONS),
   });
   return unwrapSlot(
     fromBase64Url(slot.wrappedGrantKey),

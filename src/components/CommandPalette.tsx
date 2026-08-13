@@ -4,12 +4,13 @@ import { useConfig } from "../config/ConfigContext";
 import { useSession } from "../auth/SessionContext";
 import { api, type SavedSetup } from "../auth/api";
 import { decodeShareCode } from "../config/shareCode";
+import { saveCalmPreference } from "../config/persistence";
 import { FX, LAYOUTS, TYPESETS } from "../data/catalog";
 import { ORNAMENTS } from "../data/ornaments";
 import { PALETTES } from "../data/palettes";
 import { FOOTER_NAV, NAV } from "../data/pageIds";
 import { isEditable } from "../hooks/useOperatorRoutes";
-import { useFocusTrap } from "../hooks/useFocusTrap";
+import { isModalOpen, useFocusTrap } from "../hooks/useFocusTrap";
 
 /**
  * The command palette (SPEC-ACCOUNTS.md §10) — the "proper commands" ask.
@@ -52,13 +53,18 @@ export function CommandPalette() {
   const [selected, setSelected] = useState(0);
   const [setups, setSetups] = useState<SavedSetup[]>([]);
   const ref = useRef<HTMLDivElement | null>(null);
-  useFocusTrap(open, ref);
+  // Modal for the same reason dialogs are: while the palette is up, the global
+  // key routes must not page the site or open the door underneath it.
+  useFocusTrap(open, ref, { modal: true });
 
   // The typed route in. Same guards as the account routes: never while typing
-  // in a field, never with a modifier held.
+  // in a field, never with a modifier held — and never over an open dialog,
+  // whose buttons are not editable fields but whose aria-modal still means
+  // "nothing else may act".
   useEffect(() => {
     const keys: string[] = [];
     const onKey = (event: KeyboardEvent) => {
+      if (isModalOpen()) return;
       if (isEditable(event.target)) return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       const key = (event.key || "").toLowerCase();
@@ -74,11 +80,15 @@ export function CommandPalette() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Escape closes from anywhere in the palette, including the input.
+  // Escape closes from anywhere in the palette, including the input. One
+  // Escape, one layer: propagation stops here so the operator routes' handler
+  // on `window` cannot also close the panel this palette was opened over.
   useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      setOpen(false);
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -126,7 +136,10 @@ export function CommandPalette() {
         void api
           .signout()
           .then(() => refresh())
-          .then(() => say("signed out"));
+          .then(() => say("signed out"))
+          // Same words as SignIn's sign-out path: a failure that says nothing
+          // leaves someone believing they signed out when they did not.
+          .catch(() => say("Could not reach the server — you may still be signed in."));
       });
     } else {
       add("signin", "account — sign in", () => go("signin"));
@@ -161,9 +174,12 @@ export function CommandPalette() {
         ["calm", config.calm],
       ] as const;
       for (const [key, value] of toggles) {
-        add(`toggle-${key}`, `toggle — ${key} ${value ? "off" : "on"}`, () =>
-          update({ [key]: !value }),
-        );
+        add(`toggle-${key}`, `toggle — ${key} ${value ? "off" : "on"}`, () => {
+          // Calm follows the visitor home from every toggle that flips it
+          // deliberately — the header, the panel, and here.
+          if (key === "calm") saveCalmPreference(!value);
+          update({ [key]: !value });
+        });
       }
     }
 

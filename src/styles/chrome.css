@@ -1109,6 +1109,15 @@
   color: var(--a1);
 }
 
+/* The found sign-in link — five taps on the ornament. `backwards`, never a
+   forwards fill: v-rise animates `transform`, and a held final frame would own
+   the property for ever — the same trap .v-block documents. Hover is safe
+   either way (interaction.css moves footer links with `translate`), but the
+   convention is the convention. */
+.v-footer-link.is-found {
+  animation: v-rise 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+}
+
 .v-toast {
   position: fixed;
   left: 50%;
@@ -1387,12 +1396,4 @@
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-}
-
-/* The armed delete. Colour only — the lift and press come from interaction.css
-   with everything else, because a destructive button that moves differently
-   from its neighbours reads as a different kind of control. */
-.v-admin .chip.is-danger {
-  border-color: var(--a3);
-  color: var(--a3);
 }

@@ -123,7 +123,13 @@ function crossOrigin(request: Request, url: URL): boolean {
     // `wrangler dev`. Comparing against the request's host rather than a literal
     // keeps this correct on the `workers.dev` URL and in tests without a list to
     // maintain.
-    return sent.host !== url.host;
+    if (sent.host !== url.host) return true;
+    // The scheme counts too: SameSite=Lax is not schemeful in every browser, so
+    // before the first HSTS visit an on-path `http://<apex>` page could POST
+    // with a passing Origin *and* the cookie. Loopback is exempt, same as the
+    // https redirect — `wrangler dev` can report the upstream protocol while
+    // the browser genuinely loads over http.
+    return !isLoopback(url.hostname) && sent.protocol !== url.protocol;
   } catch {
     return true;
   }

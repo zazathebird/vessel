@@ -17,7 +17,7 @@
 
 import { BadRequest } from "./encoding";
 import type { Env } from "./env";
-import { auditStatement, json, readJson, requireAccount } from "./accounts";
+import { auditStatement, json, noStore, readJson, requireAccount } from "./accounts";
 
 interface AdminAccountRow {
   id: string;
@@ -74,21 +74,25 @@ export async function listAccounts(request: Request, env: Env): Promise<Response
       ORDER BY a.created_at`,
   ).all<AdminAccountRow>();
 
-  return json({
-    accounts: results.map((row) => ({
-      id: row.id,
-      handle: row.handle,
-      isOperator: row.is_operator === 1,
-      createdAt: row.created_at,
-      resetAt: row.reset_at,
-      credentials: {
-        password: row.passwords > 0,
-        passkeys: row.passkeys,
-        recoveryCodesRemaining: row.recovery_left,
-      },
-      totp: { confirmed: row.totp_confirmed !== null },
-    })),
-  });
+  // Account state, so `no-store` — the same convention every other roster-ish
+  // response (`me`, `passkeys.list`, `setups.list`) already follows.
+  return noStore(
+    json({
+      accounts: results.map((row) => ({
+        id: row.id,
+        handle: row.handle,
+        isOperator: row.is_operator === 1,
+        createdAt: row.created_at,
+        resetAt: row.reset_at,
+        credentials: {
+          password: row.passwords > 0,
+          passkeys: row.passkeys,
+          recoveryCodesRemaining: row.recovery_left,
+        },
+        totp: { confirmed: row.totp_confirmed !== null },
+      })),
+    }),
+  );
 }
 
 /**
@@ -118,11 +122,24 @@ export async function setOperator(request: Request, env: Env): Promise<Response>
     }
   }
 
+  // The pre-check above gives the self-demotion its friendly message; this is
+  // the enforcement, and it covers every demotion. Two operators demoting each
+  // other concurrently would each pass a pre-check that still counted the
+  // other — the EXISTS in the WHERE clause makes "another operator remains"
+  // true at write time or the write does not happen.
+  const flip = wanted
+    ? env.DB.prepare("UPDATE accounts SET is_operator = 1 WHERE id = ?").bind(account.id)
+    : env.DB.prepare(
+        "UPDATE accounts SET is_operator = 0 WHERE id = ? AND EXISTS (SELECT 1 FROM accounts WHERE is_operator = 1 AND id <> ?)",
+      ).bind(account.id, account.id);
+  const flipped = await flip.run();
+  if (!wanted && (flipped.meta?.changes ?? 0) === 0) {
+    throw new BadRequest(
+      "That would leave the site with no operator. Make someone else an operator first.",
+    );
+  }
+
   await env.DB.batch([
-    env.DB.prepare("UPDATE accounts SET is_operator = ? WHERE id = ?").bind(
-      wanted ? 1 : 0,
-      account.id,
-    ),
     auditStatement(env, caller.id, wanted ? "admin.operator.granted" : "admin.operator.revoked", account.handle),
   ]);
 
@@ -172,10 +189,17 @@ export async function resetTotp(request: Request, env: Env): Promise<Response> {
  *   a reset of their own row can only be a slip, and it is a slip that deletes
  *   their own key slot.
  * - **Not an account with no other way in.** The password slot being deleted may
- *   be the last openable copy of the grant key. If no unspent recovery code (or,
- *   later, passkey) remains, reset does not put the account into recovery — it
- *   seals the grant key for ever, quietly, which is deletion wearing a milder
- *   name. Refusing makes the operator choose the honest button.
+ *   be the last openable copy of the grant key. If no other openable slot
+ *   remains, reset does not put the account into recovery — it seals the grant
+ *   key for ever, quietly, which is deletion wearing a milder name. Refusing
+ *   makes the operator choose the honest button.
+ *
+ *   **Counted in key slots, not credentials** — the same query shape as passkey
+ *   removal's refusal, for the same reason. A `prf`-less passkey is a credential
+ *   with no slot (§5's missing-slot fallback): it signs the account in and can
+ *   never open the grant key, so counting it as a way back would let a reset
+ *   seal the key while claiming not to. Spent recovery codes' slots are excluded
+ *   because their codes cannot sign in again.
  */
 export async function resetPassword(request: Request, env: Env): Promise<Response> {
   const caller = await operator(request, env);
@@ -186,28 +210,40 @@ export async function resetPassword(request: Request, env: Env): Promise<Respons
     throw new BadRequest("Change your own password from your account instead.");
   }
 
-  const waysBack = await env.DB.prepare(
-    "SELECT count(*) AS n FROM credentials WHERE account_id = ? AND kind IN ('recovery', 'passkey') AND used_at IS NULL",
-  )
-    .bind(account.id)
-    .first<{ n: number }>();
-  if ((waysBack?.n ?? 0) === 0) {
+  // "Another way back exists" is checked inside each write's WHERE clause, not
+  // ahead of it: a pre-check could pass and then the owner spends their last
+  // recovery code (whose spent slot `setPassword` deletes) before the batch
+  // lands — a reset that then proceeded would seal the grant key while
+  // promising it could not. The guard names only passkey and unspent-recovery
+  // slots, none of which these statements touch, so it is stable across the
+  // batch. The batch is a transaction; if the guard is false all three
+  // statements no-op and the stamp below reports it.
+  const guard = `EXISTS (SELECT 1
+                   FROM key_slots s JOIN credentials c ON c.id = s.credential_id
+                  WHERE s.account_id = ?
+                    AND (c.kind = 'passkey' OR (c.kind = 'recovery' AND c.used_at IS NULL)))`;
+  const results = await env.DB.batch([
+    // Slots before credentials: the subquery needs the rows it names.
+    env.DB.prepare(
+      `DELETE FROM key_slots WHERE credential_id IN (SELECT id FROM credentials WHERE account_id = ? AND kind = 'password') AND ${guard}`,
+    ).bind(account.id, account.id),
+    env.DB.prepare(
+      `DELETE FROM credentials WHERE account_id = ? AND kind = 'password' AND ${guard}`,
+    ).bind(account.id, account.id),
+    env.DB.prepare(`UPDATE accounts SET reset_at = ? WHERE id = ? AND ${guard}`).bind(
+      Date.now(),
+      account.id,
+      account.id,
+    ),
+  ]);
+  if ((results[2]?.meta?.changes ?? 0) === 0) {
     throw new BadRequest(
-      "That account has no recovery codes left, so a reset would seal it for good. Delete it instead, or leave it be.",
+      "That account has no other credential that can open its key, so a reset would seal it for good. Delete it instead, or leave it be.",
     );
   }
 
-  await env.DB.batch([
-    // Slots before credentials: the subquery needs the rows it names.
-    env.DB.prepare(
-      "DELETE FROM key_slots WHERE credential_id IN (SELECT id FROM credentials WHERE account_id = ? AND kind = 'password')",
-    ).bind(account.id),
-    env.DB.prepare("DELETE FROM credentials WHERE account_id = ? AND kind = 'password'").bind(
-      account.id,
-    ),
-    env.DB.prepare("UPDATE accounts SET reset_at = ? WHERE id = ?").bind(Date.now(), account.id),
-    auditStatement(env, caller.id, "admin.password.reset", account.handle),
-  ]);
+  // After the verdict, so the audit never records a reset the guard refused.
+  await env.DB.batch([auditStatement(env, caller.id, "admin.password.reset", account.handle)]);
 
   return json({ status: "ok", handle: account.handle });
 }

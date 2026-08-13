@@ -32,16 +32,57 @@ body {
 }
 
 /* 404 is desaturated to 55% and its accents drop to muted greys (theme.ts). The
-   calm rule follows this one deliberately: at equal specificity the later rule
-   wins, so calm's own saturation holds even on the 404 page. */
-.vessel.page-notfound {
+   calm rules follow these deliberately: at equal specificity the later rule
+   wins, so calm's own saturation holds even on the 404 page.
+
+   The filter lives on the wrapper's children, never on `.vessel` itself: a
+   non-none filter makes an element the containing block for every
+   `position: fixed` descendant, and the overlays — panel, door, dialog,
+   palette, screensaver, toast — are all fixed children of the wrapper. In
+   Terminal, the one layout where the document scrolls, a wrapper filter
+   re-anchored them all to the document: toasts rendered off-screen and the
+   door opened at document mid-height. Filtering each child keeps the look and
+   leaves fixed positioning against the viewport. `.v-toast` is filtered
+   directly rather than via its `.v-toast-live` wrapper for the same reason —
+   the toast is the fixed element inside it. */
+.vessel.page-notfound > .v-canvas,
+.vessel.page-notfound > .v-vignette,
+.vessel.page-notfound > .v-grain,
+.vessel.page-notfound > .v-chrome,
+.vessel.page-notfound > .v-saver,
+.vessel.page-notfound > .v-panel,
+.vessel.page-notfound > .v-door-scrim,
+.vessel.page-notfound > .v-dialog-scrim,
+.vessel.page-notfound > .v-cmd-scrim,
+.vessel.page-notfound .v-toast {
   filter: saturate(0.55);
   transition: filter 0.9s ease;
 }
 
 /* Calm is a second aesthetic, not a dimmer switch: one accent, no motion. */
-.vessel.is-calm {
+.vessel.is-calm > .v-canvas,
+.vessel.is-calm > .v-vignette,
+.vessel.is-calm > .v-grain,
+.vessel.is-calm > .v-chrome,
+.vessel.is-calm > .v-saver,
+.vessel.is-calm > .v-panel,
+.vessel.is-calm > .v-door-scrim,
+.vessel.is-calm > .v-dialog-scrim,
+.vessel.is-calm > .v-cmd-scrim,
+.vessel.is-calm .v-toast {
   filter: saturate(0.45);
+}
+
+/* The cursor glow owns a blur, which the child rules above would clobber, so
+   it takes the saturation combined with it. Ordered after both groups: on a
+   calm 404 the calm value must win here exactly as it does above. */
+.vessel.page-notfound > .v-cursor-glow {
+  filter: blur(8px) saturate(0.55);
+  transition: filter 0.9s ease;
+}
+
+.vessel.is-calm > .v-cursor-glow {
+  filter: blur(8px) saturate(0.45);
 }
 
 .vessel.is-calm *,

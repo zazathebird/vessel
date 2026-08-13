@@ -43,12 +43,22 @@ interface DialogProps {
 export function Dialog({ open, title, onClose, children }: DialogProps) {
   const host = useContext(OverlayHostContext);
   const ref = useRef<HTMLDivElement | null>(null);
-  useFocusTrap(open, ref);
+  // Modal: while open, the global key routes (paging, `sudo`, `cmd`, ⌘K) stand
+  // down — aria-modal promises the rest of the page is inert, and an ArrowLeft
+  // on the Cancel button must not page the site out from under a confirmation.
+  useFocusTrap(open, ref, { modal: true });
 
   useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key !== "Escape") return;
+      // One Escape, one layer. This listener sits on `document`, the operator
+      // routes' on `window`, so stopping propagation here is what keeps a
+      // dialog's Escape from also closing the panel beneath it. Swallowed even
+      // while busy (onClose is a no-op then): a busy dialog refusing to close
+      // must not hand the keystroke to the layer below.
+      event.stopPropagation();
+      onClose();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);

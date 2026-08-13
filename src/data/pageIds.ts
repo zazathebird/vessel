@@ -11,7 +11,14 @@ export type PageId =
   | "home" | "about" | "work" | "gallery" | "contact"
   | "guestbook" | "now" | "changelog" | "notfound" | "signup" | "signin" | "admin";
 
-/** Header nav — seven pills, in order. "404" is genuinely in the nav; that is the joke. */
+/**
+ * Header nav — six public pills, in order.
+ *
+ * "404" was genuinely in the nav — that was the joke — until the client pulled
+ * it behind sign-in on 2026-08-13 (`OPERATOR_NAV` below). The page itself is
+ * still what every visitor gets at an unknown URL; only the *advertisement*
+ * became operator-only.
+ */
 export const NAV: { id: PageId; label: string }[] = [
   { id: "home", label: "Home" },
   { id: "about", label: "About" },
@@ -19,7 +26,20 @@ export const NAV: { id: PageId; label: string }[] = [
   { id: "gallery", label: "Gallery" },
   { id: "contact", label: "Contact" },
   { id: "guestbook", label: "Guestbook" },
+];
+
+/**
+ * Operator-only tabs (client request, 2026-08-13): appended to the header nav
+ * for a signed-in operator, rendered for nobody else. Deliberately **not** part
+ * of `NAV` — `useOperatorRoutes` cycles `NAV` and Radial's orbit renders `NAV`,
+ * so these stay top-bar tabs without changing arrow-key paging or the orbit for
+ * anyone. The `Config` tab is not here because it is not a page: the header
+ * renders it beside these, toggling the siteconfig panel.
+ */
+export const OPERATOR_NAV: { id: PageId; label: string }[] = [
   { id: "notfound", label: "404" },
+  { id: "signin", label: "Account" },
+  { id: "admin", label: "Admin" },
 ];
 
 /**

@@ -1,3 +1,6 @@
+import { useCallback, useRef } from "react";
+import type { MouseEvent } from "react";
+
 import { useConfig } from "../config/ConfigContext";
 import { NAV } from "../data/pageIds";
 import type { LayoutId } from "../data/catalog";
@@ -20,14 +23,47 @@ import { DuelOrnament } from "./DuelOrnament";
 const HIDES_ORNAMENT: LayoutId[] = ["sidescroll", "terminal", "ledger", "console", "sheet"];
 
 export function Ornament({ layout }: { layout: LayoutId }) {
-  const { band, config, go } = useConfig();
+  const { band, config, go, say, signinShown, revealSignin } = useConfig();
+
+  const taps = useRef(0);
+  const tapTimer = useRef<number | undefined>(undefined);
+
+  // Five taps on the ornament reveal the footer's sign-in link (client request,
+  // 2026-08-13) — the account side's answer to the logo's five taps, the way
+  // the leftward drag answers the rightward one: same rhythm, other door. It
+  // reveals a plain link to a real page and never touches `openDoor` —
+  // SPEC-ACCOUNTS.md requires real auth stay clear of the operator theatre.
+  // Keyboard users are not locked out: typing `login` remains the tellable
+  // route, so this stays a pointer easter egg on a decorative element rather
+  // than a button that would advertise itself to the tab order.
+  const onTap = useCallback(
+    (event: MouseEvent) => {
+      // Radial parks its orbit pills in this same slot; a pill click is
+      // navigation, not a tap on the ornament.
+      if ((event.target as Element).closest("button")) return;
+      if (signinShown) return;
+      taps.current += 1;
+      window.clearTimeout(tapTimer.current);
+      if (taps.current >= 5) {
+        taps.current = 0;
+        revealSignin();
+        say("the footer noticed");
+        return;
+      }
+      if (taps.current > 2) say(String(5 - taps.current) + " more");
+      tapTimer.current = window.setTimeout(() => {
+        taps.current = 0;
+      }, 1400);
+    },
+    [signinShown, revealSignin, say],
+  );
 
   if (band === "phone" || config.ornament === "none" || HIDES_ORNAMENT.includes(layout)) {
     return null;
   }
 
   return (
-    <div className={`v-ornament is-${config.ornament}`}>
+    <div className={`v-ornament is-${config.ornament}`} onClick={onTap}>
       {config.ornament === "valve" && <Valve />}
       {config.ornament === "lens" && <Lens />}
       {config.ornament === "aperture" && <Aperture />}

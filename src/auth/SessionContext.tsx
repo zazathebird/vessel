@@ -1,4 +1,12 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { ReactNode } from "react";
 
 import { api, type MeResult } from "./api";
@@ -39,16 +47,25 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<MeResult | null>(null);
   const [known, setKnown] = useState(false);
 
+  // Last call wins, by serial number. Without this, the mount-time probe can
+  // settle *after* a post-sign-in refresh — its 401 lands late, `setMe(null)`
+  // reads as signed-out, and losing `isOperator` force-closes the panel and
+  // door over a perfectly valid session.
+  const serial = useRef(0);
+
   const refresh = useCallback(async () => {
+    const ticket = ++serial.current;
+    let next: MeResult | null;
     try {
-      setMe(await api.me());
+      next = await api.me();
     } catch {
       // A 401 is the ordinary answer for a visitor, not a fault, and a network
       // failure has to land in the same place: signed out, site unchanged.
-      setMe(null);
-    } finally {
-      setKnown(true);
+      next = null;
     }
+    if (ticket !== serial.current) return;
+    setMe(next);
+    setKnown(true);
   }, []);
 
   useEffect(() => {

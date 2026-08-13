@@ -113,7 +113,12 @@ every visitor at once.
   and appears when the answer arrives.
 - `src/hooks/useAccountRoutes.ts` — the unlinked routes to the account pages: type `whoami`,
   `login` or `admin`, or drag the page **left** past 260px, mirroring the door's rightward drag.
-  **These never call `openDoor`.**
+  **These never call `openDoor`.** Since 2026-08-13 there is also one *findable* affordance
+  (client request): five taps on the hero ornament (`Ornament.tsx`) reveal a sign-in link in the
+  footer for the rest of the visit (`signinShown` in `ConfigContext`) — the account side's mirror
+  of the logo's five taps, and like every account route it navigates rather than unlocking
+  anything. Radial's orbit pills share the ornament's slot; their clicks are excluded from the
+  count.
 - `src/hooks/useOperatorRoutes.ts` — the door's six routes, and arrow-key page cycling over `NAV`.
 
 Both keystroke hooks carry an `isEditable` guard: without it, typing in an account form pages the
@@ -178,6 +183,18 @@ ones most likely to be "fixed" by accident:
   `ConfigContext` via `hasVisited()`
 - **Persistence** is validated field by field in `src/config/persistence.ts`, not trusted. A stored
   layout id that no longer exists would otherwise render an unstyled page forever
+- **Calm is the one stored field `loadConfig` reads back** (2026-08-13), under its own key
+  (`vessel.calm.v1`), written only by the three deliberate calm toggles. It is the accessibility
+  escape hatch and must survive reload for visitors. Do not read it from the full-config echo
+  `saveConfig` writes — that would freeze whatever was published on the first visit — and do not
+  extend the carve-out to other fields: everything else stays published-only
+- **The calm/404 `filter` lives on `.vessel`'s children, never on `.vessel`** (`base.css`). A
+  filter on the wrapper makes it the containing block for every fixed-position overlay, which in
+  Terminal (document scrolls) re-anchors toasts and scrims to the document instead of the viewport
+- **Focus traps stack, and dialogs + the command palette are *modal*** (`useFocusTrap`'s
+  `isModalOpen`): the global key and drag routes stand down under an open modal, its Escape
+  handler stops propagation so one press closes one layer, and only the top trap handles Tab. The
+  panel and door are deliberately **not** modal — `sudo` with the panel open opens the door
 - **Adapted layouts**: the operator's stored layout is **never overwritten** when a small screen
   collapses it — it re-emerges when the window widens. That state is now surfaced **nowhere**:
   `SPEC.md` puts a ` · adapted` suffix on the hero metadata strip, and the strip was removed
@@ -186,6 +203,15 @@ ones most likely to be "fixed" by accident:
 - **Routing**: the prototype swaps pages in place with no URL change. That is a prototype
   limitation, not a design decision — **twelve** real URLs are wired in `src/data/pageIds.ts`: the
   spec's nine content pages plus `/signup`, `/signin` and `/admin`
+- **The 404 pill left the public nav on 2026-08-13, by client decision.** "404 genuinely in the
+  nav" was the spec's joke; the client pulled it behind sign-in. It now leads `OPERATOR_NAV`
+  (404 / Account / Admin), the operator-only tabs the header appends for a signed-in operator,
+  plus a Config tab that toggles the panel. `OPERATOR_NAV` is deliberately not part of `NAV`:
+  `useOperatorRoutes` cycles `NAV` and Radial's orbit renders `NAV`, so the tabs change neither.
+  The 404 *page* still renders for anyone at an unknown URL — only its advertisement moved. The
+  panel's **Leave operator mode** button (same day) is the counterpart: it signs the session out,
+  which collapses the tabs, the panel and the door in one motion, and clears `unlocked` so the
+  header's siteconfig button retires with them
 - **Share codes are base-36 and `FX` order is a wire format.** Effect index 12 is `C`, not `12`;
   `0-0-12-0-7-0` parses `12` as 38, falls through `FX[38] ?? FX[0]` and applies Vessels, which
   looks exactly like a failed deploy. Append to `FX`, never insert
@@ -317,7 +343,10 @@ The design decisions most likely to be broken by someone who has not read it:
   (`rate-limit.ts` `/succeed`). Wiping the client bucket on success hands an attacker a free reset:
   sign in to an account you own, and the counter recording your failures against everyone else's
   goes to zero. Client allowance is 50 and account allowance 5 because one address is a household
-  behind NAT and five would lock out a café over one typo.
+  behind NAT and five would lock out a café over one typo. **Signup has a third bucket**
+  (`signup:`, allowance 12 — 2026-08-13 audit): the client bucket alone let one address mint fifty
+  accounts per window. Twelve is sized just above the e2e harness's eight signups per run — shrink
+  it and the harness locks itself out.
 - **Rate limiting reserves and checks in one round-trip** (`assertAttempt` → `/attempt`). `/check`
   then `/fail` was two, so N concurrent sign-ins all passed the check before any failure landed.
   **`challenge` deliberately stays on `/check`**: asking for a salt is not a failable attempt, and
@@ -368,6 +397,22 @@ The design decisions most likely to be broken by someone who has not read it:
   **non-extractable** key, which cannot be wrapped into a new slot, so the flow goes
   ciphertext-to-ciphertext through `rewrapSlot`. Calling `unwrapSlot` here typechecks and fails at
   runtime.
+- **The browser refuses implausible KDF parameters** (`checkIterations` in `src/auth/derive.ts`,
+  2026-08-13 review). Every consumer of `challenge`'s response floors the iteration count at the
+  constant its credential kind has always used and caps it at 10M — otherwise anything that could
+  forge that one response could say `iterations: 1` and silently strip the whole stretch. Refuse,
+  never clamp: a "corrected" count derives a secret the server does not hold. If the default ever
+  rises, the floor stays at the oldest count ever deployed.
+- **Passwords are NFKC-normalised before PBKDF2** (same review; NIST 800-63B). Composed and
+  decomposed non-ASCII must derive identically across platforms — there is no email reset behind
+  a mismatch. A no-op for ASCII, so recovery codes are untouched.
+- **The last-way-in guards live in the writes' own `WHERE` clauses**, not in a check before them
+  (`passkeys.remove`, `admin.resetPassword`, `admin.setOperator`'s demotion, `totpEnrol`'s
+  upsert; 2026-08-13 review). Check-then-act versions let two concurrent requests each count the
+  other as "another way in" and destroy the invariant the refusal promises — sealed grant key,
+  zero operators, a confirmed TOTP's secret replaced under it. Zero `meta.changes` is the refusal;
+  the audit row is written only after it, so it can never record an act the guard declined. Do
+  not "simplify" these back into a pre-check plus an unconditional write.
 
 ### Four things the client has not yet signed off
 

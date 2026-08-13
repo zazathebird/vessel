@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 
 import { api } from "../auth/api";
+import { useSession } from "../auth/SessionContext";
 import { publishable } from "../config/siteConfig";
 import { useConfig } from "../config/ConfigContext";
+import { saveCalmPreference } from "../config/persistence";
 import { decodeShareCode, encodeShareCode } from "../config/shareCode";
 import { FX, LAYOUTS, MODES, SCOPES, TYPESETS } from "../data/catalog";
 import type { ScopeId } from "../data/catalog";
@@ -21,9 +23,36 @@ import { useFocusTrap } from "../hooks/useFocusTrap";
  */
 export function SiteConfigPanel() {
   const { config, update, say, panelOpen, closePanel, shuffle, setMode } = useConfig();
+  const { refresh } = useSession();
   const panelRef = useRef<HTMLElement | null>(null);
   const [pasted, setPasted] = useState("");
   const [publishState, setPublishState] = useState<"idle" | "publishing" | "published">("idle");
+  const [leaving, setLeaving] = useState(false);
+
+  /**
+   * End operator mode (client request, 2026-08-13): sign the session out and
+   * take every operator surface with it. The sign-out is the real mechanism —
+   * losing `isOperator` already force-closes the panel and the door
+   * (ConfigContext), and the header's operator tabs unrender on the session
+   * refresh. `unlocked: false` retires the header's siteconfig button too, so
+   * nothing operator-shaped survives the click. Coming back is a fresh
+   * sign-in, which is the point of "done".
+   */
+  const leaveOperatorMode = async () => {
+    setLeaving(true);
+    try {
+      await api.signout();
+    } catch {
+      // Offline, the cookie survives — say so instead of pretending.
+      setLeaving(false);
+      say("could not reach the server — still signed in");
+      return;
+    }
+    update({ unlocked: false });
+    closePanel();
+    await refresh();
+    say("operator mode ended");
+  };
 
   const publish = async () => {
     setPublishState("publishing");
@@ -270,6 +299,9 @@ export function SiteConfigPanel() {
             onClick={() => {
               const calm = !config.calm;
               update({ calm, breathe: !calm, grain: !calm });
+              // Recorded like the header's toggle: a deliberate calm choice
+              // survives reload, whoever makes it.
+              saveCalmPreference(calm);
               say(calm ? "calm — one accent, no motion" : "calm off");
             }}
           >
@@ -333,6 +365,21 @@ export function SiteConfigPanel() {
           disabled={publishState === "publishing"}
         >
           {publishState === "publishing" ? "publishing…" : "publish"}
+        </button>
+      </section>
+
+      {/*
+       * Below Publish because it is the last act of a session, the way Publish
+       * is the last act of a change. It ends the *session*, not just the panel:
+       * the ✕ above closes the drawer and leaves you operator; this signs out.
+       */}
+      <section className="v-panel-section">
+        <h2 className="v-panel-label">Leave operator mode</h2>
+        <p className="v-panel-note">
+          Signs you out. The tabs, this panel and the door all go away until you sign in again.
+        </p>
+        <button type="button" className="chip" onClick={leaveOperatorMode} disabled={leaving}>
+          {leaving ? "leaving…" : "leave"}
         </button>
       </section>
 

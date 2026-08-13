@@ -4,7 +4,9 @@ The single ordered backlog. `CLAUDE.md` explains *why* things are the way they
 are, and `docs/DECISIONS.md` records what was decided when; this file is only
 what is left to do.
 
-Last updated 2026-08-13.
+Last updated 2026-08-13 (evening — second review round fixed and deployed; operator tabs,
+leave-operator-mode and the ornament sign-in unlock shipped; `docs/REVIEW-CONTINUATION.md` holds
+the one unfinished review and the next-session prompt).
 
 ---
 
@@ -39,6 +41,22 @@ Nobody has ever completed the flow end to end in a browser. It spends one of ten
 codes, which is why it has not been done casually. The harness proves the bytes;
 it does not prove the screens, and `SignIn.tsx`'s recovery stages were changed
 on 2026-08-13.
+
+### 2b. Finish the review round: re-run the app-shell/UI review
+
+The 2026-08-13 second review round covered the Worker and the client auth stack
+end to end (all findings fixed — `docs/DECISIONS.md`); the third agent, covering
+`src/` outside auth plus the stylesheets and fx, died at a session limit before
+returning anything. Scope and rules are in `docs/REVIEW-CONTINUATION.md`. Also
+still open from that round: the raw signup fixtures omit `slotAlg`.
+
+### 2c. By eye, in a real browser (needs the client)
+
+New since the last eyeball pass, all harness-proven but never seen: the ornament
+five-tap → footer sign-in link (countdown toasts, Radial pills excluded), the
+operator tabs (404/Account/Admin/Config) appearing on sign-in, and Leave
+operator mode collapsing everything. Plus the standing items: TOTP enrolment
+screen, dialog motion, command palette, duel ornaments, matrix rain speed.
 
 ---
 

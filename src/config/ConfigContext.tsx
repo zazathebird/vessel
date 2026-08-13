@@ -66,6 +66,10 @@ interface ConfigContextValue {
   mailShown: boolean;
   /** Reveal the address, copy it to the clipboard, and toast. */
   revealMail: () => void;
+  /** Has the footer's sign-in link been found this visit. Never resets mid-visit. */
+  signinShown: boolean;
+  /** Reveal the footer's sign-in link — five taps on the hero ornament. */
+  revealSignin: () => void;
   /** Switch randomiser mode, applying the new mode's immediate effect. */
   setMode: (mode: ModeId) => void;
 }
@@ -107,6 +111,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   const [doorVia, setDoorVia] = useState("");
   const [saver, setSaver] = useState(false);
   const [mailShown, setMailShown] = useState(false);
+  const [signinShown, setSigninShown] = useState(false);
   const [saverHeld, setSaverHeld] = useState(false);
 
   const toastTimer = useRef<number | undefined>(undefined);
@@ -156,6 +161,11 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     navigator.clipboard?.writeText(MAIL).catch(() => {});
     say("address copied");
   }, [say]);
+
+  // Unlike the address, a found sign-in link does not un-find itself on
+  // navigation — it lasts the visit. A reload starts the hunt over, which is
+  // the point of it being found rather than shown.
+  const revealSignin = useCallback(() => setSigninShown(true), []);
 
   const setMode = useCallback(
     (mode: ModeId) => {
@@ -392,6 +402,8 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       setMode,
       mailShown,
       revealMail,
+      signinShown,
+      revealSignin,
     }),
     [
       config,
@@ -418,6 +430,8 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       setMode,
       mailShown,
       revealMail,
+      signinShown,
+      revealSignin,
     ],
   );
 

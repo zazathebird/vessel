@@ -1,16 +1,21 @@
 import { useEffect, useRef } from "react";
 
 import { useConfig } from "../config/ConfigContext";
+import { isModalOpen } from "./useFocusTrap";
 import { isEditable } from "./useOperatorRoutes";
 
 /**
  * The hidden ways to the account pages.
  *
- * The site has no visible link to `/signin` or `/signup`. That is a deliberate
- * choice while accounts are being built: there is nothing behind an account yet
- * — no setups to save, no machines to reach — so a footer link would be an
- * invitation to sign up for nothing. The URLs still work and are still real
- * pages; they are simply not advertised, the way the operator door is not.
+ * The site has no *standing* link to `/signin` or `/signup`. That began as a
+ * deliberate choice while accounts were being built — there was nothing behind
+ * an account yet — and settled into the site's shape: the way in is findable,
+ * not advertised. Since 2026-08-13 (client request) there is one discoverable
+ * affordance: five taps on the hero ornament (`Ornament.tsx` → `revealSignin`)
+ * reveal a quiet sign-in link in the footer for the rest of the visit. The
+ * typed routes and the drag below still work and are the tellable versions —
+ * and the keyboard-reachable ones, which is what lets the ornament stay a
+ * decorative element rather than a button.
  *
  * **These are not the operator door, and they must never become it.** `SPEC.md`
  * §Security fixes the door as theatre guarding a settings panel, and
@@ -27,6 +32,7 @@ import { isEditable } from "./useOperatorRoutes";
  * | type `whoami`          | **sign-in**       |
  * | type `login`           | **sign-in**       |
  * | drag **left**          | **sign-in**       |
+ * | five taps, ornament    | **footer link**   |
  *
  * The mirrored drag is the pick of them: the door is a sideways pull one way
  * and the account is the same pull the other, which is the kind of symmetry
@@ -62,6 +68,10 @@ export function useAccountRoutes(): void {
 
     const onKey = (event: KeyboardEvent) => {
       poke();
+      // Nothing here may fire under an aria-modal layer: typing `admin` with
+      // focus on a dialog's Cancel button would navigate away and unmount the
+      // confirmation mid-flight.
+      if (isModalOpen()) return;
       // Typing a handle must never navigate. The account pages are the first
       // inputs outside the panel, so this guard is what makes them usable.
       if (isEditable(event.target)) return;
@@ -100,6 +110,7 @@ export function useAccountRoutes(): void {
       const from = dragFrom.current;
       dragFrom.current = null;
       if (from === null) return;
+      if (isModalOpen()) return;
       if (window.getSelection()?.toString()) return;
       // Leftward, where the door is rightward. `useOperatorRoutes` owns the
       // other direction and the two thresholds are equal on purpose, so the

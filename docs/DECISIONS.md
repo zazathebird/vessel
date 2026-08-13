@@ -13,6 +13,116 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-13 — Second review round: 14 findings fixed, guards move into the writes
+
+Two fresh end-to-end review agents (Worker + client auth) ran after the morning audits; every
+confirmed finding is fixed and `npm run test:auth` passes 178/178 (two new checks — see below).
+Highlights, newest lessons first:
+
+- **`checkIterations`** (`src/auth/derive.ts`): the browser now refuses a `challenge` response
+  whose iteration count is below the credential kind's constant or above 10M. Closes an active
+  KDF-downgrade path (`iterations: 1` from a forged response silently stripped the stretch).
+- **NFKC before PBKDF2**: composed/decomposed non-ASCII passwords now derive identically. Caveat
+  flagged to the client: a pre-existing non-ASCII password could stop matching (recovery codes
+  are the way back; the operator's is believed ASCII).
+- **The last-way-in guards moved into the writes' `WHERE` clauses** — passkey removal, operator
+  password reset, operator demotion, TOTP re-enrolment. Check-then-act let two concurrent
+  requests each count the other as "another way in": two removals could seal a grant key, two
+  demotions could leave zero operators, an enrol racing a confirm could replace a confirmed
+  secret. Zero `meta.changes` is now the refusal, and audit rows write only after it.
+- **The harness proves the UV refusal** instead of trusting it: `webauthn-sim` grew
+  `userVerification` and `rpIdOverride` knobs, and two new negative checks (UV-less assertion,
+  wrong RP ID hash) — the no-TOTP/no-rate-limit passkey decisions rest on exactly that refusal.
+- **`crossOrigin` now compares scheme as well as host**; `SessionContext.refresh` discards stale
+  settlements by serial; `api.ts` refuses a 200 with a non-JSON body instead of returning `{}`
+  (signup could otherwise succeed server-side and never show the recovery codes); `addPasskey`
+  no longer reports a corrupt slot as a wrong password; signup's 201 and the admin roster joined
+  `no-store`; `slotAlg` is capped at 64; the body limit measures real bytes; two overclaiming
+  comments (`openGrantKey` revocation, passkey sign-in prf) were made honest.
+
+Still open from the round, deliberately: the app-shell/UI review never completed (session limit)
+and is queued for the next session; the raw signup fixtures still omit `slotAlg`
+(`docs/REVIEW-CONTINUATION.md`).
+
+## 2026-08-13 — Operator chrome: tabs in the header, and a way to leave
+
+Client request, same day as the ornament unlock: the operator surfaces should be *visible tabs*
+once signed in — and closeable when done.
+
+- **`OPERATOR_NAV`** (404 / Account / Admin) plus a Config tab (toggles the panel) render in the
+  header for a signed-in operator and for nobody else. Not part of `NAV`, so arrow-key cycling
+  and Radial's orbit are unchanged for everyone.
+- **The 404 pill left the public nav.** "404 genuinely in the nav" was the spec's joke; the
+  client pulled it behind sign-in. The page itself still serves every unknown URL — the joke
+  copy survives for whoever lands there; only the pill is operator-only now. Public arrow-key
+  cycling no longer visits it, which is the unlisting doing its job.
+- **Leave operator mode** sits at the bottom of the siteconfig panel, after Publish: it signs
+  out (`api.signout` + session refresh), which collapses tabs, panel and door through the
+  existing `isOperator` effect, and clears `unlocked` so the header button retires too. The ✕
+  closes the drawer and leaves you operator; this ends the session. Offline, it refuses loudly
+  rather than pretending.
+
+## 2026-08-13 — Sign-in gets a findable link: five taps on the ornament
+
+The client asked for a way in to sign-in/sign-up that could be told to someone — hidden or not,
+their call, creativity requested. Chosen over an always-visible footer link (least on-brand for a
+site built on hidden doors) and a custom pass-phrase (typing `login` already is one): **five taps
+on the hero ornament reveal a quiet `sign in` link in the footer for the rest of the visit.**
+
+- The shape follows the house precedent twice over: the logo's five taps open the door, the
+  ornament's five taps reveal the account link — the same mirror as the rightward/leftward drag.
+  Same count, same 1400ms rhythm, same ">2 taps" countdown toasts.
+- `revealSignin`/`signinShown` live in `ConfigContext`'s ephemeral block beside `mailShown`, but
+  unlike the mail reveal it does **not** reset on navigation — found is found, until reload.
+- The footer link renders for non-operators only (operators already have `account`/`admin`),
+  labels itself `sign in` signed out and `account` signed in, and rises in with `v-rise` using
+  fill-mode `backwards` — the `.v-block` trap applies verbatim.
+- The ornament stays a decorative element, not a button: keyboard users already have the typed
+  routes, and a tab stop would advertise what is meant to be found. Radial's orbit pills share
+  the slot, so pill clicks (`closest("button")`) are excluded from the count.
+- Nothing here touches `openDoor`; the two five-tap gestures target different elements and
+  different worlds, per SPEC-ACCOUNTS.md's rule that real auth never reuses the theatre.
+
+Same day, the client also decided: **the 404 page stays** (it is a designed page, not a default),
+and **per-account subdomains stay parked** per `design/GUIDE-SUBDOMAINS.md`'s recommendation —
+the enumeration decision it requires remains untaken.
+
+## 2026-08-13 — Frontend review: nine findings fixed, overlays learn to stack
+
+A full review pass over `src/` (the counterpart to the same day's Worker audit) surfaced nine
+findings; all are fixed. The three worth remembering:
+
+- **The calm/404 `filter` moved off the `.vessel` wrapper and onto its children** (`base.css`).
+  A non-none filter makes an element the containing block for every `position: fixed`
+  descendant — and all six overlays are fixed children of the wrapper. In Terminal, the one
+  layout where the document scrolls, calm or the 404 page re-anchored them to the *document*:
+  toasts rendered off-screen, the door centred at document mid-height. The look is identical
+  with the filter applied per child; the cursor glow keeps its own blur combined in.
+- **Overlays now layer instead of fighting.** `useFocusTrap` keeps a stack — only the top trap
+  handles Tab, so a dialog over the panel no longer snaps focus back to its first control on
+  every press. Dialogs and the palette register as *modal* (`isModalOpen()`), which stands the
+  global key routes down while one is open: no arrow-paging under a confirmation, no `sudo`/
+  `cmd`/`⌘K` opening things beneath a scrim, and Escape closes exactly one layer (the modal's
+  own `document`-level handler stops propagation before the routes' `window` handler runs).
+  The panel and door are deliberately not modal — typing `sudo` with the panel open has always
+  opened the door and still does.
+- **Calm survives reload, for everyone.** `loadConfig` reads published config only, on the
+  stated ground that a visitor "has no way to set these" — but calm is visitor-settable from
+  the header and is the accessibility escape hatch for the low-contrast palettes. It now has
+  its own storage key (`vessel.calm.v1`), written **only** by the three deliberate toggles
+  (header, panel, palette) — not read back from the full-config echo `saveConfig` writes,
+  which would freeze whatever was published on the first visit. Absent key means no
+  preference; OS-level reduced-motion still forces calm on top. Everything else stays
+  published-only, so "the operator sees exactly what a visitor sees" still holds for the
+  published look.
+
+The rest, briefly: `TotpEnrol`'s backup-codes screen now takes the same `holdSaver` hold as
+signup's (ten codes, transcribed by hand, screensaver at sixty seconds); the palette's sign-out
+gained the `.catch` + honest toast `SignIn` already had; and the dead `.v-admin .chip.is-danger`
+rule (pre-dialog armed-delete) is deleted.
+
+---
+
 ## 2026-08-13 — Full security audit: six fixes shipped, four dashboard items logged
 
 Client-requested audit of the Worker, both halves of the auth stack, headers, cookies, the client

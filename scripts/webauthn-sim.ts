@@ -115,6 +115,15 @@ const FLAGS_GET = 0x05; // UP | UV
 export class SoftwareAuthenticator implements Authenticator {
   /** Flip off to simulate an authenticator without `prf` — §5's missing-slot path. */
   supportsPrf = true;
+  /**
+   * Flip off to emit assertions/attestations without the UV flag. The Worker
+   * must refuse these: UV is the passkey's second factor, and the no-TOTP,
+   * no-rate-limit decisions on passkey sign-in rest on that refusal. This knob
+   * exists so the harness proves the refusal instead of trusting it.
+   */
+  userVerification = true;
+  /** Override the RP ID hashed into authData, to prove a wrong hash is refused. */
+  rpIdOverride: string | null = null;
   private credentials: StoredCredential[] = [];
 
   constructor(
@@ -146,8 +155,8 @@ export class SoftwareAuthenticator implements Authenticator {
       ]),
     );
     const authData = concat(
-      await sha256(encoder.encode(this.rpId)),
-      new Uint8Array([FLAGS_CREATE]),
+      await sha256(encoder.encode(this.rpIdOverride ?? this.rpId)),
+      new Uint8Array([this.userVerification ? FLAGS_CREATE : FLAGS_CREATE & ~0x04]),
       u32be(0),
       new Uint8Array(16), // aaguid, zero for attestation `none`
       new Uint8Array([credential.id.length >> 8, credential.id.length & 0xff]),
@@ -193,8 +202,8 @@ export class SoftwareAuthenticator implements Authenticator {
 
     credential.signCount += 1;
     const authenticatorData = concat(
-      await sha256(encoder.encode(this.rpId)),
-      new Uint8Array([FLAGS_GET]),
+      await sha256(encoder.encode(this.rpIdOverride ?? this.rpId)),
+      new Uint8Array([this.userVerification ? FLAGS_GET : FLAGS_GET & ~0x04]),
       u32be(credential.signCount),
     );
     const clientDataJSON = encoder.encode(

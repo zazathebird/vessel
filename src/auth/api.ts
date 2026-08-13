@@ -38,7 +38,19 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
     throw new ApiError(0, "Could not reach the server. Check your connection and try again.");
   }
 
-  const body = (await response.json().catch(() => ({}))) as { error?: string };
+  let body: { error?: string };
+  try {
+    body = await response.json();
+  } catch {
+    if (response.ok) {
+      // A 200 whose body is not JSON is not our Worker — a captive portal or an
+      // intermediary's error page. Passing `{}` through as the result would let
+      // a flow "succeed" on nothing: signup would create the account server-side
+      // and then never show the recovery codes it only shows once.
+      throw new ApiError(0, "The server sent an unexpected response. Try again shortly.");
+    }
+    body = {};
+  }
   if (!response.ok) {
     throw new ApiError(response.status, body.error ?? "Something went wrong. Try again shortly.");
   }
@@ -91,7 +103,13 @@ export interface PasskeySignInResult {
   status: "signed-in";
   account: PublicAccount;
   resetAt: number | null;
-  /** The passkey's own slot, when it has one — the browser just evaluated `prf` and can open it. */
+  /**
+   * The passkey's own slot, when it has one. Opening it takes a fresh `prf`
+   * evaluation — a second authenticator gesture — because the sign-in
+   * assertion's own `prf` output is deliberately not retained
+   * (`signInWithPasskey` discards it; unlike a spent recovery code it is
+   * re-derivable at will, so nothing is stranded by letting it go).
+   */
   keySlot?: WrappedKeySlot;
 }
 

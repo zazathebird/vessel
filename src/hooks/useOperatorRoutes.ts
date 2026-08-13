@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 
 import { useConfig } from "../config/ConfigContext";
 import { NAV } from "../data/pageIds";
+import { isModalOpen } from "./useFocusTrap";
 
 /**
  * The operator door's keyboard and pointer routes (SPEC.md § The operator door),
@@ -66,12 +67,12 @@ export function isEditable(target: EventTarget | null): boolean {
 }
 
 export function useOperatorRoutes(): void {
-  const { config, go, openDoor, closeDoor, closePanel, panelOpen, poke } = useConfig();
+  const { config, go, openDoor, closeDoor, closePanel, panelOpen, doorOpen, poke } = useConfig();
 
   // Read at event time, not bind time, so the listeners can be attached once.
-  const live = useRef({ page: config.page, panelOpen });
+  const live = useRef({ page: config.page, panelOpen, doorOpen });
   useEffect(() => {
-    live.current = { page: config.page, panelOpen };
+    live.current = { page: config.page, panelOpen, doorOpen };
   });
 
   useEffect(() => {
@@ -81,6 +82,14 @@ export function useOperatorRoutes(): void {
       const key = (event.key || "").toLowerCase();
       poke();
 
+      // A dialog or the command palette is aria-modal: the rest of the page is
+      // promised inert, so none of these routes may fire under one — not even
+      // ⌘K, which would open the door invisibly *beneath* the palette's scrim.
+      // The modal's own Escape handler sits on `document` and stops
+      // propagation, so it has already acted before this listener on `window`
+      // could; everything else is simply refused here.
+      if (isModalOpen()) return;
+
       if ((event.metaKey || event.ctrlKey) && key === "k") {
         // Only take the keystroke off the browser if the door actually opens.
         // `openDoor` refuses everyone who is not the operator, which is every
@@ -89,8 +98,13 @@ export function useOperatorRoutes(): void {
         return;
       }
       if (key === "escape") {
-        closeDoor();
-        closePanel();
+        // One layer per Escape. The door and the panel are mutually exclusive
+        // (openDoor closes the panel), so this is one close either way — the
+        // if/else states the layering rather than changing it. The layers that
+        // *can* stack, dialogs and the palette, handle their own Escape on
+        // `document` and stop propagation before this listener runs.
+        if (live.current.doorOpen) closeDoor();
+        else closePanel();
         return;
       }
 
@@ -141,6 +155,7 @@ export function useOperatorRoutes(): void {
       const from = dragFrom;
       dragFrom = null;
       if (from === null) return;
+      if (isModalOpen()) return;
       if (window.getSelection()?.toString()) return;
       if (event.clientX - from > DRAG_THRESHOLD) openDoor("dragged sideways");
     };

@@ -158,6 +158,7 @@ export async function register(request: Request, env: Env): Promise<Response> {
   const slot = hasSlot ? expectBytes(body.slot, WRAPPED_KEY_BYTES, "Key slot") : null;
   const slotAlg = typeof body.slotAlg === "string" ? body.slotAlg : "";
   if (slot && !slotAlg) throw new BadRequest("Missing key slot algorithm.");
+  if (slotAlg.length > 64) throw new BadRequest("That key slot algorithm is not valid.");
 
   const now = Date.now();
   const credentialRowId = newId();
@@ -245,30 +246,33 @@ export async function remove(request: Request, env: Env): Promise<Response> {
     .first<{ id: string; label: string | null }>();
   if (!row) throw new BadRequest("No such passkey on this account.", 404);
 
-  const hasSlot = await env.DB.prepare("SELECT 1 AS ok FROM key_slots WHERE credential_id = ?")
-    .bind(row.id)
-    .first();
-  if (hasSlot) {
-    const others = await env.DB.prepare(
-      `SELECT count(*) AS n
-         FROM key_slots s JOIN credentials c ON c.id = s.credential_id
-        WHERE s.account_id = ? AND s.credential_id <> ?
-          AND (c.kind = 'password' OR c.kind = 'passkey'
-               OR (c.kind = 'recovery' AND c.used_at IS NULL))`,
-    )
-      .bind(account.id, row.id)
-      .first<{ n: number }>();
-    if ((others?.n ?? 0) === 0) {
-      throw new BadRequest(
-        "Removing this passkey would seal this account's key for good. Add another way in first.",
-      );
-    }
+  // The guard rides in the DELETE's own WHERE clause so the check and the act
+  // are one statement. Checked first and deleted after, two concurrent removals
+  // of an account's last two openable slots would each count the other as
+  // "another way in", both pass, and the grant key would be sealed for good —
+  // the exact outcome the refusal exists to make impossible. A slotless passkey
+  // (no `prf`) is always removable; one with a slot goes only while some other
+  // openable slot still exists at the moment of deletion.
+  const deleted = await env.DB.prepare(
+    `DELETE FROM credentials WHERE id = ?
+       AND (NOT EXISTS (SELECT 1 FROM key_slots WHERE credential_id = credentials.id)
+            OR EXISTS (SELECT 1
+                         FROM key_slots s JOIN credentials c ON c.id = s.credential_id
+                        WHERE s.account_id = ? AND s.credential_id <> credentials.id
+                          AND (c.kind = 'password' OR c.kind = 'passkey'
+                               OR (c.kind = 'recovery' AND c.used_at IS NULL))))`,
+  )
+    .bind(row.id, account.id)
+    .run();
+  if ((deleted.meta?.changes ?? 0) === 0) {
+    throw new BadRequest(
+      "Removing this passkey would seal this account's key for good. Add another way in first.",
+    );
   }
 
-  await env.DB.batch([
-    env.DB.prepare("DELETE FROM credentials WHERE id = ?").bind(row.id),
-    auditStatement(env, account.id, "auth.passkey.removed", row.label),
-  ]);
+  // After, not batched with it: an audit row must not claim a removal the
+  // conditional DELETE refused.
+  await env.DB.batch([auditStatement(env, account.id, "auth.passkey.removed", row.label)]);
 
   return json({ status: "removed" });
 }

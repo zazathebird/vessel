@@ -38,7 +38,7 @@ export function expectBytes(text: unknown, length: number, field: string): Uint8
   if (typeof text !== "string" || !/^[A-Za-z0-9_-]+$/.test(text)) {
     throw new BadRequest(`${field} is missing or malformed.`);
   }
-  const bytes = fromBase64Url(text);
+  const bytes = decodeOrRefuse(text, field);
   if (bytes.length !== length) {
     throw new BadRequest(`${field} should be ${length} bytes, not ${bytes.length}.`);
   }
@@ -59,11 +59,26 @@ export function expectBytesRange(
   if (typeof text !== "string" || !/^[A-Za-z0-9_-]+$/.test(text)) {
     throw new BadRequest(`${field} is missing or malformed.`);
   }
-  const bytes = fromBase64Url(text);
+  const bytes = decodeOrRefuse(text, field);
   if (bytes.length < min || bytes.length > max) {
     throw new BadRequest(`${field} should be ${min} to ${max} bytes, not ${bytes.length}.`);
   }
   return bytes;
+}
+
+/**
+ * The character-set regex above is not the whole of validity: a base64url
+ * string whose length is ≡ 1 (mod 4) passes it and still cannot decode — `atob`
+ * throws on it, and uncaught that surfaced as a 500 for what is a malformed
+ * request (2026-08-13 audit). The caller's wording is kept: which byte of a
+ * request was undecodable is not something a prober needs distinguished.
+ */
+function decodeOrRefuse(text: string, field: string): Uint8Array {
+  try {
+    return fromBase64Url(text);
+  } catch {
+    throw new BadRequest(`${field} is missing or malformed.`);
+  }
 }
 
 /**

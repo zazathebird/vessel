@@ -185,7 +185,13 @@ export async function readJson(request: Request): Promise<Record<string, unknown
   // header check passes and the whole body is read regardless. Reading the text
   // first costs one buffer and makes the limit real.
   const text = await request.text();
-  if (text.length > MAX_BODY_BYTES) throw new BadRequest("That request was too large.", 413);
+  // `text.length` counts UTF-16 code units, not bytes — a body of three-byte
+  // UTF-8 characters would pass a "64KB" check at ~192KB of wire bytes. The
+  // cheap check first short-circuits the encode for the common oversized case;
+  // the encode makes the limit true.
+  if (text.length > MAX_BODY_BYTES || new TextEncoder().encode(text).byteLength > MAX_BODY_BYTES) {
+    throw new BadRequest("That request was too large.", 413);
+  }
 
   let body: unknown;
   try {
@@ -277,9 +283,21 @@ async function buckets(request: Request, env: Env, handleLower: string | null): 
  */
 const CLIENT_FREE_ATTEMPTS = 50;
 const ACCOUNT_FREE_ATTEMPTS = 5;
+/**
+ * Account creations from one address before backoff (2026-08-13 audit). Signup
+ * used to lean on the client bucket alone, whose allowance of fifty is sized
+ * for a household's sign-in typos — as a creation quota it let one script mint
+ * fifty accounts per window, while the comment beside it believed the answer
+ * was five. Twelve is sized just above the e2e harness, which legitimately
+ * creates eight accounts per run from one fictional address, and it is still
+ * nobody's honest afternoon at a keyboard.
+ */
+const SIGNUP_FREE_ATTEMPTS = 12;
 
 function freeFor(name: string): number {
-  return name.startsWith("client:") ? CLIENT_FREE_ATTEMPTS : ACCOUNT_FREE_ATTEMPTS;
+  if (name.startsWith("client:")) return CLIENT_FREE_ATTEMPTS;
+  if (name.startsWith("signup:")) return SIGNUP_FREE_ATTEMPTS;
+  return ACCOUNT_FREE_ATTEMPTS;
 }
 
 async function limiterFetch(env: Env, name: string, path: string): Promise<RateVerdict> {
@@ -526,6 +544,11 @@ export function publicAccount(account: AccountRow) {
  */
 export async function signup(request: Request, env: Env): Promise<Response> {
   const names = await buckets(request, env, null);
+  // The creation quota gets its own bucket beside the shared client one: same
+  // daily-rotating client key, different namespace, so `freeFor` can hold it to
+  // SIGNUP_FREE_ATTEMPTS while sign-in traffic keeps its fifty. Index 0 is the
+  // client bucket by construction — see `buckets`.
+  names.push(`signup:${names[0].slice("client:".length)}`);
   await assertAllowed(env, names);
 
   const body = await readJson(request);
@@ -538,6 +561,9 @@ export async function signup(request: Request, env: Env): Promise<Response> {
   const grantPubkey = expectBytes(body.grantPubkey, GRANT_PUBKEY_BYTES, "Grant public key");
   const passwordSlot = expectBytes(body.passwordSlot, WRAPPED_KEY_BYTES, "Key slot");
   const slotAlg = typeof body.slotAlg === "string" ? body.slotAlg : "AES-KW/HKDF-SHA-256";
+  // Stored and echoed back on every sign-in that returns a slot, so bounded
+  // like every other free-text field.
+  if (slotAlg.length > 64) throw new BadRequest("That key slot algorithm is not valid.");
 
   // An uncompressed point that is genuinely *on* P-256, not merely 65 bytes
   // beginning 0x04. This is the account's grant root: in phase 3 an agent will
@@ -641,14 +667,21 @@ export async function signup(request: Request, env: Env): Promise<Response> {
     throw error;
   }
 
-  // Signup consumes attempts from the client bucket the way a failure does. The
-  // Durable Object counts failures only, so this is a mild repurposing of it and
-  // worth naming: the intent is a quota on account creation from one place, and
-  // five before backoff is generous for a real person and tight for a script.
+  // Signup consumes attempts the way a failure does. The Durable Object counts
+  // failures only, so this is a mild repurposing of it and worth naming: the
+  // intent is a quota on account creation from one place, enforced by the
+  // `signup:` bucket at SIGNUP_FREE_ATTEMPTS before backoff — the shared client
+  // bucket also counts it, but its allowance is an order of magnitude looser.
   await recordFailure(env, names);
 
   const account = await accountById(env, accountId);
-  return withSession(env, accountId, json({ account: publicAccount(account!) }, { status: 201 }));
+  // Carries the fresh session cookie — account state, so `no-store` like every
+  // other response under the convention.
+  return withSession(
+    env,
+    accountId,
+    noStore(json({ account: publicAccount(account!) }, { status: 201 })),
+  );
 }
 
 // Sign-in ---------------------------------------------------------------------
@@ -1080,7 +1113,9 @@ export async function signout(request: Request, env: Env): Promise<Response> {
   );
   if (token) await env.DB.batch([auditStatement(env, token.subject, "auth.signout", null)]);
 
-  const response = json({ status: "signed-out" });
+  // no-store like every other response that changes account state: the body is
+  // inert, but the Set-Cookie clearing the session should never sit in a cache.
+  const response = noStore(json({ status: "signed-out" }));
   response.headers.append("set-cookie", session.clearedCookie());
   return response;
 }
@@ -1204,6 +1239,7 @@ export async function changePassword(request: Request, env: Env): Promise<Respon
   const iterations = expectIterations(body.iterations);
   const alg = typeof body.slotAlg === "string" ? body.slotAlg : "";
   if (!alg) throw new BadRequest("Missing key slot algorithm.");
+  if (alg.length > 64) throw new BadRequest("That key slot algorithm is not valid.");
 
   // A wrong current password is a failed authentication and is counted as one.
   const names = await buckets(request, env, account.handle.toLowerCase());
@@ -1303,6 +1339,7 @@ export async function setPassword(request: Request, env: Env): Promise<Response>
   const iterations = expectIterations(body.iterations);
   const alg = typeof body.slotAlg === "string" ? body.slotAlg : "";
   if (!alg) throw new BadRequest("Missing key slot algorithm.");
+  if (alg.length > 64) throw new BadRequest("That key slot algorithm is not valid.");
 
   const nextHash = new Uint8Array(await authHash(env.AUTH_PEPPER, toBase64Url(nextSecret)));
   const now = Date.now();
@@ -1401,11 +1438,19 @@ export async function totpEnrol(request: Request, env: Env): Promise<Response> {
   const secret = newTotpSecret();
   const now = Date.now();
 
-  await env.DB.batch([
-    env.DB.prepare(
-      "INSERT INTO totp (account_id, secret_enc, confirmed_at, backup_codes_hash, created_at, last_step) VALUES (?, ?, NULL, '[]', ?, NULL) ON CONFLICT (account_id) DO UPDATE SET secret_enc = excluded.secret_enc, created_at = excluded.created_at, backup_codes_hash = '[]', last_step = NULL",
-    ).bind(account.id, toBlob(await encryptSecret(env.TOTP_ENC_KEY, secret)), now),
-  ]);
+  // The upsert refuses to touch a *confirmed* row (the trailing WHERE): the
+  // pre-check above races a concurrent `totpConfirm`, and without the guard
+  // this could replace a confirmed enrolment's secret and wipe its backup
+  // codes while `confirmed_at` stayed set — a silently broken second factor.
+  // Zero changes means the conflict row was confirmed, which is the same 409.
+  const wrote = await env.DB.prepare(
+    "INSERT INTO totp (account_id, secret_enc, confirmed_at, backup_codes_hash, created_at, last_step) VALUES (?, ?, NULL, '[]', ?, NULL) ON CONFLICT (account_id) DO UPDATE SET secret_enc = excluded.secret_enc, created_at = excluded.created_at, backup_codes_hash = '[]', last_step = NULL WHERE totp.confirmed_at IS NULL",
+  )
+    .bind(account.id, toBlob(await encryptSecret(env.TOTP_ENC_KEY, secret)), now)
+    .run();
+  if ((wrote.meta?.changes ?? 0) === 0) {
+    throw new BadRequest("Two-factor is already set up on this account.", 409);
+  }
 
   // no-store: this response IS the shared secret — the one §9 says never
   // leaves the server except here, once, to be enrolled.
