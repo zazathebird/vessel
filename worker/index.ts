@@ -25,9 +25,96 @@ import { publishSiteConfig, readSiteConfig, withSiteConfig } from "./site-config
 export { RateLimiter };
 export type { Env };
 
+/**
+ * **The http→https redirect belongs in Cloudflare, not here, and this note is
+ * why.**
+ *
+ * A Workers route matches *both* schemes, so `http://mcclevarty.ca/` answers
+ * with a plain 200 over cleartext — which is what a browser means by "Not
+ * secure". The obvious fix is to redirect in this file. It was written, and it
+ * was wrong in a way worth recording rather than rediscovering:
+ *
+ *     const secure = new URL(url.toString());
+ *     secure.protocol = "https:";      // silently does nothing in workerd
+ *
+ * The `URL.protocol` setter did not take. The redirect therefore returned
+ * `Location:` equal to the request URL, which is an infinite redirect loop —
+ * observed locally as `redirect count exceeded`. Deployed, that would have taken
+ * the **entire site** down for every cleartext visitor, and if the Worker ever
+ * sees `http:` for a request that actually arrived over TLS, for everyone.
+ *
+ * So the URL is built by concatenation, and — because being wrong here costs the
+ * whole site rather than one page — the result is **compared against the request
+ * URL and only sent if it actually differs**. That guard is what makes a loop
+ * structurally impossible rather than merely unlikely: whatever a future runtime
+ * does to URL parsing, a redirect to oneself is never emitted.
+ *
+ * Cloudflare's zone setting (SSL/TLS → Edge Certificates → **Always Use HTTPS**)
+ * does the same job at the edge without costing a Worker invocation, and turning
+ * it on as well is worth doing. This is here so the guarantee lives in the
+ * repository too.
+ *
+ * **The session cookie is already `Secure`** (`worker/session.ts`), so signing in
+ * over http never worked — the cookie would be set and never sent back. The bug
+ * was that the *site* loaded at all, which trains people onto a URL that cannot
+ * sign in and shows a browser warning on a page asking for a password.
+ */
+function isLoopback(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+}
+
+/**
+ * Null when no redirect should happen — wrong scheme, loopback, or a target that
+ * would equal the request. The caller treats null as "carry on".
+ */
+function httpsRedirect(request: Request, url: URL): Response | null {
+  if (url.protocol !== "http:") return null;
+  // `wrangler dev` serves plain http on loopback, and `npm run test:auth` drives
+  // it. Browsers already treat localhost as a secure context.
+  if (isLoopback(url.hostname)) return null;
+
+  const target = `https://${url.host}${url.pathname}${url.search}`;
+  if (target === request.url) return null;
+
+  return new Response(null, {
+    status: 301,
+    headers: { location: target, "strict-transport-security": HSTS },
+  });
+}
+
+/**
+ * Two years, subdomains included. Not preloaded — preload is a one-way door that
+ * needs a deliberate submission, and the apex is what matters here.
+ */
+const HSTS = "max-age=63072000; includeSubDomains";
+
+/**
+ * Headers every response carries. Deliberately not a full CSP: the app shell has
+ * the published site config **inlined** as a script (see `site-config.ts`), so a
+ * `script-src` without a nonce plumbed through that injection would blank the
+ * site's appearance on first paint. That is worth doing and is not worth doing
+ * badly at the end of a session — the three below are unconditional wins.
+ */
+function harden(response: Response): Response {
+  const out = new Response(response.body, response);
+  out.headers.set("strict-transport-security", HSTS);
+  out.headers.set("x-content-type-options", "nosniff");
+  out.headers.set("referrer-policy", "strict-origin-when-cross-origin");
+  // The site is never legitimately framed, and this is the cheap half of the
+  // clickjacking defence a CSP `frame-ancestors` would otherwise carry.
+  out.headers.set("x-frame-options", "DENY");
+  return out;
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+
+    // Before anything else, including the API: a request that arrived in
+    // cleartext gets a redirect and nothing else, or the response would ship
+    // over http regardless of what it contains.
+    const upgrade = httpsRedirect(request, url);
+    if (upgrade) return upgrade;
 
     if (!url.pathname.startsWith("/api/")) {
       // The app shell gets the published look inlined into it, so the first
@@ -35,11 +122,11 @@ export default {
       // path. Non-HTML assets pass straight through untouched, and a failure
       // to read the published row serves the site's built-in defaults rather
       // than serving nothing.
-      return withSiteConfig(await env.ASSETS.fetch(request), env);
+      return harden(await withSiteConfig(await env.ASSETS.fetch(request), env));
     }
 
     try {
-      return await route(request, env, ctx, url);
+      return harden(await route(request, env, ctx, url));
     } catch (error) {
       // A `BadRequest` carries wording that was written to be shown to a user;
       // anything else carries wording that was not, so it becomes a generic 500.

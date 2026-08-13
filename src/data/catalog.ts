@@ -47,13 +47,18 @@ export const FX: { id: FxId; label: string }[] = [
   { id: "bokeh", label: "Bokeh" },
   { id: "orbits", label: "Orbits" },
   { id: "off", label: "None" },
-  // **Appended, never inserted.** `shareCode.ts` encodes the effect as this
-  // array's *index*, so putting anything ahead of an existing entry silently
-  // repoints every share code already in the wild — a code that read "Orbits"
-  // would quietly start meaning something else. New effects go on the end, even
-  // when that puts them after "None" and reads oddly in the panel.
-  { id: "duel", label: "Lightswords: light & dark" },
-  { id: "duelholy", label: "Lightswords: saint & serpent" },
+  // **The two lightsword duels are withdrawn, not deleted.** The client saw the
+  // shipped version and rejected it in the right terms: the stick figures are
+  // terrible, and what was asked for is a fast, obviously-readable 8/32-bit
+  // pixel fight. That is a different renderer, not a tuning pass, so the effects
+  // stay out of this list until it exists rather than shipping something the
+  // owner of the site does not want on it. `EFFECTS.duel` / `EFFECTS.duelholy`
+  // in `src/fx/effects.ts` still hold the stance machine, the clash detection
+  // and the blade rendering, which are the reusable parts.
+  //
+  // **Appended, never inserted**, when they come back. `shareCode.ts` encodes the
+  // effect as this array's *index*, so putting anything ahead of an existing
+  // entry silently repoints every share code already in the wild.
 ];
 
 export interface TypeSet {

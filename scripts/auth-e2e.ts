@@ -20,7 +20,14 @@
 
 import { deriveFromPassword, deriveFromRecoveryCode, newKdfParams } from "../src/auth/derive";
 import { fromBase64Url, toBase64Url } from "../src/auth/encoding";
-import { generateGrantKey, unwrapSlot, wrapSlot, signWithGrantKey } from "../src/auth/grantKey";
+import {
+  SLOT_ALG,
+  generateGrantKey,
+  rewrapSlot,
+  unwrapSlot,
+  wrapSlot,
+  signWithGrantKey,
+} from "../src/auth/grantKey";
 import {
   looksLikeRecoveryCode,
   newRecoveryCodes,
@@ -628,6 +635,173 @@ async function main(): Promise<void> {
       body: { handle: rescuee, authSecret: pw.authSecret },
     });
     check("the password still works after a code is spent", stillWorks.status === "signed-in", stillWorks.error);
+  }
+
+  section("Setting a password after recovery (§4, the other half)");
+  {
+    // Recovery is only worth having if it ends with the account openable again.
+    // Everything above proves a code signs in; this proves the person who used
+    // one can get a password back — and that the grant key survives it.
+    const rescuee = `harness-set-${RUN}`;
+    const params = newKdfParams();
+    const credential = await deriveFromPassword(password, params);
+    const grant = await generateGrantKey();
+    const codes = newRecoveryCodes();
+    const recovery = [];
+    for (const code of codes) {
+      const derived = await deriveFromRecoveryCode(code, { salt: params.salt, iterations: 100_000 });
+      recovery.push({
+        authSecret: derived.authSecret,
+        slot: toBase64Url(await wrapSlot(grant.scalar, derived.wrappingKey)),
+      });
+    }
+    const setup = new Client();
+    await setup.call("/api/auth/signup", {
+      body: {
+        handle: rescuee,
+        kdf: { salt: toBase64Url(params.salt), iterations: params.iterations, recoveryIterations: 100_000 },
+        authSecret: credential.authSecret,
+        grantPubkey: toBase64Url(grant.publicKeyRaw),
+        passwordSlot: toBase64Url(await wrapSlot(grant.scalar, credential.wrappingKey)),
+        recovery,
+      },
+    });
+    check("the set-password fixture account was created", setup.lastStatus === 201);
+
+    const lost = new Client();
+    const { kdf } = await lost.call("/api/auth/challenge", { body: { handle: rescuee } });
+    const derived = await deriveFromRecoveryCode(codes[0], {
+      salt: fromBase64Url(kdf.salt),
+      iterations: kdf.recoveryIterations,
+    });
+    const redeemed = await lost.call("/api/auth/signin", {
+      body: { handle: rescuee, authSecret: derived.authSecret, kind: "recovery" },
+    });
+    check(
+      "redemption hands back a set-password ticket",
+      typeof redeemed.setPasswordTicket === "string" && redeemed.setPasswordTicket.length > 0,
+      JSON.stringify(redeemed).slice(0, 160),
+    );
+
+    // **The ticket is the whole security argument.** A session records who you
+    // are, never how you proved it, so if a password sign-in also minted one —
+    // or if the endpoint accepted a session alone — a stolen cookie would become
+    // permanent account takeover rather than a bounded thirty-minute exposure.
+    const owner2 = new Client();
+    await owner2.call("/api/auth/challenge", { body: { handle: rescuee } });
+    const pwIn = await owner2.call("/api/auth/signin", {
+      body: { handle: rescuee, authSecret: credential.authSecret },
+    });
+    check(
+      "a password sign-in gets no set-password ticket",
+      pwIn.status === "signed-in" && pwIn.setPasswordTicket === undefined,
+      JSON.stringify(pwIn).slice(0, 140),
+    );
+    const noTicket = await owner2.call("/api/account/set-password", {
+      body: {
+        authSecret: credential.authSecret,
+        iterations: 600_000,
+        passwordSlot: toBase64Url(await wrapSlot(grant.scalar, credential.wrappingKey)),
+        slotAlg: SLOT_ALG,
+      },
+    });
+    check(
+      "a live session alone cannot set a password",
+      owner2.lastStatus === 401,
+      JSON.stringify(noTicket).slice(0, 140),
+    );
+
+    // **Re-wrap, never regenerate.** The slot goes ciphertext-to-ciphertext, so
+    // the grant key is the same key afterwards — which is what the signature
+    // check below actually proves.
+    const nextPassword = `${password}-recovered`;
+    const next = await deriveFromPassword(nextPassword, {
+      salt: fromBase64Url(kdf.salt),
+      iterations: 600_000,
+    });
+    const rewrapped = await rewrapSlot(
+      fromBase64Url(redeemed.keySlot.wrappedGrantKey),
+      derived.wrappingKey,
+      next.wrappingKey,
+    );
+    const body = {
+      ticket: redeemed.setPasswordTicket,
+      authSecret: next.authSecret,
+      iterations: 600_000,
+      passwordSlot: toBase64Url(rewrapped),
+      slotAlg: SLOT_ALG,
+    };
+    const set = await lost.call("/api/account/set-password", { body });
+    check("the new password is accepted", set.status === "set", JSON.stringify(set).slice(0, 160));
+
+    const reuse = await lost.call("/api/account/set-password", { body });
+    check("the ticket cannot be replayed", lost.lastStatus === 401, JSON.stringify(reuse).slice(0, 140));
+
+    const fresh = new Client();
+    const after = await fresh.call("/api/auth/challenge", { body: { handle: rescuee } });
+    const reDerived = await deriveFromPassword(nextPassword, {
+      salt: fromBase64Url(after.kdf.salt),
+      iterations: after.kdf.iterations,
+    });
+    const signedIn = await fresh.call("/api/auth/signin", {
+      body: { handle: rescuee, authSecret: reDerived.authSecret },
+    });
+    check("the new password signs in", signedIn.status === "signed-in", signedIn.error);
+
+    const slot = await fresh.call("/api/account/slot");
+    const reopened = await unwrapSlot(
+      fromBase64Url(slot.wrappedGrantKey),
+      reDerived.wrappingKey,
+      fromBase64Url(slot.grantPubkey),
+    );
+    const message = new TextEncoder().encode("still the same grant key");
+    const pub = await crypto.subtle.importKey(
+      "raw",
+      fromBase64Url(slot.grantPubkey),
+      { name: "ECDSA", namedCurve: "P-256" },
+      false,
+      ["verify"],
+    );
+    check(
+      "the new password opens the ORIGINAL grant key",
+      await crypto.subtle.verify(
+        { name: "ECDSA", hash: "SHA-256" },
+        pub,
+        await signWithGrantKey(reopened, message),
+        message,
+      ),
+    );
+    check(
+      "the grant public key never moved",
+      slot.grantPubkey === toBase64Url(grant.publicKeyRaw),
+    );
+
+    const stale = new Client();
+    await stale.call("/api/auth/challenge", { body: { handle: rescuee } });
+    const refused = await stale.call("/api/auth/signin", {
+      body: { handle: rescuee, authSecret: credential.authSecret },
+    });
+    check("the old password no longer works", stale.lastStatus === 401, JSON.stringify(refused).slice(0, 120));
+
+    // **The salt-reuse check, and the reason it exists.** The remaining nine
+    // codes were derived against the password's salt at signup. Rolling a fresh
+    // salt when setting the new password would leave all nine deriving against a
+    // salt nothing uses any more — ten codes silently dead, discovered by the
+    // one person who needed them. This is that check.
+    const ninth = await deriveFromRecoveryCode(codes[9], {
+      salt: fromBase64Url(after.kdf.salt),
+      iterations: after.kdf.recoveryIterations,
+    });
+    const survivor = new Client();
+    await survivor.call("/api/auth/challenge", { body: { handle: rescuee } });
+    const another = await survivor.call("/api/auth/signin", {
+      body: { handle: rescuee, authSecret: ninth.authSecret, kind: "recovery" },
+    });
+    check(
+      "the remaining recovery codes survive the new password",
+      another.status === "signed-in",
+      JSON.stringify(another).slice(0, 140),
+    );
   }
 
   // Rate limiting ---------------------------------------------------------------
