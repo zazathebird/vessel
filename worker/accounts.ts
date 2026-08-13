@@ -104,6 +104,14 @@ const MAX_ITERATIONS = 5_000_000;
 /** Mirrors `RECOVERY_ITERATIONS` in `src/auth/derive.ts`; used only for decoys. */
 const RECOVERY_ITERATIONS_DEFAULT = 100_000;
 
+/**
+ * Mirrors `DEFAULT_ITERATIONS` in `src/auth/derive.ts`. Reported by `challenge`
+ * for an account that has a salt but no password credential — one whose password
+ * the operator reset — where there is no stored count to report and the browser
+ * is about to choose its own anyway.
+ */
+const DEFAULT_ITERATIONS = 600_000;
+
 /** Nothing legitimate here is large. A signup with ten slots is a few kilobytes. */
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -564,22 +572,43 @@ export async function challenge(request: Request, env: Env): Promise<Response> {
   // counting it would let anyone lock an owner out by requesting theirs.
   await assertAllowed(env, await buckets(request, env, handleLower));
 
+  // **The salt comes from any credential that has one, not only the password.**
+  //
+  // An account whose password was reset by the operator has no password
+  // credential at all, and the person holding a recovery code needs this exact
+  // salt to derive against — theirs was issued under it. Keying this query on
+  // `kind = 'password'` would drop such an account through to the decoy below,
+  // hand the browser a fabricated salt, and turn a working recovery code into a
+  // wrong one. The failure would look like a bad code and be blamed on the user.
+  //
+  // Every credential on an account shares one salt (see signup, where the
+  // recovery codes are derived with the password's `params.salt`), so preferring
+  // the password row is about the iteration count travelling with it, not about
+  // the salts differing.
   const row = await env.DB.prepare(
-    `SELECT c.kdf_salt AS salt, c.kdf_iterations AS iterations,
-            (SELECT r.kdf_iterations FROM credentials r
-              WHERE r.account_id = c.account_id AND r.kind = 'recovery' LIMIT 1) AS recovery_iterations
-       FROM credentials c
-       JOIN accounts a ON a.id = c.account_id
-      WHERE a.handle_lower = ? AND c.kind = 'password'`,
+    `SELECT
+       (SELECT c.kdf_salt FROM credentials c
+         WHERE c.account_id = a.id AND c.kdf_salt IS NOT NULL
+         ORDER BY CASE c.kind WHEN 'password' THEN 0 ELSE 1 END LIMIT 1) AS salt,
+       (SELECT p.kdf_iterations FROM credentials p
+         WHERE p.account_id = a.id AND p.kind = 'password') AS iterations,
+       (SELECT r.kdf_iterations FROM credentials r
+         WHERE r.account_id = a.id AND r.kind = 'recovery' LIMIT 1) AS recovery_iterations
+     FROM accounts a
+     WHERE a.handle_lower = ?`,
   )
     .bind(handleLower)
-    .first<{ salt: unknown; iterations: number; recovery_iterations: number | null }>();
+    .first<{ salt: unknown; iterations: number | null; recovery_iterations: number | null }>();
 
-  if (row) {
+  if (row?.salt) {
     return json({
       kdf: {
         salt: toBase64Url(fromBlob(row.salt)),
-        iterations: row.iterations,
+        // Null when the password credential is gone. The count only governs a
+        // password derivation, and the only one left to do is setting a new one,
+        // which picks its own — so the default is the honest answer rather than
+        // a placeholder.
+        iterations: row.iterations ?? DEFAULT_ITERATIONS,
         recoveryIterations: row.recovery_iterations ?? MIN_ITERATIONS,
       },
     });
@@ -730,8 +759,8 @@ async function lookupCredentials(
  *
  * The code itself is spent — `used_at` is set, so it cannot sign in again — and
  * the slot it leaves behind is unreachable without another credential. Clearing
- * spent slots belongs to the not-yet-built "set a new password" flow, which is
- * the only thing that can replace one.
+ * spent slots belongs to `setPassword`, which is the only thing that can replace
+ * one, and which this response hands the ticket for.
  */
 async function completeSignIn(
   env: Env,
@@ -746,6 +775,7 @@ async function completeSignIn(
   ];
 
   let keySlot: { wrappedGrantKey: string; grantPubkey: string; alg: string } | undefined;
+  let setPasswordTicket: string | undefined;
 
   if (kind === "recovery") {
     const slot = await env.DB.prepare(
@@ -768,6 +798,13 @@ async function completeSignIn(
       env.DB.prepare("UPDATE credentials SET used_at = ? WHERE id = ?").bind(now, credentialId),
       auditStatement(env, account.id, "auth.recovery.redeemed", credentialId),
     );
+
+    // The capability to set a password without presenting the current one, given
+    // only to the one caller who by definition cannot present it. Minted here
+    // rather than at `signin` so that an account with a second factor gets it
+    // after TOTP rather than before — this function is the single point both
+    // paths converge on.
+    setPasswordTicket = await session.mint(env.SESSION_SECRET, "set-password", account.id);
   }
 
   await env.DB.batch(statements);
@@ -781,6 +818,7 @@ async function completeSignIn(
         account: publicAccount(account),
         resetAt: account.reset_at,
         ...(keySlot ? { keySlot } : {}),
+        ...(setPasswordTicket ? { setPasswordTicket } : {}),
       }),
     ),
   );
@@ -1085,6 +1123,125 @@ export async function changePassword(request: Request, env: Env): Promise<Respon
   ]);
 
   return json({ status: "changed" });
+}
+
+/**
+ * Set a password **without presenting the current one** — the other half of
+ * redeeming a recovery code, and the reason recovery is worth having at all.
+ *
+ * `changePassword` above cannot serve this: it demands the current password,
+ * which is the one thing a person arriving by recovery code definitionally does
+ * not have. Without this endpoint a redeemed code buys thirty minutes of session
+ * and then the account is as locked as it was, one code poorer — which is why
+ * the sign-in screen refused to offer recovery until this existed.
+ *
+ * **Authorisation is the ticket, not the session.** See `TokenPurpose` in
+ * `./session`: a session says who you are, never how you proved it, so gating
+ * here on the session alone would let a stolen cookie set a password and convert
+ * this design's bounded thirty-minute exposure into permanent takeover. The
+ * ticket is minted only inside `completeSignIn`, only on the recovery path, and
+ * only once the last factor has passed.
+ *
+ * **The salt is reused, exactly as in `changePassword`,** and for the same
+ * reason: the account's remaining recovery codes were derived against it, and
+ * rolling it would silently kill every one of them at the moment their owner has
+ * just proved they need them. The iteration count is free to move.
+ *
+ * The insert branch is not speculative. An operator password reset (§4) deletes
+ * the password credential outright, so the account that most needs this endpoint
+ * is precisely the one with no password row to update.
+ */
+export async function setPassword(request: Request, env: Env): Promise<Response> {
+  const account = await requireAccount(request, env);
+  const body = await readJson(request);
+
+  const ticket = typeof body.ticket === "string" ? body.ticket : "";
+  const claim = await session.verify(env.SESSION_SECRET, "set-password", ticket);
+  // Bound to the account as well as verified, so a ticket cannot be carried from
+  // one account's recovery into another's session.
+  if (!claim || claim.subject !== account.id) {
+    throw new BadRequest(
+      "The window for setting a password has closed. Sign in with another recovery code to start again.",
+      401,
+    );
+  }
+
+  const nextSecret = expectBytes(body.authSecret, AUTH_SECRET_BYTES, "New password");
+  const slot = expectBytes(body.passwordSlot, WRAPPED_KEY_BYTES, "Key slot");
+  const iterations = expectIterations(body.iterations);
+  const alg = typeof body.slotAlg === "string" ? body.slotAlg : "";
+  if (!alg) throw new BadRequest("Missing key slot algorithm.");
+
+  const nextHash = new Uint8Array(await authHash(env.AUTH_PEPPER, toBase64Url(nextSecret)));
+  const now = Date.now();
+
+  const existing = await env.DB.prepare(
+    "SELECT id FROM credentials WHERE account_id = ? AND kind = 'password'",
+  )
+    .bind(account.id)
+    .first<{ id: string }>();
+
+  // As in `changePassword`, the credential and its slot move together or not at
+  // all: a new auth hash beside an old slot is a password that signs in and then
+  // cannot open its own grant key.
+  const statements = [];
+
+  if (existing) {
+    statements.push(
+      env.DB.prepare(
+        "UPDATE credentials SET auth_hash = ?, kdf_iterations = ?, last_used_at = ? WHERE id = ?",
+      ).bind(toBlob(nextHash), iterations, now, existing.id),
+      env.DB.prepare("UPDATE key_slots SET wrapped_grant_key = ?, alg = ? WHERE credential_id = ?")
+        .bind(toBlob(slot), alg, existing.id),
+    );
+  } else {
+    const saltRow = await env.DB.prepare(
+      "SELECT kdf_salt AS salt FROM credentials WHERE account_id = ? AND kdf_salt IS NOT NULL LIMIT 1",
+    )
+      .bind(account.id)
+      .first<{ salt: unknown }>();
+    if (!saltRow?.salt) {
+      throw new BadRequest("This account has no key-derivation salt to reuse.", 409);
+    }
+
+    const credentialId = newId();
+    statements.push(
+      env.DB.prepare(
+        "INSERT INTO credentials (id, account_id, kind, label, created_at, last_used_at, auth_hash, kdf_salt, kdf_iterations) VALUES (?, ?, 'password', 'password', ?, ?, ?, ?, ?)",
+      ).bind(
+        credentialId,
+        account.id,
+        now,
+        now,
+        toBlob(nextHash),
+        toBlob(fromBlob(saltRow.salt)),
+        iterations,
+      ),
+      env.DB.prepare(
+        "INSERT INTO key_slots (id, account_id, credential_id, wrapped_grant_key, alg, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      ).bind(newId(), account.id, credentialId, toBlob(slot), alg, now),
+    );
+  }
+
+  statements.push(
+    // A spent recovery code cannot sign in — `findCredentials` filters on
+    // `used_at IS NULL` — so the slot it left behind is ciphertext nothing can
+    // ever reach. `completeSignIn` keeps it deliberately, because until this
+    // moment it was the only copy of the grant key the browser could still open.
+    // That copy has now been re-sealed under the new password, so the dead one
+    // goes.
+    env.DB.prepare(
+      "DELETE FROM key_slots WHERE credential_id IN (SELECT id FROM credentials WHERE account_id = ? AND kind = 'recovery' AND used_at IS NOT NULL)",
+    ).bind(account.id),
+    // The operator reset that set this, if any, has now been answered by the
+    // owner choosing their own password. The notice on their account stops.
+    env.DB.prepare("UPDATE accounts SET reset_at = NULL WHERE id = ?").bind(account.id),
+    auditStatement(env, account.id, "auth.password.set", null),
+  );
+
+  await env.DB.batch(statements);
+
+  return json({ status: "set" });
 }
 
 // Two-factor enrolment --------------------------------------------------------

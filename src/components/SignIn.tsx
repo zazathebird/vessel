@@ -2,7 +2,14 @@ import { useEffect, useState } from "react";
 
 import { useConfig } from "../config/ConfigContext";
 import { useSession } from "../auth/SessionContext";
-import { MIN_PASSWORD_LENGTH, changePassword, signIn } from "../auth/flows";
+import {
+  MIN_PASSWORD_LENGTH,
+  changePassword,
+  signIn,
+  signInWithRecoveryCode,
+  type RecoverySignIn,
+} from "../auth/flows";
+import { looksLikeRecoveryCode } from "../auth/recoveryCodes";
 import { ApiError, api, type MeResult } from "../auth/api";
 
 /**
@@ -27,14 +34,14 @@ import { ApiError, api, type MeResult } from "../auth/api";
  * No literal colours: every surface reads the palette custom properties, so the
  * 0.9s bleed crosses this page like any other.
  *
- * **Signing in with a recovery code is deliberately not offered here yet.** The
- * Worker supports redeeming one and `signInWithRecoveryCode` is written and
- * tested. What is still missing is the screen that turns a redeemed code into a
- * fresh password: `changePassword` below needs the *current* password, and
- * someone arriving by recovery code is precisely the person who does not have
- * one. Until that variant exists, offering recovery here would spend one of ten
- * codes and leave the account no better off, so the signed-out view says to wait
- * rather than letting people discover it by burning codes.
+ * **Recovery is a three-stage path and the stages must not be separable.**
+ * Redeeming a code spends it, so a person who redeems and then closes the tab has
+ * paid one of ten codes for a thirty-minute session and an account still locked.
+ * The `RecoverySignIn` handle returned by `signInWithRecoveryCode` is therefore
+ * held in the stage itself — it carries the wrapping key derived from the code,
+ * which cannot be re-derived once the code is spent — and the set-password screen
+ * has no "skip" affordance. Losing that object is losing the account's grant key,
+ * so it never round-trips through anything that could remount.
  */
 
 /**
@@ -134,6 +141,11 @@ type Stage =
   | { name: "checking" }
   | { name: "credentials" }
   | { name: "second-factor"; ticket: string }
+  // The recovery path's own three stages. `session` is the live `RecoverySignIn`
+  // and is the only thing holding the wrapping key — see the note at the top.
+  | { name: "recovery" }
+  | { name: "recovery-second-factor"; session: RecoverySignIn }
+  | { name: "set-password"; session: RecoverySignIn }
   | { name: "signed-in"; me: MeResult };
 
 export function SignIn() {
@@ -243,6 +255,87 @@ export function SignIn() {
         setStage({ name: "credentials" });
         setCode("");
       }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const recoveryReady = handle.trim().length >= 3 && looksLikeRecoveryCode(code) && !busy;
+
+  /**
+   * Redeem a recovery code. This is the call that spends it, so everything after
+   * it has to succeed locally — which is why the resulting `RecoverySignIn` goes
+   * straight into stage state rather than being awaited into a variable that a
+   * thrown error could discard.
+   */
+  async function onRecovery(event: React.FormEvent) {
+    event.preventDefault();
+    if (!recoveryReady) return;
+
+    setBusy(true);
+    setError(null);
+    try {
+      const session = await signInWithRecoveryCode(handle.trim(), code.trim());
+      setCode("");
+      if (session.result.status === "totp-required") {
+        setStage({ name: "recovery-second-factor", session });
+        return;
+      }
+      setStage({ name: "set-password", session });
+      await refreshSession();
+    } catch (cause) {
+      fail(cause);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * The second factor on the recovery path.
+   *
+   * It goes through `session.completeSecondFactor` rather than `api.totp`
+   * directly, and that is the whole point: the key slot arrives with *this*
+   * response, and only the session object still holds the wrapping key that
+   * opens it. Calling the API directly here would sign the user in and strand
+   * their grant key — the bug this shape exists to prevent.
+   */
+  async function onRecoverySecondFactor(event: React.FormEvent) {
+    event.preventDefault();
+    if (stage.name !== "recovery-second-factor" || !codeReady || busy) return;
+
+    setBusy(true);
+    setError(null);
+    try {
+      const finished = await stage.session.completeSecondFactor(digits);
+      if (finished.status === "signed-in") {
+        setCode("");
+        setStage({ name: "set-password", session: stage.session });
+        await refreshSession();
+      }
+    } catch (cause) {
+      fail(cause);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const setPasswordReady = password.length >= MIN_PASSWORD_LENGTH && !busy;
+
+  async function onSetPassword(event: React.FormEvent) {
+    event.preventDefault();
+    if (stage.name !== "set-password" || !setPasswordReady) return;
+
+    setBusy(true);
+    setError(null);
+    try {
+      await stage.session.setPassword(password);
+      setPassword("");
+      const me = await api.me();
+      setStage({ name: "signed-in", me });
+      await refreshSession();
+      say("Password set. You can sign in with it from now on.");
+    } catch (cause) {
+      fail(cause);
     } finally {
       setBusy(false);
     }
@@ -393,6 +486,157 @@ export function SignIn() {
     );
   }
 
+  // Deliberately offers no way out but forward. The code that got here is already
+  // spent; a "later" button would return the user to a sign-in form none of their
+  // credentials now open, having paid for the privilege.
+  if (stage.name === "set-password") {
+    return (
+      <section className="v-account">
+        <form className="v-account-form" onSubmit={onSetPassword}>
+          <h2 className="v-account-title">Set a new password</h2>
+
+          <p className="v-account-note">
+            That code worked, and it is now spent. Choose a password and it becomes the way in
+            again — the account keeps everything it had, because the code carried its own copy of
+            the key rather than a way around it.
+          </p>
+
+          <label className="v-field">
+            <span className="v-field-label">New password</span>
+            <input
+              className="v-input"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="new-password"
+              autoFocus
+            />
+            <span className="v-field-hint">
+              At least {MIN_PASSWORD_LENGTH} characters. Your remaining recovery codes keep
+              working.
+            </span>
+          </label>
+
+          {error ? (
+            <p className="v-account-error" role="alert">{error}</p>
+          ) : null}
+
+          <button type="submit" className="v-btn v-btn-primary" disabled={!setPasswordReady}>
+            {busy ? "Setting…" : "Set password"}
+          </button>
+
+          <p className="v-account-aside">
+            Do not close this page until it succeeds. The code that got you here has been used, and
+            this is what turns it back into an account you can sign in to.
+          </p>
+        </form>
+      </section>
+    );
+  }
+
+  if (stage.name === "recovery-second-factor") {
+    return (
+      <section className="v-account">
+        <form className="v-account-form" onSubmit={onRecoverySecondFactor}>
+          <p className="v-account-note">
+            That code was right. The second factor is still required — recovery replaces a
+            forgotten password, not the authenticator.
+          </p>
+
+          <label className="v-field">
+            <span className="v-field-label">Code</span>
+            <input
+              className="v-input"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              autoComplete="one-time-code"
+              inputMode="numeric"
+              spellCheck={false}
+              autoFocus
+              placeholder="six digits"
+            />
+            <span className="v-field-hint">
+              Or one of the backup codes from when you turned it on.
+            </span>
+          </label>
+
+          {error ? (
+            <p className="v-account-error" role="alert">{error}</p>
+          ) : null}
+
+          <button type="submit" className="v-btn v-btn-primary" disabled={!codeReady || busy}>
+            {busy ? "Checking…" : "Continue"}
+          </button>
+        </form>
+      </section>
+    );
+  }
+
+  if (stage.name === "recovery") {
+    return (
+      <section className="v-account">
+        <form className="v-account-form" onSubmit={onRecovery}>
+          <h2 className="v-account-title">Sign in with a recovery code</h2>
+
+          <p className="v-account-note">
+            One of the ten codes you were given when the account was made. Each works once, and the
+            next screen asks you to set a new password.
+          </p>
+
+          <label className="v-field">
+            <span className="v-field-label">Handle</span>
+            <input
+              className="v-input"
+              value={handle}
+              onChange={(e) => setHandle(e.target.value)}
+              autoComplete="username"
+              spellCheck={false}
+            />
+          </label>
+
+          <label className="v-field">
+            <span className="v-field-label">Recovery code</span>
+            <input
+              className="v-input"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              spellCheck={false}
+              autoCapitalize="characters"
+              autoFocus
+              placeholder="K7M2P-9XQRT-4WVN8-BCDF3"
+            />
+            <span className="v-field-hint">
+              Dashes and spacing do not matter, and neither does case. `O` and `0`, `I` and `1` are
+              read as the same character — the alphabet was chosen so a misread card still works.
+            </span>
+          </label>
+
+          {error ? (
+            <p className="v-account-error" role="alert">{error}</p>
+          ) : null}
+
+          <button type="submit" className="v-btn v-btn-primary" disabled={!recoveryReady}>
+            {busy ? "Checking…" : "Redeem code"}
+          </button>
+
+          <p className="v-account-aside">
+            <button
+              type="button"
+              className="v-account-link"
+              onClick={() => {
+                setStage({ name: "credentials" });
+                setCode("");
+                setError(null);
+              }}
+            >
+              Back to signing in with a password
+            </button>
+          </p>
+        </form>
+      </section>
+    );
+  }
+
   return (
     <section className="v-account">
       <form className="v-account-form" onSubmit={onCredentials}>
@@ -432,9 +676,20 @@ export function SignIn() {
           <button type="button" className="v-account-link" onClick={() => go("signup")}>
             Make one
           </button>
-          . Forgotten the password? Recovery codes do not work yet — the screen that would let you
-          set a new one is still being built, and redeeming a code before it exists would spend the
-          code for nothing.
+          . Forgotten it?{" "}
+          <button
+            type="button"
+            className="v-account-link"
+            onClick={() => {
+              setStage({ name: "recovery" });
+              setPassword("");
+              setCode("");
+              setError(null);
+            }}
+          >
+            Use a recovery code
+          </button>
+          .
         </p>
       </form>
     </section>

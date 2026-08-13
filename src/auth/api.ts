@@ -77,6 +77,12 @@ export type SignInResult =
       resetAt: number | null;
       /** Present only when a recovery code was redeemed — open it now or it is lost. */
       keySlot?: WrappedKeySlot;
+      /**
+       * Present only when a recovery code was redeemed: the one-shot capability
+       * to set a password without presenting the current one. Fifteen minutes,
+       * and deliberately not a cookie — see `TokenPurpose` in `worker/session.ts`.
+       */
+      setPasswordTicket?: string;
     }
   | { status: "totp-required"; ticket: string };
 
@@ -120,6 +126,8 @@ export const api = {
   me: () => call<MeResult>("/api/me"),
   /** Replace the password credential and re-seal its key slot under the new password. */
   changePassword: (body: unknown) => post<{ status: string }>("/api/account/password", body),
+  /** The same, for someone who arrived by recovery code and has no current password. */
+  setPassword: (body: unknown) => post<{ status: string }>("/api/account/set-password", body),
   keySlot: () =>
     call<{ wrappedGrantKey: string; grantPubkey: string; alg: string }>("/api/account/slot"),
   totpEnrol: () => post<{ secret: string; uri: string }>("/api/totp/enrol", {}),

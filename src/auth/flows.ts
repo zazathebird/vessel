@@ -125,44 +125,120 @@ export async function signIn(handle: string, password: string): Promise<SignInRe
 }
 
 /**
+ * A recovery sign-in in progress, and the two things that can still be done with
+ * it. Returned rather than a bare result because both of them need the wrapping
+ * key derived from the code, and that key must not escape into caller-held state.
+ */
+export interface RecoverySignIn {
+  result: SignInResult;
+  /**
+   * Finish the second factor, when `result.status` asked for one. Returns the
+   * updated result and makes `setPassword` usable.
+   */
+  completeSecondFactor(code: string): Promise<SignInResult>;
+  /** Whether the key slot and its ticket are in hand — false until sign-in completes. */
+  canSetPassword(): boolean;
+  /** Re-seal the account's grant key under a new password, and write it. */
+  setPassword(newPassword: string): Promise<void>;
+}
+
+/**
  * Sign in by redeeming a recovery code — §4's second recovery path, and the only
  * one besides a second credential that keeps grant authority intact.
  *
- * The code is spent by this call: the server marks it used and deletes its key
- * slot. The caller is expected to send the user straight to setting a new
- * password, which writes a fresh password slot from the grant key this code just
- * opened. Until that happens the account has one fewer way in than it started
- * with, which is worth saying on the screen rather than only here.
+ * The code is spent by this call. What comes back with the sign-in is the code's
+ * own key slot, and the caller is expected to walk the user straight to
+ * `setPassword`, which re-seals that same grant key under a password they choose.
+ * Until that happens the account has one fewer way in than it started with, which
+ * is worth saying on the screen rather than only here.
+ *
+ * **Why this returns an object with methods rather than a result and a key.**
+ * Two things are needed to finish recovery and neither may be handed to the
+ * caller:
+ *
+ * 1. *The wrapping key derived from the code.* It exists only here, because the
+ *    code is now spent and cannot be re-derived from. An earlier version of this
+ *    function returned only the result and an unwrapped key — which meant that on
+ *    an account **with a second factor** the wrapping key went out of scope at the
+ *    `return`, and the key slot that arrived after TOTP could never be opened.
+ *    Recovery silently worked for accounts without 2FA and stranded the grant key
+ *    of every account with it. Holding the key in this closure, and finishing TOTP
+ *    through `completeSecondFactor`, is what closes that hole.
+ * 2. *The slot as ciphertext.* Not as an opened `CryptoKey` — `unwrapSlot`
+ *    deliberately returns a **non-extractable** key, which cannot be re-wrapped
+ *    into a new slot. Setting a password therefore goes ciphertext-to-ciphertext
+ *    through `rewrapSlot`, exactly as `changePassword` does, and the scalar never
+ *    exists as bytes in this program.
  */
 export async function signInWithRecoveryCode(
   handle: string,
   code: string,
-): Promise<{ result: SignInResult; grantKey: CryptoKey | null }> {
+): Promise<RecoverySignIn> {
   const { kdf } = await api.challenge(handle);
+  const salt = fromBase64Url(kdf.salt);
   const derived = await deriveFromRecoveryCode(code, {
-    salt: fromBase64Url(kdf.salt),
+    salt,
     iterations: kdf.recoveryIterations,
   });
   const result = await api.signin({ handle, authSecret: derived.authSecret, kind: "recovery" });
 
-  // **Open the slot here or lose it.** The wrapping key exists only in this
-  // function's scope: it came from the code the user just typed, and that code
-  // is now spent. If this returns without unwrapping, the account's grant key is
-  // sealed in ciphertext that nothing can ever open again — and §5's claim that
-  // a recovery code "preserves grant authority in full" quietly becomes false.
-  //
-  // Null when the sign-in still needs a second factor; the caller finishes that
-  // step and the slot comes back with it.
-  const grantKey =
-    result.status === "signed-in" && result.keySlot
-      ? await unwrapSlot(
-          fromBase64Url(result.keySlot.wrappedGrantKey),
-          derived.wrappingKey,
-          fromBase64Url(result.keySlot.grantPubkey),
-        )
-      : null;
+  // Filled by whichever call actually completes the sign-in — this one, or
+  // `completeSecondFactor` below.
+  let slot = result.status === "signed-in" ? result.keySlot : undefined;
+  let ticket = result.status === "signed-in" ? result.setPasswordTicket : undefined;
 
-  return { result, grantKey };
+  return {
+    result,
+
+    async completeSecondFactor(secondFactor: string): Promise<SignInResult> {
+      if (result.status !== "totp-required") {
+        throw new Error("This sign-in is not waiting for a second factor.");
+      }
+      const finished = await api.totp(result.ticket, secondFactor.replace(/\s/g, ""));
+      if (finished.status === "signed-in") {
+        slot = finished.keySlot;
+        ticket = finished.setPasswordTicket;
+      }
+      return finished;
+    },
+
+    canSetPassword(): boolean {
+      return Boolean(slot && ticket);
+    },
+
+    async setPassword(newPassword: string): Promise<void> {
+      if (newPassword.length < MIN_PASSWORD_LENGTH) {
+        throw new Error(`Use at least ${MIN_PASSWORD_LENGTH} characters.`);
+      }
+      if (!slot || !ticket) {
+        throw new Error("Finish signing in before setting a password.");
+      }
+
+      // **The same salt the recovery code used**, and for the reason spelled out
+      // on `changePassword`: the account's other nine codes were derived against
+      // it, and rolling it here would kill all nine at the exact moment their
+      // owner has just proved they depend on them.
+      const next = await deriveFromPassword(newPassword, { salt, iterations: DEFAULT_ITERATIONS });
+
+      const rewrapped = await rewrapSlot(
+        fromBase64Url(slot.wrappedGrantKey),
+        derived.wrappingKey,
+        next.wrappingKey,
+      );
+
+      await api.setPassword({
+        ticket,
+        authSecret: next.authSecret,
+        iterations: DEFAULT_ITERATIONS,
+        passwordSlot: toBase64Url(rewrapped),
+        slotAlg: SLOT_ALG,
+      });
+
+      // Single-use on the server, and single-use here too, so a screen that
+      // somehow submits twice gets a clear local error rather than a 401.
+      ticket = undefined;
+    },
+  };
 }
 
 /**

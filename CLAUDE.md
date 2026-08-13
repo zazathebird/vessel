@@ -321,14 +321,67 @@ All deployed to `mcclevarty.ca` and verified live. In order:
 - **Email recovery was proposed and rejected** in favour of `docs/BREAK-GLASS.md`.
   Reasons recorded there. Do not re-add it without reading that file.
 
+### Session of 2026-08-12 (third): operator bootstrap, recovery-code sign-in
+
+- **`piratelife` exists and is the operator.** Created through `/signup` by the
+  client, promoted with step 1 of `docs/BREAK-GLASS.md`. `/admin` is reachable on
+  the live site for the first time. `erwerwerwer` is still present and is not an
+  operator; deleting it is a job for `/admin` itself.
+- **The footer carries `account` and `admin` links, but only for a signed-in
+  operator.** The account pages stay unlinked for visitors, which is what was
+  asked for — but an operator having to remember a typed word to reach their own
+  administration is a trapdoor that locks from the inside, not privacy. Signed
+  out, `useSession().isOperator` is false and the links do not render.
+- **Sign in with a recovery code, and set a password afterwards** — the whole
+  path, browser and Worker. `/api/account/set-password`, `signInWithRecoveryCode`
+  returning a `RecoverySignIn`, and three new stages in `SignIn.tsx`.
+
+Four things here are decisions, and three of them were latent bugs:
+
+- **`signInWithRecoveryCode` returns an object with methods, not a result.** The
+  old shape returned `{ result, grantKey }`, which meant that on an account
+  **with a second factor** the wrapping key derived from the code went out of
+  scope at the `return` — and the key slot that arrives after TOTP could never be
+  opened. Recovery worked for accounts without 2FA and stranded the grant key of
+  every account with it. The closure now holds the key and `completeSecondFactor`
+  finishes the sign-in through it.
+- **Set-password re-wraps, it does not unwrap.** `unwrapSlot` returns a
+  deliberately **non-extractable** key, which cannot be wrapped into a new slot,
+  so the flow goes ciphertext-to-ciphertext through `rewrapSlot` exactly as
+  `changePassword` does. Calling `unwrapSlot` here would typecheck and fail at
+  runtime.
+- **`challenge` now takes the salt from any credential that has one**, preferring
+  the password row for its iteration count. Keyed on `kind = 'password'` it
+  dropped an account whose password the operator had reset through to the decoy
+  branch and handed back a *fabricated* salt — turning a working recovery code
+  into a wrong one, and looking like user error. This is what makes operator
+  password reset safe to build.
+- **Authorisation for set-password is a ticket, not the session.** A session says
+  who you are, never how you proved it. Gated on the session alone, a stolen
+  cookie — a bounded thirty-minute exposure today — would become permanent
+  takeover. `TokenPurpose` gains `set-password`, minted only inside
+  `completeSignIn`, only on the recovery path, only after the last factor.
+
+Verified live after deploy: `/api/health` returns six tables, `challenge` returns
+the real salt for `piratelife` (600000/100000) and a *varying* decoy for a
+nonexistent handle, `/signin` and `/admin` both 200.
+
+**Not verified: the recovery path has not been run end to end by a human.** The
+code typechecks and the query it depends on was checked against production data,
+but no recovery code has actually been redeemed on the live site. Doing so spends
+one of ten, which is why it was not done casually — but it should be done once,
+deliberately, before it is relied on.
+
 **Next, in order** — nothing below is started:
 
-1. **Sign in with a recovery code**, and the set-password variant it needs.
-   `changePassword` requires the *current* password, which is exactly what a
-   person arriving by recovery code does not have. Until this exists, operator
-   password reset must stay absent from `/admin` — see the note in `Admin.tsx`.
+1. **Operator password reset in `/admin`.** Now unblocked: the endpoint deletes
+   the password credential and its slot, and `setPassword`'s insert branch plus
+   the `challenge` fix already handle the account that results. See the note in
+   `Admin.tsx`.
 2. **TOTP enrolment UI.** The endpoints and tests exist; there is no screen, so
-   nobody can turn on the second factor the sign-in flow already supports.
+   nobody can turn on the second factor the sign-in flow already supports. Note
+   `api.totpEnrol()` posts `{}` today and the Worker calls `requirePassword` on
+   it, so the screen must derive and send an `authSecret` or every call 401s.
 3. **Edit mode** — operator-editable page copy and images. Asked for 2026-08-12.
    Large: `src/data/pages.ts` is currently a static module, so this needs a D1
    table, the same inject-don't-fetch treatment as site config, and a decision
@@ -429,6 +482,18 @@ cutover, delete `public/_redirects` and both scripts together.
 
 Also queued, after phase 1:
 
+- **Duelling-figures background effects, with sound.** Raised and then withdrawn by
+  the client on 2026-08-12 ("that is dumb, ignore it"), recorded because the
+  constraints are the interesting part and will apply to any animated-figure
+  effect, not just this one. Three things make it much larger than "one more
+  entry in `FX`": the named characters asked for (Vader, Luke, and "lightsaber"
+  itself) are Lucasfilm marks and this is a **commercial** site, so any shipped
+  version has to be abstract duellists with glowing blades rather than
+  recognisable likenesses; `MODES` is a share-code field, so going from 12 to 14
+  entries touches `guardrails.ts`, persistence validation and share-code decoding
+  together; and **the site has no audio at all today** — WebAudio synthesis fits
+  the no-assets rule, but autoplaying sound does not, so it would need to be
+  off by default with its own control, which is a spec change.
 - **Richer transitions, slide-overs and typewriter effects.** The hard part is the constraint: every
   layout, palette and ornament has to stay visually distinct. That points at a small set of motion
   primitives each layout composes differently, rather than bespoke animation per layout — but confirm

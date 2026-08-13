@@ -97,6 +97,12 @@ async function route(
       return accounts.me(request, env);
     case "POST /api/account/password":
       return accounts.changePassword(request, env);
+    // Separate from the route above because it authorises differently: that one
+    // takes the current password, this one takes a ticket minted by redeeming a
+    // recovery code. Folding them into one handler with an `if` is how the
+    // no-current-password branch eventually becomes reachable without a ticket.
+    case "POST /api/account/set-password":
+      return accounts.setPassword(request, env);
     case "GET /api/account/slot":
       return accounts.keySlot(request, env);
     case "POST /api/totp/enrol":

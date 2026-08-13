@@ -58,7 +58,31 @@ const TICKET_TTL_MS = 5 * 60 * 1000;
  */
 const MAX_SESSION_AGE_MS = 12 * 60 * 60 * 1000;
 
-export type TokenPurpose = "session" | "totp-ticket";
+/**
+ * Long enough to choose a password without being rushed, short enough that a
+ * ticket left in a closed tab is not a standing capability. Fifteen minutes
+ * rather than the five a TOTP ticket gets: reading a code off a phone is a
+ * transcription, choosing a password is a decision.
+ */
+const SET_PASSWORD_TTL_MS = 15 * 60 * 1000;
+
+/**
+ * `set-password` is the capability to replace a password *without presenting the
+ * current one*, and it exists for exactly one person: someone who just redeemed
+ * a recovery code and therefore has no current password to present.
+ *
+ * It is a separate token rather than a flag on the session because a session is
+ * not evidence of how it was obtained. If `/api/account/set-password` authorised
+ * on the session alone, a stolen cookie — thirty minutes of access this design
+ * already accepts as bounded — would become permanent account takeover, since
+ * the thief could set a password and lock the owner out. Requiring a token that
+ * is minted only at the moment a recovery code is spent keeps the blast radius
+ * of a stolen session exactly where it is today.
+ *
+ * It rides in the response body, never in a cookie: it is a one-shot capability
+ * for the next request, not ambient authority attached to the browser.
+ */
+export type TokenPurpose = "session" | "totp-ticket" | "set-password";
 
 export interface Token {
   subject: string;
@@ -85,7 +109,12 @@ export async function mint(
   now = Date.now(),
   issuedAt = now,
 ): Promise<string> {
-  const ttl = purpose === "session" ? SESSION_TTL_MS : TICKET_TTL_MS;
+  const ttl =
+    purpose === "session"
+      ? SESSION_TTL_MS
+      : purpose === "set-password"
+        ? SET_PASSWORD_TTL_MS
+        : TICKET_TTL_MS;
   const nonce = toBase64Url(crypto.getRandomValues(new Uint8Array(9)));
   const body = `${purpose}.${toBase64Url(new TextEncoder().encode(subject))}.${now + ttl}.${issuedAt}.${nonce}`;
   return `${body}.${toBase64Url(await hmac(secret, body))}`;
