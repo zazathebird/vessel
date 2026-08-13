@@ -263,9 +263,29 @@ Three things that are decisions, and are easy to "fix" back into bugs:
   carries the pending credential id. Spending it earlier would burn one of ten codes per abandoned
   attempt, for the person recovery exists for.
 
-Next, in order: the operator surface and its reset flow, set/change password (which is what lets a
-redeemed recovery code write a fresh password slot), passkeys, then account/setups pages, then the
-dialog primitive and command palette.
+**Signup has a real UI as of 2026-08-12** — `src/components/SignUp.tsx` at `/signup`, linked from
+`FOOTER_NAV` as "Account". Verified in a browser against production: an account was created end to
+end and ten recovery codes rendered. The test account was deleted afterwards (`accounts`,
+`credentials` and `key_slots` all cascade to zero), because its password was written down in a
+transcript. **The account count is zero again, so `HANDLE_PATTERN` and the schema are still free to
+change without a migration.**
+
+**There is no sign-in UI.** You can create an account on the live site and cannot then use it from
+the browser. `/api/auth/challenge`, `/signin` and `/totp` all exist and are tested; only the form is
+missing. That is the smallest, highest-value next piece and it should come before anything else.
+
+Next, in order: **sign-in UI**, then the operator surface and its reset flow, set/change password
+(which is what lets a redeemed recovery code write a fresh password slot), passkeys, then
+account/setups pages, then the dialog primitive and command palette.
+
+**Not built, and asked for on 2026-08-12: an operator-only siteconfig whose saved settings apply to
+every visitor**, plus a way to hide/close config mode. This is not a small change. Config today is
+per-visitor in `localStorage` (`src/config/persistence.ts`); making it global needs a D1 table, a
+read endpoint the site calls on load, a write endpoint gated on `accounts.is_operator`, and a
+decision about precedence — whether a visitor's own choices override the operator's defaults or are
+replaced by them. That precedence question is a product decision, not an implementation detail, and
+it should be settled before the table is designed. It also depends on sign-in existing, since there
+is no way to be the operator in a browser yet.
 
 ### Four things the client has not yet signed off
 
