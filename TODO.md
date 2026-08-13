@@ -54,19 +54,15 @@ harness drives the whole loop — reset → recovery code → `setPassword`'s in
 branch → same grant key — and both refusals. The `/admin` button asks twice,
 like delete. **Unverified by eye:** the button states in a real browser.
 
-### 4. TOTP enrolment screen
+### 4. ~~TOTP enrolment screen~~ — done 2026-08-13
 
-Endpoints and tests exist; there is no UI, so nobody can turn on the second
-factor that sign-in already supports.
-
-**The trap, half closed 2026-08-13:** `api.totpEnrol` and `api.totpConfirm` now
-pass a caller-supplied body through (the harness drives them for real), but
-`worker/accounts.ts` calls `requirePassword` on both — the screen must still
-derive and send an `authSecret` with each, or every call 401s.
-
-§4 requires the secret be shown both as a manual string and as an `otpauth://`
-URI — both are already returned. No QR library (no third-party deps), so render
-the string and the URI as text.
+`beginTotpEnrolment` in `flows.ts` (the derived `authSecret` lives in its
+closure between enrol and confirm, the `RecoverySignIn` shape), rendered by
+`src/components/TotpEnrol.tsx` inside the signed-in summary. Secret and
+`otpauth://` URI as text — no QR, no library. Backup codes shown once with the
+honest-clipboard copy. The harness drives the flow, both refusals included.
+**Unverified by eye:** the screen itself, like every account screen — the
+client walks it in a real browser.
 
 ### 5. Passkeys, account/setups pages, dialog primitive, command palette
 

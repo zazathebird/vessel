@@ -11,6 +11,7 @@ import {
 } from "../auth/flows";
 import { looksLikeRecoveryCode } from "../auth/recoveryCodes";
 import { ApiError, api, type MeResult } from "../auth/api";
+import { TotpEnrol } from "./TotpEnrol";
 
 /**
  * Sign in, and — once you are — the account summary.
@@ -356,6 +357,21 @@ export function SignIn() {
     }
   }
 
+  /**
+   * Re-ask `/api/me` after something in the account changes shape — the same
+   * single source the signed-in view is always built from. Failing quietly is
+   * correct: if the session died in the meantime, the next action will say so
+   * with better words than a background refresh could.
+   */
+  async function refreshMe() {
+    try {
+      const me = await api.me();
+      setStage({ name: "signed-in", me });
+    } catch {
+      /* keep the current view; the next action reports properly */
+    }
+  }
+
   async function onSignOut() {
     setBusy(true);
     try {
@@ -441,6 +457,8 @@ export function SignIn() {
         )}
 
         <ChangePassword />
+
+        <TotpEnrol me={stage.me} onChanged={refreshMe} />
 
         <button type="button" className="v-btn" onClick={onSignOut} disabled={busy}>
           {busy ? "Signing out…" : "Sign out"}

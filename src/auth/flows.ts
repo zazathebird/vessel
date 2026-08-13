@@ -242,6 +242,61 @@ export async function signInWithRecoveryCode(
 }
 
 /**
+ * A two-factor enrolment in progress. Like `RecoverySignIn`, it is an object
+ * with a method because something derived must stay in a closure: both halves
+ * of enrolment demand the password's auth secret — a credential change demands
+ * the credential (§4) — and holding the derived secret here means the password
+ * is asked for once, lives as long as this object, and never sits in a
+ * component's state between the two requests.
+ */
+export interface TotpEnrolment {
+  /** Base32, for typing into an authenticator by hand. */
+  secret: string;
+  /** The same secret as an `otpauth://` URI, for apps that accept a pasted URI. */
+  uri: string;
+  /**
+   * Prove the authenticator holds the secret. Returns the ten backup codes,
+   * which the server keeps only hashes of — show them once and say so.
+   */
+  confirm(code: string): Promise<string[]>;
+}
+
+/**
+ * Begin two-factor enrolment on the signed-in account.
+ *
+ * §4 requires the secret be shown both as a manual string and as an
+ * `otpauth://` URI, and both come back from the enrol call. There is no QR
+ * code and there will not be one — rendering one needs a library, and the
+ * no-third-party rule outranks the convenience. The strings are the spec.
+ *
+ * A wrong password fails at the enrol call with the Worker's wording. An
+ * unconfirmed earlier attempt is replaced by beginning again, which is why
+ * this can be called freely; a *confirmed* enrolment is refused server-side,
+ * and clearing it is the operator's `reset 2FA`, not a route.
+ */
+export async function beginTotpEnrolment(password: string): Promise<TotpEnrolment> {
+  const { account } = await api.me();
+  const { kdf } = await api.challenge(account.handle);
+  const derived = await deriveFromPassword(password, {
+    salt: fromBase64Url(kdf.salt),
+    iterations: kdf.iterations,
+  });
+  const { secret, uri } = await api.totpEnrol({ authSecret: derived.authSecret });
+
+  return {
+    secret,
+    uri,
+    async confirm(code: string): Promise<string[]> {
+      const { backupCodes } = await api.totpConfirm({
+        code: code.replace(/\s/g, ""),
+        authSecret: derived.authSecret,
+      });
+      return backupCodes;
+    },
+  };
+}
+
+/**
  * Change the password on a signed-in account.
  *
  * The grant key does not change and must not: every slot holds the same key, and

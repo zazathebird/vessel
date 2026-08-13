@@ -13,6 +13,26 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-13 — The second factor can finally be turned on
+
+`TODO.md` item 4. The endpoints existed and were tested; nobody could reach them. The screen is
+`src/components/TotpEnrol.tsx`, inside the signed-in summary, and the sequence is
+`beginTotpEnrolment` in `flows.ts` — an object with a `confirm` method, the `RecoverySignIn`
+shape, because the derived auth secret must live between the enrol and confirm calls (both demand
+the password; a credential change demands the credential) and a closure is where it lives without
+sitting in component state. The password is asked for once.
+
+No QR code, deliberately: §4 requires the secret as a manual string and as an `otpauth://` URI,
+both come back from the Worker, and both render as selectable text (`user-select: all`).
+Rendering a QR needs a library and the no-third-party rule outranks the convenience. Backup codes
+render above every other state in the component — they are shown once, the server keeps hashes,
+and a re-render that swapped them for a summary would eat the only copy. The copy button reuses
+SignUp's honest-clipboard shape: it never says "copied" unless the write settled.
+
+`api.totpEnrol`/`api.totpConfirm` had hardcoded bodies that could only 401 (fixed with the
+harness work, same day); the harness now drives `beginTotpEnrolment` itself, wrong password and
+wrong code included.
+
 ## 2026-08-13 — Operator password reset ships, with two refusals
 
 `TODO.md` item 3, unblocked since `setPassword` grew its insert branch and `challenge` its salt

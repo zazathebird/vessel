@@ -1243,6 +1243,20 @@
   color: var(--fg);
 }
 
+/* The TOTP secret and its otpauth URI stack rather than sitting in the
+   two-column code grid — each is one long string, not one of a pair. */
+.v-codes-single {
+  grid-template-columns: 1fr;
+}
+
+/* The URI especially has no natural break points, so it breaks anywhere rather
+   than overflowing the 46ch column. `user-select: all` makes the first click
+   take the whole string — these are copied, never edited. */
+.v-totp-secret {
+  word-break: break-all;
+  user-select: all;
+}
+
 /* The cross-links between the two account pages, and the note under each form.
    Set as prose rather than as another button row: "no account? make one" is a
    sentence with a control in it, and a second bordered button next to the

@@ -25,6 +25,7 @@ import { api, ApiError } from "../src/auth/api";
 import { deriveFromPassword, deriveFromRecoveryCode, newKdfParams } from "../src/auth/derive";
 import { fromBase64Url, toBase64Url } from "../src/auth/encoding";
 import {
+  beginTotpEnrolment,
   changePassword as changePasswordFlow,
   openGrantKey,
   signIn as signInFlow,
@@ -981,28 +982,33 @@ async function main(): Promise<void> {
       ),
     );
 
-    // TOTP enrolment through api.ts — the exact calls the enrolment screen
-    // will make, including the trap: both need the password's authSecret.
+    // TOTP enrolment through the flow the enrolment screen calls. The derived
+    // auth secret lives in the flow's closure between enrol and confirm — the
+    // password is asked for once, which is the shape the screen depends on.
     const noSecret = await refusal(() => api.totpEnrol({}));
     check("api.totpEnrol without the password is refused", noSecret?.status === 401, noSecret?.message);
 
-    const { kdf } = await api.challenge(flowsHandle);
-    const derived = await deriveFromPassword(secondPassword, {
-      salt: fromBase64Url(kdf.salt),
-      iterations: kdf.iterations,
-    });
-    const enrol = await api.totpEnrol({ authSecret: derived.authSecret });
+    const wrongEnrolPassword = await refusal(() => beginTotpEnrolment("not the password"));
     check(
-      "api.totpEnrol returns the secret and the otpauth URI",
-      /^[A-Z2-7]{32}$/.test(enrol.secret) && enrol.uri.startsWith("otpauth://totp/"),
+      "beginTotpEnrolment demands the real password",
+      wrongEnrolPassword?.status === 401,
+      wrongEnrolPassword?.message,
     );
-    flowsTotpSecret = enrol.secret;
 
-    const confirmed = await api.totpConfirm({
-      code: await totpCode(enrol.secret),
-      authSecret: derived.authSecret,
-    });
-    check("api.totpConfirm issues ten backup codes", confirmed.backupCodes.length === 10);
+    const enrolment = await beginTotpEnrolment(secondPassword);
+    check(
+      "beginTotpEnrolment returns the secret and the otpauth URI",
+      /^[A-Z2-7]{32}$/.test(enrolment.secret) &&
+        enrolment.uri.startsWith("otpauth://totp/") &&
+        enrolment.uri.includes(enrolment.secret),
+    );
+    flowsTotpSecret = enrolment.secret;
+
+    const wrongConfirm = await refusal(() => enrolment.confirm("000000"));
+    check("a wrong confirmation code is refused through the flow", wrongConfirm?.status === 401, wrongConfirm?.message);
+
+    const backupCodes = await enrolment.confirm(await totpCode(enrolment.secret));
+    check("confirm issues ten backup codes", backupCodes.length === 10, String(backupCodes.length));
   }
 
   section("Recovery with two-factor, through flows.ts — the stranded-key path");
