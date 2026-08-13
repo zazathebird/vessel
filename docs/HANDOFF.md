@@ -21,12 +21,12 @@ Paste this to begin:
 >
 > Start by running `npm run test:auth` against `npm run dev:worker` — it should
 > pass. Kill any stray `wrangler dev` first: a second instance silently takes
-> port 8788 and the harness will not find it. Then work `TODO.md` item 1, which
-> is the coverage the suite does *not* have.
+> port 8788 and the harness will not find it.
 >
-> If those pass, tell me before moving on. After that, work `TODO.md` in order
-> unless I say otherwise. Do not deploy without running the verification block
-> in `docs/HANDOFF.md` afterwards.
+> If it passes, tell me before moving on. Then work `TODO.md` in order — the
+> first open items need me (redeeming a recovery code in a real browser), so the
+> first buildable one is item 5. Do not deploy without running the verification
+> block in `docs/HANDOFF.md` afterwards.
 
 ---
 
@@ -39,11 +39,14 @@ Paste this to begin:
 - **Withdrawn**: the lightsword duel. Code survives in `src/fx/effects.ts`; the
   two `FX` catalogue entries were removed. `docs/DUEL.md` is the spec for the
   rebuild.
-- **Not deployed**: everything committed on 2026-08-13. The review session was
-  local-only by instruction, so `main` and the live Worker are behind the working
-  tree. Run the verification block below *after* the first deploy that carries it.
-- **Unproven in a browser**: recovery-code sign-in. The harness covers the bytes;
-  no human has redeemed a code on the live site. `TODO.md` item 2.
+- **Not deployed**: everything committed on 2026-08-13 — the review session's
+  security fixes *and* the three items shipped since (harness coverage, operator
+  password reset, the TOTP enrolment screen). The review session was local-only
+  by instruction, so `main` and the live Worker are behind. Run the verification
+  block below *after* the first deploy that carries it.
+- **Unproven in a browser**: recovery-code sign-in, the reset-password button
+  states in `/admin`, and the TOTP enrolment screen. The harness covers the
+  bytes; no human has walked the screens. `TODO.md` items 2–4 notes.
 
 ---
 
