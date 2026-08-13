@@ -484,18 +484,6 @@
   box-shadow: 0 0 36px color-mix(in oklab, var(--a1) 34%, transparent);
 }
 
-.v-vitals {
-  display: flex;
-  gap: 18px;
-  flex-wrap: wrap;
-  padding-top: 8px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--faint);
-}
-
 /* The hero ornament ---------------------------------------------------------
  *
  * One square slot, four things that can sit in it, all drawn from palette
