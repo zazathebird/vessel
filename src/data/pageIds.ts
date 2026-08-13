@@ -1,9 +1,10 @@
 /**
- * The nine pages and their real URLs.
+ * The twelve pages and their real URLs — the spec's nine, plus signup, signin
+ * and admin.
  *
  * The prototype swaps pages in place with no URL change; the spec is explicit
  * that this is a prototype limitation, not a design decision, so the real build
- * gets nine addressable routes.
+ * gets twelve addressable routes.
  */
 
 export type PageId =

@@ -25,7 +25,10 @@ export function publishedConfig(): Partial<Config> | null {
   return raw as Partial<Config>;
 }
 
-/** The fields an operator publishes. `page` is per-visit; `unlocked` is per-browser. */
+/**
+ * The fields an operator publishes. `page` is per-visit, and `unlocked` is
+ * per-session — omitting it here is what makes it false again on every reload.
+ */
 export const PUBLISHED_KEYS = [
   "pal",
   "layout",

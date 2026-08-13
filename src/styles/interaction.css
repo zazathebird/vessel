@@ -56,7 +56,9 @@
 .vessel .v-swatch,
 .vessel .v-door-go,
 .vessel .v-door-leave,
-.vessel .v-knock {
+.vessel .v-knock,
+.vessel .v-shuffle,
+.vessel .v-panel-close {
   transition: background-color 0.9s ease, color 0.9s ease, border-color 0.9s ease,
     box-shadow var(--t-hover) var(--ease-ui), translate var(--t-hover) var(--ease-ui),
     scale var(--t-press) var(--ease-ui);
@@ -68,7 +70,9 @@
 .vessel .v-swatch:hover:not(:disabled),
 .vessel .v-door-go:hover:not(:disabled),
 .vessel .v-door-leave:hover:not(:disabled),
-.vessel .v-knock:hover:not(:disabled) {
+.vessel .v-knock:hover:not(:disabled),
+.vessel .v-shuffle:hover:not(:disabled),
+.vessel .v-panel-close:hover:not(:disabled) {
   translate: 0 -1px;
   box-shadow: 0 3px 16px color-mix(in oklab, var(--a1) 20%, transparent);
 }
@@ -91,7 +95,9 @@
 .vessel .v-swatch:active:not(:disabled),
 .vessel .v-door-go:active:not(:disabled),
 .vessel .v-door-leave:active:not(:disabled),
-.vessel .v-knock:active:not(:disabled) {
+.vessel .v-knock:active:not(:disabled),
+.vessel .v-shuffle:active:not(:disabled),
+.vessel .v-panel-close:active:not(:disabled) {
   translate: 0 0;
   scale: 0.978;
 }
@@ -158,6 +164,11 @@
    only, never a colour, never `transform` — `transform` belongs to the
    cursor-lean. The `.vessel` prefix takes these to 0-2-0 so they beat the
    0-1-0 base rules in chrome.css on specificity rather than import order. */
+
+.vessel .v-btn {
+  transition: background-color 0.9s ease, color 0.9s ease, border-color 0.9s ease,
+    translate var(--t-hover) var(--ease-ui), scale var(--t-press) var(--ease-ui);
+}
 
 .vessel .v-btn:hover:not(:disabled) {
   translate: 0 -1px;

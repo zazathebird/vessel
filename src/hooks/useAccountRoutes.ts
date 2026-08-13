@@ -86,17 +86,25 @@ export function useAccountRoutes(): void {
       }
     };
 
+    // Selecting text is a drag. `/signup`'s recovery codes render exactly once
+    // — the server keeps only hashes — and reading ten of them back means
+    // selecting them, right-to-left as often as not; navigating on that would
+    // unmount the screen and lose the codes for good. Two guards because one
+    // does not cover it: the target check catches a drag begun inside an input,
+    // and the selection check catches one begun on ordinary text.
     const onDown = (event: PointerEvent) => {
-      dragFrom.current = event.clientX;
+      dragFrom.current = isEditable(event.target) ? null : event.clientX;
     };
 
     const onUp = (event: PointerEvent) => {
       const from = dragFrom.current;
       dragFrom.current = null;
+      if (from === null) return;
+      if (window.getSelection()?.toString()) return;
       // Leftward, where the door is rightward. `useOperatorRoutes` owns the
       // other direction and the two thresholds are equal on purpose, so the
       // gesture is one motion with two meanings rather than two motions.
-      if (from !== null && from - event.clientX > DRAG_THRESHOLD) enter("pulled the other way");
+      if (from - event.clientX > DRAG_THRESHOLD) enter("pulled the other way");
     };
 
     window.addEventListener("keydown", onKey);

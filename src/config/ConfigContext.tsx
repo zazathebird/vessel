@@ -51,7 +51,8 @@ interface ConfigContextValue {
   doorOpen: boolean;
   /** Which unlock route fired, e.g. "unlocked via five taps". Shown in the door modal. */
   doorVia: string;
-  openDoor: (via: string) => void;
+  /** Opens the door. Returns false for a non-operator, so a route can decline to eat its keystroke. */
+  openDoor: (via: string) => boolean;
   closeDoor: () => void;
   /** authenticate: sets unlocked, opens the panel, closes the door. Theatre — see CLAUDE.md. */
   openConfig: () => void;
@@ -116,9 +117,11 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
 
   // The idle timer fires a minute after the last click, long after the render
   // that armed it, so it reads current state from a ref rather than a closure.
-  const live = useRef({ calm: config.calm, panelOpen, doorOpen, saverHeld });
+  // `go` reads the same ref: a setConfig updater has to be pure, and StrictMode
+  // double-invokes it, so the branch it takes cannot live inside one.
+  const live = useRef({ config, panelOpen, doorOpen, saverHeld });
   useEffect(() => {
-    live.current = { calm: config.calm, panelOpen, doorOpen, saverHeld };
+    live.current = { config, panelOpen, doorOpen, saverHeld };
   });
 
   const say = useCallback((message: string) => {
@@ -180,8 +183,8 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     window.clearTimeout(idleTimer.current);
     setSaver((sleeping) => (sleeping ? false : sleeping));
     idleTimer.current = window.setTimeout(() => {
-      const { calm, panelOpen: panel, doorOpen: door, saverHeld: held } = live.current;
-      if (calm || panel || door || held) return;
+      const { config: cfg, panelOpen: panel, doorOpen: door, saverHeld: held } = live.current;
+      if (cfg.calm || panel || door || held) return;
       setSaver(true);
     }, 60_000);
   }, []);
@@ -282,32 +285,29 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   // ugly transition is hidden. Calm mode skips the dive and cuts instantly.
   const go = useCallback((page: PageId) => {
     poke();
-    setConfig((previous) => {
-      if (previous.page === page) return previous;
+    if (live.current.config.page === page) return;
 
-      const commit = () => {
-        if (window.location.pathname !== PATHS[page]) {
-          window.history.pushState({}, "", PATHS[page]);
-        }
-        setConfig((prev) => {
-          const next = { ...prev, page };
-          const result = prev.mode === "page" ? roll(prev) : null;
-          return result ? { ...next, ...result } : next;
-        });
-        setNav((n) => n + 1);
-        setPanelOpen(false);
-        setDiving(false);
-      };
-
-      if (previous.calm) {
-        commit();
-        return previous;
+    const commit = () => {
+      if (window.location.pathname !== PATHS[page]) {
+        window.history.pushState({}, "", PATHS[page]);
       }
-      setDiving(true);
-      window.clearTimeout(diveTimer.current);
-      diveTimer.current = window.setTimeout(commit, 300);
-      return previous;
-    });
+      // Rolled out here rather than inside the updater: roll() is random, and a
+      // double-invoked updater would spend two rolls to apply one.
+      const current = live.current.config;
+      const result = current.mode === "page" ? roll(current) : null;
+      setConfig((prev) => ({ ...prev, page, ...(result ?? {}) }));
+      setNav((n) => n + 1);
+      setPanelOpen(false);
+      setDiving(false);
+    };
+
+    if (live.current.config.calm) {
+      commit();
+      return;
+    }
+    setDiving(true);
+    window.clearTimeout(diveTimer.current);
+    diveTimer.current = window.setTimeout(commit, 300);
   }, [poke]);
 
   /**
@@ -332,10 +332,11 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
 
   const openDoor = useCallback(
     (via: string) => {
-      if (!isOperator) return;
+      if (!isOperator) return false;
       setDoorVia(`unlocked via ${via}`);
       setDoorOpen(true);
       setPanelOpen(false);
+      return true;
     },
     [isOperator],
   );

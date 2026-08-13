@@ -28,7 +28,24 @@ const KONAMI = [
   "a",
 ].join(" ");
 
+const KONAMI_KEYS = KONAMI.split(" ");
+
 const DRAG_THRESHOLD = 260;
+
+/**
+ * Is the tail of the buffer the opening of a konami?
+ *
+ * The code contains two ArrowLefts and two ArrowRights, so without this an
+ * operator entering it is paged across four pages before the door opens.
+ * A complete match is not "started" — the door branch has already taken it.
+ */
+function konamiStarted(keys: string[]): boolean {
+  for (let i = 0; i < keys.length; i++) {
+    const tail = keys.slice(i);
+    if (tail.length < KONAMI_KEYS.length && tail.every((k, j) => k === KONAMI_KEYS[j])) return true;
+  }
+  return false;
+}
 
 /**
  * Is the keystroke going into a field the visitor is typing in?
@@ -65,8 +82,10 @@ export function useOperatorRoutes(): void {
       poke();
 
       if ((event.metaKey || event.ctrlKey) && key === "k") {
-        event.preventDefault();
-        openDoor("⌘K");
+        // Only take the keystroke off the browser if the door actually opens.
+        // `openDoor` refuses everyone who is not the operator, which is every
+        // visitor, and stealing their ⌘K in exchange for nothing is a tax.
+        if (openDoor("⌘K")) event.preventDefault();
         return;
       }
       if (key === "escape") {
@@ -81,35 +100,49 @@ export function useOperatorRoutes(): void {
       // one to leave and one because it is a global command.
       if (isEditable(event.target)) return;
 
-      if ((key === "arrowright" || key === "arrowleft") && !live.current.panelOpen) {
-        const i = NAV.findIndex((n) => n.id === live.current.page);
-        if (i > -1) {
-          go(NAV[(i + (key === "arrowright" ? 1 : NAV.length - 1)) % NAV.length].id);
-        }
-      }
-
+      // The buffer is read before paging, not after, because an arrow key can
+      // belong to either and the sequence has the stronger claim on it.
       keys.push(key);
       if (keys.length > 12) keys.shift();
       const buffer = keys.join(" ");
       if (buffer.includes("s u d o")) {
         keys.length = 0;
         openDoor("typed command");
-      } else if (buffer.includes(KONAMI)) {
+        return;
+      }
+      if (buffer.includes(KONAMI)) {
         keys.length = 0;
         openDoor("konami");
+        return;
+      }
+
+      if (
+        (key === "arrowright" || key === "arrowleft") &&
+        !live.current.panelOpen &&
+        !konamiStarted(keys)
+      ) {
+        const i = NAV.findIndex((n) => n.id === live.current.page);
+        if (i > -1) {
+          go(NAV[(i + (key === "arrowright" ? 1 : NAV.length - 1)) % NAV.length].id);
+        }
       }
     };
 
+    // A drag that is a text selection must not open the door. Same reasoning as
+    // `useAccountRoutes`, which owns the other direction: selecting the share
+    // code in the panel, or ten recovery codes that render exactly once, is a
+    // sideways pointer drag over text and nothing else.
     let dragFrom: number | null = null;
     const onDown = (event: PointerEvent) => {
-      dragFrom = event.clientX;
+      dragFrom = isEditable(event.target) ? null : event.clientX;
       poke();
     };
     const onUp = (event: PointerEvent) => {
-      if (dragFrom !== null && event.clientX - dragFrom > DRAG_THRESHOLD) {
-        openDoor("dragged sideways");
-      }
+      const from = dragFrom;
       dragFrom = null;
+      if (from === null) return;
+      if (window.getSelection()?.toString()) return;
+      if (event.clientX - from > DRAG_THRESHOLD) openDoor("dragged sideways");
     };
 
     window.addEventListener("keydown", onKey);

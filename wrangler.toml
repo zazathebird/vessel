@@ -30,6 +30,12 @@ routes = [
   { pattern = "mcclevarty.ca/*", zone_name = "mcclevarty.ca" },
 ]
 
+# The routes above make `wrangler dev` simulate `http://mcclevarty.ca/...`, so
+# the loopback exemption in `httpsRedirect` never matches and every local
+# request 301s to itself. https matches what production sees after edge TLS.
+[dev]
+upstream_protocol = "https"
+
 [assets]
 directory = "./dist"
 binding = "ASSETS"

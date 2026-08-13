@@ -20,7 +20,7 @@ import { Screensaver } from "./components/Screensaver";
 
 /**
  * The whole site: one chrome — header, hero with the valve, content grid,
- * footer — shared by all nine pages and restyled per layout by CSS alone,
+ * footer — shared by all twelve pages and restyled per layout by CSS alone,
  * over the canvas and under the three overlays.
  *
  * The overlays are siblings of `.v-chrome` rather than children, because the
@@ -51,10 +51,13 @@ export default function App() {
   useOperatorRoutes();
   useAccountRoutes();
 
-  // A new page starts at the top. The stage is the scroll container, not the
-  // window, so this cannot be left to the browser.
+  // A new page starts at the top, and with its own name in the tab. The stage
+  // is the scroll container in every layout but Terminal, which gives it
+  // `height: auto` and scrolls the document — so both have to be reset.
   useEffect(() => {
     if (stageRef.current) stageRef.current.scrollTop = 0;
+    window.scrollTo(0, 0);
+    document.title = `${PAGES[config.page].title} · vessel`;
   }, [config.page]);
 
   const stageAnimation = config.calm

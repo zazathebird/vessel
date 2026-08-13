@@ -4,6 +4,10 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>vessel</title>
+    <!-- An empty data: icon, not a file: no images and no third-party assets
+         (SPEC.md § Assets). Without it /favicon.ico falls through to the Worker
+         and is answered with the app shell, once per visitor. -->
+    <link rel="icon" href="data:," />
     <meta
       name="description"
       content="Independent computer repair. One person, no shopfront, free diagnosis."

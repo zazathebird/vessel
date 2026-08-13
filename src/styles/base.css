@@ -71,14 +71,6 @@ body {
   border-radius: 3px;
 }
 
-.stage {
-  position: relative;
-  z-index: 5;
-  max-width: 1180px;
-  margin: 0 auto;
-  padding: var(--page-padding);
-}
-
 /* Shared chrome primitives ------------------------------------------------ */
 
 .mono {

@@ -1,5 +1,6 @@
 /**
- * Final page copy for all nine pages.
+ * Final page copy for all twelve pages — the spec's nine, plus the three
+ * account pages, whose hero copy was written for this build.
  * Copied verbatim from the prototype's PAGES object (Site v2 - Vessel.dc.html:366).
  *
  * COPY CORRECTION, approved by the client (see CLAUDE.md):

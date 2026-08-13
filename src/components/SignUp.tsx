@@ -76,15 +76,25 @@ export function SignUp() {
         </p>
         <ul className="v-codes">
           {result.codes.map((code) => (
-            <li key={code} className="v-code">{code}</li>
+            <li key={code} className="v-recovery-code">{code}</li>
           ))}
         </ul>
         <button
           type="button"
           className="v-btn"
           onClick={() => {
-            navigator.clipboard?.writeText(result.codes.join("\n"));
-            say("Recovery codes copied.");
+            // The one copy on the site that must never claim a success it did
+            // not have: a denied clipboard write plus "copied" is how someone
+            // leaves this screen with nothing.
+            const written = navigator.clipboard?.writeText(result.codes.join("\n"));
+            if (!written) {
+              say("Copying is unavailable here — write them down.");
+              return;
+            }
+            written.then(
+              () => say("Recovery codes copied."),
+              () => say("Copy was blocked — write them down."),
+            );
           }}
         >
           Copy all ten

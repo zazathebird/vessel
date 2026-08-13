@@ -67,8 +67,9 @@ export function themeVars(config: Config, layout: LayoutId, band: Band): CSSProp
     "--faint": palette.faint,
     "--a1": lost ? palette.muted : palette.a1,
     // Calm leaves exactly one accent: a2 and a3 collapse into the neutral ramp.
+    // 404 drops all three, or the one left saturated is the one it draws the eye to.
     "--a2": calm ? palette.muted : lost ? palette.faint : palette.a2,
-    "--a3": calm ? palette.faint : palette.a3,
+    "--a3": calm || lost ? palette.faint : palette.a3,
 
     "--font-body": type.body,
     "--font-display": type.display,

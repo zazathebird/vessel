@@ -101,8 +101,5 @@ export const BAND_TOKENS: Record<Band, BandTokens> = {
   },
 };
 
-/** The valve is hidden on phones outright, not merely shrunk. */
-export const SHOWS_VALVE: Record<Band, boolean> = { phone: false, tablet: true, desk: true };
-
 /** Cursor-lean card tilt needs a hovering pointer; on touch it only jitters. */
 export const SUPPORTS_TILT: Record<Band, boolean> = { phone: false, tablet: false, desk: true };

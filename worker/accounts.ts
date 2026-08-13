@@ -255,8 +255,35 @@ async function limiterFetch(env: Env, name: string, path: string): Promise<RateV
  * the version of that which tells a locked-out owner nothing.
  */
 async function assertAllowed(env: Env, names: string[]): Promise<void> {
+  await gate(env, names, "/check");
+}
+
+/**
+ * Reserve an attempt in the same round-trip that checks it.
+ *
+ * `/check` then `/fail` is two round-trips, and between them the bucket says
+ * nothing is happening. Fire five hundred concurrent sign-ins for one handle and
+ * every one of them reads the bucket, sees fewer than five failures and
+ * proceeds — five hundred password guesses against an allowance of five. The
+ * Durable Object serialises the *writes* faithfully; it simply has nothing to
+ * refuse, because every caller already passed.
+ *
+ * `/attempt` counts the attempt as a failure up front, so the object's
+ * single-threaded execution actually decides: the Nth concurrent caller sees
+ * N-1 already recorded. `recordSuccess` refunds it, which is why the honest path
+ * is unchanged — a correct password still carries nothing forward.
+ *
+ * **Every credential check should use this, and `challenge` must not.** Asking
+ * for a salt is not a failable attempt, and counting it would let anyone lock an
+ * owner out of their own account by requesting theirs in a loop.
+ */
+async function assertAttempt(env: Env, names: string[]): Promise<void> {
+  await gate(env, names, "/attempt");
+}
+
+async function gate(env: Env, names: string[], path: string): Promise<void> {
   for (const name of names) {
-    const verdict = await limiterFetch(env, name, "/check");
+    const verdict = await limiterFetch(env, name, path);
     if (!verdict.allowed) {
       const seconds = Math.max(1, Math.ceil((verdict.retryAt - Date.now()) / 1000));
       throw new BadRequest(
@@ -269,6 +296,13 @@ async function assertAllowed(env: Env, names: string[]): Promise<void> {
   }
 }
 
+/**
+ * Count a failure that `assertAttempt` did not already reserve.
+ *
+ * Still needed for the paths that are not credential checks — signup's handle
+ * collision and its creation quota — and harmless after `assertAttempt`, which
+ * is why the credential paths drop their trailing call rather than keeping both.
+ */
 async function recordFailure(env: Env, names: string[]): Promise<void> {
   await Promise.all(names.map((name) => limiterFetch(env, name, "/fail")));
 }
@@ -385,12 +419,35 @@ async function withSession(
  */
 async function requirePassword(request: Request, env: Env, account: AccountRow): Promise<void> {
   const body = await readJson(request);
-  await assertPassword(env, account, body.authSecret);
+  await assertPassword(request, env, account, body.authSecret);
 }
 
-async function assertPassword(env: Env, account: AccountRow, supplied: unknown): Promise<void> {
+/**
+ * **The rate limiting lives in here, not in the callers.**
+ *
+ * This is a password check, and every other password check on the site counts
+ * against the limiter. These two did not: `totpEnrol` called this with no bucket
+ * at all, and `totpConfirm` called it *above* the bucket it later set up for the
+ * TOTP code, so a wrong password there was never recorded either. That left one
+ * unthrottled online password oracle — and the caller who benefits from it is
+ * precisely the one who should not exist: somebody holding a session obtained
+ * *without* the password, via a recovery code or a stolen cookie. The password
+ * is what opens the key slot, so grinding it there is an escalation from session
+ * access to grant authority, which §5 exists to prevent.
+ *
+ * Putting the counting inside the check means a future caller cannot forget it.
+ */
+async function assertPassword(
+  request: Request,
+  env: Env,
+  account: AccountRow,
+  supplied: unknown,
+): Promise<void> {
   const refused = new BadRequest("Enter your password to change how you sign in.", 401);
   if (typeof supplied !== "string") throw refused;
+
+  const names = await buckets(request, env, account.handle.toLowerCase());
+  await assertAttempt(env, names);
 
   const authSecret = expectBytes(supplied, AUTH_SECRET_BYTES, "Authentication secret");
   const row = await env.DB.prepare(
@@ -402,6 +459,7 @@ async function assertPassword(env: Env, account: AccountRow, supplied: unknown):
 
   const presented = new Uint8Array(await authHash(env.AUTH_PEPPER, toBase64Url(authSecret)));
   if (!timingSafeEqual(presented, fromBlob(row.auth_hash))) throw refused;
+  await recordSuccess(env, names);
 }
 
 function publicAccount(account: AccountRow) {
@@ -614,18 +672,26 @@ export async function challenge(request: Request, env: Env): Promise<Response> {
     });
   }
 
-  // The iteration count is derived alongside the salt rather than hardcoded.
-  // Today every account uses the same default, so a fixed number would give
-  // nothing away — but the moment the browser scales the count to the device, or
-  // the default is raised for new accounts, a constant here would make every
-  // existing account distinguishable from a nonexistent one and quietly undo the
-  // decoy. Deriving it means the fake varies the way the real values will.
+  // **The decoy must report exactly what a real account reports.**
+  //
+  // An earlier version varied the count — `600000 + (hmac(handle) % 200) * 1000`
+  // — reasoning that a constant would betray every existing account the moment
+  // the browser started scaling iterations to the device. That reasoning is
+  // right about the future and backwards about the present: `DEFAULT_ITERATIONS`
+  // is a constant in `src/auth/derive.ts`, so every real account reports 600000
+  // exactly and nothing else can. The spread was therefore the tell — one
+  // unauthenticated request classified any handle, `> 600000` meaning "certainly
+  // does not exist" and `== 600000` meaning "exists" at 199/200 — which is the
+  // handle oracle this whole endpoint exists to deny, and `challenge` never
+  // records a failure, so probing it is unthrottled.
+  //
+  // When real counts do start varying, sample this from the same distribution.
+  // Until then the only safe decoy is the real value.
   const decoy = new Uint8Array(await hmac(env.AUTH_PEPPER, `decoy-salt:${handleLower}`));
-  const spread = ((decoy[KDF_SALT_BYTES] << 8) | decoy[KDF_SALT_BYTES + 1]) % 200;
   return json({
     kdf: {
       salt: toBase64Url(decoy.slice(0, KDF_SALT_BYTES)),
-      iterations: 600_000 + spread * 1_000,
+      iterations: DEFAULT_ITERATIONS,
       recoveryIterations: RECOVERY_ITERATIONS_DEFAULT,
     },
   });
@@ -646,7 +712,7 @@ export async function signin(request: Request, env: Env): Promise<Response> {
   const authSecret = expectBytes(body.authSecret, AUTH_SECRET_BYTES, "Authentication secret");
 
   const names = await buckets(request, env, handleLower);
-  await assertAllowed(env, names);
+  await assertAttempt(env, names);
 
   const wrong = new BadRequest("That handle and password do not match.", 401);
 
@@ -668,7 +734,6 @@ export async function signin(request: Request, env: Env): Promise<Response> {
     // made-up one and the medians separate cleanly, whatever the response body
     // says. The sentinel id matches nothing and the query plan is identical.
     await lookupCredentials(env, "no-such-account", kind);
-    await recordFailure(env, names);
     throw wrong;
   }
 
@@ -683,7 +748,6 @@ export async function signin(request: Request, env: Env): Promise<Response> {
   }
 
   if (!credential) {
-    await recordFailure(env, names);
     throw wrong;
   }
 
@@ -804,7 +868,19 @@ async function completeSignIn(
     // rather than at `signin` so that an account with a second factor gets it
     // after TOTP rather than before — this function is the single point both
     // paths converge on.
-    setPasswordTicket = await session.mint(env.SESSION_SECRET, "set-password", account.id);
+    //
+    // **The subject carries the redeemed credential, not just the account**, and
+    // that is what makes the ticket single-use. A token is a bearer capability
+    // with no memory: verifying it proves it was minted, never that it has not
+    // already been spent. `setPassword` deletes this credential's key slot as
+    // part of the same batch that writes the new password, so requiring the slot
+    // to still exist turns "already used" into a refusal without a table to
+    // track spent tickets in.
+    setPasswordTicket = await session.mint(
+      env.SESSION_SECRET,
+      "set-password",
+      `${account.id}:${credentialId}`,
+    );
   }
 
   await env.DB.batch(statements);
@@ -850,7 +926,7 @@ export async function signinTotp(request: Request, env: Env): Promise<Response> 
 
   const names = await buckets(request, env, null);
   names.push(`second-factor:${accountId}`);
-  await assertAllowed(env, names);
+  await assertAttempt(env, names);
 
   // One sentence for every way the second factor can fail. Distinguishing "that
   // code has already been used" from "that code is wrong" tells an attacker
@@ -890,16 +966,10 @@ export async function signinTotp(request: Request, env: Env): Promise<Response> 
     )
       .bind(step, accountId, step)
       .run();
-    if (claimed.meta.changes !== 1) {
-      await recordFailure(env, names);
-      throw wrong;
-    }
+    if (claimed.meta.changes !== 1) throw wrong;
   } else {
     const spent = await spendBackupCode(env, row.backup_codes_hash, code);
-    if (!spent) {
-      await recordFailure(env, names);
-      throw wrong;
-    }
+    if (!spent) throw wrong;
     // Same reasoning, and here the race is worse: two concurrent redemptions of
     // *different* codes both read the full list and both write their own copy
     // back, so the loser's strike-off is lost and an already-accepted code goes
@@ -910,10 +980,7 @@ export async function signinTotp(request: Request, env: Env): Promise<Response> 
     )
       .bind(spent, accountId, row.backup_codes_hash)
       .run();
-    if (claimed.meta.changes !== 1) {
-      await recordFailure(env, names);
-      throw wrong;
-    }
+    if (claimed.meta.changes !== 1) throw wrong;
     await env.DB.batch([auditStatement(env, accountId, "auth.totp.backup-used", null)]);
   }
 
@@ -1093,7 +1160,7 @@ export async function changePassword(request: Request, env: Env): Promise<Respon
 
   // A wrong current password is a failed authentication and is counted as one.
   const names = await buckets(request, env, account.handle.toLowerCase());
-  await assertAllowed(env, names);
+  await assertAttempt(env, names);
 
   const credential = await env.DB.prepare(
     "SELECT id, auth_hash FROM credentials WHERE account_id = ? AND kind = 'password'",
@@ -1104,7 +1171,6 @@ export async function changePassword(request: Request, env: Env): Promise<Respon
 
   const hash = new Uint8Array(await authHash(env.AUTH_PEPPER, toBase64Url(presented)));
   if (!timingSafeEqual(hash, fromBlob(credential.auth_hash))) {
-    await recordFailure(env, names);
     throw new BadRequest("That is not your current password.", 401);
   }
   await recordSuccess(env, names);
@@ -1157,14 +1223,33 @@ export async function setPassword(request: Request, env: Env): Promise<Response>
 
   const ticket = typeof body.ticket === "string" ? body.ticket : "";
   const claim = await session.verify(env.SESSION_SECRET, "set-password", ticket);
+  const [ticketAccountId, redeemedCredentialId] = (claim?.subject ?? "").split(":");
+
+  const closed = new BadRequest(
+    "The window for setting a password has closed. Sign in with another recovery code to start again.",
+    401,
+  );
+
   // Bound to the account as well as verified, so a ticket cannot be carried from
   // one account's recovery into another's session.
-  if (!claim || claim.subject !== account.id) {
-    throw new BadRequest(
-      "The window for setting a password has closed. Sign in with another recovery code to start again.",
-      401,
-    );
-  }
+  if (!claim || !redeemedCredentialId || ticketAccountId !== account.id) throw closed;
+
+  // **And spent, not merely valid.** Verification proves the ticket was minted;
+  // it cannot prove it has not already been used, because a signed token has no
+  // memory. The key slot belonging to the recovery code that bought this ticket
+  // is deleted by the batch below, so its continued existence *is* the unspent
+  // marker — and checking it costs one query instead of a table.
+  //
+  // Without this the ticket replays for its full fifteen minutes: a caller who
+  // holds the session could set the password repeatedly, which is the property
+  // `TokenPurpose` in `./session` already claims ("a one-shot capability for the
+  // next request") and did not have.
+  const unspent = await env.DB.prepare(
+    "SELECT 1 AS ok FROM key_slots WHERE credential_id = ? AND account_id = ?",
+  )
+    .bind(redeemedCredentialId, account.id)
+    .first<{ ok: number }>();
+  if (!unspent) throw closed;
 
   const nextSecret = expectBytes(body.authSecret, AUTH_SECRET_BYTES, "New password");
   const slot = expectBytes(body.passwordSlot, WRAPPED_KEY_BYTES, "Key slot");
@@ -1292,7 +1377,7 @@ export async function totpEnrol(request: Request, env: Env): Promise<Response> {
 export async function totpConfirm(request: Request, env: Env): Promise<Response> {
   const account = await requireAccount(request, env);
   const body = await readJson(request);
-  await assertPassword(env, account, body.authSecret);
+  await assertPassword(request, env, account, body.authSecret);
   const code = typeof body.code === "string" ? body.code : "";
 
   const row = await env.DB.prepare("SELECT secret_enc, confirmed_at FROM totp WHERE account_id = ?")
@@ -1302,12 +1387,11 @@ export async function totpConfirm(request: Request, env: Env): Promise<Response>
   if (row.confirmed_at) throw new BadRequest("Two-factor is already set up on this account.", 409);
 
   const names = await buckets(request, env, `totp-enrol:${account.id}`);
-  await assertAllowed(env, names);
+  await assertAttempt(env, names);
 
   const secret = await decryptSecret(env.TOTP_ENC_KEY, fromBlob(row.secret_enc));
   const step = await verifyTotp(secret, code);
   if (step === null) {
-    await recordFailure(env, names);
     throw new BadRequest("That code is not right. Check your authenticator and try again.", 401);
   }
   await recordSuccess(env, names);

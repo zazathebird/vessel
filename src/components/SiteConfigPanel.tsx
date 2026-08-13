@@ -318,7 +318,7 @@ export function SiteConfigPanel() {
        * is the order the job is done in.
        */}
       <section className="v-panel-section">
-        <h2 className="v-panel-label" id="v-publish-label">
+        <h2 className="v-panel-label">
           Publish to everyone
         </h2>
         <p className="v-panel-note">
@@ -329,7 +329,6 @@ export function SiteConfigPanel() {
         <button
           type="button"
           className="chip"
-          aria-labelledby="v-publish-label"
           onClick={publish}
           disabled={publishState === "publishing"}
         >

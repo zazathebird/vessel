@@ -318,9 +318,10 @@
   margin-left: 10px;
 }
 
+/* No overflow rule: Terminal gives the stage `height: auto`, so this box has no
+   height to scroll within and the document scrolls instead. */
 .v-termbody {
   padding: 0 34px 34px;
-  overflow-y: auto;
 }
 
 .band-phone .v-termbody {
@@ -1228,7 +1229,10 @@
   gap: 8px;
 }
 
-.v-code {
+/* Not `.v-code`: that name belongs to the share-code field in overlays.css,
+   which is imported after this file and would win on order at equal
+   specificity — taking these to 12px in --a1 with a text field's padding. */
+.v-recovery-code {
   padding: 9px 11px;
   border: 1px solid var(--line);
   border-radius: var(--radius);

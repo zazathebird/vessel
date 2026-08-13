@@ -70,6 +70,8 @@ export class RateLimiter {
     switch (url.pathname) {
       case "/check":
         return json(await this.check(now, free));
+      case "/attempt":
+        return json(await this.attempt(now, free));
       case "/fail":
         return json(await this.fail(now, free));
       case "/succeed":
@@ -100,6 +102,38 @@ export class RateLimiter {
       remaining: Math.max(0, free - bucket.failures),
       retryAt: 0,
     };
+  }
+
+  /**
+   * Check **and consume** in one invocation — the attempt is counted as a
+   * failure up front, and `/succeed` refunds it.
+   *
+   * `/check` followed by `/fail` is two round-trips, so N concurrent requests
+   * could all pass the check before any failure landed — a burst bypass of the
+   * whole backoff. Reserving here closes that: the single-threaded object
+   * serialises the increments, so the Nth concurrent attempt sees N-1 already
+   * counted. The attempt that crosses the allowance is still permitted (its
+   * outcome is unknown); everything after it is blocked until refunded.
+   */
+  private async attempt(now: number, free: number): Promise<RateVerdict> {
+    const bucket = await this.load(now);
+    if (bucket.blockedUntil > now) {
+      return { allowed: false, remaining: 0, retryAt: bucket.blockedUntil };
+    }
+
+    bucket.failures += 1;
+    bucket.expiresAt = now + WINDOW_MS;
+    const over = bucket.failures - free;
+    if (over > 0) {
+      const penalty = Math.min(WINDOW_MS * 2 ** (over - 1), MAX_PENALTY_MS);
+      bucket.blockedUntil = now + penalty;
+      bucket.expiresAt = bucket.blockedUntil + WINDOW_MS;
+    }
+
+    await this.state.storage.put("bucket", bucket);
+    await this.state.storage.setAlarm(bucket.expiresAt);
+
+    return { allowed: true, remaining: Math.max(0, free - bucket.failures), retryAt: 0 };
   }
 
   /**

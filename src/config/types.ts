@@ -26,7 +26,12 @@ export interface Config {
   grain: boolean;
   breathe: boolean;
   cursor: boolean;
-  /** Has the operator door ever been opened. Sticky once true. */
+  /**
+   * Has the operator door been opened in this session. Not persisted and not
+   * published, so it is false again after every reload — `loadConfig` reads the
+   * published config only, and `unlocked` is not one of its keys. Nothing is
+   * gated on it: the door and the panel check `is_operator` instead.
+   */
   unlocked: boolean;
 }
 
