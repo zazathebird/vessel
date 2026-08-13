@@ -13,6 +13,32 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-13 — The dialog primitive, and /admin's destructive actions moved onto it
+
+`TODO.md` item 5's third piece, to §10's letter: `src/components/Dialog.tsx` exports
+`Dialog` (focus-trapped via the existing `useFocusTrap`, Escape to dismiss, focus returned
+by the trap's cleanup, 22px backdrop blur, 340ms entrance on the standard curve, z-index
+**75** in §11's ladder, palette-driven throughout) and `ConfirmDialog` (the destructive
+shape: consequence in specific terms, optional type-to-confirm, one `<form>` per the form
+convention). It does not reuse the operator door, which stays theatre.
+
+**Dialogs portal into the themed wrapper, not `document.body`** — every colour is a custom
+property on that wrapper, so a body portal renders in no palette at all. The portal also
+delivers §11's "one more sibling at the overlay level" for a dialog owned by a component
+deep in `.v-stage`, whose entrance animation holds a `transform` — and a transformed
+ancestor becomes the containing block for `position: fixed`, which would pin a
+"fullscreen" scrim to the stage. The wrapper element travels by React context
+(`OverlayHostContext`), set once in `App`.
+
+First consumer: `/admin`. Reset-password and delete-account now confirm through the
+dialog — reset states the consequence with the account's live recovery-code count (§4's
+second requirement on reset), delete requires typing the handle (§10's rule). The
+ask-twice chip pattern they used is retired *there*; `Setups` keeps it deliberately, a
+saved setup being two clicks to recreate. `reset 2FA` stays one click, as before.
+
+**Unverified by eye**, like every account surface — and the dialog's entrance motion is
+in the category nothing on this side can check.
+
 ## 2026-08-13 — Saved setups, on the signed-in summary
 
 `TODO.md` item 5's second piece, and §11's "nearly free" half delivered as such:

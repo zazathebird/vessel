@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useConfig } from "../config/ConfigContext";
 import { useSession } from "../auth/SessionContext";
 import { ApiError, api, type AdminAccount } from "../auth/api";
+import { ConfirmDialog } from "./Dialog";
 
 /**
  * Account administration, for the operator.
@@ -29,7 +30,11 @@ export function Admin() {
   const [accounts, setAccounts] = useState<AdminAccount[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [confirming, setConfirming] = useState<string | null>(null);
+  /** The destructive action awaiting its dialog's confirmation, if any. */
+  const [confirming, setConfirming] = useState<{
+    kind: "reset" | "delete";
+    account: AdminAccount;
+  } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -161,25 +166,13 @@ export function Admin() {
                     reset 2FA
                   </button>
 
-                  {/* Reset forces the owner onto their recovery codes, so it
-                      asks twice the same way delete does. Self is hidden
-                      (change-password is the right tool) and an account with no
-                      codes left is disabled — the Worker refuses both anyway;
-                      these states just say so before the click. */}
-                  {self ? null : confirming === `reset:${account.id}` ? (
-                    <button
-                      type="button"
-                      className="chip is-danger"
-                      disabled={working}
-                      onClick={() =>
-                        act(account.id, `password reset for ${account.handle}`, () =>
-                          api.adminResetPassword(account.id),
-                        )
-                      }
-                    >
-                      {working ? "resetting…" : "really reset"}
-                    </button>
-                  ) : (
+                  {/* Both destructive actions open the §10 confirm dialog with
+                      the consequence in specific terms; the dialogs live after
+                      the list. Self is hidden (change-password is the right
+                      tool for reset, and self-delete is refused) and a reset
+                      with no codes left is disabled — the Worker refuses all
+                      of these anyway; the states just say so before the click. */}
+                  {self ? null : (
                     <button
                       type="button"
                       className="chip"
@@ -188,36 +181,18 @@ export function Admin() {
                         !account.credentials.password ||
                         account.credentials.recoveryCodesRemaining === 0
                       }
-                      onClick={() => setConfirming(`reset:${account.id}`)}
+                      onClick={() => setConfirming({ kind: "reset", account })}
                     >
                       reset password
                     </button>
                   )}
 
-                  {/* Deleting is irreversible and takes the account's grant key
-                      with it, so it asks twice. The second press is a different
-                      button in the same place, which is the cheapest way to make
-                      a slip impossible without a dialog primitive that does not
-                      exist yet. */}
-                  {self ? null : confirming === `delete:${account.id}` ? (
-                    <button
-                      type="button"
-                      className="chip is-danger"
-                      disabled={working}
-                      onClick={() =>
-                        act(account.id, `deleted ${account.handle}`, () =>
-                          api.adminDeleteAccount(account.id),
-                        )
-                      }
-                    >
-                      {working ? "deleting…" : "really delete"}
-                    </button>
-                  ) : (
+                  {self ? null : (
                     <button
                       type="button"
                       className="chip"
                       disabled={working}
-                      onClick={() => setConfirming(`delete:${account.id}`)}
+                      onClick={() => setConfirming({ kind: "delete", account })}
                     >
                       delete
                     </button>
@@ -235,6 +210,54 @@ export function Admin() {
         of their key, and chooses a new password from there. An account with no codes left cannot
         be reset, only deleted: a reset would seal it for good under a milder name.
       </p>
+
+      {/* §4 requirement 2: the operator is shown the consequences before
+          confirming, in terms specific to the account — hence the live counts. */}
+      <ConfirmDialog
+        open={confirming?.kind === "reset"}
+        title={`Reset ${confirming?.account.handle}'s password?`}
+        consequence={
+          <p>
+            Their password and its key slot are deleted — nothing here can read either. They sign
+            back in with one of their {confirming?.account.credentials.recoveryCodesRemaining}{" "}
+            remaining recovery codes and choose a new password from there, and their next sign-in
+            tells them this reset happened.
+          </p>
+        }
+        confirmLabel="Reset password"
+        busyLabel="Resetting…"
+        busy={busy === confirming?.account.id}
+        onConfirm={() =>
+          confirming &&
+          void act(confirming.account.id, `password reset for ${confirming.account.handle}`, () =>
+            api.adminResetPassword(confirming.account.id),
+          )
+        }
+        onClose={() => setConfirming(null)}
+      />
+
+      <ConfirmDialog
+        open={confirming?.kind === "delete"}
+        title={`Delete ${confirming?.account.handle}?`}
+        consequence={
+          <p>
+            The account, its credentials, its key slots, its saved setups and its second factor
+            are deleted. There is no undo — the grant key goes with it, and nothing can bring
+            either back.
+          </p>
+        }
+        confirmLabel="Delete account"
+        busyLabel="Deleting…"
+        requireText={confirming?.account.handle ?? ""}
+        busy={busy === confirming?.account.id}
+        onConfirm={() =>
+          confirming &&
+          void act(confirming.account.id, `deleted ${confirming.account.handle}`, () =>
+            api.adminDeleteAccount(confirming.account.id),
+          )
+        }
+        onClose={() => setConfirming(null)}
+      />
     </section>
   );
 }

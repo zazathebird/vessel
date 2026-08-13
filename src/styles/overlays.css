@@ -8,6 +8,83 @@
  * operator is picking, which is the point of picking it from inside the panel.
  */
 
+/* dialogs (SPEC-ACCOUNTS §10) ------------------------------------------------
+ *
+ * z-index 75: above the panel (60) and the sleeping chrome (70), below the
+ * door's scrim (80) and toasts (90) — the ladder §11 sets out. Blur and
+ * entrance timing deliberately match the panel: 22px, 340ms on the standard
+ * curve. Colour comes from the palette like everything else; the transform in
+ * the entrance is a keyframe, not a transition, so it does not fight the
+ * interaction layer's translate/scale rules.
+ */
+
+.v-dialog-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 75;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: color-mix(in oklab, var(--bg) 55%, transparent);
+  backdrop-filter: blur(22px);
+  animation: v-fade-in 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.v-dialog {
+  width: min(92vw, 440px);
+  max-height: min(84vh, 640px);
+  overflow-y: auto;
+  padding: 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in oklab, var(--surface) 94%, transparent);
+  box-shadow: 0 40px 90px rgba(0, 0, 0, 0.55);
+  animation: v-dialog-in 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes v-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.v-dialog-title {
+  font-family: var(--font-display);
+  font-size: 20px;
+  margin: 0;
+  color: var(--fg);
+}
+
+.v-dialog-body {
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: color-mix(in oklab, var(--fg) 82%, transparent);
+}
+
+.v-dialog-body p {
+  margin: 0 0 10px;
+}
+
+.v-dialog-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.v-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 /* siteconfig drawer --------------------------------------------------------- */
 
 .v-panel {

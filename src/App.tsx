@@ -17,6 +17,7 @@ import { Admin } from "./components/Admin";
 import { SiteConfigPanel } from "./components/SiteConfigPanel";
 import { OperatorDoor } from "./components/OperatorDoor";
 import { Screensaver } from "./components/Screensaver";
+import { OverlayHostContext } from "./components/Dialog";
 
 /**
  * The whole site: one chrome — header, hero with the valve, content grid,
@@ -105,6 +106,9 @@ export default function App() {
   );
 
   return (
+    // Dialogs portal into the themed wrapper (never document.body, which has no
+    // palette tokens), landing as siblings of the overlays below — see Dialog.tsx.
+    <OverlayHostContext.Provider value={hostRef}>
     <div
       ref={hostRef}
       className={`page-${config.page} ${themeClasses(config, layout, band)}`}
@@ -140,6 +144,7 @@ export default function App() {
       <OperatorDoor />
       <Toast />
     </div>
+    </OverlayHostContext.Provider>
   );
 }
 

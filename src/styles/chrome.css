@@ -1220,6 +1220,13 @@
   color: var(--a1);
 }
 
+/* Colour only, like the admin chips' .is-danger — a destructive button that
+   moves differently from its neighbours reads as a different kind of control. */
+.v-btn-danger {
+  border-color: var(--a3);
+  color: var(--a3);
+}
+
 .v-account-title {
   font-family: var(--font-display);
   font-size: 22px;

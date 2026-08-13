@@ -68,6 +68,11 @@ client walks it in a real browser.
 
 In that order. Note `⌘K` is claimed twice — see *Unsigned-off* below.
 
+- **Dialog primitive — done 2026-08-13.** `src/components/Dialog.tsx` per §10:
+  focus trap, Escape, focus return, 22px blur, 340ms standard curve, z 75,
+  portals into the themed wrapper (`OverlayHostContext` — body has no palette).
+  `/admin`'s reset and delete now confirm through it; delete types the handle.
+  **Unverified by eye:** everything, including the entrance motion.
 - **Account/setups — done 2026-08-13.** Saved setups on the `/signin` summary
   (`worker/setups.ts`, `src/components/Setups.tsx`): name + share code, apply =
   paste, case-insensitive replace, harness-covered. `/account` stays reserved
