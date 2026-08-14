@@ -25,11 +25,15 @@
 #   ./scripts/pi-setup.sh [KIOSK_URL]
 #   VESSEL_KIOSK_URL=https://example.invalid/somewhere ./scripts/pi-setup.sh
 #
-# The default URL is about:blank, and that is not laziness. The sharing page is phase 2 (§7); §10
-# names /share as the route it will eventually live at, and it does not exist today. Pointing the
-# kiosk at a URL that 404s would make the host look broken when it is merely early, so it points at
-# nothing until there is something to point it at. The URL lives in a one-line config file, so
-# changing it later is one edit and one restart, not a re-run of this script.
+# The default URL is https://mcclevarty.ca/share, as of 2026-08-14.
+#
+# It was about:blank, deliberately, for as long as that page did not exist: pointing a kiosk at a
+# URL that 404s makes a working host look broken when it is merely early. Phase 2 shipped, /share
+# is live, and the honest default is now the real page — a host that boots into about:blank looks
+# just as broken, and needs a trip to the shelf to fix.
+#
+# The URL still lives in a one-line config file and this script still refuses to overwrite one that
+# has been set by hand, so changing it is one edit and one restart, not a re-run.
 
 set -euo pipefail
 
@@ -38,7 +42,7 @@ readonly CONFIG_DIR="${HOME}/.config/vessel-kiosk"
 readonly URL_FILE="${CONFIG_DIR}/url"
 readonly LAUNCHER="${HOME}/.local/bin/vessel-kiosk"
 readonly UNIT_FILE="${HOME}/.config/systemd/user/${SERVICE_NAME}.service"
-readonly DEFAULT_URL="about:blank"
+readonly DEFAULT_URL="https://mcclevarty.ca/share"
 
 KIOSK_URL="${1:-${VESSEL_KIOSK_URL:-${DEFAULT_URL}}}"
 
@@ -560,8 +564,9 @@ URL="$(cat "${URL_FILE}" 2>/dev/null || echo about:blank)"
 log() { printf 'vessel-kiosk: %s\n' "$*"; }
 
 if [ "${URL}" = "about:blank" ]; then
-    log "URL is about:blank. The Vessel sharing page is phase 2 and does not exist yet; this host"
-    log "is being kept warm. Put the real URL in ${URL_FILE} and restart the service when it does."
+    log "URL is about:blank, which is no longer the default — this host was set up before the"
+    log "sharing page existed. It does now: put https://mcclevarty.ca/share in ${URL_FILE}"
+    log "and restart the service."
 fi
 
 # ---- Wait for a display -----------------------------------------------------------------------

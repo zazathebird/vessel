@@ -366,7 +366,7 @@ Re-running it is safe and is meant to be routine. Every step checks before it ac
 died halfway through an apt install can simply be run again. The one thing it will not overwrite is
 `~/.config/vessel-kiosk/url` — if you have set a real URL there, a later run leaves it alone.
 
-To point it somewhere other than the placeholder:
+To point it somewhere other than the default:
 
 ```sh
 ./scripts/pi-setup.sh https://example.invalid/wherever
@@ -374,8 +374,19 @@ To point it somewhere other than the placeholder:
 VESSEL_KIOSK_URL=https://example.invalid/wherever ./scripts/pi-setup.sh
 ```
 
-The default is `about:blank`, deliberately. The sharing page does not exist yet and pointing the
-kiosk at a URL that 404s makes a working host look broken.
+**The default is `https://mcclevarty.ca/share`** as of 2026-08-14. It was `about:blank` for as long
+as that page did not exist — pointing a kiosk at a URL that 404s makes a working host look broken —
+but phase 2 has shipped and `/share` is live, so the honest default is now the real page. A host
+that boots into `about:blank` looks just as broken and costs a trip to the shelf to fix.
+
+If you set up a host before this change, its `~/.config/vessel-kiosk/url` still says `about:blank`
+and the script will not overwrite it. The launcher now says so in the journal on every start. Fix it
+in place rather than re-running the script:
+
+```sh
+echo 'https://mcclevarty.ca/share' > ~/.config/vessel-kiosk/url
+systemctl --user restart vessel-kiosk
+```
 
 Reboot when it finishes. That reboot is the first real test: autologin, session, lingering, service
 and browser all have to come up with nobody helping, and if any link in that chain is wrong this is
@@ -388,9 +399,9 @@ when you find out.
 **Picking the folder.** This is the one step that cannot be automated at all, and the reason is
 structural rather than incidental: `showDirectoryPicker()` requires a user gesture, and the folder
 picker and its permission prompt are drawn by the browser, outside the page, where no script can
-reach them. When phase 2 ships, you will connect a pointer to this machine once — over VNC, or with
-a mouse and monitor plugged in temporarily — open the sharing page, pick the folder under
-`/srv/vessel`, and answer the prompt.
+reach them. Phase 2 has shipped, so this is a step to do rather than to wait for: connect a pointer
+to this machine once — over VNC, or with a mouse and monitor plugged in temporarily — open
+`https://mcclevarty.ca/share`, pick the folder under `/srv/vessel`, and answer the prompt.
 
 **When you answer it, choose "Allow on every visit" if Chromium offers it.** The alternative
 ("Allow this time") means the handle survives in IndexedDB but the *permission* does not, so every
@@ -690,14 +701,17 @@ anything.
 
 ---
 
-## What changes when phase 2 ships
+## What to do now that phase 2 has shipped
 
-Nothing on this machine has to be rebuilt. Three things get done, in this order:
+Phase 2 went live on 2026-08-14, so this section is a checklist rather than a forecast. Nothing on
+this machine has to be rebuilt. Three things get done, in this order:
 
-1. **Point the kiosk at the sharing page.** Put the real URL in `~/.config/vessel-kiosk/url` and
-   `systemctl --user restart vessel-kiosk`. §10 names `/share` as the intended route, and the
-   correct URL is whatever the deployed site actually serves at the time — take it from the release
-   rather than from this document, which is guessing.
+1. **Point the kiosk at the sharing page.** A host set up on or after 2026-08-14 already is —
+   `https://mcclevarty.ca/share` is the script's default. One set up before that still holds
+   `about:blank`, which the script deliberately will not overwrite, so fix it in place:
+   `echo 'https://mcclevarty.ca/share' > ~/.config/vessel-kiosk/url` and
+   `systemctl --user restart vessel-kiosk`. The launcher logs a line on every start when it finds
+   the old value, so the journal will tell you which kind of host this is.
 2. **Pair the machine and pick the folders.** Once, with a pointer. Each folder under `/srv/vessel`
    that you intend to expose becomes its own `drives` row with its own label (§8 — a machine may
    expose several), and this is where the layout decided earlier pays for itself. The pairing screen

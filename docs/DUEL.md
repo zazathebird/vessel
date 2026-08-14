@@ -53,7 +53,9 @@ without needing a visible tab.
 An endless lightsword fight as a background effect — and, first and separately,
 as a **tiny animation replacing the hero ornament** (the "pulsing wye/radar
 looking thing", i.e. the Lens/Valve in `.v-ornament`). Both homes are acceptable;
-the ornament one was the original request and is still unbuilt.
+the ornament one was the original request. **Both are built** — the ornament on
+2026-08-13, the background re-listed on 2026-08-14 (see the status block above).
+This paragraph is what was asked for, kept as written; it is no longer a to-do.
 
 "Lightswords" is the client's own word, chosen by them on 2026-08-12, and is the
 name to use. The pairings asked for are **Jesus vs Devil** and **Luke vs Darth**.
