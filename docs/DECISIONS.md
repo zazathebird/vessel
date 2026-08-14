@@ -13,6 +13,38 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-14 — Share codes get harness coverage; 263 → 301
+
+The share code is the site's most dangerous wire format and had **no automated coverage at all**,
+which is exactly backwards: it is the format whose failures are silent. A code pointing at the wrong
+palette still *works*. An entry appended to a catalogue repoints every code in circulation without an
+error anywhere. A base-36 slip reads `12` as 38, falls through `FX[38] ?? FX[0]` and applies the
+default effect, which looks precisely like a failed deploy — a trap `CLAUDE.md`, `HANDOFF.md` and
+`DUEL.md` all warn about, having paid for it once.
+
+Every one of those was caught by a person reading carefully. That is not a control.
+
+Thirty-eight checks, in the pure section beside the path rule (§12 S) so they run before any network
+call. They cover: full round-trip field by field; **each toggle bit asserted individually** — a
+swapped pair round-trips perfectly and is still wrong for everyone holding an older code; the
+bitfield still fitting one base-36 character at maximum; five- and six-field legacy codes still
+decoding, still leaving the ornament alone, and still meaning sound-off; effect index 12 encoding as
+`C`; the decimal-looking `0-0-12-0-7-0` falling back rather than throwing; hidden effects still
+decoding while `PICKABLE_FX` stays a subset of `FX`; out-of-range indices clamping to real catalogue
+entries in all five positions; and five distinct malformed inputs refused.
+
+Plus the presets' own guarantee, asserted rather than assumed: each `PRESETS` entry decodes to **real
+catalogue entries**, not to a literal string. That is the whole point of deriving the code
+structurally — a hardcoded `"N-7-5-3-5-3"` stays correct until something is appended and then becomes
+a working code pointing at the wrong palette. And each preset is checked not to switch sound on for
+anybody.
+
+The hidden-effect loop is a no-op today, because nothing carries `hidden` since the duels were
+re-listed this morning. It is deliberately written as a loop over `FX.filter(e => e.hidden)` so that
+it starts asserting the moment something is withdrawn again, which is when the rule matters.
+
+---
+
 ## 2026-08-14 — The CSP measured against production; the blocker list goes from four to one
 
 `TODO.md` 12's remaining half was "flip to enforcing once production runs quiet through the surfaces

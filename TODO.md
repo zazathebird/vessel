@@ -7,7 +7,7 @@ what is left to do.
 Last updated 2026-08-14: **SPEC-ACCOUNTS phase 2 is built and harness-proven**
 — machines, drives, the per-machine signalling Durable Object, the connect
 ceremony, the file protocol, and the `/share` + `/machines` pages. The spec
-grew §13 and §12 K–S; the harness is at **263**. Done items below are kept as
+grew §13 and §12 K–S; the harness is at **301**. Done items below are kept as
 one-liners because their numbers are cross-referenced from `docs/DECISIONS.md`.
 
 ---

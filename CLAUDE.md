@@ -24,8 +24,13 @@ npm run deploy       # build, strip dist/_redirects, publish the Worker
 **Deploy with `npm run deploy`, never bare `wrangler deploy`** — see *Deployment*.
 
 The only tests are `scripts/auth-e2e.ts`, which drives the real `src/auth` modules against a live
-Worker and local D1 and prints its own check count on completion. There is no test suite for the
-site itself.
+Worker and local D1 and prints its own check count on completion. There is still no test suite for
+the site's *rendering* — but two of the site's own pure modules are covered there because both are
+**wire formats whose failures are silent**: `src/share/paths.ts` (§12 S) and, since 2026-08-14,
+`src/config/shareCode.ts`. A wrong share code is a *working* code pointing at the wrong palette, so
+nothing ever throws and nothing ever logs. Both sections run before any network call. If you append
+to `FX`, `LAYOUTS`, `PALETTES`, `TYPESETS` or `ORNAMENTS`, the harness is what tells you whether
+every code already in circulation still means what it meant.
 
 **`fxlab.html` (project root) is the canvas bench** — open `http://localhost:5173/fxlab.html` with
 `npm run dev` running. All sixteen effects on one page through `FxCanvas`'s exact frame maths,

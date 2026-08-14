@@ -59,6 +59,12 @@ import {
   verifyFingerprint,
 } from "../src/share/handshake";
 import { isValidPath } from "../src/share/paths";
+import { decodeShareCode, encodeShareCode } from "../src/config/shareCode";
+import { DEFAULT_CONFIG } from "../src/config/types";
+import { FX, LAYOUTS, PICKABLE_FX, TYPESETS } from "../src/data/catalog";
+import { ORNAMENTS } from "../src/data/ornaments";
+import { PALETTES } from "../src/data/palettes";
+import { PRESETS } from "../src/data/presets";
 import { SoftwareAuthenticator } from "./webauthn-sim";
 
 // `ws`, marked external in the esbuild step and resolved from node_modules at
@@ -1775,6 +1781,126 @@ async function main(): Promise<void> {
       fingerprintFromSdp(probe.sdp) === normalizeFingerprint(probe.fingerprint),
     );
     check("an SDP with no fingerprint yields null", fingerprintFromSdp("v=0\r\ns=-\r\n") === null);
+  }
+
+  /**
+   * Share codes — the site's other wire format, and the one `CLAUDE.md` warns
+   * about hardest.
+   *
+   * It had no automated coverage until 2026-08-14, which is the wrong way round:
+   * every failure here is silent. A code that points at the wrong palette still
+   * *works*, an appended catalogue entry breaks every code in circulation
+   * without an error anywhere, and a base-36 slip decodes `12` as 38 and applies
+   * the default effect — which looks exactly like a failed deploy.
+   *
+   * Pure, so it runs before any wire, next to the path rule for the same reason.
+   */
+  section("Share codes (wire format) — round-trip, legacy codes, base-36");
+  {
+    const full = {
+      ...DEFAULT_CONFIG,
+      pal: 17,
+      layout: LAYOUTS[11].id,
+      fx: FX[14].id,
+      type: 3,
+      ornament: ORNAMENTS[4].id,
+      grain: true,
+      breathe: false,
+      cursor: true,
+      calm: false,
+      sound: true,
+    };
+    const there = encodeShareCode(full);
+    const back = decodeShareCode(there);
+    check("a full config round-trips its palette", back?.pal === full.pal);
+    check("…its layout", back?.layout === full.layout);
+    check("…its effect", back?.fx === full.fx);
+    check("…its typeface", back?.type === full.type);
+    check("…its ornament", back?.ornament === full.ornament);
+    check(
+      "…and every toggle independently",
+      back?.grain === true && back?.breathe === false && back?.cursor === true &&
+        back?.calm === false && back?.sound === true,
+    );
+    check("applying a code pins the randomiser to static", back?.mode === "static");
+
+    // The bitfield is 1 grain / 2 breathing / 4 cursor / 8 calm / 16 sound, and
+    // each bit is asserted on its own — a swapped pair round-trips perfectly and
+    // is still wrong for everyone holding an older code.
+    const bitOf = (patch: Partial<typeof full>) =>
+      encodeShareCode({ ...DEFAULT_CONFIG, grain: false, breathe: false, cursor: false,
+        calm: false, sound: false, ...patch }).split("-")[4];
+    check("bit 1 is grain", bitOf({ grain: true }) === "1");
+    check("bit 2 is breathing", bitOf({ breathe: true }) === "2");
+    check("bit 4 is cursor glow", bitOf({ cursor: true }) === "4");
+    check("bit 8 is calm", bitOf({ calm: true }) === "8");
+    check("bit 16 is sound", bitOf({ sound: true }) === "G"); // 16 in base 36
+    check(
+      "every toggle at once still fits one base-36 character",
+      bitOf({ grain: true, breathe: true, cursor: true, calm: true, sound: true }) === "V",
+    );
+
+    // Codes minted before a field existed must keep meaning what they meant.
+    const legacy6 = decodeShareCode("0-0-0-0-7-0");
+    const legacy5 = decodeShareCode("A-3-1-0-7");
+    check("a six-field code still decodes", legacy6 !== null);
+    check("a five-field code still decodes", legacy5 !== null);
+    check("a five-field code leaves the ornament alone", legacy5?.ornament === undefined);
+    check("a code minted before sound decodes as sound off", legacy6?.sound === false);
+    check("…and so does the five-field one", legacy5?.sound === false);
+
+    // The trap that has been paid for once already.
+    check("effect index 12 encodes as C, not 12", encodeShareCode({ ...DEFAULT_CONFIG, fx: FX[12].id }).split("-")[2] === "C");
+    check(
+      "a decimal-looking effect field falls back rather than throwing",
+      decodeShareCode("0-0-12-0-7-0")?.fx === FX[0].id,
+    );
+
+    // A hidden effect is unlisted, not invalid — `FX` decodes, `PICKABLE_FX` offers.
+    check("PICKABLE_FX is a subset of FX", PICKABLE_FX.every((e) => FX.includes(e)));
+    for (const entry of FX.filter((e) => e.hidden)) {
+      check(`a hidden effect still decodes: ${entry.id}`,
+        decodeShareCode(encodeShareCode({ ...DEFAULT_CONFIG, fx: entry.id }))?.fx === entry.id);
+    }
+
+    // Out of range must fall back, never throw and never produce undefined ids.
+    const wild = decodeShareCode("ZZ-ZZ-ZZ-ZZ-0-ZZ");
+    check("an out-of-range palette clamps into the catalogue",
+      typeof wild?.pal === "number" && wild.pal >= 0 && wild.pal < PALETTES.length);
+    check("an out-of-range layout falls back to a real one",
+      LAYOUTS.some((l) => l.id === wild?.layout));
+    check("an out-of-range effect falls back to a real one", FX.some((f) => f.id === wild?.fx));
+    check("an out-of-range typeface clamps", typeof wild?.type === "number" && wild.type < TYPESETS.length);
+    check("an out-of-range ornament falls back to a real one",
+      ORNAMENTS.some((o) => o.id === wild?.ornament));
+
+    check("garbage decodes to null", decodeShareCode("nope") === null);
+    check("a four-field code is refused", decodeShareCode("0-0-0-0") === null);
+    check("a seven-field code is refused", decodeShareCode("0-0-0-0-0-0-0") === null);
+    check("a non-base-36 field is refused", decodeShareCode("0-0-!-0-0-0") === null);
+    check("an empty string is refused", decodeShareCode("") === null);
+
+    /**
+     * The presets' own guarantee: they define themselves structurally and
+     * *derive* the code. A hardcoded string stays right until something is
+     * appended to a catalogue and then becomes a working code pointing at the
+     * wrong palette — the exact failure this discipline exists to prevent. So
+     * assert the codes decode to real catalogue entries rather than to literals.
+     */
+    check("there are presets to check", PRESETS.length > 0);
+    for (const preset of PRESETS) {
+      const decoded = decodeShareCode(preset.shareCode);
+      check(
+        `preset "${preset.name}" decodes to real catalogue entries`,
+        !!decoded &&
+          decoded.pal >= 0 && decoded.pal < PALETTES.length &&
+          LAYOUTS.some((l) => l.id === decoded.layout) &&
+          FX.some((f) => f.id === decoded.fx) &&
+          decoded.type < TYPESETS.length &&
+          ORNAMENTS.some((o) => o.id === decoded.ornament),
+      );
+      check(`preset "${preset.name}" does not switch sound on for anyone`, decoded?.sound === false);
+    }
   }
 
   section("Machines and drives (§13) — pairing is a password ceremony");

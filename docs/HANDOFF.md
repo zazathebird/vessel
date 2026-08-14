@@ -2,7 +2,7 @@
 
 Updated 2026-08-14: **SPEC-ACCOUNTS phase 2 is built, harness-proven and deployed** — spec
 §13 + §12 K–S, migration `0004`, `worker/machines.ts`, the `MachineSignal` signalling Durable
-Object, `src/share/*`, and the `/share` + `/machines` pages. Harness is at **263**. The docs
+Object, `src/share/*`, and the `/share` + `/machines` pages. Harness is at **301**. The docs
 were condensed the same day (`FABLE-FINDINGS.md` deleted, its durable content moved —
 `docs/DECISIONS.md` 2026-08-14 has the map). Read `TODO.md` for what to do and
 `docs/DECISIONS.md` for why things are as they are; this file is how to pick the work up and
@@ -17,7 +17,7 @@ Paste this to begin:
 > Read `CLAUDE.md`, `TODO.md` and `docs/HANDOFF.md` before doing anything. The site is live at
 > `mcclevarty.ca`; everything in `main` is deployed. First prove the ground: kill stray
 > `wrangler dev` processes, run `npm run test:auth` against `npm run dev:worker`, and confirm
-> all 263 checks pass before anything else.
+> all 301 checks pass before anything else.
 >
 > Then pick up `TODO.md` from the top. Phase 2 is built but **unverified by eye** — if I am
 > present, walk me through the two-tab test below first. Phase 3 (grants to others) must not
@@ -48,7 +48,7 @@ the other models") — best run as its own dedicated session with fresh context.
   password, passkeys, saved setups, `/admin`, published site config, forced HTTPS) plus
   **phase 2**: machine pairing (password ceremony), drives, the per-machine signalling DO,
   the signed-fingerprint connect ceremony, the v1 file protocol, `/share` and `/machines`.
-- **The harness is at 263** and covers every route end to end, negatives included. It cannot
+- **The harness is at 301** and covers every route end to end, negatives included. It cannot
   run `RTCPeerConnection` — the WebRTC hop itself and every phase-2 screen need the client's
   eye (the two-tab test above).
 - **Phase boundaries hold**: no `grants`/`invites` tables, no TURN (client spend decision),
