@@ -1441,12 +1441,27 @@ async function main(): Promise<void> {
     const readBack = (await reader.call("/api/site-config")).config as Record<string, unknown>;
     check("the published config reads back", readBack?.pal === 7 && readBack?.layout === 2);
 
-    const html = await (await fetch(`${BASE}/`)).text();
+    const shell = await fetch(`${BASE}/`);
+    const html = await shell.text();
     check(
       "the app shell carries the injected config",
       html.includes("window.__VESSEL_SITE__") && html.includes('"pal":7'),
       "no __VESSEL_SITE__ injection in served HTML",
     );
+
+    // TODO 12: the report-only CSP, and the nonce that ties the one legitimate
+    // inline script to it. The header and the attribute must agree per request
+    // or the policy would report the site's own injection.
+    const csp = shell.headers.get("content-security-policy-report-only") ?? "";
+    const nonce = /'nonce-([^']+)'/.exec(csp)?.[1];
+    check("the shell carries the report-only CSP", csp.includes("default-src 'self'"), csp.slice(0, 100));
+    check(
+      "the injected script carries the CSP's own nonce",
+      !!nonce && html.includes(`<script nonce="${nonce}">window.__VESSEL_SITE__`),
+      csp.slice(0, 100),
+    );
+    const report = await fetch(`${BASE}/api/csp-report`, { method: "POST", body: "{}" });
+    check("a violation report is answered with 204", report.status === 204);
 
     // Leave the local database's published look the way this run found it.
     if (original) {

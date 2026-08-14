@@ -13,6 +13,22 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-14 — TODO 12 lands as far as it safely can: a nonced CSP, report-only
+
+The blocker was always the inlined site-config script; the nonce now exists (`cspNonce` per
+request in `worker/index.ts`, stamped by `withSiteConfig`, named by `cspPolicy`). The policy
+ships **report-only**: it cannot blank anything — the documented failure mode of doing this
+badly — while every violation it would have blocked posts to `/api/csp-report`, which logs a
+truncated line for `wrangler tail` and stores nothing (§9's inventory deliberately gains no
+field; do not add a report table). `style-src` keeps `'unsafe-inline'` because the theming is
+style attributes and `style-src-attr` would blank pre-15.4 Safari; `connect-src` names
+`ws(s)://<host>` beside `'self'` for old WebKit's sake; `frame-ancestors 'none'` restates
+`x-frame-options` on purpose. Verified: harness 260 → **263** (header present, injected script
+carries the header's own nonce, report endpoint answers 204), and a six-page browse in a real
+Chromium produced zero violation reports. **The flip to enforcing is one header rename in
+`harden`**, once production has run quiet through a passkey ceremony, a phase-2 browse, TOTP
+enrolment and the effects — the surfaces the harness cannot drive.
+
 ## 2026-08-14 — TODO 15 lands: `/api/account/slot` demands the password, and the TOTP half moves
 
 The slot endpoint was the last place a session cookie alone bought the wrapped grant key — the

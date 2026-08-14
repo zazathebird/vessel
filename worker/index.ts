@@ -138,13 +138,77 @@ function crossOrigin(request: Request, url: URL): boolean {
 }
 
 /**
- * Headers every response carries. Deliberately not a full CSP: the app shell has
- * the published site config **inlined** as a script (see `site-config.ts`), so a
- * `script-src` without a nonce plumbed through that injection would blank the
- * site's appearance on first paint. That is worth doing and is not worth doing
- * badly at the end of a session — the three below are unconditional wins.
+ * The CSP, **report-only** (TODO 12, 2026-08-14). The nonce is minted per
+ * request and plumbed through `withSiteConfig`, which stamps it on the inlined
+ * site-config script — the injection that made an unnonced `script-src`
+ * impossible. Report-only is the deliberate first stage, not caution theatre:
+ * this policy cannot blank anything, and every violation it *would* have
+ * blocked arrives at `/api/csp-report` (visible in `wrangler tail`, stored
+ * nowhere — §9). **Flip to enforcing** by renaming the header in `harden` once
+ * production has run quiet: passkey ceremonies, a phase-2 browse (the
+ * signalling WebSocket under `connect-src`), TOTP enrolment and every effect
+ * are the surfaces worth seeing reports from first.
+ *
+ * Shape notes, each deliberate:
+ * - `style-src 'unsafe-inline'` — the theming *is* style attributes
+ *   (`theme.ts` writes custom properties to the wrapper; `useMotionSystems`
+ *   writes the cursor-lean). `style-src-attr` would be the precise directive,
+ *   but pre-15.4 Safari ignores it and would then enforce `style-src` against
+ *   every attribute — a blanked site by accident. Inline `<style>` elements do
+ *   not exist here, so the practical exposure is attribute-sized.
+ * - `img-src data:` — the favicon is a data: URI by design (deviation 10).
+ * - explicit `ws(s)://<host>` beside `'self'` in `connect-src` — CSP3 makes
+ *   `'self'` cover same-host WebSockets, but older WebKit did not, and the
+ *   signalling socket must not be the thing an old browser silently drops.
+ * - `frame-ancestors 'none'` restates `x-frame-options: DENY`; both stay, one
+ *   is for browsers that only read the other.
  */
-function harden(response: Response): Response {
+function cspPolicy(nonce: string, url: URL): string {
+  const ws = `${isLoopback(url.hostname) ? "ws" : "wss"}://${url.host}`;
+  return [
+    "default-src 'self'",
+    `script-src 'self' 'nonce-${nonce}'`,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    `connect-src 'self' ${ws}`,
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+    "report-uri /api/csp-report",
+    "report-to csp-endpoint",
+  ].join("; ");
+}
+
+/** 128 bits of nonce, fresh per request — a reused nonce is no nonce. */
+function cspNonce(): string {
+  return btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));
+}
+
+/**
+ * Receive a CSP violation report: log it, store nothing, say 204.
+ *
+ * The log line is the whole product — `wrangler tail` during a browse session
+ * is how the report-only policy gets read before it is enforced. Reports carry
+ * page and blocked URLs, which is why they are truncated and never written to
+ * D1: §9's inventory gains nothing, deliberately.
+ */
+async function cspReport(request: Request): Promise<Response> {
+  try {
+    console.warn("csp-report", (await request.text()).slice(0, 2_048));
+  } catch {
+    // A report that cannot be read still deserves its 204 — the browser is
+    // fire-and-forgetting and there is nobody to complain to.
+  }
+  return new Response(null, { status: 204 });
+}
+
+/**
+ * Headers every response carries; the CSP only where there is a document for it
+ * to govern. API responses are JSON to a fetch — a policy there is noise the
+ * report endpoint would faithfully relay.
+ */
+function harden(response: Response, csp?: string): Response {
   const out = new Response(response.body, response);
   out.headers.set("strict-transport-security", HSTS);
   out.headers.set("x-content-type-options", "nosniff");
@@ -164,6 +228,12 @@ function harden(response: Response): Response {
   // severing any opener relationship costs nothing and keeps a hostile page
   // that window.open'd us from scripting against the window.
   out.headers.set("cross-origin-opener-policy", "same-origin");
+  if (csp) {
+    // Report-only until production has run quiet — see `cspPolicy`. This line
+    // is the flip: drop the `-report-only` suffix to enforce.
+    out.headers.set("content-security-policy-report-only", csp);
+    out.headers.set("reporting-endpoints", 'csp-endpoint="/api/csp-report"');
+  }
   return out;
 }
 
@@ -197,8 +267,22 @@ export default {
       // render is already the right colour and there is no fetch on the boot
       // path. Non-HTML assets pass straight through untouched, and a failure
       // to read the published row serves the site's built-in defaults rather
-      // than serving nothing.
-      return harden(await withSiteConfig(await env.ASSETS.fetch(request), env));
+      // than serving nothing. The nonce ties the injected script to the CSP:
+      // minted here, stamped on the script by `withSiteConfig`, named by the
+      // policy `harden` attaches.
+      const nonce = cspNonce();
+      return harden(
+        await withSiteConfig(await env.ASSETS.fetch(request), env, nonce),
+        cspPolicy(nonce, url),
+      );
+    }
+
+    // CSP violation reports, ahead of the cross-origin refusal: browsers send
+    // them without an Origin or with the literal string "null", the endpoint is
+    // unauthenticated and stores nothing, so there is nothing for that refusal
+    // to protect and a lost report is the only possible cost.
+    if (url.pathname === "/api/csp-report" && request.method === "POST") {
+      return harden(await cspReport(request));
     }
 
     if (crossOrigin(request, url)) {

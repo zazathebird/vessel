@@ -7,7 +7,7 @@ what is left to do.
 Last updated 2026-08-14: **SPEC-ACCOUNTS phase 2 is built and harness-proven**
 — machines, drives, the per-machine signalling Durable Object, the connect
 ceremony, the file protocol, and the `/share` + `/machines` pages. The spec
-grew §13 and §12 K–S; the harness is at **260**. Done items below are kept as
+grew §13 and §12 K–S; the harness is at **263**. Done items below are kept as
 one-liners because their numbers are cross-referenced from `docs/DECISIONS.md`.
 
 ---
@@ -90,8 +90,12 @@ desaturated).
 
 ### 11. Richer transitions/slide-overs/typewriter — after accounts; confirm
 the motion-primitives approach before building.
-### 12. CSP — deliberately absent until a nonce is plumbed through the
-site-config injection. Worth doing properly, not badly.
+### 12. ~~CSP~~ — nonce plumbed and shipped **report-only** 2026-08-14
+(`cspPolicy` in `worker/index.ts`; reports to `/api/csp-report`, logged in
+`wrangler tail`, stored nowhere). Remaining half: **flip to enforcing** — one
+header rename in `harden` — after production runs quiet through the surfaces
+the harness cannot drive: a passkey ceremony, a phase-2 browse over the
+signalling socket, TOTP enrolment, each canvas effect. Harness 260 → 263.
 ### 13. Cloudflare "Always Use HTTPS" — dashboard toggle, belt and braces.
 
 ---
