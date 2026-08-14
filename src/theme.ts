@@ -136,7 +136,6 @@ export function themeVars(config: Config, layout: LayoutId, band: Band): CSSProp
 
     "--page-padding": tokens.pagePadding,
     "--header-padding": tokens.headerPadding,
-    "--stage-height": tokens.stageHeight,
     "--grid-columns": tokens.gridColumns,
     "--grid-gap": tokens.gridGap,
     "--valve-size": tokens.valveSize,

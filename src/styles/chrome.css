@@ -89,12 +89,38 @@
 }
 
 /* Screensaver fades the whole interactive chrome, leaving only the canvas. */
+/*
+ * A flex column, so the stage takes the room the header actually leaves.
+ *
+ * `--stage-height` used to be `calc(100dvh - 132px)` on phone: a **hardcoded
+ * guess at the header's height**. The real phone header is 147px, because it
+ * wraps to two rows there — so the chrome came to 15px taller than the viewport
+ * and the *document* scrolled behind the already-scrolling `.v-stage`. Two
+ * nested vertical scroll containers on the band least able to afford them: you
+ * swipe, and sometimes the wrong one moves.
+ *
+ * Nothing caught it because the number was right when it was written and
+ * drifted afterwards — the header gains height whenever a chip is added, and
+ * one was (`sound`, this morning). `flex: 1` cannot drift; it measures.
+ *
+ * `min-height: 0` on the stage is the load-bearing half: a flex child defaults
+ * to `min-height: auto`, which refuses to shrink below its content, so without
+ * it the stage would grow to fit and push the overflow straight back onto the
+ * document.
+ */
 .v-chrome {
   position: relative;
   z-index: 10;
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
   opacity: 1;
   pointer-events: auto;
   transition: opacity 1.6s ease;
+}
+
+.v-chrome > .v-header {
+  flex: 0 0 auto;
 }
 
 .v-chrome.is-sleeping {
@@ -219,6 +245,21 @@
   gap: 7px;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
+  /*
+   * The scroll has to look like a scroll (2026-08-14 audit).
+   *
+   * Measured on the phone band: the pill row overflows by 66px, the scrollbar
+   * is hidden by the line above, and the last pill is simply sliced mid-word —
+   * "GUE". Nothing said there was more to the right, so Guestbook was, in
+   * practice, hidden on a phone. A fade at the trailing edge is the whole fix:
+   * a cut letter reads as broken, a fading one reads as continuing.
+   *
+   * `mask-image`, not an overlay pseudo-element: the row is a scroll container,
+   * so a positioned child would scroll away with the content. And it is
+   * unconditional rather than toggled on overflow, because detecting overflow
+   * needs JS and this band always overflows — six pills never fit a phone.
+   */
+  mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 34px), transparent 100%);
 }
 
 .band-phone .v-nav::-webkit-scrollbar,
@@ -276,9 +317,16 @@
   position: relative;
   z-index: 5;
   max-width: 1180px;
+  /* `margin: 0 auto` centres it; `width: 100%` keeps it from stretching to the
+     flex line now that the parent is a column (`align-items` defaults to
+     `stretch`, which would ignore `max-width` on some engines). */
+  width: 100%;
   margin: 0 auto;
   padding: var(--page-padding);
-  height: var(--stage-height);
+  /* Takes what the header leaves, rather than guessing at it — see `.v-chrome`.
+     `min-height: 0` is what lets it actually shrink and scroll internally. */
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }

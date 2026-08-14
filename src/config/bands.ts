@@ -52,11 +52,25 @@ export function isAdapted(layout: LayoutId, band: Band): boolean {
   return adaptLayout(layout, band) !== layout;
 }
 
-/** Per-band values from the spec's responsive table, exposed as CSS custom properties. */
+/**
+ * Per-band values from the spec's responsive table, exposed as CSS custom
+ * properties.
+ *
+ * **`stageHeight` was removed on 2026-08-14 and must not come back.** It was
+ * `calc(100dvh - 132px)` on phone — a hardcoded guess at the header's height —
+ * and the real phone header is 147px, because it wraps to two rows there. The
+ * chrome therefore came to 15px taller than the viewport and the *document*
+ * scrolled behind the already-scrolling `.v-stage`: two nested vertical scroll
+ * containers on the band least able to afford them. The number was right when
+ * it was written and drifted afterwards, which is the whole problem with
+ * measuring one element by hardcoding another's size — the header grows
+ * whenever a chip is added, and one was. `.v-chrome` is now a flex column and
+ * the stage is `flex: 1` with `min-height: 0`, which measures instead of
+ * guessing. See the note on `.v-chrome` in chrome.css.
+ */
 export interface BandTokens {
   pagePadding: string;
   headerPadding: string;
-  stageHeight: string;
   gridColumns: string;
   gridGap: string;
   valveSize: string;
@@ -71,9 +85,6 @@ export const BAND_TOKENS: Record<Band, BandTokens> = {
   phone: {
     pagePadding: "0 18px 64px",
     headerPadding: "14px 18px",
-    // dvh, not vh: the stage scrolls internally, so iOS Safari's URL bar never
-    // collapses and 100vh (the large viewport) hides the stage's bottom ~60px.
-    stageHeight: "calc(100dvh - 132px)",
     gridColumns: "1fr",
     gridGap: "14px",
     // Sized, not hidden (mobile parity, client request 2026-08-13): the
@@ -90,7 +101,6 @@ export const BAND_TOKENS: Record<Band, BandTokens> = {
   tablet: {
     pagePadding: "0 26px 72px",
     headerPadding: "16px 26px",
-    stageHeight: "calc(100dvh - 132px)",
     gridColumns: "repeat(auto-fit, minmax(260px, 1fr))",
     gridGap: "20px",
     valveSize: "min(34vw, 240px)",
@@ -103,7 +113,6 @@ export const BAND_TOKENS: Record<Band, BandTokens> = {
   desk: {
     pagePadding: "0 40px 80px",
     headerPadding: "20px 40px",
-    stageHeight: "calc(100vh - 86px)",
     gridColumns: "repeat(auto-fit, minmax(300px, 1fr))",
     gridGap: "20px",
     valveSize: "min(38vw, 340px)",
