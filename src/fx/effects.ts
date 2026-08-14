@@ -37,6 +37,17 @@ export interface Frame {
   beat: number;
   /** Scroll velocity + screensaver multiplier, ≥ 1. */
   boost: number;
+  /**
+   * The screensaver is on — the chrome has faded out and the canvas has the
+   * screen to itself.
+   *
+   * Deliberately its own flag rather than something read back out of `boost`:
+   * scroll velocity is folded into that same number, so a hard scroll is
+   * indistinguishable from a sleeping interface there. Only `duelling` uses it
+   * (see its attract mode); every other effect is a field that already fills
+   * the viewport and has nothing to gain from the extra room.
+   */
+  sleeping: boolean;
   /** Pointer position, 0–1 of the viewport. */
   mx: number;
   my: number;
@@ -95,6 +106,13 @@ export interface FxCache {
   flow?: Channel[] | null;
   /** The duel's match state — fighters, health, sparks, the match counter. */
   duel?: DuelState | null;
+  /**
+   * The duel's attract-mode blend, 0 (background) to 1 (screensaver). Eased
+   * rather than switched, so nothing about the fight jumps when the interface
+   * goes to sleep. Cached beside the match rather than inside `DuelState`
+   * because the ornament shares that state and has no attract mode.
+   */
+  attract?: number;
 }
 
 const TAU = 6.3;
@@ -720,8 +738,30 @@ const telemetry: Effect = ({ ctx, w, h, p, t }) => {
  * wrong: no such string exists in `pages.ts` or anywhere else. It went with the
  * hero vitals strip. No copy correction is owed.
  */
+/**
+ * Per-frame fraction of the remaining distance the attract blend closes.
+ *
+ * 0.016 puts it ~95% of the way there in about 182 fight frames, which is the
+ * 1.6s the chrome takes to fade at the boost the screensaver is running at.
+ */
+const ATTRACT_RATE = 0.016;
+
+/**
+ * Exponential approach that survives a variable frame count.
+ *
+ * `frames` is not 1 — it is a delta-corrected, boost-inclusive count that the
+ * duel already clamps to 4 — so a naive `x += (target - x) * rate` would move
+ * a different distance per unit time on every display. Raising the retained
+ * fraction to that power is the same curve sampled at the right places.
+ */
+function approach(from: number, to: number, frames: number): number {
+  if (frames <= 0) return from;
+  const next = to + (from - to) * Math.pow(1 - ATTRACT_RATE, frames);
+  return Math.abs(next - to) < 0.0005 ? to : next;
+}
+
 function duelling(left: FighterStyle, right: FighterStyle): Effect {
-  return ({ ctx, w, h, p, t }, cache) => {
+  return ({ ctx, w, h, p, t, sleeping }, cache) => {
     let st = cache.duel;
     if (!st) st = cache.duel = createDuel(left, right);
 
@@ -734,12 +774,27 @@ function duelling(left: FighterStyle, right: FighterStyle): Effect {
     st.prev = t;
     advanceDuel(st, frames);
 
-    // Sized as a background, not as a subject — the first attempt's figures
-    // were taller than the hero copy. Feet on a line at 80% height, centred.
-    const scale = Math.min((w * 0.62) / DUEL_WORLD_W, (h * 0.55) / DUEL_WORLD_H);
+    // Attract mode: the screensaver has faded the chrome out, so there is no
+    // copy left to sit behind and the fight stops being polite about it.
+    //
+    // Eased, never switched. The chrome takes 1.6s to fade (`.v-chrome` in
+    // chrome.css) and a figure that doubled in size on one frame would beat it
+    // there and read as a glitch. The rate is expressed in *fight* frames, which
+    // run boosted while asleep and unboosted awake, so the growth lands with the
+    // fade and the settle back is roughly twice as slow — the right asymmetry:
+    // waking up is the moment you want the page back, not a second animation.
+    const attract = (cache.attract = approach(cache.attract ?? 0, sleeping ? 1 : 0, frames));
+
+    // Sized as a background, not as a subject — the first attempt's figures were
+    // taller than the hero copy. Feet on a line at 80% height, centred. Attract
+    // mode spends the room the chrome vacated: about 1.4× linear, feet a little
+    // lower so the taller pair still sits on a believable floor.
+    const spanW = 0.62 + 0.26 * attract;
+    const spanH = 0.55 + 0.23 * attract;
+    const scale = Math.min((w * spanW) / DUEL_WORLD_W, (h * spanH) / DUEL_WORLD_H);
     drawDuel(ctx, st, {
       x: (w - DUEL_WORLD_W * scale) / 2,
-      y: h * 0.8 - DUEL_FEET_Y * scale,
+      y: h * (0.8 + 0.04 * attract) - DUEL_FEET_Y * scale,
       scale,
       ink: p.fg,
       // The blades keep their alignment colours in every palette — the one
@@ -749,8 +804,12 @@ function duelling(left: FighterStyle, right: FighterStyle): Effect {
       core: p.fg,
       spark: p.a2,
       line: p.line,
-      bars: false,
-      dim: 0.55,
+      // Health bars are wrong behind body copy and right once the copy has gone
+      // — the same judgement that made them ornament-only. `barAlpha` is what
+      // keeps them from popping in: `bars` is a boolean and cannot be eased.
+      bars: attract > 0.01,
+      barAlpha: attract,
+      dim: 0.55 + 0.45 * attract,
     });
   };
 }

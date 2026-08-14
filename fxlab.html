@@ -121,6 +121,10 @@
       </label>
       <label>dpr <input id="dpr" type="number" min="1" max="3" step="0.5" value="2" style="width:64px" /></label>
       <label>step <input id="frames" type="number" min="1" max="2000" value="60" style="width:78px" /> frames</label>
+      <!-- The duel's attract mode is the only thing that reads this; see
+           `duelling` in src/fx/effects.ts. Left on the bench because it eases
+           over ~1.6s and stepping frames is the only way to watch it here. -->
+      <label><input id="sleeping" type="checkbox" /> screensaver</label>
       <button id="step">Step ▸</button>
       <button id="burst">+600</button>
       <button id="run">Run (rAF)</button>
@@ -144,6 +148,7 @@
       const shapeSelect = document.getElementById("shape");
       const dprInput = document.getElementById("dpr");
       const framesInput = document.getElementById("frames");
+      const sleepingInput = document.getElementById("sleeping");
       const status = document.getElementById("status");
       const grid = document.getElementById("grid");
 
@@ -212,6 +217,7 @@
             t: cell.t,
             beat: (Math.sin(cell.t * 1.9) + 1) / 2,
             boost,
+            sleeping: sleepingInput.checked,
             mx: 0.5,
             my: 0.5,
           }, cell.cache);

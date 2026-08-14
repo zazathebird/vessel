@@ -13,6 +13,69 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-14 — The duel gets an attract mode, and the screensaver turns out to be older than the idea
+
+The client asked whether the screensaver should run the lightsword fight, and the matrix rain when
+the theme is matrix rain — *"or is that dumb?"*
+
+**It is not dumb, and it is what the screensaver has always done.** `Screensaver.tsx`: sixty seconds
+without a click fades the whole interface to `opacity: 0` and leaves only the canvas, which speeds
+up (`FxCanvas` adds `0.9` to the boost while sleeping). The screensaver has never had a rendering of
+its own — it *is* the configured effect, alone, faster. So with the duels re-listed earlier today
+the client's idea was already live; picking either duel gives a full-screen lightsword fight after a
+minute idle, and picking rain gives rain. Worth writing down because the question will be asked
+again: the screensaver has no content of its own to give it.
+
+### What was actually missing, and is now built
+
+The duel was still drawn with **background** settings while asleep — `0.62` of the viewport width,
+bodies at `dim: 0.55`, health bars off — all three of which exist to keep it out of the way of body
+copy that, once the chrome has faded, is not there. It was being polite to nobody.
+
+`Frame` gains a `sleeping` flag and `duelling` an attract blend:
+
+- **Its own flag, not something read back out of `boost`.** Scroll velocity is folded into the same
+  number, so a hard scroll is indistinguishable from a sleeping interface there.
+- **Eased, never switched.** The chrome takes 1.6s to fade, and a figure that doubled in size on one
+  frame would beat it there and read as a glitch. The blend closes 1.6% of the remaining distance
+  per fight frame, which lands with the fade at the boost the screensaver runs at. Measured on the
+  bench: `0.34 → 0.56 → 0.71 → 0.80 → 0.87 → 0.91 → 0.94 → 0.96` going to sleep and a clean
+  exponential decay back, no discontinuity at either end.
+- **The rate is expressed in fight frames**, which run boosted asleep and unboosted awake, so the
+  settle back takes roughly twice as long as the growth. That asymmetry is deliberate: waking is the
+  moment you want the page back, not a second animation competing with it.
+- **`approach()` raises the retained fraction to the frame count** rather than doing a naive
+  `x += (target - x) * rate`. `frames` here is delta-corrected and clamped to 4, never 1, so the
+  naive form would travel a different distance per unit time on every display.
+- **Health bars needed a numeric fade.** `DuelView.bars` is a boolean and can only pop, so `barAlpha`
+  joins it — optional, defaulting to 1, which leaves the ornament untouched. The judgement that made
+  bars ornament-only is unchanged: they are wrong behind body copy and right once the copy has gone.
+
+At full attract the pair runs about 1.4× linear with feet 4% lower, and `dim` reaches 1.
+
+**Only the duel reads `sleeping`.** Every other effect is a field that already fills the viewport and
+gains nothing from the extra room; adding the flag to the frame does not oblige anyone to use it.
+
+### Verified on the bench, not on the site, and that is a real limit
+
+`fxlab.html` gained a **screensaver** checkbox and drove the whole ease. What could not be checked
+here is the sixty-second path on the real site: the screensaver timer runs in a hidden tab but the
+render loop correctly parks, so the blend would advance one or two frames per screenshot and never
+visibly grow. The effect logic is the same code either way and the wiring is a one-line pass-through
+that typechecks — but the sentence "it looks right easing in on the live site" is the client's to
+say, not this session's.
+
+### The placement question, answered rather than acted on
+
+Attract mode does **not** fix the fighters standing behind the hero's CTA, because that is the
+non-attract state. Recommendation: **leave it.** The effect is operator-opt-in, the screensaver is
+now the showcase so the in-page state can afford to stay recessive, and the collision is a function
+of viewport height *and* where the fighters happen to be in the match — a fixed offset would trade
+Cinematic's collision for another layout's. It wants the client's eye in motion rather than more
+stills.
+
+---
+
 ## 2026-08-14 — The four open design calls, decided
 
 The client handed over the four judgement calls the HUD pass and the duel rebuild had left

@@ -556,6 +556,15 @@ export interface DuelView {
   line: string;
   /** Health bars: right in the ornament slot, wrong behind body copy. */
   bars: boolean;
+  /**
+   * Fades the bars independently of `dim`, 0–1, defaulting to 1.
+   *
+   * `bars` is a boolean and so can only pop. The background effect's attract
+   * mode (`duelling` in effects.ts) brings the bars in as the screensaver takes
+   * the screen, and needs them to arrive over the same 1.6s as everything else
+   * rather than on one frame. The ornament omits it and gets full strength.
+   */
+  barAlpha?: number;
   /** Multiplies body/ground alphas: 1 in the ornament, lower as a background. */
   dim: number;
 }
@@ -1003,10 +1012,11 @@ function drawFighter(
   // The health bar is drawn outside the body transform: inside it, the mirror
   // would fill it from the wrong end and the landing squash would bounce it.
   if (v.bars && !dead) {
-    ctx.globalAlpha = 0.3 * v.dim;
+    const barFade = v.barAlpha ?? 1;
+    ctx.globalAlpha = 0.3 * v.dim * barFade;
     ctx.fillStyle = v.ink;
     ctx.fillRect(cx - 17, f.y - 34, 34, 4);
-    ctx.globalAlpha = 0.9 * v.dim;
+    ctx.globalAlpha = 0.9 * v.dim * barFade;
     ctx.fillStyle = blade;
     ctx.fillRect(cx - 17, f.y - 34, 34 * (f.health / MAX_HEALTH), 4);
   }

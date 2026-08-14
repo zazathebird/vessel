@@ -265,6 +265,19 @@ ones most likely to be "fixed" by accident:
   handing them device pixels silently doubles their density on a retina display. The per-frame
   `setTransform` also means a missed `ctx.restore()` — `rain` flips the world inside a save/restore
   pair — can no longer mirror the site permanently.
+- **The screensaver has no rendering of its own** — it *is* the configured effect, alone and
+  boosted. Sixty seconds without a click fades `.v-chrome` to `opacity: 0` over 1.6s and `FxCanvas`
+  adds `0.9` to the boost. So "make the screensaver do X" is already answered for every effect:
+  pick X. The only thing that needed building was **the duel's attract mode** — it alone has a
+  *subject*, and it was still drawn at background scale, `dim: 0.55` and bars-off while asleep, i.e.
+  being polite to copy that had faded out. `Frame.sleeping` drives it, deliberately as its own flag
+  rather than something recovered from `boost` (scroll velocity is folded into that same number, so
+  a hard scroll would be indistinguishable from a sleeping interface). The blend is **eased, never
+  switched** — a figure that doubled in size on one frame would beat the 1.6s chrome fade and read
+  as a glitch — and `approach()` raises the retained fraction to the frame count because `frames` is
+  delta-corrected and clamped to 4, never 1. `DuelView.barAlpha` exists because `bars` is a boolean
+  and can only pop; it defaults to 1, so the ornament is untouched. No other effect reads `sleeping`
+  and none needs to.
 - **A resize is absorbed by each effect, never by the cache.** `FxCanvas` drops the effect cache
   only when the effect *id* changes, so anything holding geometry has to notice a new box itself:
   `rain` compares its column and row counts, and `vessels` compares the box its tree was grown for.

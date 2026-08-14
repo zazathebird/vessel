@@ -123,11 +123,28 @@ Remaining inside phase 2:
   `PICKABLE_FX` now equals `FX` — keep both anyway; the flag is the mechanism
   for withdrawing an effect without moving anyone's share code.
 
+- **6c. ~~Screensaver attract mode~~ — done 2026-08-14** (client request). The
+  screensaver was already "the configured effect, alone, boosted" — it has no
+  rendering of its own, so the client's "make the screensaver do the lightsword
+  fight / the matrix rain" was live the moment the duels were re-listed. What
+  was missing is that the duel stayed at *background* settings while asleep.
+  It now eases to ~1.4× scale, `dim` 1 and health bars over the same 1.6s the
+  chrome takes to fade, via `Frame.sleeping` and `DuelView.barAlpha`.
+
+  **Unverified on the live site, deliberately said so**: the sixty-second path
+  cannot be driven from here — the timer runs in a hidden tab but the render
+  loop correctly parks, so the blend advances a frame or two per screenshot and
+  never visibly grows. The ease itself was driven end to end on `fxlab.html`
+  (its **screensaver** checkbox), which runs the identical code.
+
   **Still wants the client's eye**: the fighters are centred with their feet at
   80% height, which on Cinematic at a short viewport sits them behind the hero's
-  CTA row. Nothing is unreadable, but it reads as placement rather than design.
-  Flagged in `src/fx/effects.ts`; moving it is a composition change to a tuned
-  effect, so it was not taken unilaterally.
+  CTA row. Attract mode does *not* address this — that is the non-attract state.
+  Recommendation on 2026-08-14 was **leave it**: the effect is operator-opt-in,
+  the screensaver is now the showcase so the in-page state can afford to stay
+  recessive, and the collision depends on viewport height *and* where the
+  fighters are in the match, so a fixed offset trades one layout's collision for
+  another's. Flagged in `src/fx/effects.ts`.
 
 ### 7. Sound — asked for twice, not built. A spec change (control, persisted
 toggle, share-code field), not a patch.

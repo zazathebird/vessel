@@ -151,6 +151,7 @@ export function FxCanvas() {
         t,
         beat: (Math.sin(t * 1.9) + 1) / 2,
         boost,
+        sleeping,
         mx: motion.mouse.x,
         my: motion.mouse.y,
       }, cache);

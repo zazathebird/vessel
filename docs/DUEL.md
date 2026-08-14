@@ -27,12 +27,26 @@ client originally asked for. (The old note here about re-listing dating the
 `docs/DECISIONS.md` 2026-08-13 has the build note and 2026-08-14 the re-listing;
 the sections below remain the spec the rebuild was built to.
 
+**Attract mode** (2026-08-14, client request): the screensaver has no rendering
+of its own — it is the configured effect, alone and boosted, which is why "make
+the screensaver run the fight" needed nothing built. What did need building is
+that the duel stayed at *background* settings once the chrome had faded, with no
+copy left to stay out of the way of. `Frame.sleeping` now eases the fight to
+~1.4× scale, `dim` 1 and health bars over the same 1.6s the chrome takes to
+fade. Eased and not switched, `DuelView.barAlpha` added because `bars` is a
+boolean and can only pop, and the ease is asymmetric on purpose — roughly twice
+as slow settling back, because waking is when you want the page, not a second
+animation. The ornament passes neither and is unaffected.
+
 **Open against the background home**: the fighters are centred with their feet
 at 80% viewport height, so on Cinematic at a short viewport they sit behind the
 hero's CTA row. `dim: 0.55` keeps everything readable, but it reads as placement
-rather than design and is the first thing to look at if the client wants it
-moved. `fxlab.html` at the project root renders both duels — and the other
-fourteen effects — without needing a visible tab.
+rather than design. Attract mode does not touch this — that is the non-attract
+state — and the 2026-08-14 recommendation was to leave it: a fixed offset trades
+Cinematic's collision for another layout's, since it depends on viewport height
+and on where the fighters are in the match. `fxlab.html` at the project root
+renders both duels — and the other fourteen effects, and the attract ease —
+without needing a visible tab.
 
 ## What the client asked for
 
