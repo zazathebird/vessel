@@ -1443,3 +1443,158 @@
   flex-wrap: wrap;
   gap: 6px;
 }
+
+/* Phase 2 — machines and the sharing tab (SPEC-ACCOUNTS.md §13) -------------
+   Same account vocabulary as everything above; no literal colours. /share is
+   the one surface allowed to diverge in tone (§10) — its status line is set
+   large enough to read from across a room. */
+
+.v-share-status {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 15px;
+  color: var(--fg);
+}
+
+.v-share-count {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.v-machines {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.v-machine-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in oklab, var(--bg) 60%, transparent);
+}
+
+.v-machine-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.v-machine-name {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: var(--fg);
+}
+
+.v-online {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 11px;
+  color: var(--a1);
+}
+
+.v-online.is-off {
+  color: var(--muted);
+}
+
+.v-drive-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.v-drive-label {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--fg);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.v-drive-state {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* The explorer, List mode (§10). A dense sortable table is the accessible
+   view — calm mode has nothing to collapse here yet. */
+.v-crumbs {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.v-crumbs button {
+  font: inherit;
+  color: var(--a1);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.v-files {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.v-files th {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--muted);
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.v-files td {
+  padding: 7px 10px;
+  border-bottom: 1px solid color-mix(in oklab, var(--line) 45%, transparent);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.v-files td.v-file-cell {
+  width: 100%;
+  white-space: normal;
+}
+
+.v-file-name {
+  font: inherit;
+  font-size: 13px;
+  color: var(--fg);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.v-file-name:disabled {
+  cursor: default;
+}
+
+.v-file-name.is-dir {
+  color: var(--a1);
+}

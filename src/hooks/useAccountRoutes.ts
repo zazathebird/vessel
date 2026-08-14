@@ -93,6 +93,16 @@ export function useAccountRoutes(): void {
         keys.current.length = 0;
         say("through the back");
         go("admin");
+      } else if (buffer.includes("machines")) {
+        // The phase-2 pair (SPEC-ACCOUNTS.md §13): same unlinked convention as
+        // the account pages — typed routes, and the account summary links them.
+        keys.current.length = 0;
+        say("the fleet");
+        go("machines");
+      } else if (buffer.includes("share")) {
+        keys.current.length = 0;
+        say("the sharing tab");
+        go("share");
       }
     };
 

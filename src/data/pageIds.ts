@@ -1,15 +1,17 @@
 /**
- * The twelve pages and their real URLs — the spec's nine, plus signup, signin
- * and admin.
+ * The fourteen pages and their real URLs — the spec's nine, plus signup,
+ * signin and admin (phase 1), and machines and share (phase 2,
+ * SPEC-ACCOUNTS.md §13).
  *
  * The prototype swaps pages in place with no URL change; the spec is explicit
  * that this is a prototype limitation, not a design decision, so the real build
- * gets twelve addressable routes.
+ * gets fourteen addressable routes.
  */
 
 export type PageId =
   | "home" | "about" | "work" | "gallery" | "contact"
-  | "guestbook" | "now" | "changelog" | "notfound" | "signup" | "signin" | "admin";
+  | "guestbook" | "now" | "changelog" | "notfound" | "signup" | "signin" | "admin"
+  | "machines" | "share";
 
 /**
  * Header nav — six public pills, in order.
@@ -77,6 +79,8 @@ export const PATHS: Record<PageId, string> = {
   signup: "/signup",
   signin: "/signin",
   admin: "/admin",
+  machines: "/machines",
+  share: "/share",
 };
 
 const BY_PATH = new Map<string, PageId>(

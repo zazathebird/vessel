@@ -16,14 +16,13 @@ It is not a server in any sense worth defending. Nothing on it listens on the ne
 turn something on yourself, and nothing on it is reachable from the internet. It is a machine with
 a folder on it and a tab looking at that folder.
 
-**Be clear that the last step has nowhere to point today.** The sharing page is phase 2 (§7) and
-phase 1 — accounts, sign-in, saved setups — is what is currently being built. §10 names `/share`
-as the route the sharing page will eventually live at, and that route does not exist. So everything
-in this document builds a host that is ready, and the final act of opening the page and picking a
-folder waits for phase 2 to ship. That is a reasonable thing to do now anyway: the storage,
-the mounting, the always-on behaviour and the getting-files-onto-it are all work that has to happen
-regardless of when the page arrives, and doing it early means phase 2 lands on a machine that is
-already right rather than on one that needs a weekend.
+**The last step has somewhere to point now: phase 2 shipped on 2026-08-14.** `/share` is live —
+sign in on the Pi's Chromium, open it, pair the machine (it asks for the account password; give
+the machine a typed name, never the hostname), pick the folder on the SSD, and leave the tab
+open. `/machines` from any other signed-in browser is where the drive is browsed. Pairing
+survives reboots via the browser profile; if the profile ever loses its storage, the re-pair
+flow on `/share` is routine (SPEC-ACCOUNTS.md §12 O). The rest of this document — storage,
+mounting, always-on, getting files onto it — is unchanged and still comes first.
 
 ---
 

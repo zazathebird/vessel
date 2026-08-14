@@ -147,6 +147,22 @@ export const PAGES: Record<PageId, Page> = {
     blocks: [],
   },
 
+  machines: {
+    eyebrow: "drives",
+    title: "Your machines.",
+    lede: "The computers you have paired, and the folders they share. Files travel straight from that machine to this browser — the site introduces the two and then gets out of the way.",
+    ctas: [],
+    blocks: [],
+  },
+
+  share: {
+    eyebrow: "drives",
+    title: "Share this machine.",
+    lede: "Pick a folder and this tab serves it, read-only, to your own signed-in browsers. Close the tab and sharing stops. The site never sees the folder, its path, or a single file byte.",
+    ctas: [],
+    blocks: [],
+  },
+
   contact: {
     eyebrow: "the useful page",
     title: "Computer repair.",

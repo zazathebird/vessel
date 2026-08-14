@@ -779,6 +779,102 @@ than to disprove twice.
 
 Each rejected option carries a **"revisit if"** — the condition that would make it the right answer.
 
+### Resolved 2026-08-13 (phase 2 designed)
+
+Written before the phase-2 build began, per §7's order: spec first. §13 holds the concrete
+protocol these decisions produce; the entries here record what each choice was chosen *over*. The
+five questions under *"Still open, and now blocking phase 2"* below are all answered by these
+entries and are annotated in place rather than deleted.
+
+**K. The browsing peer authenticates with the grant key — in both phases.** The agent serves a
+read only over a connection whose peer proved possession of a key the agent already trusts. In
+phase 2 the only trusted key *is* the trust root — the owner's grant public key, stored at pair
+time — so the owner's browsing tab unwraps its grant key (§5, any slot) and signs its DTLS
+fingerprint with it. Phase 3 swaps "is the root" for "is named in a grant signed by the root"
+without changing the ceremony, which is what keeps the phases uncollapsed: phase 2 builds the
+handshake, phase 3 builds the capability system on top of it.
+
+- *Rejected: the agent trusting the signalling DO's introduction* — serving whoever the site says
+  is the signed-in owner. One message simpler, and it silently makes §3's first row false: a site
+  that can introduce anyone to the agent is a site operator who can read files. The agent is the
+  policy enforcement point (§6) and must verify peers against keys the site never held.
+- *Rejected: a separate "browse key".* A second keypair to persist, sync and lose. The grant key
+  already means "may direct this agent", and it already survives credential loss via slots.
+- **Revisit if** §3's fresh-gesture requirement is ever extended from grant signatures to
+  connections; today unwrap-per-connect is proportionate for reading your own files.
+
+**L. Pairing is a password ceremony, not a session action.** `POST /api/machines/pair` — first
+pairing and re-keying alike — requires the password through `assertPassword`, exactly as enrolling
+TOTP or adding a passkey does: registering an agent public key adds a trust anchor, and the
+phase-1 convention is that a credential change demands a credential. Rename, remove, and drive
+add/remove are session-gated — those rows carry labels, not authority.
+
+- *Rejected: session-gated pairing.* A stolen thirty-minute cookie could register an attacker's
+  machine under the victim's account — pollution today, and in phase 3 a plausible-looking grant
+  target with the attacker's key on it.
+- **Revisit if** pairing from an account without a password is ever needed. Today every account
+  has one, and an operator-reset account pairs again after `set-password`.
+
+**M. A "machine" is a browser profile, and the DO admits one agent socket per machine.** The
+machine key and the directory handles live in profile storage, so a browser profile is what
+"machine" honestly means, and the pairing screen says so in those words. A second agent socket for
+the same machine **replaces** the first; the replaced tab is told ("another tab took over") and
+goes quiescent — answering open question 5. The same folder shared from two machines is simply two
+drives, and read-only makes that harmless.
+
+- *Rejected: refusing the second tab.* A crashed tab with a half-open socket would lock sharing
+  out until some timeout expired; replacement makes the newest tab authoritative with no timer.
+
+**N. Presence is the DO's socket state, persisted nowhere.** "Is the agent online" is answered by
+whether its socket is currently open; the machine list carries the answer and the browse surface
+renders a closed tab as *"that machine is offline — open its sharing tab to bring it back"*, never
+as a generic failure (open question 1). The DO stores nothing across restarts. `machines.last_seen`
+(§9) is stamped by the Worker when an agent connects, so its granularity is connection events, not
+liveness. The agent tab warns before closing (`beforeunload`) **only while a peer is actually
+connected** — a warning on every close of a merely-configured tab is the obnoxious version the open
+question worried about.
+
+**O. Re-pairing is a first-class flow, not an error state (open question 2).** The server-side
+machine and drive rows are the durable record; everything browser-side — machine key, directory
+handles — is treated as evictable at any moment. The agent tab reconciles on every load: a handle
+that lost permission gets a one-click re-request; a missing handle gets a "re-attach" against its
+surviving drive row; a missing machine key gets the re-key ceremony (password, per L) against the
+surviving machine row. Every path leads back to sharing in one or two clicks.
+
+**P. STUN only in phase 2; TURN specified but not enabled (open question 3).** Owner-only browsing
+is dominated by same-machine and same-LAN, where host and STUN candidates connect without a relay.
+The TURN shape is fixed now so enabling it is configuration, not design — Cloudflare TURN,
+short-lived per-session credentials minted by the Worker, never a static secret in the client —
+but turning it on is a per-byte spend and an abuse surface, and that is the client's call, carried
+on the sign-off list.
+
+- **Revisit if** a real cross-NAT case appears. The failure is visible ("connecting…" that ends in
+  "this network pair needs a relay") rather than silent.
+
+**Q. No read cap in phase 2 (open question 4).** The only principal is the owner reading their own
+files, and a cap on that protects nobody. The agent counts bytes per connection and shows the count
+on the sharing tab — so the *hook* exists and the number is glanceable — but an enforced limit is
+phase-3 hardening, and §7 forbids borrowing it early.
+
+**R. Signed DTLS fingerprints are the whole handshake, and they bind the machine id.** Each side
+signs `vessel/p2p/<role>-fp/v1\n<machine id>\n<fingerprint>` with its key — agent: machine key;
+browser: grant key — as a raw P-256/SHA-256 signature, verified with WebCrypto on the other side.
+The DO relays opaque payloads and can forge neither signature, which is §3's MITM row made
+concrete. The context string namespaces the two roles so neither signature can be replayed as the
+other.
+
+- *Rejected: an ECDH/HKDF/AES layer inside the channel.* §8 already removed it as redundant —
+  DTLS is the encryption; the signatures are the authentication it lacked.
+
+**S. Paths travel as arrays of components, never as strings.** The wire format sends
+`["invoices", "2026", "march.pdf"]`; each component is validated — non-empty, not `.` or `..`, no
+separators, no control characters, bounded length and depth — and the agent walks the directory
+handle component by component, so there is no string to normalise and no prefix to re-check. This
+is §9's "one place worth a dedicated test suite", and the validator is a pure function the harness
+drives directly.
+
+- *Rejected: a path-string parser.* Every traversal bug ever shipped lives inside one.
+
 ### Resolved 2026-08-13 (passkeys built)
 
 **J. A passkey sign-in is one step: no TOTP stage, no rate limiting.** Decided at build time,
@@ -920,28 +1016,148 @@ the sections above rather than left here. Recorded for the reasoning, since seve
    URLs were rejected: they leak through history, referrers and chat, they cannot be bound to a person,
    and they reduce the audit log to "someone who had the link."
 
-### Still open, and now blocking phase 2
+### Formerly open and blocking phase 2 — all five answered 2026-08-13
 
-The browser agent answers old questions and raises new ones. None of these block phase 1.
+The browser agent answered old questions and raised these; the phase-2 design round answered them
+in turn. Kept with their original wording per this log's rule; each annotation points at the entry
+holding the reasoning.
 
 1. **What happens when the sharing tab closes?** The honest answer today is "sharing stops," which is
    correct but needs to be *communicated* rather than merely true. A grantee hitting a closed tab must
    see "that machine is offline" and not a generic failure. Whether the owner gets any warning before
    closing — and whether that is even possible without being obnoxious — is undecided.
+   **Answered — N**: DO presence renders the closed tab as "offline", and `beforeunload` warns only
+   while a peer is actually connected.
 2. **How durable is the persisted directory handle in practice?** Handles survive in IndexedDB and
    permission can be granted persistently, but browser storage eviction, profile clearing and policy
    changes can all revoke it silently. The re-pairing path needs to be routine and cheap rather than an
    error state, and it has not been designed.
+   **Answered — O**: server rows are the durable record, browser storage is treated as evictable,
+   and the agent tab reconciles on every load.
 3. **What is the TURN budget, and what happens when it is exhausted?** Per-byte cost on the relayed
    minority is bounded but not zero, and an unauthenticated-by-default TURN service is an abuse target.
    Credentials must be short-lived and issued per session.
+   **Answered — P**: STUN only in phase 2; the TURN mechanics are fixed (short-lived per-session
+   credentials) and enabling it is a client spend decision on the sign-off list.
 4. **Does the agent enforce a rate or volume limit?** Nothing currently stops a grantee reading the
    same folder continuously. The agent is the right place to cap it, and no cap is specified.
+   **Answered — Q**: no cap in phase 2 (the only reader is the owner); the byte counter ships now,
+   the enforced cap is phase-3 hardening.
 5. **Multiple sharing tabs on the same machine, or the same folder shared from two machines.** Both are
    reachable states with undefined behaviour.
+   **Answered — M**: one agent socket per machine, newest replaces oldest and the replaced tab is
+   told; the same folder from two machines is two drives, harmless read-only.
 
 ### Deferred with the native agent, if it is ever built
 
 Code-signing certificates and their annual cost; a Go implementation of grant verification kept in step
 with the TypeScript one; installer and update mechanics; running as a service. All of it is avoidable
 for as long as the tab-open constraint is acceptable.
+
+## 13. Phase 2, concretely
+
+Added 2026-08-13, before the phase-2 build, from the K–S decisions in §12. This section is the
+protocol those decisions produce; §12 holds the reasoning. Phase 2's boundary, restated from §7:
+**the only principal is the owner.** No grants, no invites, no second person — the `grants` and
+`invites` tables stay absent from the schema, and every route below refuses anyone but the
+machine's owner.
+
+### Pairing
+
+On the machine that holds the files, the signed-in owner opens `/share`:
+
+1. The tab generates a **machine keypair** — P-256 ECDSA, private key non-extractable, persisted
+   in IndexedDB. It never leaves the browser in any form; there is no slot for it and no recovery
+   of it, because re-pairing (§12 O) is the recovery.
+2. The owner types a machine name. The screen asks for a name, **suggests nothing** (§9 — never
+   the hostname), and says the name is visible to anyone shared with.
+3. `POST /api/machines/pair` carries `{ name, agentPubkey, authSecret }` — the password proof
+   because pairing is a credential-class change (§12 L). The Worker validates the pubkey is a real
+   P-256 point (same check signup applies to the grant key), inserts the machine row, and returns
+   the machine plus the account's `grant_pubkey`.
+4. The tab stores `grant_pubkey` in IndexedDB as its **trust root** (§6). It is written at pair
+   time and read from local storage thereafter — deliberately not re-fetched per session, so a
+   later server compromise cannot quietly re-root an already-paired agent.
+
+**Re-keying** is the same route with a `machineId`: same password ceremony, replaces
+`agent_pubkey` on the existing row, keeps the drives. Rename and remove are session-gated
+(`/api/machines/rename`, `/api/machines/remove`); removing a machine cascades its drives.
+
+**Drives.** The agent tab calls `showDirectoryPicker()`, then `POST /api/drives`
+`{ machineId, label }`; the handle is stored in IndexedDB keyed by the returned drive id. The
+server holds the label only — no path, per §9. `POST /api/drives/remove` deletes the row; the tab
+drops the handle. Bounds: machines and drives are user-writable tables, so both are capped
+(10 machines per account, 16 drives per machine — generous for people, hostile to scripts).
+
+### Signalling
+
+One Durable Object per machine (`idFromName(machineId)`), reached by WebSocket at
+`GET /api/signal/<machineId>?role=agent|browser`. The Worker authenticates the upgrade — session
+cookie, account must own the machine — before the DO ever sees it, and stamps `last_seen` when an
+agent connects. The DO:
+
+- holds **one agent socket** (a newcomer replaces the incumbent, which is sent `replaced` — §12 M)
+  and any number of browser sockets, each assigned an opaque peer id;
+- relays `{ type: "offer" | "answer" | "ice", ... }` between a browser (tagged `from`) and the
+  agent (addressed `to`) **without reading payloads** — the signed fingerprints ride inside them,
+  so the introducer never handles, and could not usefully alter, the material that authenticates
+  the call;
+- answers presence — browsers receive `agent-status` on connect and on every agent arrival or
+  departure, and the Worker's machine list asks the DO the same question over a plain fetch;
+- persists nothing, ever. Who-talked-to-whom exists only as open sockets.
+
+Frames are JSON text, bounded (64 KiB); an oversized or unparseable frame closes the socket.
+
+### The connect ceremony
+
+1. The browsing tab unwraps the grant key for this connection (§12 K — password prompt, any slot;
+   the key is non-extractable and never stored).
+2. It creates an `RTCPeerConnection` (STUN only — §12 P), reads its local DTLS fingerprint from
+   the offer SDP, and signs `vessel/p2p/owner-fp/v1\n<machineId>\n<fingerprint>` with the grant
+   key. Offer + signature go to the agent through the DO.
+3. The agent verifies the signature against its stored trust root. Failure is a refusal before any
+   answer is sent. Success: it answers, signing its own fingerprint under
+   `vessel/p2p/agent-fp/v1\n<machineId>\n<fingerprint>` with the machine key.
+4. The browser verifies that against `agent_pubkey` from its machine list. Only then does either
+   side proceed; a substituted fingerprint on either leg fails its check and the connection is
+   refused (§3's MITM row).
+5. ICE completes; the data channel (`vessel-files`) opens; file traffic is DTLS end-to-end.
+
+### The file protocol, v1
+
+JSON control messages and binary chunks over the one data channel:
+
+- Requests: `{ v: 1, id, op: "list" | "stat" | "read", drive, path, offset?, length? }` — `path`
+  is an **array of components**, validated per §12 S by a pure function
+  (`src/share/paths.ts`) before any handle is touched.
+- `list`/`stat` answer in JSON: name, kind, size, modified. `read` answers with a JSON header then
+  length-prefixed binary chunks tagged with the request id — 64 KiB chunks, sender paced by
+  `bufferedAmount` so a large file cannot balloon the channel.
+- Errors state what to do next (§10): unknown drive, path refused, file vanished, permission lost
+  (which sends the owner to the agent tab's re-attach flow, §12 O).
+
+The agent counts bytes per connection and shows the total on the sharing tab (§12 Q). Reads only —
+no rename, no delete, no write op exists in v1, so a future write is a protocol version, not a flag.
+
+### Interface
+
+Two pages join the unlinked account set (typed routes and the account pages link them; nothing in
+the public nav changes):
+
+- **`/share`** — the agent (§10's fourth route). Deliberately divergent chrome within the same
+  tokens: its job is to be glanceable from across a room — sharing state, drive list with
+  re-attach affordances, connected-peer count, bytes served, and "this tab is holding your folder
+  open" said plainly. Chromium-only, and it says so rather than failing quietly.
+- **`/machines`** — the browse surface, chrome-consistent like every content page. Lists paired
+  machines with presence, drives under each; opening a drive opens the §10 file explorer (List
+  mode is the phase-2 build's floor; Grid and Column follow the §10 design).
+
+Both follow the account-form conventions (§11) and neither touches the operator door's UI.
+
+### What phase 3 changes here, so phase 2 does not pre-build it
+
+Grants and invites tables; the agent verifying grant documents instead of only the root key;
+`/api/account/slot` gaining its password-proof gate (TODO 15); mandatory 2FA on first grant;
+the enforced read cap (§12 Q); the grant/revoke UI and audit mirror. None of it alters the
+pairing ceremony, the signalling protocol, or the file protocol above — that is what "the phases
+have clear edges" buys.

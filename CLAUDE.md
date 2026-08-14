@@ -203,8 +203,10 @@ ones most likely to be "fixed" by accident:
   (deviation 8 below). Deliberate. If it needs to return it wants its own affordance rather than
   the whole readout coming back
 - **Routing**: the prototype swaps pages in place with no URL change. That is a prototype
-  limitation, not a design decision — **twelve** real URLs are wired in `src/data/pageIds.ts`: the
-  spec's nine content pages plus `/signup`, `/signin` and `/admin`
+  limitation, not a design decision — **fourteen** real URLs are wired in `src/data/pageIds.ts`:
+  the spec's nine content pages plus `/signup`, `/signin`, `/admin`, and (phase 2) `/machines`
+  and `/share`. The phase-2 pair follow the account pages' unlinked convention — typed routes
+  (`machines`, `share`) and links from the `/signin` summary, nothing in the public nav
 - **The 404 pill left the public nav on 2026-08-13, by client decision.** "404 genuinely in the
   nav" was the spec's joke; the client pulled it behind sign-in. It now leads `OPERATOR_NAV`
   (404 / Account / Admin), the operator-only tabs the header appends for a signed-in operator,
@@ -333,9 +335,9 @@ The design decisions most likely to be broken by someone who has not read it:
 
 ### Where the code is
 
-- `migrations/` — `0001` phase 1 tables, `0002` TOTP replay, `0003` site config. Machines, drives,
-  grants and invites are deliberately absent: an empty `grants` table is an invitation to fill it
-  before the phase that hardens it.
+- `migrations/` — `0001` phase 1 tables, `0002` TOTP replay, `0003` site config, `0004` phase-2
+  machines and drives. **Grants and invites remain deliberately absent**: an empty `grants` table
+  is an invitation to fill it before the phase that hardens it (phase 3).
 - `worker/index.ts` — serves the static site via the assets binding; `/api/*` is the exception.
   Delete every route and the site serves as it does today, which is what "accounts are strictly
   additive" has to mean.
@@ -345,6 +347,21 @@ The design decisions most likely to be broken by someone who has not read it:
 - `worker/rate-limit.ts` — the `RateLimiter` Durable Object. Counts failures only, resets on
   success, exponential backoff to a **one-hour ceiling**; the ceiling stops an attack on a known
   handle from becoming an indefinite lockout of its owner. Never sees an IP.
+- `worker/machines.ts` — phase 2's server half: pairing (a **password ceremony** via
+  `assertPassword` — §12 L), machine/drive CRUD. The server stores public keys and labels only;
+  no path, no hostname (§9).
+- `worker/signal.ts` — the `MachineSignal` Durable Object, one per paired machine. **An
+  introducer, not a pipe**: relays SDP/ICE without reading payloads, persists nothing, and all
+  authentication happens in `signalUpgrade` (`worker/index.ts`) *before* the object is reached.
+  The upgrade path bypasses `harden()` deliberately — copying a 101 response drops its
+  `webSocket` and hangs every connection.
+- `src/share/` — the browser half of phase 2: `handshake.ts` (signed DTLS fingerprints, both
+  roles), `paths.ts` (the §12 S array-of-components validator — the one place worth a dedicated
+  test suite, and the harness drives it), `agent.ts` (the `/share` tab's file server),
+  `browse.ts` (the verified connector), `store.ts` (IndexedDB: machine key, trust root,
+  directory handles — all treated as evictable, §12 O), `unlock.ts` (the §12 K
+  password-unwrap-per-connect; deliberately not `flows.openGrantKey`, which guards the phase-3
+  signing gesture and demands TOTP).
 - `src/auth/` — the browser half: `derive.ts` (PBKDF2 → HKDF split into an auth secret and a
   wrapping key), `grantKey.ts` (the P-256 grant key and its AES-KW slots), `recoveryCodes.ts`,
   `api.ts`, `flows.ts`, `passkeys.ts` (WebAuthn flows behind an injectable `Authenticator` seam),
@@ -438,6 +455,27 @@ The design decisions most likely to be broken by someone who has not read it:
   zero operators, a confirmed TOTP's secret replaced under it. Zero `meta.changes` is the refusal;
   the audit row is written only after it, so it can never record an act the guard declined. Do
   not "simplify" these back into a pre-check plus an unconditional write.
+- **The agent verifies peers itself; it never trusts the signalling introduction** (§12 K,
+  phase 2). A browsing tab proves possession of the grant key by signing its DTLS fingerprint;
+  the agent checks it against the trust root **stored at pair time in IndexedDB and never
+  re-fetched** — re-fetching would let a later server compromise quietly re-root a paired agent.
+  Symmetrically the browser verifies the agent's signed fingerprint against
+  `machines.agent_pubkey`. "Simplify" either check away and §3's first row (the operator cannot
+  read files) becomes false.
+- **Pairing and re-keying demand the password** (`assertPassword` — §12 L); rename, remove and
+  the drive routes are session-gated because those rows carry labels, not authority.
+- **File paths travel as arrays of components, never strings** (§12 S, `src/share/paths.ts`).
+  The agent walks handles component by component; there is no parser to have a traversal bug in.
+  Refuse, never repair.
+- **One agent socket per machine; a newcomer replaces the incumbent**, which is sent `replaced`
+  (§12 M). The frame is the contract — local workerd delivers the server-side close lazily, so
+  nothing may depend on the close code reaching the replaced tab.
+- **STUN only; no TURN** until the client approves the spend (§12 P). A hard-NAT pair fails with
+  an honest message, not silently.
+- **The harness imports `ws`** (a devDependency, marked `--external` in the `test:auth` esbuild
+  step) because Node's built-in WebSocket cannot send a cookie header and the signalling socket
+  authenticates by cookie. The runtime constraint — no third-party libraries — is about the
+  site, and the site gained nothing.
 
 ### Four things the client has not yet signed off
 

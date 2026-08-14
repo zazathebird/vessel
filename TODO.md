@@ -4,9 +4,11 @@ The single ordered backlog. `CLAUDE.md` explains *why* things are the way they
 are, and `docs/DECISIONS.md` records what was decided when; this file is only
 what is left to do.
 
-Last updated 2026-08-13 (late — app-shell/UI review ran and its eight findings are fixed;
-de-branding to `mcclevarty.ca`, duel silhouettes + literal blade colours, placeholder photos and
-the new favicon shipped; `docs/REVIEW-CONTINUATION.md` completed and deleted per its own note).
+Last updated 2026-08-14: **SPEC-ACCOUNTS phase 2 is built and harness-proven**
+— machines, drives, the per-machine signalling Durable Object, the connect
+ceremony, the file protocol, and the `/share` + `/machines` pages. The spec
+grew §13 and §12 K–S; the harness is at **258**. Done items below are kept as
+one-liners because their numbers are cross-referenced from `docs/DECISIONS.md`.
 
 ---
 
@@ -14,261 +16,130 @@ the new favicon shipped; `docs/REVIEW-CONTINUATION.md` completed and deleted per
 
 ### 1. ~~Close the harness's three coverage gaps~~ — done 2026-08-13
 
-All three closed; `docs/DECISIONS.md` has the full note. The suite now imports
-`flows.ts` and `api.ts` through a fetch shim, covers recovery-with-2FA (the
-stranded-wrapping-key path), change-password, site config, and all four admin
-routes with their guards. The number stays so cross-references hold.
-
-```sh
-npm run dev:worker      # wait for "Ready on http://127.0.0.1:8787"
-npm run test:auth       # in a second terminal
-```
-
-The harness prints its own total; do not hardcode a count anywhere else. Snags
-when running it:
-- If the port is not 8787, the harness will not find the server. Kill stray
-  `wrangler dev` processes first — a second instance silently takes 8788.
-- `SQLITE_BUSY` / `workerd failed to start` means two instances are running.
-- A bare `npm run build` leaves `dist/_redirects` in place, which the local
-  Worker rejects the same way a deploy would. Run `npm run predeploy` instead,
-  or delete the file. See `docs/HANDOFF.md`.
-- The last-operator guard check skips (and says so) if a non-`harness-` account
-  holds an operator flag in local D1. Demote it or accept the skip.
+Harness snags, still true when running it: kill stray `wrangler dev` first (a
+second instance silently takes 8788); delete `dist/_redirects` or run
+`npm run predeploy`, never bare `npm run build`, before `dev:worker`; the
+last-operator guard check skips if a non-`harness-` operator exists in local D1.
 
 ### 2. Redeem one recovery code on the live site, once, deliberately
 
-Nobody has ever completed the flow end to end in a browser. It spends one of ten
-codes, which is why it has not been done casually. The harness proves the bytes;
-it does not prove the screens, and `SignIn.tsx`'s recovery stages were changed
-on 2026-08-13.
+Nobody has ever completed the flow end to end in a browser. It spends one of
+ten codes. The harness proves the bytes; only a browser proves the screens.
 
-### 2b. ~~Finish the review round: re-run the app-shell/UI review~~ — done 2026-08-13
-
-Ran late 2026-08-13 over the full app-shell scope; eight findings confirmed and
-fixed (Radial's six-pills-on-seven-slots orbit, the stuck "leaving…" button,
-impure `setConfig` updaters, calm toggles overwriting published grain/breathe,
-two dishonest clipboard toasts, Terminal's dead scroll boost, the unstyled
-`.v-setup-row`, the logo countdown teasing visitors). One product-level finding
-moved to *Awaiting client sign-off* (5). The `slotAlg` fixtures are fixed too —
-178/178. `docs/DECISIONS.md` has the note; `docs/REVIEW-CONTINUATION.md` is
-deleted per its own instruction.
+### 2b. ~~App-shell/UI review~~ — done 2026-08-13 (eight findings fixed)
 
 ### 2c. By eye, in a real browser (needs the client)
 
-New since the last eyeball pass, all harness-proven but never seen: the ornament
-five-tap → footer sign-in link (countdown toasts, Radial pills excluded), the
-operator tabs (404/Account/Admin/Config) appearing on sign-in, and Leave
-operator mode collapsing everything. Plus the standing items: TOTP enrolment
-screen, dialog motion, command palette, duel ornaments, matrix rain speed.
+Everything listed under *Unverified by eye* at the bottom.
 
 ---
 
-## Accounts (phase 1 continues)
+## Accounts
 
-### 3. ~~Operator password reset in `/admin`~~ — done 2026-08-13
-
-`POST /api/admin/reset-password` deletes the password credential and its key
-slot, stamps `reset_at`, and returns status only — never key material (§5). Two
-refusals: self-reset (change-password is the right tool) and an account with no
-unspent recovery codes, where reset would seal the grant key for good. The
-harness drives the whole loop — reset → recovery code → `setPassword`'s insert
-branch → same grant key — and both refusals. The `/admin` button asks twice,
-like delete. **Unverified by eye:** the button states in a real browser.
-
+### 3. ~~Operator password reset~~ — done 2026-08-13
 ### 4. ~~TOTP enrolment screen~~ — done 2026-08-13
+### 5. ~~Passkeys, saved setups, dialog primitive, command palette~~ — done 2026-08-13
 
-`beginTotpEnrolment` in `flows.ts` (the derived `authSecret` lives in its
-closure between enrol and confirm, the `RecoverySignIn` shape), rendered by
-`src/components/TotpEnrol.tsx` inside the signed-in summary. Secret and
-`otpauth://` URI as text — no QR, no library. Backup codes shown once with the
-honest-clipboard copy. The harness drives the flow, both refusals included.
-**Unverified by eye:** the screen itself, like every account screen — the
-client walks it in a real browser.
+`⌘K` stays unbound (claimed twice — sign-off list); the palette opens by
+typing `cmd`.
 
-### 5. ~~Passkeys, account/setups pages, dialog primitive, command palette~~ — done 2026-08-13
+### 5b. Phase 2 — ~~plumbing and interface~~ — built 2026-08-14
 
-All four built, in order, each with its own note in `docs/DECISIONS.md`. `⌘K`
-remains unbound (claimed twice — see *Awaiting client sign-off*); the palette
-opens by typing `cmd` until the client picks. The number stays so
-cross-references hold.
+Spec §13 and §12 K–S; migration `0004`; `worker/machines.ts` + the
+`MachineSignal` DO; `src/share/*`; `/share` and `/machines` pages (typed
+routes `share` / `machines`, linked from the `/signin` summary). Harness
+drives every route, the ceremony crypto, and the path validator — the WebRTC
+hop itself needs two real Chromium tabs, which is the client's walk-through.
+Remaining inside phase 2:
 
-- **Command palette — done 2026-08-13.** Typed `cmd` route, z 85; commands are
-  what the caller could already do, operator vocabulary gated on `isOperator`.
-  **Unverified by eye:** all of it.
-- **Dialog primitive — done 2026-08-13.** `src/components/Dialog.tsx` per §10:
-  focus trap, Escape, focus return, 22px blur, 340ms standard curve, z 75,
-  portals into the themed wrapper (`OverlayHostContext` — body has no palette).
-  `/admin`'s reset and delete now confirm through it; delete types the handle.
-  **Unverified by eye:** everything, including the entrance motion.
-- **Account/setups — done 2026-08-13.** Saved setups on the `/signin` summary
-  (`worker/setups.ts`, `src/components/Setups.tsx`): name + share code, apply =
-  paste, case-insensitive replace, harness-covered. `/account` stays reserved
-  and the signed-in *current* config still does not sync — both deliberate,
-  `docs/DECISIONS.md` has the reasoning. **Unverified by eye:** the section.
-- **Passkeys — done 2026-08-13.** Hand-rolled WebAuthn (`worker/webauthn.ts`,
-  `worker/passkeys.ts`, `src/auth/passkeys.ts`), each passkey a key slot on the
-  same grant key via the `prf` extension, driven end to end by the harness with
-  a software authenticator. Two recorded decisions — no TOTP stage and no rate
-  limiting on passkey sign-in — in `docs/DECISIONS.md`. **Unverified by eye:**
-  the Passkeys section, the sign-in link, and the real-authenticator ceremony
-  on the live site, which needs the client's device.
+- **Grid and Column explorer modes** (§10 fixes the design; List shipped).
+- **TURN** — mechanics specified (§12 P), enablement is a client spend
+  decision; without it a hard-NAT pair fails with an honest message.
+- **The Pi sharing host** (`docs/pi-sharing-host.md`) can now point its final
+  step at `/share`.
 
----
+### 6. ~~Lightsword duel rebuild~~ — ornament home done 2026-08-13
 
-## The lightsword duel
+- **6b. Re-add the background `FX` entries once the client passes the
+  ornament's motion.** Append at indices 12/13, never insert; re-dating the
+  404's "12 background modes" line travels with it.
 
-### 6. ~~Rebuild it per `docs/DUEL.md`~~ — ornament home done 2026-08-13
-
-The new match engine (`src/fx/duel.ts`) keeps the client's reference verbatim:
-blocky fighters, frame-count timers, the damage table, and **discrete matches
-with winners**. Ships as ornaments 6 and 7 (`src/components/DuelOrnament.tsx`);
-`docs/DECISIONS.md` has the note. Later the same day the four silhouettes were
-upgraded (hair/halo/aura, horns/wing/spade tail, hood/belt, helmet/chest panel)
-and the blades went to fixed alignment colours — blue/green good, red evil —
-per the client (`CLAUDE.md` deviation 9). **Unverified by eye: the motion and
-the new silhouettes** — this environment cannot check either, and the client's
-verdict decides the remaining half of this item:
-
-- **6b. Re-add the background `FX` entries once the client passes the ornament.**
-  Append at indices 12/13 (never insert — share-code wire format);
-  `EFFECTS.duel` / `EFFECTS.duelholy` already point at the new engine. Doing so
-  dates the 404's "12 background modes" line, which is a copy correction that
-  needs the client's sign-off at the same time.
-
-### 7. Sound
-
-Asked for twice, not built. The site has no audio at all. WebAudio synthesis fits
-the no-assets rule; autoplay does not. Needs a control, a persisted toggle and a
-share-code field — **a spec change, not a patch.**
+### 7. Sound — asked for twice, not built. A spec change (control, persisted
+toggle, share-code field), not a patch.
 
 ---
 
 ## Content and copy
 
-### 8. Edit mode — operator-editable page copy and images
-
-Asked for 2026-08-12. Large. `src/data/pages.ts` is a static module today, so it
-needs a D1 table and the same inject-don't-fetch treatment as site config.
-
-**Blocked on a client decision:** the spec forbids images entirely (`SPEC.md`
-*Assets*). Allowing them is a spec change and needs R2 or similar.
-
-### 9. A setup guide page/download (Tailscale et al.)
-
-Asked for 2026-08-12.
-
-### 10. Photo slots hold stand-in photos, not yet the operator's own
-
-Since 2026-08-13 the eight tiles show Wikimedia Commons PD/CC0 photographs
-(`public/photos/`, ledger in `docs/PHOTOS.md`), EXIF stripped, lazy-loaded,
-desaturated under the tile chrome. Two are approximate fits (flagged in
-PHOTOS.md). When the operator's real images arrive: same treatment — strip
-EXIF, lazy-load, keep the aspect ratios in each caption, no lightbox library —
-and update PHOTOS.md.
+### 8. Edit mode — operator-editable copy/images. Large; blocked on the images
+spec change (R2 or similar).
+### 9. A setup guide page/download (Tailscale et al.) — asked for 2026-08-12.
+### 10. Photo slots hold Wikimedia placeholders (`docs/PHOTOS.md`); swap for
+the operator's own when they exist, same treatment (EXIF stripped, lazy,
+desaturated).
 
 ---
 
 ## Polish
 
-### 11. Richer transitions, slide-overs, typewriter effects
-
-Deliberately sequenced after accounts. The constraint that makes it non-trivial:
-every layout, palette and ornament has to stay visually distinct, which points at
-a small set of motion primitives each layout composes differently rather than
-bespoke animation per layout. **Confirm the approach before building.** The
-file-explorer design in SPEC-ACCOUNTS §10 is *not* this — that is phase 2.
-
-### 12. Content-Security-Policy
-
-Deliberately absent. The app shell has the published site config **inlined** as a
-script (`worker/site-config.ts`), so a `script-src` without a nonce plumbed
-through that injection would blank the site's appearance on first paint. Worth
-doing properly; not worth doing badly.
-
-### 13. Turn on Cloudflare "Always Use HTTPS"
-
-SSL/TLS → Edge Certificates. The Worker already redirects, so this is belt and
-braces — but it happens at the edge without costing a Worker invocation.
+### 11. Richer transitions/slide-overs/typewriter — after accounts; confirm
+the motion-primitives approach before building.
+### 12. CSP — deliberately absent until a nonce is plumbed through the
+site-config injection. Worth doing properly, not badly.
+### 13. Cloudflare "Always Use HTTPS" — dashboard toggle, belt and braces.
 
 ---
 
-## Security — found, reviewed, not fixed
+## Security — found, reviewed, deliberately open
 
-The 2026-08-13 review's findings were fixed in `1729dfd` and `561e067`, and the
-same day's full audit's in the security-audit commit — both recorded in
-`docs/DECISIONS.md`, the audit's log in `docs/SECURITY-AUDIT.md`. Items 14 and
-15 were left open deliberately, because neither is a patch: neither is
-exploitable by an anonymous visitor today, and each becomes worse under a
-specific future change, which is noted. Item 16 is open because it lives in the
-Cloudflare and Namespro dashboards, not in this repository.
-
-### 14. Password change is not a session-revocation event
-
-`changePassword` and `setPassword` do not rotate or invalidate other session
-cookies, and the stateless session design permits none. A stolen cookie survives
-the victim changing their password, bounded by the 30-minute TTL and the 12-hour
-absolute ceiling. Consistent with the no-session-table decision — but it should
-be a written-down residual exposure rather than an assumption. Closing it needs
-a table, so it is a design decision, not a patch.
-
-### 15. `/api/account/slot` authorises on the session alone
-
-**Not exploitable today**: it returns only ciphertext the server cannot open,
-and unwrapping needs the password-derived wrapping key, which no session grants.
-It becomes real in phase 3, where §3 requires a fresh user-verification gesture
-per grant signature — a stolen 30-minute session could otherwise fetch the slot.
-Add the password-proof + current-TOTP gate **before phase 3**, not with it.
-
-### 16. DNS hardening — three dashboard changes (2026-08-13 audit)
-
-Found by the full security audit (`docs/SECURITY-AUDIT.md` has records to paste and the order to
-do them in); none can be done from this repository. In priority order:
-
-1. **Enable DNSSEC** — Cloudflare DNS → Settings, then add the DS record at Namespro. No DS
-   record exists at CIRA today.
-2. **Add CAA records** — nothing restricts which CA may issue for `mcclevarty.ca`. The audit doc
-   lists Cloudflare's Universal SSL set.
-3. **Tighten mail records** — DMARC is `p=none` (spoofed mail is delivered, only reported) and
-   SPF ends `~all`. Watch the Cloudflare DMARC reports for two weeks, then `p=quarantine` →
-   `p=reject`. The domain forwards and never sends, so the only legitimate traffic at risk is the
-   forwarding path — which is why this is observe-then-tighten, not a same-day edit.
+### 14. Password change is not a session-revocation event. Bounded by the
+30-minute TTL / 12-hour ceiling; closing it needs a session table (design
+change, not a patch).
+### 15. `/api/account/slot` authorises on the session alone. Not exploitable
+today (returns ciphertext only); **add the password-proof + current-TOTP gate
+before phase 3**, not with it.
+### 16. DNS hardening, in the dashboards (2026-08-13 audit; records in
+`docs/SECURITY-AUDIT.md`): enable DNSSEC + DS at Namespro; add CAA; DMARC
+`p=none` → observe two weeks → `p=quarantine` → `p=reject`.
 
 ---
 
 ## Unverified / unresolved
 
-- **Matrix rain fall speed** has never been confirmed by eye. Rebuilt after the
-  client said the original was far too fast, verified headlessly at 96–307 px/sec
-  against the old 960. `RAIN_SPEED_MIN` / `RAIN_SPEED_RANGE` in
-  `src/fx/effects.ts`.
-- **Several palettes fail WCAG AA on body text.** Deliberate — Peat especially —
-  with calm mode as the intended remedy. Open rather than overlooked.
-- **Animation cannot be verified from screenshots here.** An occluded Chrome
-  window freezes `requestAnimationFrame`. Motion needs the client's eye.
+- **All of phase 2 by eye**: pairing, drive picking, the agent tab's states,
+  a real two-tab WebRTC browse and download, offline/re-attach/take-over
+  flows, the `/machines` explorer. The harness proves every route and the
+  ceremony's bytes; it cannot run `RTCPeerConnection`.
+- **Matrix rain fall speed** — rebuilt, never confirmed by eye.
+- **Several palettes fail WCAG AA** — deliberate; calm mode is the remedy.
+- **Animation cannot be verified from screenshots here** — occluded windows
+  freeze rAF; motion needs the client's eye.
 
 ---
 
 ## Awaiting client sign-off
 
-Found while building; none blocking. Full reasoning in `CLAUDE.md`.
+Found while building; none blocking. Reasoning in `CLAUDE.md` unless noted.
 
-1. **`totp.last_step`** is a field §9's inventory does not list, and §9 says
-   adding one is a spec change. Without it a TOTP code is replayable for up to
-   90 seconds. **Recommend approving.**
-2. **§3's operator row is stronger than the design supports.** The Worker sees the
-   raw `authSecret` on every sign-in, so an operator who logged one could grind
-   candidate passwords offline. The cryptography is fine; the *unconditional*
-   wording is not.
-3. **`⌘K` is claimed twice** — `SPEC.md` makes it the operator door's sixth unlock
-   route, `SPEC-ACCOUNTS.md` §10 makes it the command palette. Both cannot be true.
-4. **Signup discloses handle availability** (409) while `challenge` goes to real
-   trouble to hide it. Defensible, but the two should not disagree.
-5. ~~**The findable sign-in affordance does not exist on phones**~~ — answered
-   same day: the client asked for full mobile parity. The phone band now
-   renders the ornament (five-tap reveal, duels and all; only Stack shows the
-   slot there, by layout), and non-desk bands get a header `cmd` chip since
-   the palette's typed route needs a hardware keyboard. **Unverified by eye
-   on a real phone.**
+1. **`totp.last_step`** — a field §9's inventory does not list. Without it a
+   TOTP code replays for up to 90s. **Recommend approving.**
+2. **§3's operator row is stronger than the design supports** — the wording,
+   not the cryptography.
+3. **`⌘K` is claimed twice** — door (SPEC.md) vs command palette
+   (SPEC-ACCOUNTS §10).
+4. **Signup discloses handle availability (409)** while `challenge` hides it.
+5. **TURN**: enable Cloudflare TURN (per-byte spend, short-lived credentials
+   already specified) or leave hard-NAT pairs with the honest failure (§12 P).
+6. **Contact-page email** (`src/data/mail.ts`): the site assembles
+   `patrickmcclevarty@outlook.com` (verbatim from the spec) but the address on
+   file is `…@hotmail.ca`. Contact is the one page with a job — confirm the
+   mailbox is real and read. (Carried from the 2026-08-13 full review.)
+7. **Per-account subdomains: wanted at all?** If yes, an Origin allowlist must
+   land first (`design/GUIDE-SUBDOMAINS.md`); if no, the guide can be closed.
+8. **When to retire the Pages project** — it is the rollback; retiring it
+   deletes the `_redirects` trap class.
+9. **Free-diagnostic copy rewrite** — client leaning yes; wording and any fee
+   pending.
 
 ---
 

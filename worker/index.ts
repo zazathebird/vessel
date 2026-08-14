@@ -16,15 +16,17 @@
 
 import * as accounts from "./accounts";
 import * as admin from "./admin";
+import * as machines from "./machines";
 import * as passkeys from "./passkeys";
 import * as setups from "./setups";
 import { clientKey } from "./crypto";
 import { BadRequest } from "./encoding";
 import type { Env } from "./env";
 import { RateLimiter } from "./rate-limit";
+import { MachineSignal } from "./signal";
 import { publishSiteConfig, readSiteConfig, withSiteConfig } from "./site-config";
 
-export { RateLimiter };
+export { MachineSignal, RateLimiter };
 export type { Env };
 
 /**
@@ -203,6 +205,20 @@ export default {
       return harden(problem(403, "That request came from somewhere we do not serve."));
     }
 
+    // The signalling WebSocket, special-cased ahead of `route`: a 101 carries a
+    // `webSocket` that `harden`'s response copy would silently drop, leaving
+    // every upgrade hanging. Refusals still flow through the catch below and
+    // get hardened like any other response.
+    if (url.pathname.startsWith("/api/signal/")) {
+      try {
+        return await signalUpgrade(request, env, url);
+      } catch (error) {
+        if (error instanceof BadRequest) return harden(problem(error.status, error.message));
+        console.error("unhandled", error);
+        return harden(problem(500, "Something went wrong at our end. Try again shortly."));
+      }
+    }
+
     try {
       return harden(await route(request, env, ctx, url));
     } catch (error) {
@@ -303,9 +319,62 @@ async function route(
     case "POST /api/setups/delete":
       return setups.remove(request, env);
 
+    // Machines and drives (§13). Pairing is a password ceremony (§12 L); the
+    // rest are session-gated rows that carry labels, not authority.
+    case "POST /api/machines/pair":
+      return machines.pair(request, env);
+    case "GET /api/machines":
+      return machines.list(request, env);
+    case "POST /api/machines/rename":
+      return machines.rename(request, env);
+    case "POST /api/machines/remove":
+      return machines.remove(request, env);
+    case "POST /api/drives":
+      return machines.driveAdd(request, env);
+    case "POST /api/drives/remove":
+      return machines.driveRemove(request, env);
+
     default:
       return problem(404, "No such endpoint.");
   }
+}
+
+/**
+ * Authenticate a signalling upgrade and hand it to the machine's Durable
+ * Object (§13). Everything that decides *whether* this caller may reach the
+ * object happens here, in front of it: the session, the ownership check, and
+ * the role. The object itself trusts what arrives, which is what keeps it an
+ * introducer with no knowledge of accounts. Phase 3 widens exactly this gate
+ * to grantees; the object does not change.
+ */
+async function signalUpgrade(request: Request, env: Env, url: URL): Promise<Response> {
+  if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
+    throw new BadRequest("That endpoint speaks WebSocket.", 426);
+  }
+
+  const account = await accounts.requireAccount(request, env);
+
+  const machineId = url.pathname.slice("/api/signal/".length);
+  const machine = await env.DB.prepare("SELECT id FROM machines WHERE id = ? AND owner_id = ?")
+    .bind(machineId, account.id)
+    .first<{ id: string }>();
+  if (!machine) throw new BadRequest("No such machine on this account.", 404);
+
+  const role = url.searchParams.get("role");
+  if (role !== "agent" && role !== "browser") {
+    throw new BadRequest("Connect as ?role=agent or ?role=browser.");
+  }
+
+  // Connection events, not liveness (§12 N) — liveness is the object's socket
+  // state, asked for by the machine list, persisted nowhere.
+  if (role === "agent") {
+    await env.DB.prepare("UPDATE machines SET last_seen = ? WHERE id = ?")
+      .bind(Date.now(), machineId)
+      .run();
+  }
+
+  const stub = env.SIGNAL.get(env.SIGNAL.idFromName(machineId));
+  return stub.fetch(new Request(`https://signal/connect?role=${role}`, request));
 }
 
 /**
@@ -315,7 +384,7 @@ async function route(
  */
 async function health(env: Env): Promise<Response> {
   const row = await env.DB.prepare(
-    "SELECT count(*) AS n FROM sqlite_master WHERE type = 'table' AND name IN ('accounts','credentials','key_slots','totp','setups','audit')",
+    "SELECT count(*) AS n FROM sqlite_master WHERE type = 'table' AND name IN ('accounts','credentials','key_slots','totp','setups','audit','machines','drives')",
   ).first<{ n: number }>();
 
   const key = await clientKey("0.0.0.0", env.RATE_SALT_SEED ?? "dev-seed");
@@ -323,7 +392,7 @@ async function health(env: Env): Promise<Response> {
   const verdict = await limiter.fetch("https://rate-limit/check").then((r) => r.json());
 
   return Response.json({
-    ok: row?.n === 6,
+    ok: row?.n === 8,
     tables: row?.n ?? 0,
     rateLimit: verdict,
   });

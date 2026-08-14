@@ -229,3 +229,37 @@ as "anything carrying account state". One line.
 - **`crossOrigin` and the cookie posture** — unchanged from the morning pass; an `Origin` of
   `null` (sandboxed frames) parses as invalid and is refused, which is the right side of that
   edge.
+
+---
+
+## Appendix — verified-safe list carried over from the 2026-08-13 full review (FABLE-FINDINGS)
+
+`FABLE-FINDINGS.md` was that review's session-survival document; every finding in it was fixed
+and its durable content moved here and to `TODO.md` before the file was deleted on 2026-08-14
+(`docs/DECISIONS.md` has the note). These were checked adversarially and left standing — record
+them so they are not re-litigated:
+
+- **Site-config `</script>` breakout: SAFE.** Every `<` in the injected JSON is escaped before
+  HTMLRewriter inlines it; content is allowlisted keys, ≤2000 bytes, `JSON.stringify` output.
+- **`.dev.vars` is gitignored and was never committed**; it holds only placeholders.
+- **Zero-operator state is unreachable** (last-operator self-revoke and self-delete refused).
+- **Operator flag and account row are re-read from D1 every request** — nothing is cached in
+  the token.
+- **TOTP**: replay closed by the atomic conditional `last_step` UPDATE; backup-code spend is a
+  compare-and-swap on the whole list; secret AES-GCM at rest with a fresh IV per encryption;
+  verification constant-time across the drift window; `counterBytes` avoids the 32-bit `>>>`
+  high-word bug.
+- **Constant-time comparison on every secret**, session MAC compared before the expiry check.
+- **Session MAC** covers purpose/subject/expiry/issuedAt; the 12-hour ceiling is enforced inside
+  `verify`; no fixation (fresh token on every sign-in); no session id ever in a URL.
+- **Uniform failure messaging and equalised D1 round-trips** on the sign-in paths (no latency
+  oracle for handle existence).
+- **`expectSignInHandle` forbids `:`**, which is what protects the synthetic
+  `second-factor:<id>` bucket names.
+- **No prototype pollution / mass assignment**: `readJson` rejects non-objects,
+  `publishSiteConfig` copies an allowlist, `expectBytes` checks charset and length.
+- **Grant public key validated on-curve at signup**; unwrapped keys non-extractable.
+- **Signup writes are one D1 batch** — no half-created account can exist.
+- **Migrations**: cascades, CHECK constraints and partial unique indexes all verified.
+- **`AUTH_PEPPER` loss is unrecoverable** — it invalidates every stored auth hash. It is backed
+  up in the client's password manager.

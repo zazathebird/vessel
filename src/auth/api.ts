@@ -131,6 +131,26 @@ export interface SavedSetup {
   createdAt: number;
 }
 
+/** One drive: a label for a folder whose handle only the agent tab holds (§9). */
+export interface DriveInfo {
+  id: string;
+  label: string;
+  createdAt: number;
+}
+
+/** One paired machine — a browser profile holding handles and a machine key (§12 M). */
+export interface MachineInfo {
+  id: string;
+  name: string;
+  /** Base64url uncompressed P-256 point; verifies the agent's signed DTLS fingerprint. */
+  agentPubkey: string;
+  pairedAt: number;
+  lastSeen: number | null;
+  /** The signalling object's socket state, asked live — never persisted (§12 N). */
+  online: boolean;
+  drives: DriveInfo[];
+}
+
 export interface MeResult {
   account: PublicAccount;
   resetAt: number | null;
@@ -209,4 +229,22 @@ export const api = {
   setupSave: (name: string, shareCode: string) =>
     post<{ status: string; setup: SavedSetup }>("/api/setups", { name, shareCode }),
   setupDelete: (id: string) => post<{ status: string }>("/api/setups/delete", { id }),
+
+  // Machines and drives (§13). Pairing carries the password proof (`authSecret`)
+  // because registering an agent public key adds a trust anchor (§12 L); the
+  // rest are session-gated labels. The pair response's `grantPubkey` is the
+  // agent tab's trust root, stored at pair time and never re-fetched.
+  machinePair: (body: unknown) =>
+    post<{ status: string; machine: MachineInfo; grantPubkey: string }>(
+      "/api/machines/pair",
+      body,
+    ),
+  machinesList: () => call<{ machines: MachineInfo[] }>("/api/machines"),
+  machineRename: (machineId: string, name: string) =>
+    post<{ status: string }>("/api/machines/rename", { machineId, name }),
+  machineRemove: (machineId: string) =>
+    post<{ status: string }>("/api/machines/remove", { machineId }),
+  driveAdd: (machineId: string, label: string) =>
+    post<{ status: string; drive: DriveInfo }>("/api/drives", { machineId, label }),
+  driveRemove: (driveId: string) => post<{ status: string }>("/api/drives/remove", { driveId }),
 };

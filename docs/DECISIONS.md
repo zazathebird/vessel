@@ -13,7 +13,51 @@ file records what happened to the codebase.
 
 ---
 
-## 2026-08-13 (late) — De-branding, duel likeness + blade colours, placeholder photos; the app-shell review finally runs
+## 2026-08-14 — SPEC-ACCOUNTS phase 2: machines, signalling, brokered browsing; docs condensed
+
+**Spec first, per §7.** `design/SPEC-ACCOUNTS.md` gained §13 (the concrete pairing, signalling,
+connect-ceremony and file-protocol design) and §12 K–S — nine logged decisions, each with what it
+was chosen over and a "revisit if". All five of §12's formerly-blocking open questions are
+answered in place. The load-bearing ones: **K** (the browsing peer authenticates with the grant
+key — the agent never trusts the introduction, in either phase), **L** (pairing is a password
+ceremony), **M** (a "machine" is a browser profile; one agent socket, newest wins), **P** (STUN
+only; TURN specified but a client spend decision), **S** (paths are arrays of components — no
+string parser exists to have a traversal bug).
+
+**Then plumbing, harness before interface.** Migration `0004` (machines + drives; grants and
+invites stay absent — phase 3). `worker/machines.ts` (pair/re-key password-gated via
+`assertPassword`, so the route rate-limits and cannot be a password oracle; CRUD session-gated;
+caps 10 machines / 16 drives). `worker/signal.ts` — the `MachineSignal` DO, hibernation API, one
+per machine, authenticated entirely in `worker/index.ts`'s `signalUpgrade` gate (which bypasses
+`harden()` deliberately: copying a 101 drops its `webSocket`). `src/share/` — `handshake.ts`
+(context-bound signed DTLS fingerprints, `vessel/p2p/<role>-fp/v1`), `paths.ts`, `protocol.ts`
+(v1: list/stat/read, 64 KiB chunks, `bufferedAmount` pacing), `agent.ts`, `browse.ts`,
+`store.ts`, `unlock.ts`. Health check now expects 8 tables.
+
+**Harness: 178 → 258.** Three new sections drive the path rule, every machine/drive route
+(negatives: no session, wrong password, malformed key, duplicate names, foreign-account 404s),
+and the signalling DO end to end over real WebSockets — including both directions of the
+ceremony's crypto with the real `src/share` modules, tampered/wrong-machine/wrong-role signature
+refusals, presence, replacement, frame hygiene and removal hangup. `ws` joined the
+devDependencies (Node's WebSocket cannot send a cookie); it is `--external` in the esbuild step.
+**One local-dev quirk recorded:** workerd delivers a server-initiated close on a hibernated
+socket lazily, so the harness asserts the `replaced` *frame* and the relay behaviour, not the
+close code reaching the replaced client.
+
+**Interface last**, account-form conventions throughout: `/share` (pair/re-key/take-over forms,
+drive pick/re-attach/allow-access, glanceable status with peers + bytes served, beforeunload only
+while a peer is connected) and `/machines` (presence-aware list, §12 K unlock form, List-mode
+explorer with breadcrumbs, folder descent, per-file fetch with progress and Blob download). Both
+unlinked pages: typed routes `machines` / `share`, linked from the `/signin` summary. The
+signed-in summary's "still being built behind it" note retired with the pages it promised.
+
+**Docs condensed at the client's request.** `FABLE-FINDINGS.md` (the 2026-08-13 full review's
+64 KB session-survival file) is deleted: every finding in it was fixed and recorded here at the
+time; its adversarially-verified "safe — do not re-litigate" list moved to
+`docs/SECURITY-AUDIT.md`'s appendix, and its three still-unanswered client questions (the
+Contact-page mailbox, per-account subdomains, Pages retirement) moved onto `TODO.md`'s sign-off
+list. `TODO.md`'s done items compressed to one-liners, numbering kept for cross-references.
+`docs/pi-sharing-host.md` updated: its final step now has a real `/share` to point at.
 
 Four client requests landed in one session, plus the review that
 `docs/REVIEW-CONTINUATION.md` had been holding open (that file is now deleted,

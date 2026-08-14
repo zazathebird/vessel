@@ -474,12 +474,21 @@ export function SignIn() {
             </button>{" "}
             — accounts, and what may be done to them.
           </p>
-        ) : (
-          <p className="v-account-note">
-            Setups below are the first thing an account actually holds. The rest of what one is{" "}
-            <em>for</em> — machines, sharing — is still being built behind it.
-          </p>
-        )}
+        ) : null}
+
+        {/* The phase-2 pair (SPEC-ACCOUNTS.md §13). The pages stay out of the
+            public nav; this summary and the typed routes are how they are
+            reached, same convention as every account page. */}
+        <p className="v-account-aside">
+          <button type="button" className="v-account-link" onClick={() => go("machines")}>
+            Your machines
+          </button>{" "}
+          — browse the folders your computers share.{" "}
+          <button type="button" className="v-account-link" onClick={() => go("share")}>
+            Share this machine
+          </button>{" "}
+          — pick a folder and serve it from this tab.
+        </p>
 
         <Setups />
 

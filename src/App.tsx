@@ -14,6 +14,8 @@ import { Footer } from "./components/Footer";
 import { SignUp } from "./components/SignUp";
 import { SignIn } from "./components/SignIn";
 import { Admin } from "./components/Admin";
+import { MachinesPage } from "./components/MachinesPage";
+import { SharePage } from "./components/SharePage";
 import { SiteConfigPanel } from "./components/SiteConfigPanel";
 import { OperatorDoor } from "./components/OperatorDoor";
 import { Screensaver } from "./components/Screensaver";
@@ -99,6 +101,10 @@ export default function App() {
         <SignIn />
       ) : config.page === "admin" ? (
         <Admin />
+      ) : config.page === "machines" ? (
+        <MachinesPage />
+      ) : config.page === "share" ? (
+        <SharePage />
       ) : (
         grid
       )}

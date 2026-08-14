@@ -51,7 +51,22 @@ import {
   newRecoveryCodes,
   normaliseRecoveryCode,
 } from "../src/auth/recoveryCodes";
+import {
+  fingerprintFromSdp,
+  generateMachineKeypair,
+  normalizeFingerprint,
+  signFingerprint,
+  verifyFingerprint,
+} from "../src/share/handshake";
+import { isValidPath } from "../src/share/paths";
 import { SoftwareAuthenticator } from "./webauthn-sim";
+
+// `ws`, marked external in the esbuild step and resolved from node_modules at
+// run time. It is already present as a transitive dependency of wrangler, and
+// the runtime constraint ("no third-party runtime libraries") is about the
+// site, not about this Node harness — Node's own WebSocket cannot attach a
+// cookie header, and the signalling socket authenticates by cookie.
+import WebSocket from "ws";
 
 const BASE = process.env.VESSEL_API ?? "http://127.0.0.1:8787";
 
@@ -268,6 +283,109 @@ async function totpCode(secretBase32: string, atMs = Date.now()): Promise<string
   return String(binary % 1_000_000).padStart(6, "0");
 }
 
+// Signalling helpers -----------------------------------------------------------
+//
+// The signalling socket authenticates by session cookie, which Node's built-in
+// WebSocket cannot send — hence `ws`, which takes arbitrary headers. The queue
+// turns an event stream into awaitable frames so the scenarios read in order;
+// a socket close is delivered into the same queue as `{ type: "__closed" }` so
+// a test can await it like any other frame, and a timeout comes back as
+// `{ type: "__timeout" }` rather than a rejection so a missing frame fails a
+// check instead of crashing the run.
+
+const WS_BASE = BASE.replace(/^http/, "ws");
+
+class SignalSocket {
+  private queue: Record<string, any>[] = [];
+  private waiters: ((frame: Record<string, any>) => void)[] = [];
+
+  constructor(readonly ws: WebSocket) {
+    ws.on("message", (data) => {
+      let frame: Record<string, any>;
+      try {
+        frame = JSON.parse(String(data));
+      } catch {
+        frame = { type: "__unparseable", raw: String(data).slice(0, 80) };
+      }
+      this.deliver(frame);
+    });
+    ws.on("close", (code) => this.deliver({ type: "__closed", code }));
+  }
+
+  private deliver(frame: Record<string, any>): void {
+    const waiter = this.waiters.shift();
+    if (waiter) waiter(frame);
+    else this.queue.push(frame);
+  }
+
+  next(timeoutMs = 5000): Promise<Record<string, any>> {
+    const queued = this.queue.shift();
+    if (queued) return Promise.resolve(queued);
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        const index = this.waiters.indexOf(waiter);
+        if (index >= 0) this.waiters.splice(index, 1);
+        resolve({ type: "__timeout" });
+      }, timeoutMs);
+      const waiter = (frame: Record<string, any>) => {
+        clearTimeout(timer);
+        resolve(frame);
+      };
+      this.waiters.push(waiter);
+    });
+  }
+
+  send(frame: unknown): void {
+    this.ws.send(typeof frame === "string" ? frame : JSON.stringify(frame));
+  }
+
+  close(): void {
+    try {
+      this.ws.close();
+    } catch {
+      // Already closed is fine.
+    }
+  }
+}
+
+/** Open a signalling socket, or reject with the refusal's HTTP status. */
+function wsOpen(machineId: string, role: string, cookie: string | null): Promise<SignalSocket> {
+  return new Promise((resolve, reject) => {
+    const headers: Record<string, string> = { "cf-connecting-ip": CLIENT_IP };
+    if (cookie) headers.cookie = cookie;
+    const ws = new WebSocket(`${WS_BASE}/api/signal/${machineId}?role=${role}`, { headers });
+    ws.on("open", () => resolve(new SignalSocket(ws)));
+    ws.on("unexpected-response", (_req, res) => reject(new Error(`status ${res.statusCode}`)));
+    ws.on("error", (error) => reject(error));
+  });
+}
+
+/** The HTTP status a refused upgrade came back with, or -1 if it opened. */
+async function wsRefusedStatus(
+  machineId: string,
+  role: string,
+  cookie: string | null,
+): Promise<number> {
+  try {
+    const socket = await wsOpen(machineId, role, cookie);
+    socket.close();
+    return -1;
+  } catch (error) {
+    const match = /status (\d+)/.exec((error as Error).message);
+    return match ? Number(match[1]) : -2;
+  }
+}
+
+/** A plausible SDP with a random DTLS fingerprint, for driving the ceremony. */
+function fakeSdp(): { sdp: string; fingerprint: string } {
+  const hex = [...crypto.getRandomValues(new Uint8Array(32))]
+    .map((b) => b.toString(16).padStart(2, "0").toUpperCase())
+    .join(":");
+  const fingerprint = `sha-256 ${hex}`;
+  const sdp = `v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=fingerprint:${fingerprint}\r\na=setup:actpass\r\n`;
+  return { sdp, fingerprint };
+}
+
 // The scenarios ---------------------------------------------------------------
 
 async function main(): Promise<void> {
@@ -278,7 +396,7 @@ async function main(): Promise<void> {
   const client = new Client();
   const health = await client.call("/api/health");
   check("the Worker answers /api/health", client.lastStatus === 200, `status ${client.lastStatus}`);
-  check("D1 has all six phase 1 tables", health.ok === true, `tables: ${health.tables}`);
+  check("D1 has all eight tables — phase 1 plus machines and drives", health.ok === true, `tables: ${health.tables}`);
   if (client.lastStatus !== 200) {
     console.log("\nThe Worker is not running. Start it with `npm run dev:worker`.");
     process.exit(1);
@@ -1562,6 +1680,423 @@ async function main(): Promise<void> {
     const anonymous = new Client();
     await anonymous.call("/api/setups");
     check("setups are invisible without a session", anonymous.lastStatus === 401);
+  }
+
+  // Phase 2 ---------------------------------------------------------------------
+  //
+  // Machines, drives and the signalling Durable Object (SPEC-ACCOUNTS.md §13).
+  // The WebRTC hop itself cannot run under Node — no RTCPeerConnection — so the
+  // boundary here is honest: every HTTP and WebSocket route is driven end to
+  // end, and the connect ceremony's cryptography is exercised with the real
+  // `src/share` modules on both sides of a relayed exchange. Only the DTLS
+  // channel that follows needs a browser.
+
+  section("The file protocol's path rule (§12 S) — pure, before any wire");
+  {
+    check("a plain relative path is valid", isValidPath(["docs", "march.pdf"]));
+    check("the empty path names the drive root", isValidPath([]));
+    check("a unicode name is valid", isValidPath(["naïve résumé.txt"]));
+    check("dot-dot is refused", !isValidPath(["docs", "..", "secrets"]));
+    check("a lone dot is refused", !isValidPath(["."]));
+    check("a forward slash inside a component is refused", !isValidPath(["a/b"]));
+    check("a backslash inside a component is refused", !isValidPath(["a\\b"]));
+    check("an empty component is refused", !isValidPath(["docs", ""]));
+    check("a DOS device name is refused", !isValidPath(["con"]));
+    check("a DOS device name with an extension is refused", !isValidPath(["PRN.txt"]));
+    check("a numbered port name is refused", !isValidPath(["com3"]));
+    check("a trailing dot is refused", !isValidPath(["name."]));
+    check("a trailing space is refused", !isValidPath(["name "]));
+    check("a colon is refused", !isValidPath(["c:evil"]));
+    check("a control character is refused", !isValidPath([`bad${String.fromCharCode(7)}name`]));
+    check("a 256-character component is refused", !isValidPath(["x".repeat(256)]));
+    check(
+      "a 33-deep path is refused",
+      !isValidPath(Array.from({ length: 33 }, () => "a")),
+    );
+    check("a non-string component is refused", !isValidPath(["docs", 42]));
+    check("a non-array is refused", !isValidPath("docs/march.pdf"));
+
+    check(
+      "fingerprint normalisation folds case one way",
+      normalizeFingerprint("SHA-256 ab:cd:ef") === "sha-256 AB:CD:EF",
+    );
+    const probe = fakeSdp();
+    check(
+      "the fingerprint is read out of an SDP",
+      fingerprintFromSdp(probe.sdp) === normalizeFingerprint(probe.fingerprint),
+    );
+    check("an SDP with no fingerprint yields null", fingerprintFromSdp("v=0\r\ns=-\r\n") === null);
+  }
+
+  section("Machines and drives (§13) — pairing is a password ceremony");
+  const ownerHandle = `harness-m-${RUN}`;
+  const ownerSession = asBrowser(new BrowserSession());
+  let machine1Id = "";
+  let machine1Pubkey = ""; // base64url, as the machine list reports it
+  let ownerGrantPubkey = "";
+  let ownerGrantKey!: CryptoKey;
+  let rekeyedKeys!: Awaited<ReturnType<typeof generateMachineKeypair>>;
+  let strangerCookie: string | null = null;
+  {
+    await signUpFlow(ownerHandle, password);
+
+    const none = await api.machinesList();
+    check("a fresh account has no machines", none.machines.length === 0);
+
+    const anonymous = new Client();
+    await anonymous.call("/api/machines");
+    check("machines are invisible without a session", anonymous.lastStatus === 401);
+
+    const { kdf } = await api.challenge(ownerHandle);
+    const derived = await deriveFromPassword(password, {
+      salt: fromBase64Url(kdf.salt),
+      iterations: kdf.iterations,
+    });
+    const wrongDerived = await deriveFromPassword("wrong password entirely", {
+      salt: fromBase64Url(kdf.salt),
+      iterations: kdf.iterations,
+    });
+
+    const slot = await api.keySlot();
+    ownerGrantPubkey = slot.grantPubkey;
+    ownerGrantKey = await unwrapSlot(
+      fromBase64Url(slot.wrappedGrantKey),
+      derived.wrappingKey,
+      fromBase64Url(slot.grantPubkey),
+    );
+
+    const agentKeys = await generateMachineKeypair();
+
+    const unproved = await refusal(() =>
+      api.machinePair({ name: "workshop", agentPubkey: toBase64Url(agentKeys.publicKeyBytes) }),
+    );
+    check("pairing without the password is refused", unproved?.status === 401, unproved?.message);
+
+    const misproved = await refusal(() =>
+      api.machinePair({
+        name: "workshop",
+        agentPubkey: toBase64Url(agentKeys.publicKeyBytes),
+        authSecret: wrongDerived.authSecret,
+      }),
+    );
+    check("pairing with the wrong password is refused", misproved?.status === 401, misproved?.message);
+
+    const shortKey = await refusal(() =>
+      api.machinePair({
+        name: "workshop",
+        agentPubkey: toBase64Url(agentKeys.publicKeyBytes.slice(0, 40)),
+        authSecret: derived.authSecret,
+      }),
+    );
+    check("a malformed agent public key is refused", shortKey?.status === 400, shortKey?.message);
+
+    const paired = await api.machinePair({
+      name: "workshop",
+      agentPubkey: toBase64Url(agentKeys.publicKeyBytes),
+      authSecret: derived.authSecret,
+    });
+    machine1Id = paired.machine.id;
+    check(
+      "a machine pairs",
+      paired.status === "paired" && paired.machine.name === "workshop" && !paired.machine.online,
+      JSON.stringify(paired).slice(0, 120),
+    );
+    check(
+      "the pair response carries the trust root — the account's own grant key",
+      paired.grantPubkey === slot.grantPubkey,
+    );
+
+    const dupKeys = await generateMachineKeypair();
+    const dupName = await refusal(() =>
+      api.machinePair({
+        name: "WORKSHOP",
+        agentPubkey: toBase64Url(dupKeys.publicKeyBytes),
+        authSecret: derived.authSecret,
+      }),
+    );
+    check("a duplicate machine name is refused, case-insensitively", dupName?.status === 409, dupName?.message);
+
+    const keys2 = await generateMachineKeypair();
+    const paired2 = await api.machinePair({
+      name: "laptop",
+      agentPubkey: toBase64Url(keys2.publicKeyBytes),
+      authSecret: derived.authSecret,
+    });
+    check("a second machine pairs", paired2.status === "paired");
+    const machine2Id = paired2.machine.id;
+
+    const renamed = await api.machineRename(machine2Id, "kitchen laptop");
+    check("a machine renames", renamed.status === "renamed");
+    const renameClash = await refusal(() => api.machineRename(machine2Id, "Workshop"));
+    check("renaming onto a taken name is refused", renameClash?.status === 409, renameClash?.message);
+    const renameGhost = await refusal(() => api.machineRename("no-such-machine", "x"));
+    check("renaming an unknown machine is a 404", renameGhost?.status === 404, renameGhost?.message);
+
+    const drive = await api.driveAdd(machine1Id, "Invoices");
+    check("a drive adds — a label, never a path", drive.status === "added" && drive.drive.label === "Invoices");
+    const driveGhost = await refusal(() => api.driveAdd("no-such-machine", "x"));
+    check("a drive on an unknown machine is a 404", driveGhost?.status === 404, driveGhost?.message);
+
+    const listed = (await api.machinesList()).machines;
+    const m1 = listed.find((m) => m.id === machine1Id)!;
+    check(
+      "the list carries the machine, its drive and its agent key",
+      listed.length === 2 && m1.drives.length === 1 && m1.agentPubkey === toBase64Url(agentKeys.publicKeyBytes),
+      JSON.stringify(listed).slice(0, 160),
+    );
+
+    const dropped = await api.driveRemove(m1.drives[0].id);
+    check("a drive removes", dropped.status === "removed");
+    const droppedTwice = await refusal(() => api.driveRemove(m1.drives[0].id));
+    check("removing it twice is a 404", droppedTwice?.status === 404, droppedTwice?.message);
+
+    // Re-attach a drive for the signalling section, then re-key the machine —
+    // §12 O's routine recovery — and prove the drives survive it.
+    await api.driveAdd(machine1Id, "Invoices");
+    rekeyedKeys = await generateMachineKeypair();
+    const rekeyed = await api.machinePair({
+      machineId: machine1Id,
+      agentPubkey: toBase64Url(rekeyedKeys.publicKeyBytes),
+      authSecret: derived.authSecret,
+    });
+    check("re-keying keeps the machine row", rekeyed.status === "rekeyed" && rekeyed.machine.id === machine1Id);
+    const afterRekey = (await api.machinesList()).machines.find((m) => m.id === machine1Id)!;
+    machine1Pubkey = afterRekey.agentPubkey;
+    check(
+      "re-keying replaces the agent key and keeps the drives",
+      afterRekey.agentPubkey === toBase64Url(rekeyedKeys.publicKeyBytes) && afterRekey.drives.length === 1,
+    );
+
+    // Another account can neither see nor steer these machines.
+    const strangerSession = asBrowser(new BrowserSession());
+    await signUpFlow(`harness-s-${RUN}`, password);
+    const strangerView = await api.machinesList();
+    check("another account sees no machines", strangerView.machines.length === 0);
+    const strangerRename = await refusal(() => api.machineRename(machine1Id, "mine now"));
+    check("another account cannot rename them", strangerRename?.status === 404, strangerRename?.message);
+    const strangerDrive = await refusal(() => api.driveAdd(machine1Id, "exfil"));
+    check("another account cannot add drives to them", strangerDrive?.status === 404, strangerDrive?.message);
+    const strangerRemove = await refusal(() => api.machineRemove(machine1Id));
+    check("another account cannot remove them", strangerRemove?.status === 404, strangerRemove?.message);
+    strangerCookie = strangerSession.cookie;
+
+    asBrowser(ownerSession);
+    const m2gone = await api.machineRemove(machine2Id);
+    check("a machine removes", m2gone.status === "removed");
+    const m2goneTwice = await refusal(() => api.machineRemove(machine2Id));
+    check("removing it twice is a 404", m2goneTwice?.status === 404, m2goneTwice?.message);
+  }
+
+  section("Signalling (§13) — the Durable Object introduces and cannot listen");
+  {
+    const cookie = ownerSession.cookie;
+
+    check(
+      "an upgrade without a session is refused with 401",
+      (await wsRefusedStatus(machine1Id, "agent", null)) === 401,
+    );
+    check(
+      "another account's upgrade is refused with 404",
+      (await wsRefusedStatus(machine1Id, "agent", strangerCookie)) === 404,
+    );
+    check(
+      "an unknown machine is refused with 404",
+      (await wsRefusedStatus("no-such-machine", "agent", cookie)) === 404,
+    );
+    check(
+      "an unknown role is refused with 400",
+      (await wsRefusedStatus(machine1Id, "operator", cookie)) === 400,
+    );
+
+    // The agent tab arrives.
+    const agent = await wsOpen(machine1Id, "agent", cookie);
+    const withAgent = (await api.machinesList()).machines.find((m) => m.id === machine1Id)!;
+    check("presence reads from the socket, not a table", withAgent.online === true);
+    check("last_seen is stamped on agent connect", withAgent.lastSeen !== null);
+
+    // The owner's browsing tab arrives and is told the agent is there.
+    const browserTab = await wsOpen(machine1Id, "browser", cookie);
+    const hello = await browserTab.next();
+    check(
+      "a browser is greeted with the agent's presence",
+      hello.type === "hello" && hello.agentOnline === true && typeof hello.peer === "string",
+      JSON.stringify(hello),
+    );
+
+    // The connect ceremony (§13), with the real src/share crypto on both ends.
+    const offerSdp = fakeSdp();
+    const ownerSignature = await signFingerprint(
+      ownerGrantKey,
+      "owner",
+      machine1Id,
+      offerSdp.fingerprint,
+    );
+    browserTab.send({
+      type: "offer",
+      payload: {
+        sdp: offerSdp.sdp,
+        fingerprint: offerSdp.fingerprint,
+        signature: toBase64Url(ownerSignature),
+      },
+    });
+
+    const offer = await agent.next();
+    check(
+      "the offer reaches the agent, tagged with its sender",
+      offer.type === "offer" && typeof offer.from === "string" && offer.payload?.sdp === offerSdp.sdp,
+      JSON.stringify(offer).slice(0, 120),
+    );
+
+    const rootBytes = fromBase64Url(ownerGrantPubkey);
+    const fingerprint = fingerprintFromSdp(String(offer.payload.sdp))!;
+    const signature = fromBase64Url(String(offer.payload.signature));
+    check(
+      "the agent verifies the owner's signed fingerprint against its trust root",
+      await verifyFingerprint(rootBytes, "owner", machine1Id, fingerprint, signature),
+    );
+    const tampered = signature.slice();
+    tampered[7] ^= 0xff;
+    check(
+      "a tampered signature is refused",
+      !(await verifyFingerprint(rootBytes, "owner", machine1Id, fingerprint, tampered)),
+    );
+    check(
+      "a signature for another machine is refused",
+      !(await verifyFingerprint(rootBytes, "owner", "other-machine", fingerprint, signature)),
+    );
+    check(
+      "an owner signature cannot be replayed as an agent's",
+      !(await verifyFingerprint(rootBytes, "agent", machine1Id, fingerprint, signature)),
+    );
+
+    const answerSdp = fakeSdp();
+    const agentSignature = await signFingerprint(
+      rekeyedKeys.keyPair.privateKey,
+      "agent",
+      machine1Id,
+      answerSdp.fingerprint,
+    );
+    agent.send({
+      type: "answer",
+      to: offer.from,
+      payload: {
+        sdp: answerSdp.sdp,
+        fingerprint: answerSdp.fingerprint,
+        signature: toBase64Url(agentSignature),
+      },
+    });
+    const answer = await browserTab.next();
+    check("the answer comes back to the right browser", answer.type === "answer", JSON.stringify(answer).slice(0, 100));
+    check(
+      "the browser verifies the agent's fingerprint against machines.agent_pubkey",
+      await verifyFingerprint(
+        fromBase64Url(machine1Pubkey),
+        "agent",
+        machine1Id,
+        String(answer.payload.fingerprint),
+        fromBase64Url(String(answer.payload.signature)),
+      ),
+    );
+
+    browserTab.send({ type: "ice", payload: { candidate: "candidate:0 1 UDP 1 127.0.0.1 9 typ host" } });
+    const iceToAgent = await agent.next();
+    check("ICE relays browser → agent", iceToAgent.type === "ice" && iceToAgent.from === offer.from);
+    agent.send({ type: "ice", to: offer.from, payload: { candidate: "candidate:1" } });
+    const iceToBrowser = await browserTab.next();
+    check("ICE relays agent → browser", iceToBrowser.type === "ice");
+
+    // The tab closes: presence goes honest, an offer meets "offline", not an error.
+    agent.close();
+    const offline = await browserTab.next();
+    check(
+      "browsers are told when the agent leaves",
+      offline.type === "agent-status" && offline.online === false,
+      JSON.stringify(offline),
+    );
+    browserTab.send({ type: "offer", payload: { sdp: "x" } });
+    const noAgent = await browserTab.next();
+    check(
+      "an offer with no agent answers offline, not a failure",
+      noAgent.type === "agent-status" && noAgent.online === false,
+      JSON.stringify(noAgent),
+    );
+    const agentGone = (await api.machinesList()).machines.find((m) => m.id === machine1Id)!;
+    check("presence reads offline once the socket is gone", agentGone.online === false);
+
+    // It returns; then a second tab takes over (§12 M).
+    const agentBack = await wsOpen(machine1Id, "agent", cookie);
+    const online = await browserTab.next();
+    check("browsers are told when the agent returns", online.type === "agent-status" && online.online === true);
+    const usurper = await wsOpen(machine1Id, "agent", cookie);
+    const replaced = await agentBack.next();
+    check("a second agent tab replaces the first, which is told", replaced.type === "replaced", JSON.stringify(replaced));
+    const stillOnline = await browserTab.next();
+    check(
+      "the browsers never saw the handover as an outage",
+      stillOnline.type === "agent-status" && stillOnline.online === true,
+      JSON.stringify(stillOnline),
+    );
+
+    // The told-tab contract is the frame; the server-side close is cleanup and
+    // local workerd delivers it lazily. What must actually hold: relays now go
+    // to the new agent and never to the replaced one.
+    browserTab.send({ type: "offer", payload: { probe: 1 } });
+    const relayedToNew = await usurper.next();
+    check("offers relay to the replacing agent", relayedToNew.type === "offer", JSON.stringify(relayedToNew).slice(0, 80));
+    const leakToOld = await agentBack.next(1500);
+    check(
+      "nothing relays to the replaced socket",
+      leakToOld.type === "__timeout" || leakToOld.type === "__closed",
+      JSON.stringify(leakToOld),
+    );
+    agentBack.close();
+
+    // Protocol hygiene: the object refuses rather than tolerates.
+    usurper.send({ type: "offer", payload: {} });
+    const usurperClose = await usurper.next();
+    check(
+      "an agent sending a browser's vocabulary is disconnected",
+      usurperClose.type === "__closed" && usurperClose.code === 1003,
+      JSON.stringify(usurperClose),
+    );
+    const usurperOffline = await browserTab.next();
+    check("its departure reads as the agent leaving", usurperOffline.type === "agent-status" && usurperOffline.online === false);
+
+    const oversized = await wsOpen(machine1Id, "browser", cookie);
+    await oversized.next(); // its hello
+    oversized.send("x".repeat(70_000));
+    const oversizedClose = await oversized.next();
+    check(
+      "an oversized frame closes the socket",
+      oversizedClose.type === "__closed" && oversizedClose.code === 1009,
+      JSON.stringify(oversizedClose),
+    );
+
+    const garbled = await wsOpen(machine1Id, "browser", cookie);
+    await garbled.next(); // its hello
+    garbled.send("not json at all");
+    const garbledClose = await garbled.next();
+    check(
+      "an unparseable frame closes the socket",
+      garbledClose.type === "__closed" && garbledClose.code === 1003,
+      JSON.stringify(garbledClose),
+    );
+
+    // Removing the machine hangs up on everyone, immediately.
+    const removal = await api.machineRemove(machine1Id);
+    check("the machine removes while its sockets are live", removal.status === "removed");
+    const removedNotice = await browserTab.next();
+    check("live sockets are told the machine is gone", removedNotice.type === "machine-removed", JSON.stringify(removedNotice));
+    const removedClose = await browserTab.next();
+    check("and are closed with the removal code", removedClose.type === "__closed" && removedClose.code === 4004);
+    check(
+      "an upgrade to the removed machine is refused with 404",
+      (await wsRefusedStatus(machine1Id, "agent", cookie)) === 404,
+    );
+    check(
+      "the machine list no longer carries it",
+      !(await api.machinesList()).machines.some((m) => m.id === machine1Id),
+    );
   }
 
   // Rate limiting ---------------------------------------------------------------

@@ -11,6 +11,8 @@ export interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
   RATE_LIMIT: DurableObjectNamespace;
+  /** One signalling object per paired machine (SPEC-ACCOUNTS.md §8, §13). */
+  SIGNAL: DurableObjectNamespace;
 
   /** HMAC key for stored auth hashes (§4). */
   AUTH_PEPPER: string;

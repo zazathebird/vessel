@@ -83,9 +83,22 @@ migrations_dir = "migrations"
 name = "RATE_LIMIT"
 class_name = "RateLimiter"
 
+# One signalling object per paired machine (SPEC-ACCOUNTS.md §8, §13) — the
+# second Durable Object this stack always needed, and the reason Pages was
+# never an option. An introducer, not a pipe: it relays SDP and ICE between
+# the agent tab and the owner's browsing tabs, persists nothing, and file
+# bytes never pass through it.
+[[durable_objects.bindings]]
+name = "SIGNAL"
+class_name = "MachineSignal"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["RateLimiter"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["MachineSignal"]
 
 [observability]
 enabled = true

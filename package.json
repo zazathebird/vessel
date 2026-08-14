@@ -11,7 +11,7 @@
     "dev:worker": "wrangler dev",
     "predeploy": "npm run typecheck && npm run build && node -e \"require('fs').rmSync('dist/_redirects', { force: true })\"",
     "deploy": "wrangler deploy",
-    "test:auth": "esbuild scripts/auth-e2e.ts --bundle --platform=node --format=esm --outfile=node_modules/.vessel/auth-e2e.mjs --log-level=warning && node node_modules/.vessel/auth-e2e.mjs",
+    "test:auth": "esbuild scripts/auth-e2e.ts --bundle --platform=node --format=esm --external:ws --outfile=node_modules/.vessel/auth-e2e.mjs --log-level=warning && node node_modules/.vessel/auth-e2e.mjs",
     "db:migrate": "wrangler d1 migrations apply vessel --local",
     "db:migrate:remote": "wrangler d1 migrations apply vessel --remote"
   },
@@ -26,6 +26,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "typescript": "^5.7.2",
     "vite": "^6.0.5",
-    "wrangler": "^4.122.0"
+    "wrangler": "^4.122.0",
+    "ws": "^8.21.0"
   }
 }
