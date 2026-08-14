@@ -1,0 +1,21 @@
+-- One column, for RFC 6238 §5.2: a code that has been accepted must not be
+-- accepted a second time inside the thirty seconds it remains valid.
+--
+-- Without this, a code observed over someone's shoulder or captured by a
+-- compromised frontend can be replayed for the rest of its step. `verifyTotp`
+-- returns the step index it matched rather than a boolean specifically so this
+-- check has something to compare against.
+--
+-- A separate migration rather than an edit to 0001, even though 0001 has never
+-- been applied to a real database: local D1 records which migrations it has run,
+-- so editing one in place leaves any existing local database silently missing
+-- the change while reporting itself up to date.
+--
+-- On §9's inventory. The rule there is that adding a stored field is a spec
+-- change to be argued rather than slipped in, so: this stores the index of the
+-- last 30-second window in which the account signed in — a coarse timestamp,
+-- less precise than `credentials.last_used_at`, which the inventory already
+-- covers under "activity metadata". It identifies nobody and reaches nobody.
+-- Flagged to the client rather than assumed.
+
+ALTER TABLE totp ADD COLUMN last_step INTEGER;

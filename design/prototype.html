@@ -1,0 +1,1325 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+  body { margin:0; background:#0B0A14; }
+  @keyframes v-breathe { 0%,100%{transform:scale(1)} 50%{transform:scale(1.012)} }
+  @keyframes v-spin { to { transform:rotate(360deg) } }
+  @keyframes v-dilate { 0%,100%{transform:scale(1);opacity:.5} 42%{transform:scale(1.14);opacity:.95} 60%{transform:scale(1.02);opacity:.7} }
+  @keyframes v-rise { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:translateY(0)} }
+  @keyframes v-irisA { 0%{opacity:0;transform:scale(1.06)} 100%{opacity:1;transform:scale(1)} }
+  @keyframes v-irisB { 0%{opacity:0;transform:scale(1.06)} 100%{opacity:1;transform:scale(1)} }
+  @keyframes v-travel { 0%{transform:translateX(-100%)} 100%{transform:translateX(300%)} }
+  @keyframes v-shock { 0%{opacity:.9;transform:translate(-50%,-50%) scale(0)} 100%{opacity:0;transform:translate(-50%,-50%) scale(16)} }
+  @keyframes v-doorIn { 0%{opacity:0;transform:perspective(1200px) rotateX(26deg) scale(.85)} 100%{opacity:1;transform:perspective(1200px) rotateX(0) scale(1)} }
+  @keyframes v-drift { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-12px)} }
+  @keyframes v-dive { 0%{opacity:1;transform:scale(1) translateZ(0);filter:blur(0)} 55%{opacity:0;transform:scale(2.6);filter:blur(14px)} 56%{opacity:0;transform:scale(.86);filter:blur(14px)} 100%{opacity:1;transform:scale(1);filter:blur(0)} }
+  @keyframes v-fadeIn { from{opacity:0} to{opacity:1} }
+</style>
+</helmet>
+
+<div style="{{ themeVars }}">
+<div style="position:relative;min-height:100vh;background:var(--bg,#0B0A14);color:var(--fg,#E9E9F2);font-family:var(--fontBody,ui-sans-serif,'Helvetica Neue',Helvetica,Arial,sans-serif);overflow:hidden;transition:background-color .9s ease,color .9s ease">
+
+  <canvas ref="{{ fxRef }}" width="1600" height="1000" style="{{ canvasStyle }}"></canvas>
+  <div style="position:absolute;inset:0;z-index:1;pointer-events:none;background:radial-gradient(130% 95% at 50% 8%,transparent 26%,var(--bg,#0B0A14) 92%)"></div>
+  <sc-if value="{{ grain }}" hint-placeholder-val="{{ true }}">
+    <div style="position:absolute;inset:0;z-index:2;pointer-events:none;opacity:.14;mix-blend-mode:overlay;background-image:repeating-conic-gradient(var(--fg,#fff) 0% 0.0006%,transparent 0% 0.05%);background-size:3px 3px"></div>
+  </sc-if>
+  <div ref="{{ cursorRef }}" style="{{ cursorStyle }}"></div>
+
+  <div style="{{ chromeStyle }}">
+  <header style="{{ headerStyle }}">
+    <div style="position:absolute;left:40px;right:40px;top:50%;height:2px;border-radius:2px;background:linear-gradient(90deg,transparent,var(--a1,#7CF),var(--a2,#F7C),transparent);opacity:.28;overflow:hidden">
+      <sc-if value="{{ alive }}" hint-placeholder-val="{{ true }}">
+        <span style="position:absolute;top:0;bottom:0;width:22%;background:linear-gradient(90deg,transparent,var(--fg,#fff),transparent);opacity:.7;animation:v-travel 5.5s cubic-bezier(.5,0,.5,1) infinite"></span>
+      </sc-if>
+    </div>
+
+    <div style="position:relative;display:flex;align-items:center;justify-content:space-between;gap:24px;flex-wrap:wrap">
+      <button onClick="{{ tapLogo }}" style="display:flex;align-items:center;gap:12px;background:none;border:0;padding:0;cursor:pointer;color:inherit;font:inherit">
+        <span style="position:relative;width:32px;height:32px;display:grid;place-items:center">
+          <span style="{{ logoRingA }}"></span>
+          <span style="{{ logoRingB }}"></span>
+          <span style="width:9px;height:9px;border-radius:50%;background:var(--a1,#7CF);box-shadow:0 0 16px var(--a1,#7CF)"></span>
+        </span>
+        <span style="font-family:var(--fontMono,ui-monospace,Menlo,monospace);font-size:13px;letter-spacing:.24em;text-transform:uppercase;color:var(--fg,#E9E9F2)">vessel</span>
+      </button>
+
+      <nav style="{{ navRowStyle }}">
+        <sc-for list="{{ nav }}" as="n" hint-placeholder-count="7">
+          <button onClick="{{ n.go }}" style="{{ n.style }}">{{ n.label }}</button>
+        </sc-for>
+      </nav>
+
+      <div style="display:flex;align-items:center;gap:10px">
+        <button onClick="{{ toggleCalm }}" style="{{ calmBtnStyle }}">{{ calmLabel }}</button>
+        <sc-if value="{{ unlocked }}" hint-placeholder-val="{{ false }}">
+          <button onClick="{{ togglePanel }}" style="display:flex;align-items:center;gap:9px;border:1px solid var(--line,#262433);background:color-mix(in oklab,var(--surface,#15131F) 78%,transparent);color:var(--fg,#E9E9F2);font-family:var(--fontMono,ui-monospace,monospace);font-size:11px;letter-spacing:.16em;padding:11px 15px;border-radius:var(--radius,14px);cursor:pointer;text-transform:uppercase">
+            <span style="width:7px;height:7px;border-radius:50%;background:var(--a2,#F7C);box-shadow:0 0 12px var(--a2,#F7C)"></span>siteconfig
+          </button>
+        </sc-if>
+      </div>
+    </div>
+  </header>
+
+  <main ref="{{ stageRef }}" style="{{ stageStyle }}">
+
+    <sc-if value="{{ isTerminal }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--line,#262433);background:color-mix(in oklab,var(--surface,#15131F) 70%,transparent);font-family:var(--fontMono,ui-monospace,monospace);font-size:11px;letter-spacing:.14em;color:var(--muted,#9A96B5)">
+        <span style="width:10px;height:10px;border-radius:50%;background:var(--a3,#FD6)"></span>
+        <span style="width:10px;height:10px;border-radius:50%;background:var(--a2,#F7C)"></span>
+        <span style="width:10px;height:10px;border-radius:50%;background:var(--a1,#7CF)"></span>
+        <span style="margin-left:10px">{{ termTitle }}</span>
+      </div>
+    </sc-if>
+
+    <section style="{{ heroStyle }}">
+      <sc-if value="{{ showValve }}" hint-placeholder-val="{{ true }}">
+        <div style="{{ valveWrapStyle }}">
+          <span style="{{ valveDash }}"></span>
+          <span style="{{ valveRing1 }}"></span>
+          <span style="{{ valveRing2 }}"></span>
+          <span style="{{ valveRing3 }}"></span>
+          <sc-if value="{{ isRadial }}" hint-placeholder-val="{{ false }}">
+            <sc-for list="{{ orbit }}" as="o" hint-placeholder-count="7">
+              <button onClick="{{ o.go }}" style="{{ o.style }}">{{ o.label }}</button>
+            </sc-for>
+          </sc-if>
+          <span style="{{ valveCore }}"></span>
+        </div>
+      </sc-if>
+
+      <div style="{{ heroTextStyle }}">
+        <div style="font-family:var(--fontMono,ui-monospace,monospace);font-size:11px;letter-spacing:.3em;text-transform:uppercase;color:var(--a1,#7CF);display:flex;align-items:center;gap:10px">
+          <span style="width:24px;height:1px;background:var(--a1,#7CF)"></span>{{ eyebrow }}
+        </div>
+        <h1 style="{{ h1Style }}">{{ h1Text }}</h1>
+        <p style="margin:0;max-width:56ch;font-size:clamp(15px,1.25vw,19px);line-height:1.65;color:var(--muted,#9A96B5);text-wrap:pretty">{{ lede }}</p>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;padding-top:6px">
+          <sc-for list="{{ ctas }}" as="c" hint-placeholder-count="2">
+            <button onClick="{{ c.go }}" style="{{ c.style }}">{{ c.label }}</button>
+          </sc-for>
+        </div>
+        <div style="display:flex;gap:18px;flex-wrap:wrap;padding-top:8px;font-family:var(--fontMono,ui-monospace,monospace);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--faint,#5C5877)">
+          <span>{{ presetName }}</span><span>{{ layoutName }}</span><span>{{ fxName }}</span><span>{{ vitals }}</span>
+        </div>
+      </div>
+    </section>
+
+    <div style="{{ gridStyle }}">
+      <sc-for list="{{ blocks }}" as="b" hint-placeholder-count="6">
+        <article ref="{{ b.ref }}" style="{{ b.style }}">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:14px">
+            <span style="display:flex;align-items:center;gap:8px;font-family:var(--fontMono,ui-monospace,monospace);font-size:10px;letter-spacing:.24em;text-transform:uppercase;color:var(--a2,#F7C)">
+              <span style="width:6px;height:6px;border-radius:50%;background:var(--a2,#F7C);box-shadow:0 0 10px var(--a2,#F7C)"></span>{{ b.kicker }}
+            </span>
+            <span style="font-family:var(--fontMono,ui-monospace,monospace);font-size:10px;color:var(--faint,#5C5877)">{{ b.idx }}</span>
+          </div>
+          <h3 style="margin:0;font-size:clamp(19px,1.6vw,24px);line-height:1.25;letter-spacing:-0.01em;color:var(--fg,#E9E9F2)">{{ b.title }}</h3>
+          <p style="margin:0;font-size:15px;line-height:1.62;color:var(--muted,#9A96B5)">{{ b.body }}</p>
+          <sc-if value="{{ b.hasList }}" hint-placeholder-val="{{ false }}">
+            <ul style="margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px;font-size:14px;line-height:1.45;color:var(--fg,#E9E9F2)">
+              <sc-for list="{{ b.items }}" as="it" hint-placeholder-count="4">
+                <li style="display:flex;gap:10px;align-items:baseline"><span style="color:var(--a1,#7CF)">▸</span>{{ it }}</li>
+              </sc-for>
+            </ul>
+          </sc-if>
+          <sc-if value="{{ b.hasTile }}" hint-placeholder-val="{{ false }}">
+            <div style="{{ b.tileStyle }}">
+              <span style="position:absolute;inset:0;border-radius:inherit;box-shadow:inset 0 0 50px color-mix(in oklab,var(--a1,#7CF) 26%,transparent);pointer-events:none"></span>
+              <span style="font-family:var(--fontMono,ui-monospace,monospace);font-size:11px;letter-spacing:.14em;color:var(--muted,#9A96B5)">{{ b.tile }}</span>
+            </div>
+          </sc-if>
+          <sc-if value="{{ b.hasMail }}" hint-placeholder-val="{{ false }}">
+            <button onClick="{{ revealMail }}" style="align-self:flex-start;background:none;border:0;border-bottom:2px solid var(--a1,#7CF);padding:0 0 5px;cursor:pointer;font-family:var(--fontMono,ui-monospace,monospace);font-size:clamp(17px,1.7vw,22px);color:var(--a1,#7CF);word-break:break-all;text-align:left">{{ mailLabel }}</button>
+          </sc-if>
+        </article>
+      </sc-for>
+    </div>
+
+    <footer style="{{ footerStyle }}">
+      <span>no trackers · no cookies · no idea why you're still here</span>
+      <div style="display:flex;gap:14px;align-items:center">
+        <sc-for list="{{ footerNav }}" as="f" hint-placeholder-count="2">
+          <button onClick="{{ f.go }}" style="{{ f.style }}">{{ f.label }}</button>
+        </sc-for>
+        <button onClick="{{ footerDot }}" style="background:none;border:0;color:var(--faint,#5C5877);font:inherit;letter-spacing:.14em;cursor:default;padding:0">·</button>
+      </div>
+      <span>{{ fiddled }} · {{ clock }}</span>
+    </footer>
+  </main>
+  </div>
+
+  <sc-if value="{{ saver }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ wake }}" style="position:fixed;inset:0;z-index:70;cursor:pointer;animation:v-fadeIn 2.4s ease both;background:transparent">
+      <div style="position:absolute;left:50%;bottom:40px;transform:translateX(-50%);font-family:var(--fontMono,ui-monospace,monospace);font-size:10px;letter-spacing:.3em;text-transform:uppercase;color:var(--faint,#5C5877);opacity:.6">click to return</div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ panelOpen }}" hint-placeholder-val="{{ false }}">
+    <aside style="position:fixed;top:0;right:0;bottom:0;width:min(92vw,420px);z-index:60;background:color-mix(in oklab,var(--surface,#15131F) 94%,transparent);border-left:1px solid var(--line,#262433);backdrop-filter:blur(22px);overflow-y:auto;padding:26px;display:flex;flex-direction:column;gap:24px;box-shadow:-40px 0 90px rgba(0,0,0,.55);animation:v-rise .34s cubic-bezier(.2,.8,.2,1) both">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <div style="display:flex;flex-direction:column;gap:5px">
+          <span style="font-family:var(--fontMono,ui-monospace,monospace);font-size:10px;letter-spacing:.3em;text-transform:uppercase;color:var(--a2,#F7C)">siteconfig</span>
+          <span style="font-size:19px;letter-spacing:-0.01em;color:var(--fg,#E9E9F2)">Operator controls</span>
+        </div>
+        <button onClick="{{ togglePanel }}" style="width:34px;height:34px;border:1px solid var(--line,#262433);background:none;color:var(--muted,#9A96B5);border-radius:var(--radius,14px);cursor:pointer;font-size:15px">✕</button>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <span style="font-family:var(--fontMono,ui-monospace,monospace);font-size:10px;letter-spacing:.24em;text-transform:uppercase;color:var(--faint,#5C5877)">Behaviour</span>
+        <div style="display:flex;flex-wrap:wrap;gap:7px">
+          <sc-for list="{{ modes }}" as="m" hint-placeholder-count="5">
+            <button onClick="{{ m.go }}" style="{{ m.style }}">{{ m.label }}</button>
+          </sc-for>
+        </div>
+        <button onClick="{{ shuffle }}" style="{{ shuffleStyle }}">↻ shuffle now</button>
+        <div style="display:flex;flex-wrap:wrap;gap:7px">
+          <sc-for list="{{ scopes }}" as="s" hint-placeholder-count="5">
+            <button onClick="{{ s.go }}" style="{{ s.style }}">{{ s.label }}</button>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <span style="font-family:var(--fontMono,ui-monospace,monospace);font-size:10px;letter-spacing:.24em;text-transform:uppercase;color:var(--faint,#5C5877)">Palette — 24</span>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:9px">
+          <sc-for list="{{ palettes }}" as="p" hint-placeholder-count="24">
+            <button onClick="{{ p.go }}" style="{{ p.style }}">
+              <span style="display:flex;gap:3px"><span style="{{ p.s1 }}"></span><span style="{{ p.s2 }}"></span><span style="{{ p.s3 }}"></span></span>
+              <span style="font-size:10px;line-height:1.2;text-align:left;color:var(--fg,#E9E9F2)">{{ p.name }}</span>
+            </button>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <span style="font-family:var(--fontMono,ui-monospace,monospace);font-size:10px;letter-spacing:.24em;text-transform:uppercase;color:var(--faint,#5C5877)">Layout — 13</span>
+        <div style="display:flex;flex-wrap:wrap;gap:7px">
+          <sc-for list="{{ layouts }}" as="l" hint-placeholder-count="8">
+            <button onClick="{{ l.go }}" style="{{ l.style }}">{{ l.label }}</button>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <span style="font-family:var(--fontMono,ui-monospace,monospace);font-size:10px;letter-spacing:.24em;text-transform:uppercase;color:var(--faint,#5C5877)">Background — 12</span>
+        <div style="display:flex;flex-wrap:wrap;gap:7px">
+          <sc-for list="{{ fxModes }}" as="f" hint-placeholder-count="12">
+            <button onClick="{{ f.go }}" style="{{ f.style }}">{{ f.label }}</button>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <span style="font-family:var(--fontMono,ui-monospace,monospace);font-size:10px;letter-spacing:.24em;text-transform:uppercase;color:var(--faint,#5C5877)">Typography</span>
+        <div style="display:flex;flex-wrap:wrap;gap:7px">
+          <sc-for list="{{ typeSets }}" as="t" hint-placeholder-count="5">
+            <button onClick="{{ t.go }}" style="{{ t.style }}">{{ t.label }}</button>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <span style="font-family:var(--fontMono,ui-monospace,monospace);font-size:10px;letter-spacing:.24em;text-transform:uppercase;color:var(--faint,#5C5877)">Life signs</span>
+        <div style="display:flex;flex-wrap:wrap;gap:7px">
+          <sc-for list="{{ toggles }}" as="t" hint-placeholder-count="6">
+            <button onClick="{{ t.go }}" style="{{ t.style }}">{{ t.label }}</button>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <span style="font-family:var(--fontMono,ui-monospace,monospace);font-size:10px;letter-spacing:.24em;text-transform:uppercase;color:var(--faint,#5C5877)">Share a setup</span>
+        <div style="display:flex;gap:8px;align-items:center">
+          <code style="flex:1;padding:11px 13px;border:1px solid var(--line,#262433);border-radius:var(--radius,14px);font-family:var(--fontMono,ui-monospace,monospace);font-size:12px;color:var(--a1,#7CF);letter-spacing:.1em">{{ code }}</code>
+          <button onClick="{{ copyCode }}" style="{{ copyStyle }}">copy</button>
+        </div>
+        <input ref="{{ pasteRef }}" onKeyDown="{{ pasteKey }}" placeholder="paste a code, press enter" style="padding:11px 13px;border:1px solid var(--line,#262433);background:color-mix(in oklab,var(--bg,#0B0A14) 60%,transparent);border-radius:var(--radius,14px);font-family:var(--fontMono,ui-monospace,monospace);font-size:12px;color:var(--fg,#E9E9F2);outline:none">
+      </div>
+
+      <button onClick="{{ knock }}" style="margin-top:auto;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px;border:1px dashed var(--line,#262433);background:color-mix(in oklab,var(--bg,#0B0A14) 60%,transparent);border-radius:var(--radius,14px);cursor:pointer;font-family:var(--fontMono,ui-monospace,monospace);font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--faint,#5C5877)">
+        <span>◈ operator access</span><span style="color:var(--muted,#9A96B5)">{{ lockLabel }}</span>
+      </button>
+    </aside>
+  </sc-if>
+
+  <sc-if value="{{ doorOpen }}" hint-placeholder-val="{{ false }}">
+    <div style="position:fixed;inset:0;z-index:80;display:grid;place-items:center;background:color-mix(in oklab,var(--bg,#0B0A14) 82%,transparent);backdrop-filter:blur(18px) saturate(1.25)">
+      <div style="position:absolute;left:50%;top:50%;width:200px;height:200px;border:1px solid var(--a1,#7CF);border-radius:50%;animation:v-shock 1.15s cubic-bezier(.2,.8,.2,1) both"></div>
+      <div style="position:absolute;left:50%;top:50%;width:200px;height:200px;border:1px solid var(--a2,#F7C);border-radius:50%;animation:v-shock 1.15s cubic-bezier(.2,.8,.2,1) .12s both"></div>
+      <div style="position:relative;width:min(92vw,460px);padding:34px;border:1px solid var(--a1,#7CF);border-radius:calc(var(--radius,14px) + 6px);background:color-mix(in oklab,var(--surface,#15131F) 92%,transparent);box-shadow:0 0 90px color-mix(in oklab,var(--a1,#7CF) 40%,transparent);display:flex;flex-direction:column;gap:20px;animation:v-doorIn .52s cubic-bezier(.2,.9,.25,1) both">
+        <div style="display:flex;align-items:center;gap:12px">
+          <span style="width:11px;height:11px;border-radius:50%;background:var(--a1,#7CF);box-shadow:0 0 16px var(--a1,#7CF);animation:v-dilate 1.8s ease-in-out infinite"></span>
+          <span style="font-family:var(--fontMono,ui-monospace,monospace);font-size:10px;letter-spacing:.3em;text-transform:uppercase;color:var(--a1,#7CF)">{{ doorVia }}</span>
+        </div>
+        <h2 style="margin:0;font-size:28px;letter-spacing:-0.02em;color:var(--fg,#E9E9F2)">Operator access</h2>
+        <p style="margin:0;font-size:14px;line-height:1.62;color:var(--muted,#9A96B5)">Private hostname. This door is a courtesy — the real one is not on this site, does not share a domain, and does not answer to visitors.</p>
+        <div style="display:flex;flex-direction:column;gap:10px;font-family:var(--fontMono,ui-monospace,monospace);font-size:12px">
+          <div style="display:flex;justify-content:space-between;padding:13px 15px;border:1px solid var(--line,#262433);border-radius:var(--radius,14px);color:var(--faint,#5C5877)"><span>identity</span><span style="color:var(--fg,#E9E9F2)">••••••••••</span></div>
+          <div style="display:flex;justify-content:space-between;padding:13px 15px;border:1px solid var(--line,#262433);border-radius:var(--radius,14px);color:var(--faint,#5C5877)"><span>key</span><span style="color:var(--fg,#E9E9F2)">••••••••••••••••</span></div>
+          <div style="display:flex;justify-content:space-between;padding:13px 15px;border:1px solid var(--line,#262433);border-radius:var(--radius,14px);color:var(--faint,#5C5877)"><span>second factor</span><span style="color:var(--a3,#FD6)">awaiting hardware key</span></div>
+        </div>
+        <div style="display:flex;gap:10px">
+          <button onClick="{{ openConfig }}" style="flex:1;padding:14px;border:1px solid var(--a1,#7CF);background:color-mix(in oklab,var(--a1,#7CF) 14%,transparent);color:var(--a1,#7CF);border-radius:var(--radius,14px);font-family:var(--fontMono,ui-monospace,monospace);font-size:11px;letter-spacing:.2em;text-transform:uppercase;cursor:pointer">authenticate</button>
+          <button onClick="{{ closeDoor }}" style="padding:14px 18px;border:1px solid var(--line,#262433);background:none;color:var(--muted,#9A96B5);border-radius:var(--radius,14px);font-family:var(--fontMono,ui-monospace,monospace);font-size:11px;letter-spacing:.2em;text-transform:uppercase;cursor:pointer">leave</button>
+        </div>
+        <div style="font-family:var(--fontMono,ui-monospace,monospace);font-size:10px;letter-spacing:.14em;color:var(--faint,#5C5877);line-height:1.7">six ways in, all of them yours: 5× logo · konami · type “sudo” · drag the page sideways · the footer dot · ⌘K</div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ hasToast }}" hint-placeholder-val="{{ false }}">
+    <div style="position:fixed;left:50%;bottom:34px;transform:translateX(-50%);z-index:90;padding:13px 20px;border:1px solid var(--a2,#F7C);border-radius:999px;background:color-mix(in oklab,var(--surface,#15131F) 92%,transparent);color:var(--fg,#E9E9F2);font-family:var(--fontMono,ui-monospace,monospace);font-size:11px;letter-spacing:.18em;text-transform:uppercase;box-shadow:0 0 40px color-mix(in oklab,var(--a2,#F7C) 35%,transparent);animation:v-rise .3s cubic-bezier(.2,.8,.2,1) both">{{ toast }}</div>
+  </sc-if>
+
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900}}">
+const PALETTES = [
+  { id:"nebula", name:"Nebula Drift", bg:"#0B0A1F", surface:"#15142E", line:"#272549", fg:"#E8E7FA", muted:"#9E9BC7", faint:"#5D5A85", a1:"#8B7BFF", a2:"#FF6FD8", a3:"#FFD36E" },
+  { id:"reef", name:"Deep Reef", bg:"#04181E", surface:"#0B2730", line:"#164049", fg:"#DFF6F4", muted:"#8DB8B8", faint:"#4E7076", a1:"#3FE0C8", a2:"#4C9BFF", a3:"#B9FF6E" },
+  { id:"vapor", name:"Vapor Sunset", bg:"#170B2B", surface:"#23113F", line:"#3B1F63", fg:"#F6E9FF", muted:"#B79BD6", faint:"#6E5391", a1:"#FF71CE", a2:"#01CDFE", a3:"#FFF56E" },
+  { id:"obsidian", name:"Molten Obsidian", bg:"#141010", surface:"#201919", line:"#3A2A24", fg:"#F5E9E2", muted:"#B79C8E", faint:"#755E52", a1:"#FF7A3D", a2:"#FFB347", a3:"#7CC4FF" },
+  { id:"chrome", name:"Liquid Chrome", bg:"#101318", surface:"#191E26", line:"#2C333F", fg:"#EAF0F8", muted:"#9FB0C4", faint:"#5F6E80", a1:"#9FD8FF", a2:"#C9D6E4", a3:"#6EE7FF" },
+  { id:"solar", name:"Solarpunk", bg:"#0B1A12", surface:"#12271B", line:"#1F402C", fg:"#E6F7E9", muted:"#95BFA2", faint:"#587560", a1:"#5BE38B", a2:"#E8C75B", a3:"#59C8FF" },
+  { id:"halftone", name:"Halftone Pop", bg:"#15151E", surface:"#1F1F2C", line:"#33334A", fg:"#FFF8EC", muted:"#B3AEC4", faint:"#6D6885", a1:"#FF4D5E", a2:"#FFD23F", a3:"#3FC1FF" },
+  { id:"blueprint", name:"Blueprint", bg:"#0A1428", surface:"#0F1E3B", line:"#1D3560", fg:"#DCE9FF", muted:"#8FA9D4", faint:"#54689B", a1:"#5FA8FF", a2:"#9FD0FF", a3:"#FFCF6E" },
+  { id:"deco", name:"Deco Gold", bg:"#141109", surface:"#1F1A0F", line:"#3B301A", fg:"#F7EEDA", muted:"#BFAE8B", faint:"#7A6C50", a1:"#D9B45B", a2:"#E8D9A8", a3:"#7FB3A8" },
+  { id:"holo", name:"Holographic", bg:"#0E0F1A", surface:"#171A2A", line:"#2A2F49", fg:"#EFF2FF", muted:"#A5ACD1", faint:"#636A93", a1:"#7CE7FF", a2:"#FF9CF0", a3:"#B6FF9C" },
+  { id:"clay", name:"Claymation", bg:"#1C1826", surface:"#282235", line:"#3D3550", fg:"#F5EFFA", muted:"#B6A9C9", faint:"#736689", a1:"#FF9E7D", a2:"#8DD6C2", a3:"#F5D06E" },
+  { id:"datamosh", name:"Datamosh", bg:"#0D0D14", surface:"#16161F", line:"#2B2B3C", fg:"#EDEDF6", muted:"#A0A0B8", faint:"#5F5F78", a1:"#FF2E88", a2:"#00E5FF", a3:"#D6FF3D" },
+  { id:"toxic", name:"Toxic Bloom", bg:"#0F1A0C", surface:"#182814", line:"#274022", fg:"#EDF7E4", muted:"#A6BF95", faint:"#66805A", a1:"#BFFF3D", a2:"#5BE3C4", a3:"#FFE55B" },
+  { id:"ember", name:"Ember Ash", bg:"#171215", surface:"#221B20", line:"#3A2C33", fg:"#F6EAEE", muted:"#BCA3AE", faint:"#786370", a1:"#FF6B8A", a2:"#FFA96B", a3:"#9DBBFF" },
+  { id:"arctic", name:"Arctic Signal", bg:"#08131A", surface:"#0F2028", line:"#1B3745", fg:"#E2F3FB", muted:"#93B6C6", faint:"#557285", a1:"#6FE0FF", a2:"#B9F2E6", a3:"#FFE07A" },
+  { id:"uv", name:"Ultraviolet", bg:"#0C0718", surface:"#160E28", line:"#2C1A4A", fg:"#F0E6FF", muted:"#AE9AD1", faint:"#6C5990", a1:"#B36BFF", a2:"#6BF0FF", a3:"#FF6BB3" },
+  { id:"terracotta", name:"Terracotta Night", bg:"#1A1310", surface:"#261C17", line:"#412F26", fg:"#F8EDE4", muted:"#C0A492", faint:"#7C6555", a1:"#E88C5A", a2:"#D6B98C", a3:"#7FA9A0" },
+  { id:"phosphor", name:"Phosphor", bg:"#070C08", surface:"#0E160F", line:"#1D2C1F", fg:"#DCF7DF", muted:"#8FB897", faint:"#54725B", a1:"#4BFF7A", a2:"#00E5A0", a3:"#D8FF5B" },
+  { id:"oxide", name:"Oxide", bg:"#150F0C", surface:"#221713", line:"#3D251C", fg:"#F2E2D8", muted:"#B79483", faint:"#775a4c", a1:"#C4552E", a2:"#8C6E5C", a3:"#B8342F" },
+  { id:"flare", name:"Signal Flare", bg:"#080809", surface:"#111113", line:"#242427", fg:"#F2F2F3", muted:"#9C9CA1", faint:"#5C5C62", a1:"#FF5A00", a2:"#C4C4C8", a3:"#8A8A90" },
+  { id:"peat", name:"Peat", bg:"#12140F", surface:"#1B1E16", line:"#2C3125", fg:"#DDE2D3", muted:"#98A089", faint:"#606856", a1:"#7E9160", a2:"#9A8A63", a3:"#6E8478" },
+  { id:"xerox", name:"Xerox", bg:"#111112", surface:"#1B1B1D", line:"#2E2E31", fg:"#EDEDEE", muted:"#9B9B9F", faint:"#5E5E63", a1:"#00B8C4", a2:"#B4B4B8", a3:"#7A7A7F" },
+  { id:"anodised", name:"Anodised", bg:"#0C0F16", surface:"#151A24", line:"#26303F", fg:"#E4EBF5", muted:"#97A5BA", faint:"#5B687D", a1:"#6E8CFF", a2:"#A98CFF", a3:"#7FD4E8" },
+  { id:"sodium", name:"Sodium", bg:"#0A0F1C", surface:"#111829", line:"#1F2A45", fg:"#F2E9D8", muted:"#B0A78F", faint:"#6E6A5C", a1:"#FFA028", a2:"#FFC97A", a3:"#5E8BC4" }
+];
+
+const LAYOUTS = [
+  { id:"cinematic", label:"Cinematic" }, { id:"magazine", label:"Magazine" },
+  { id:"deck", label:"Card deck" }, { id:"split", label:"Split" },
+  { id:"radial", label:"Radial orbit" }, { id:"sidescroll", label:"Side-scroll" },
+  { id:"terminal", label:"Terminal" }, { id:"mosaic", label:"Mosaic" },
+  { id:"ledger", label:"Ledger" }, { id:"stack", label:"Stack" },
+  { id:"marginalia", label:"Marginalia" }, { id:"console", label:"Console" },
+  { id:"sheet", label:"Contact sheet" }
+];
+
+const FX = [
+  { id:"vessels", label:"Vessels" }, { id:"flow", label:"Flow" }, { id:"pressure", label:"Pressure" },
+  { id:"rain", label:"Matrix rain" }, { id:"stars", label:"Warp stars" }, { id:"constellation", label:"Constellation" },
+  { id:"aurora", label:"Aurora" }, { id:"plasma", label:"Plasma" }, { id:"tunnel", label:"Grid tunnel" },
+  { id:"bokeh", label:"Bokeh" }, { id:"orbits", label:"Orbits" }, { id:"off", label:"None" }
+];
+
+const TYPESETS = [
+  { id:"grotesk", label:"Grotesk", body:"ui-sans-serif,'Helvetica Neue',Helvetica,Arial,sans-serif", display:"ui-sans-serif,'Helvetica Neue',Helvetica,Arial,sans-serif", mono:"ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" },
+  { id:"editorial", label:"Editorial", body:"Georgia,'Iowan Old Style','Times New Roman',serif", display:"Georgia,'Iowan Old Style','Times New Roman',serif", mono:"ui-monospace,SFMono-Regular,Menlo,monospace" },
+  { id:"mixed", label:"Serif + mono", body:"ui-sans-serif,'Helvetica Neue',Arial,sans-serif", display:"Georgia,'Iowan Old Style',serif", mono:"ui-monospace,SFMono-Regular,Menlo,monospace" },
+  { id:"allmono", label:"All mono", body:"ui-monospace,SFMono-Regular,Menlo,Consolas,monospace", display:"ui-monospace,SFMono-Regular,Menlo,Consolas,monospace", mono:"ui-monospace,SFMono-Regular,Menlo,monospace" },
+  { id:"condensed", label:"Condensed", body:"'Avenir Next Condensed','Helvetica Neue',Impact,sans-serif", display:"'Avenir Next Condensed',Impact,'Helvetica Neue',sans-serif", mono:"ui-monospace,Menlo,monospace" }
+];
+
+const MODES = [
+  { id:"static", label:"Static" }, { id:"tod", label:"Time of day" },
+  { id:"visit", label:"Per visit" }, { id:"page", label:"Per page" }, { id:"manual", label:"Shuffle only" }
+];
+
+const SCOPES = [
+  { id:"pal", label:"Palette" }, { id:"layout", label:"Layout" },
+  { id:"fx", label:"Effect" }, { id:"type", label:"Type" }, { id:"toggles", label:"Toggles" }
+];
+
+// combos the user asked to block
+const BAD = [
+  { layout:"magazine", fx:["rain","plasma"] },
+  { layout:"terminal", fxNot:["rain","tunnel","off"] },
+  { layout:"terminal", type:["condensed"] },
+  { type:["editorial"], pal:["datamosh"] },
+  { layout:"sidescroll", fx:["rain","plasma","vessels","bokeh"] },
+  { layout:"radial", fx:["plasma","rain"] },
+  { layout:"ledger", fx:["plasma","bokeh"] },
+  { layout:"ledger", type:["condensed"] },
+  { layout:"console", fxNot:["rain","tunnel","off","constellation"] },
+  { layout:"marginalia", fx:["rain","plasma","stars"] },
+  { layout:"sheet", fx:["rain","plasma"] }
+];
+const LOWCONTRAST = ["peat","oxide","terracotta","deco"];
+
+const PAGES = {
+  home: {
+    eyebrow: "pressure nominal",
+    title: "Oh. It's you.",
+    lede: "There is no product here, no newsletter, no funnel, and nothing measuring you. The domain was already paid for, so this exists. If you need a machine fixed, contact is one click away and is the only genuinely useful part of it.",
+    ctas: [ { label:"Fix my computer →", to:"contact", primary:true }, { label:"Show me something weird", to:"gallery" } ],
+    blocks: [
+      { kicker:"the pitch", title:"Machines get fixed here", body:"Fifteen years of taking things apart and putting most of them back together. Laptops, desktops, drives that stopped spinning, networks that never worked properly to begin with." },
+      { kicker:"the catch", title:"There is no catch", body:"No quote form, no ticket system, no chat widget pretending to be a person. You send an email, you get a reply, usually the same day." },
+      { kicker:"the site", title:"Twenty-four palettes, eight layouts", body:"Everything visible here is switchable. It is entirely unnecessary. That is the point.", hasList:true, items:["24 colour palettes","8 layout archetypes","12 background modes","5 type systems"] },
+      { kicker:"the honesty", title:"What this is not", body:"Not an agency. Not a startup. Not looking for funding, partnerships, or your synergy. One person and a bench." },
+      { kicker:"the rate", title:"Free diagnosis, always", body:"If it can't be fixed you pay nothing and you get it back in the same number of pieces it arrived in." },
+      { kicker:"the door", title:"Some of this is hidden", body:"There are six ways into a panel you will never need. Cosmetic to you, load-bearing to me." }
+    ]
+  },
+  about: {
+    eyebrow: "who",
+    title: "Nobody, deliberately.",
+    lede: "No name, no face, no city on this page. Not paranoia — a preference. The work speaks, and if it doesn't, a name wouldn't have helped.",
+    ctas: [ { label:"See the work", to:"work", primary:true }, { label:"Contact", to:"contact" } ],
+    blocks: [
+      { kicker:"origin", title:"Started with a broken 486", body:"It was already broken when it arrived. It was more broken afterwards. Something clicked anyway." },
+      { kicker:"now", title:"Benches, not offices", body:"A room, good light, an anti-static mat, and more spare screws than any person needs." },
+      { kicker:"stance", title:"Repair over replace", body:"Most things called dead are one component and forty minutes away from fine. The rest get stripped, and the parts get used." },
+      { kicker:"tools", title:"What's on the bench", body:"", hasList:true, items:["Hot air station and a steady hand","Drive imagers, write blockers","A drawer of donor boards","More USB sticks than sense"] }
+    ]
+  },
+  work: {
+    eyebrow: "selected repairs",
+    title: "Things that were dead.",
+    lede: "No client names, no photos of anyone's living room. What came in, what was wrong, what happened next.",
+    ctas: [ { label:"Bring me yours", to:"contact", primary:true } ],
+    blocks: [
+      { kicker:"recovery", title:"4TB out of a flooded drive", body:"Dried, cleaned, imaged in a single pass. 94% recovered, including the only copy of eleven years of photos.", hasTile:true, tile:"drive teardown · photo slot" },
+      { kicker:"board", title:"Reflowed a GPU everyone wrote off", body:"Two cold joints. Still running two years later — two years longer than the shop that quoted a new machine predicted." },
+      { kicker:"network", title:"A house with three routers fighting", body:"Removed two. The third works perfectly and always did.", hasTile:true, tile:"cabinet before/after · photo slot" },
+      { kicker:"forensics", title:"Ransomware, no ransom", body:"An offline backup existed. Nobody knew. Restored in an afternoon." },
+      { kicker:"absurd", title:"A laptop full of sand", body:"Beach holiday. Every key. It lives.", hasTile:true, tile:"keyboard, disassembled · photo slot" },
+      { kicker:"ongoing", title:"Twelve machines kept alive past 2019", body:"Small office, no budget. SSDs and RAM instead of a purchase order." }
+    ]
+  },
+  gallery: {
+    eyebrow: "dumping ground",
+    title: "Random shit, catalogued.",
+    lede: "Dead hardware, screenshots of things that should not compile, and photographs of cable drawers. Lazy-loaded, EXIF stripped, no lightbox library.",
+    ctas: [ { label:"Contact instead", to:"contact" } ],
+    blocks: [
+      { kicker:"img_01", title:"Exploded ThinkPad", body:"Every screw laid out in order. It went back together.", hasTile:true, tile:"4:5 · photo slot" },
+      { kicker:"img_02", title:"Burnt capacitor, close", body:"Macro. You can see where it gave up.", hasTile:true, tile:"16:9 · photo slot" },
+      { kicker:"clip_01", title:"Fan bearing screaming", body:"Eight seconds. Muted by default, obviously.", hasTile:true, tile:"video · muted loop" },
+      { kicker:"img_03", title:"Forty drives, one works", body:"A shelf of maybes.", hasTile:true, tile:"3:4 · photo slot" },
+      { kicker:"img_04", title:"CRT still alive", body:"Refuses to die. Respect.", hasTile:true, tile:"1:1 · photo slot" },
+      { kicker:"img_05", title:"Cable drawer, unsolved", body:"An ongoing situation.", hasTile:true, tile:"4:5 · photo slot" }
+    ]
+  },
+  contact: {
+    eyebrow: "the useful page",
+    title: "Computer repair.",
+    lede: "Independent, one person, no shopfront. Dead, slow, infected, or you need the photos off a drive that stopped spinning. Email is below, reply usually within a day.",
+    ctas: [ { label:"Copy the address", to:"contact", primary:true } ],
+    blocks: [
+      { kicker:"email", title:"The only way in", body:"Plain email, assembled in your browser so the scrapers don't get it. No form, no ticket system, nothing that stores your details on someone else's server.", hasMail:true },
+      { kicker:"what i fix", title:"Most of it", body:"", hasList:true, items:["Laptops and desktops — Windows, macOS, Linux","Won't boot, blue screens, random shutdowns","SSD and RAM upgrades for slow machines","Malware removal and clean reinstalls","Data recovery from failing drives","Screens, keyboards, batteries, fans","Home wifi, routers, printers (reluctantly)","Backups, so it doesn't happen twice"] },
+      { kicker:"what i don't", title:"A short list", body:"", hasList:true, items:["Phone and tablet glass","Getting into an account that isn't yours","Crypto wallet recovery","3am emergencies, unless genuinely on fire"] },
+      { kicker:"area", title:"Local, plus about thirty minutes around it", body:"Drop-off or collection by arrangement. Remote fixes over the phone where they'll actually work. Ask and I'll tell you if you're in range." },
+      { kicker:"how it works", title:"Three steps", body:"", hasList:true, items:["Email what's wrong","Rough quote back, free","Fixed, or you pay nothing"] },
+      { kicker:"include", title:"To save a round trip", body:"Make and model, what it does, and when it started doing it. One sentence is fine." }
+    ]
+  },
+  now: {
+    eyebrow: "currently on the bench",
+    title: "What's open right now.",
+    lede: "Updated when it changes, which is not often enough to justify a feed. If your machine is on this list it is being worked on and you do not need to email me twice.",
+    ctas: [ { label:"Add yours to it", to:"contact", primary:true } ],
+    blocks: [
+      { kicker:"in progress", title:"Three ThinkPads, one keyboard between them", body:"Two are donors. The third is going home." },
+      { kicker:"waiting on parts", title:"A screen coming slowly from very far away", body:"Ordered, shipped, tracking last seen in a warehouse. Six to ten days." },
+      { kicker:"in progress", title:"A NAS rebuild that should not have taken this long", body:"Two disks replaced, array resilvering. Slow by design." },
+      { kicker:"diagnosing", title:"An intermittent shutdown", body:"The worst kind. It behaves perfectly on the bench and dies at home. Currently running a week of logging." },
+      { kicker:"done this week", title:"Two clean reinstalls and a battery", body:"All collected. All working." },
+      { kicker:"personal", title:"Something old, being restored badly", body:"Not for a client. Not going well. Continuing anyway." }
+    ]
+  },
+  changelog: {
+    eyebrow: "site edits",
+    title: "Things I changed.",
+    lede: "A log of edits to a website nobody asked for, kept for the same reason people keep receipts.",
+    ctas: [ { label:"Back to the front", to:"home" } ],
+    blocks: [
+      { kicker:"v2.4", title:"Added six palettes nobody will pick", body:"Oxide, Signal Flare, Peat, Xerox, Anodised, Sodium. Peat is deliberately hard to read." },
+      { kicker:"v2.3", title:"The site now shuffles itself", body:"Five behaviours, including one that reshuffles on every click. Regret is a feature." },
+      { kicker:"v2.2", title:"Calm mode stopped being a half measure", body:"It is now its own aesthetic rather than the same site with the fun turned down." },
+      { kicker:"v2.1", title:"Screensaver", body:"Sixty seconds of no clicking and the interface gets out of the way. Mouse drift no longer counts as being alive." },
+      { kicker:"v2.0", title:"Threw out the terminal", body:"Green text on black was a decision made at 2am in 2009 and defended for far too long." },
+      { kicker:"v1.9", title:"Email hidden from scrapers", body:"Assembled in the browser. The bots get a placeholder, you get an address." }
+    ]
+  },
+  guestbook: {
+    eyebrow: "1999 revival",
+    title: "Sign nothing.",
+    lede: "A guestbook with no form, because a form is a database and a database is a liability. Transcribed from emails, with permission, minus everything identifying.",
+    ctas: [ { label:"Email instead", to:"contact", primary:true } ],
+    blocks: [
+      { kicker:"entry 001", title:"“Got my photos back. All of them.”", body:"— someone who had not backed up since 2011" },
+      { kicker:"entry 002", title:"“Cheaper than the quote for a new one.”", body:"— a five-year-old laptop that now boots in nine seconds" },
+      { kicker:"entry 003", title:"“You told me not to buy anything. Who does that?”", body:"— unclear whether this was a compliment" },
+      { kicker:"entry 004", title:"“The website is insane.”", body:"— many people, repeatedly" },
+      { kicker:"entry 005", title:"“It still smells faintly of the sea.”", body:"— the sand laptop, six months on" }
+    ]
+  },
+  notfound: {
+    eyebrow: "pressure lost · http 404",
+    title: "Nothing here. Never was.",
+    lede: "You typed it wrong, a link rotted, something was deleted on purpose, or you are a crawler doing reconnaissance. Three of those are forgivable.",
+    ctas: [ { label:"Go home", to:"home", primary:true }, { label:"Contact", to:"contact" } ],
+    blocks: [
+      { kicker:"trace", title:"resource not found", body:"/var/www/whatever_you_wanted → exists = false" },
+      { kicker:"suggestion", title:"Try the parts that exist", body:"There are eight other pages and all of them are more interesting than this one.", hasList:true, items:["Landing — the joke","Contact — the useful one","Now — what's on the bench","Gallery — the dumping ground"] },
+      { kicker:"consolation", title:"Have a palette instead", body:"Twenty-four of them. None will find your page." }
+    ]
+  }
+};
+
+const NAV = [
+  { id:"home", label:"Home" }, { id:"about", label:"About" }, { id:"work", label:"Work" },
+  { id:"gallery", label:"Gallery" }, { id:"contact", label:"Contact" },
+  { id:"guestbook", label:"Guestbook" }, { id:"notfound", label:"404" }
+];
+const FOOTER_NAV = [ { id:"now", label:"Now" }, { id:"changelog", label:"Changelog" } ];
+
+const MAIL = ["patrickmcclevarty", String.fromCharCode(64), "outlook", ".", "com"].join("");
+const GLYPHS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ#$%&*+=<>/\\|01";
+const KEY = "vessel.cfg.v2";
+
+class Component extends DCLogic {
+  state = {
+    page:"home", pal:0, layout:"cinematic", fx:"vessels", type:0,
+    mode:"tod", scope:{ pal:true, layout:true, fx:true, type:true, toggles:true },
+    panelOpen:false, doorOpen:false, doorVia:"", toast:"", calm:false,
+    grain:true, breathe:true, cursor:true, unlocked:false, clock:"",
+    nav:0, diving:false, h1Text:"", saver:false, mailShown:false, band:"desk"
+  };
+
+  componentDidMount() {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(KEY) || "null"); } catch (e) {}
+    const reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    const next = saved ? { ...saved, panelOpen:false, doorOpen:false, toast:"" } : {};
+    if (reduced) { next.calm = true; next.grain = false; next.breathe = false; }
+    this.setState(next, () => {
+      const m = this.state.mode;
+      if (m === "visit") this.roll(false);
+      else if (m === "tod" && saved) this.applyTod();
+      this.scramble(PAGES[this.state.page].title);
+    });
+
+    this.tick = setInterval(() => {
+      const d = new Date();
+      this.setState({ clock: String(d.getHours()).padStart(2,"0") + ":" + String(d.getMinutes()).padStart(2,"0") + " · local" });
+      const hr = new Date().getHours();
+      if (this.bootHour === undefined) this.bootHour = hr;
+      if (this.state.mode === "tod" && hr !== this.bootHour) this.applyTod(true);
+    }, 1000);
+
+    this.cards = [];
+    this.keys = [];
+    this.onKey = (e) => {
+      const k = (e.key || "").toLowerCase();
+      this.poke();
+      if ((e.metaKey || e.ctrlKey) && k === "k") { e.preventDefault(); this.openDoor("⌘K"); return; }
+      if (k === "escape") { this.setState({ doorOpen:false, panelOpen:false }); return; }
+      if (k === "arrowright" || k === "arrowleft") {
+        const i = NAV.findIndex(n => n.id === this.state.page);
+        if (i > -1 && !this.state.panelOpen) {
+          const j = (i + (k === "arrowright" ? 1 : NAV.length - 1)) % NAV.length;
+          this.go(NAV[j].id)();
+        }
+      }
+      this.keys.push(k); if (this.keys.length > 12) this.keys.shift();
+      const s = this.keys.join(" ");
+      if (s.indexOf("s u d o") > -1) { this.keys = []; this.openDoor("typed command"); }
+      const kon = ["arrowup","arrowup","arrowdown","arrowdown","arrowleft","arrowright","arrowleft","arrowright","b","a"].join(" ");
+      if (s.indexOf(kon) > -1) { this.keys = []; this.openDoor("konami"); }
+    };
+    window.addEventListener("keydown", this.onKey);
+
+    this.onVis = () => {
+      if (document.hidden && this.scrambling) {
+        this.scrambleRun = (this.scrambleRun || 0) + 1;
+        this.scrambling = false;
+        this.setState({ h1Text: PAGES[this.state.page].title });
+      }
+    };
+    document.addEventListener("visibilitychange", this.onVis);
+
+    this.onSize = () => {
+      const w = window.innerWidth;
+      const band = w < 560 ? "phone" : w < 900 ? "tablet" : "desk";
+      if (band !== this.state.band) this.setState({ band });
+    };
+    this.onSize();
+    window.addEventListener("resize", this.onSize);
+
+    this.mouse = { x:.5, y:.5 };
+    this.onMove = (e) => {
+      const host = this.cursorEl && this.cursorEl.parentElement;
+      if (!host) return;
+      const r = host.getBoundingClientRect();
+      this.mouse = { x:(e.clientX - r.left)/r.width, y:(e.clientY - r.top)/r.height };
+      if (this.state.cursor && !this.state.calm && !this.state.saver)
+        this.cursorEl.style.transform = "translate3d(" + (e.clientX - r.left) + "px," + (e.clientY - r.top) + "px,0)";
+      this.tilt(e);
+    };
+    window.addEventListener("pointermove", this.onMove);
+
+    this.dragX = null;
+    this.onDown = (e) => { this.dragX = e.clientX; this.poke(); };
+    this.onUp = (e) => {
+      if (this.dragX !== null && e.clientX - this.dragX > 260) this.openDoor("dragged sideways");
+      this.dragX = null;
+    };
+    window.addEventListener("pointerdown", this.onDown);
+    window.addEventListener("pointerup", this.onUp);
+    this.poke();
+  }
+
+  componentWillUnmount() {
+    clearInterval(this.tick); clearTimeout(this.toastT); clearTimeout(this.diveT);
+    clearTimeout(this.idleT); cancelAnimationFrame(this.raf); cancelAnimationFrame(this.scrambleRaf);
+    document.removeEventListener("visibilitychange", this.onVis);
+    window.removeEventListener("keydown", this.onKey);
+    window.removeEventListener("pointermove", this.onMove);
+    window.removeEventListener("pointerdown", this.onDown);
+    window.removeEventListener("pointerup", this.onUp);
+    window.removeEventListener("resize", this.onSize);
+  }
+
+  // ---- persistence ----
+  save() {
+    const s = this.state;
+    try { localStorage.setItem(KEY, JSON.stringify({
+      page:s.page, pal:s.pal, layout:s.layout, fx:s.fx, type:s.type, mode:s.mode,
+      scope:s.scope, calm:s.calm, grain:s.grain, breathe:s.breathe, cursor:s.cursor, unlocked:s.unlocked
+    })); } catch (e) {}
+  }
+  componentDidUpdate(prevProps, prevState) {
+    clearTimeout(this.saveT);
+    this.saveT = setTimeout(() => this.save(), 250);
+    // opening or closing an overlay restarts the idle clock, so the timer can never
+    // be left armed from before the panel opened
+    if (prevState && (prevState.panelOpen !== this.state.panelOpen || prevState.doorOpen !== this.state.doorOpen))
+      this.poke();
+  }
+
+  // ---- idle / screensaver ----
+  poke() {
+    clearTimeout(this.idleT);
+    if (this.state.saver) this.setState({ saver:false });
+    // The saver owns the whole screen, so anything it cannot fade must be closed first —
+    // the panel and door are fixed-position siblings outside the faded chrome wrapper.
+    this.idleT = setTimeout(() => {
+      const s = this.state;
+      if (s.calm || s.panelOpen || s.doorOpen) return;
+      this.setState({ saver:true, panelOpen:false, doorOpen:false });
+    }, 60000);
+  }
+  wake = () => { this.setState({ saver:false }); this.poke(); };
+
+  // ---- randomiser ----
+  applyTod(quiet) {
+    const h = new Date().getHours();
+    const id = h < 6 ? "uv" : h < 10 ? "arctic" : h < 15 ? "reef" : h < 19 ? "vapor" : h < 22 ? "obsidian" : "nebula";
+    const i = PALETTES.findIndex(p => p.id === id);
+    if (i > -1 && i !== this.state.pal) { this.setState({ pal:i }); if (!quiet) this.say(PALETTES[i].name); }
+  }
+  ok(cfg) {
+    for (const r of BAD) {
+      if (r.layout && r.layout !== cfg.layout) continue;
+      if (r.fx && r.fx.indexOf(cfg.fx) > -1) return false;
+      if (r.fxNot && r.fxNot.indexOf(cfg.fx) < 0) return false;
+      if (r.type && r.type.indexOf(TYPESETS[cfg.type].id) > -1) return false;
+      if (r.pal && r.pal.indexOf(PALETTES[cfg.pal].id) > -1 && r.type && r.type.indexOf(TYPESETS[cfg.type].id) > -1) return false;
+    }
+    if (cfg.grain && LOWCONTRAST.indexOf(PALETTES[cfg.pal].id) > -1) return false;
+    return true;
+  }
+  roll(announce) {
+    const sc = this.state.scope;
+    const pick = (a) => a[(Math.random()*a.length)|0];
+    let cfg = null;
+    for (let n = 0; n < 60; n++) {
+      const c = {
+        pal: sc.pal ? (Math.random()*PALETTES.length)|0 : this.state.pal,
+        layout: sc.layout ? pick(LAYOUTS).id : this.state.layout,
+        fx: sc.fx ? pick(FX).id : this.state.fx,
+        type: sc.type ? (Math.random()*TYPESETS.length)|0 : this.state.type,
+        grain: sc.toggles ? Math.random() > .35 : this.state.grain,
+        breathe: sc.toggles ? Math.random() > .2 : this.state.breathe,
+        cursor: sc.toggles ? Math.random() > .3 : this.state.cursor
+      };
+      if (this.ok(c)) { cfg = c; break; }
+    }
+    if (!cfg) return;
+    this.setState(cfg);
+    if (announce) this.say(PALETTES[cfg.pal].name + " · " + (LAYOUTS.find(l => l.id === cfg.layout) || {}).label);
+  }
+  shuffle = () => this.roll(true);
+
+  // ---- share codes ----
+  code() {
+    const s = this.state;
+    const li = LAYOUTS.findIndex(l => l.id === s.layout);
+    const fi = FX.findIndex(f => f.id === s.fx);
+    const bits = (s.grain?1:0) + (s.breathe?2:0) + (s.cursor?4:0) + (s.calm?8:0);
+    return [s.pal, li, fi, s.type, bits].map(n => (n < 0 ? 0 : n).toString(36)).join("-").toUpperCase();
+  }
+  copyCode = () => {
+    const c = this.code();
+    if (navigator.clipboard) navigator.clipboard.writeText(c).catch(() => {});
+    this.say("copied " + c);
+  };
+  pasteKey = (e) => {
+    if (e.key !== "Enter") return;
+    const parts = String(e.target.value || "").toLowerCase().trim().split("-");
+    if (parts.length !== 5) { this.say("that isn't a setup code"); return; }
+    const n = parts.map(x => parseInt(x, 36));
+    if (n.some(x => isNaN(x))) { this.say("that isn't a setup code"); return; }
+    const bits = n[4];
+    this.setState({
+      pal: Math.min(n[0], PALETTES.length - 1),
+      layout: (LAYOUTS[n[1]] || LAYOUTS[0]).id,
+      fx: (FX[n[2]] || FX[0]).id,
+      type: Math.min(n[3], TYPESETS.length - 1),
+      grain: !!(bits & 1), breathe: !!(bits & 2), cursor: !!(bits & 4), calm: !!(bits & 8),
+      mode: "static"
+    });
+    e.target.value = "";
+    this.say("setup applied");
+  };
+
+  // ---- title scramble ----
+  // The resolved title is the default; the scramble is a decoration on top of it
+  // with a wall-clock deadline, so a clamped or stalled clock can never strand it.
+  scramble(target) {
+    const run = (this.scrambleRun = (this.scrambleRun || 0) + 1);
+    this.scrambleTarget = target;
+    this.scrambling = false;
+    this.setState({ h1Text: target });
+    if (this.state.calm || document.hidden) return;
+
+    const DUR = 550, t0 = performance.now();
+    this.scrambling = true;
+    const frame = () => {
+      if (this.scrambleRun !== run) return;
+      const k = (performance.now() - t0) / DUR;
+      if (k >= 1 || document.hidden) {
+        this.scrambling = false;
+        this.setState({ h1Text: target });
+        return;
+      }
+      const out = target.split("").map((ch, i) => {
+        if (ch === " ") return " ";
+        return i < k * target.length ? ch : GLYPHS[(Math.random()*GLYPHS.length)|0];
+      }).join("");
+      this.setState({ h1Text: out });
+      this.scrambleRaf = requestAnimationFrame(frame);
+    };
+    this.scrambleRaf = requestAnimationFrame(frame);
+  }
+
+  // ---- card tilt ----
+  tilt(e) {
+    if (this.state.calm || !this.cards || this.state.band !== "desk") return;
+    for (const el of this.cards) {
+      if (!el || !el.isConnected) continue;
+      const r = el.getBoundingClientRect();
+      if (r.bottom < -200 || r.top > window.innerHeight + 200) continue;
+      const dx = (e.clientX - (r.left + r.width/2)) / (r.width/2);
+      const dy = (e.clientY - (r.top + r.height/2)) / (r.height/2);
+      const near = Math.max(0, 1 - Math.hypot(dx, dy) / 2.6);
+      el.style.transform = "perspective(1100px) rotateY(" + (dx*3.4*near) + "deg) rotateX(" + (-dy*3.4*near) + "deg) translateZ(" + (near*10) + "px)";
+    }
+  }
+
+  pal() { return PALETTES[this.state.pal]; }
+  say(m) { clearTimeout(this.toastT); this.setState({ toast:m }); this.toastT = setTimeout(() => this.setState({ toast:"" }), 2600); }
+  openDoor(via) { this.setState({ doorOpen:true, doorVia:"unlocked via " + via, panelOpen:false }); }
+  closeDoor = () => this.setState({ doorOpen:false });
+  openConfig = () => this.setState({ doorOpen:false, unlocked:true, panelOpen:true });
+  togglePanel = () => this.setState(s => ({ panelOpen:!s.panelOpen }));
+  toggleCalm = () => {
+    const calm = !this.state.calm;
+    this.setState({ calm, breathe:!calm, grain:!calm, saver:false });
+    this.say(calm ? "calm — one accent, no motion" : "calm off");
+  };
+  tapLogo = () => {
+    this.taps = (this.taps || 0) + 1;
+    clearTimeout(this.tapT);
+    if (this.taps >= 5) { this.taps = 0; this.openDoor("five taps"); return; }
+    if (this.taps > 2) this.say(String(5 - this.taps) + " more");
+    this.tapT = setTimeout(() => { this.taps = 0; }, 1400);
+  };
+  footerDot = () => this.openDoor("the footer dot");
+  knock = () => this.say("you are already inside");
+  revealMail = () => { this.setState({ mailShown:true }); if (navigator.clipboard) navigator.clipboard.writeText(MAIL).catch(() => {}); this.say("address copied"); };
+
+  go = (id) => () => {
+    if (this.state.page === id) return;
+    const calm = this.state.calm;
+    const commit = () => {
+      this.setState(s => ({ page:id, panelOpen:false, nav:s.nav + 1, diving:false, mailShown:false }));
+      if (this.stageEl) this.stageEl.scrollTop = 0;
+      this.scramble(PAGES[id].title);
+      if (this.state.mode === "page") this.roll(false);
+      this.poke();
+    };
+    if (calm) { commit(); return; }
+    this.setState({ diving:true });
+    clearTimeout(this.diveT);
+    this.diveT = setTimeout(commit, 300);
+  };
+
+  fxRef = (el) => { if (el && el !== this.canvas) { this.canvas = el; this.startFx(); } };
+  cursorRef = (el) => { this.cursorEl = el; };
+  pasteRef = (el) => { this.pasteEl = el; };
+  stageRef = (el) => {
+    this.stageEl = el;
+    if (el && !el.__vbound) {
+      el.__vbound = true;
+      let last = 0, lastT = 0;
+      el.addEventListener("scroll", () => {
+        const now = performance.now(), y = el.scrollTop;
+        const dt = Math.max(16, now - lastT);
+        this.scrollV = Math.min(3, Math.abs(y - last) / dt * 8);
+        last = y; lastT = now;
+      }, { passive:true });
+    }
+  };
+  cardRef = (i) => (el) => { if (!this.cards) this.cards = []; this.cards[i] = el; };
+
+  buildTree(w, h) {
+    const branches = [];
+    const grow = (x, y, ang, len, depth) => {
+      if (depth > 6 || len < 14) return;
+      const x2 = x + Math.cos(ang)*len, y2 = y + Math.sin(ang)*len;
+      branches.push({ x, y, x2, y2, depth, phase: Math.random()*6.28 });
+      const n = depth < 2 ? 3 : 2;
+      for (let i = 0; i < n; i++)
+        grow(x2, y2, ang + (Math.random()-.5)*1.25, len*(.62 + Math.random()*.2), depth+1);
+    };
+    grow(w*.5, h*1.05, -Math.PI/2, h*.19, 0);
+    grow(-10, h*.35, .35, w*.11, 1);
+    grow(w+10, h*.62, Math.PI-.4, w*.11, 1);
+    return branches;
+  }
+
+  startFx() {
+    if (this.running) return;
+    this.running = true;
+    let t = 0, cols = null, parts = null, tree = null, flow = null;
+    const seed = (w,h,n) => Array.from({length:n}, () => ({
+      x:Math.random()*w, y:Math.random()*h, z:Math.random()+.2,
+      vx:(Math.random()-.5)*.5, vy:(Math.random()-.5)*.5, r:Math.random()*2.4+.5
+    }));
+    const step = () => {
+      this.raf = requestAnimationFrame(step);
+      const cv = this.canvas; if (!cv || !cv.isConnected || document.hidden) return;
+      const ctx = cv.getContext("2d"), w = cv.width, h = cv.height, p = this.pal();
+      const calm = this.state.calm, saver = this.state.saver;
+      const mode = calm ? "off" : this.state.fx;
+      if (mode === "off") { ctx.clearRect(0,0,w,h); return; }
+      this.scrollV = (this.scrollV || 0) * .92;
+      const boost = 1 + this.scrollV + (saver ? .9 : 0);
+      t += .011 * boost;
+      const beat = (Math.sin(t*1.9) + 1) / 2;
+      const mx = this.mouse ? this.mouse.x : .5, my = this.mouse ? this.mouse.y : .5;
+
+      if (mode === "rain") {
+        const size = 16;
+        if (!cols || cols.n !== Math.floor(w/size)) { cols = { n:Math.floor(w/size), y:Array.from({length:Math.floor(w/size)},()=>Math.random()*-60) }; ctx.fillStyle = p.bg; ctx.fillRect(0,0,w,h); }
+        ctx.fillStyle = p.bg + "18"; ctx.fillRect(0,0,w,h);
+        ctx.font = size + "px ui-monospace, monospace";
+        const g = "01<>[]{}/\\|=+*#$%&アイウエオカキクケコサシスセソ";
+        for (let i=0;i<cols.n;i++){
+          if (Math.random() > .5) { cols.y[i]++; continue; }
+          const y = cols.y[i]*size;
+          ctx.fillStyle = p.fg; ctx.fillText(g[(Math.random()*g.length)|0], i*size, y);
+          ctx.fillStyle = p.a1 + "88"; ctx.fillText(g[(Math.random()*g.length)|0], i*size, y - size*3);
+          cols.y[i] = (y > h && Math.random() > .975) ? 0 : cols.y[i]+1;
+        }
+        return;
+      }
+
+      ctx.fillStyle = p.bg; ctx.fillRect(0,0,w,h);
+
+      if (mode === "vessels") {
+        if (!tree) tree = this.buildTree(w,h);
+        for (const b of tree) {
+          const near = 1 - Math.min(1, Math.hypot(b.x2 - mx*w, b.y2 - my*h) / 420);
+          const wave = (Math.sin(t*2.2 - b.depth*.9 + b.phase) + 1) / 2;
+          ctx.strokeStyle = b.depth < 2 ? p.a1 : b.depth < 4 ? p.a2 : p.a3;
+          ctx.globalAlpha = .10 + wave*.20 + near*.28;
+          ctx.lineWidth = Math.max(1, (7 - b.depth) * (1 + near*.5));
+          ctx.lineCap = "round";
+          ctx.beginPath(); ctx.moveTo(b.x, b.y);
+          ctx.quadraticCurveTo((b.x+b.x2)/2 + Math.sin(t + b.phase)*7, (b.y+b.y2)/2, b.x2, b.y2);
+          ctx.stroke();
+          if (b.depth > 3 && wave > .82) {
+            ctx.globalAlpha = .5; ctx.fillStyle = p.fg;
+            ctx.beginPath(); ctx.arc(b.x2, b.y2, 1.8, 0, 6.3); ctx.fill();
+          }
+        }
+        ctx.globalAlpha = .10 + beat*.06;
+        const g = ctx.createRadialGradient(w*.5,h*.72,0,w*.5,h*.72,h*.75);
+        g.addColorStop(0, p.a1); g.addColorStop(1, p.bg + "00");
+        ctx.fillStyle = g; ctx.fillRect(0,0,w,h);
+        ctx.globalAlpha = 1; return;
+      }
+
+      if (mode === "flow") {
+        if (!flow) flow = Array.from({length:160}, () => ({ u:Math.random(), lane:(Math.random()*5)|0, s:.0012+Math.random()*.0022, r:Math.random()*2.6+1 }));
+        for (let l=0;l<5;l++) {
+          ctx.beginPath();
+          for (let x=0;x<=w;x+=12) {
+            const y = h*(.22+l*.14) + Math.sin(x*.0032 + l*1.4 + t*.5)*h*.07;
+            x === 0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+          }
+          ctx.strokeStyle = p.line; ctx.globalAlpha = .55; ctx.lineWidth = 10; ctx.lineCap="round"; ctx.stroke();
+        }
+        for (const c of flow) {
+          c.u += c.s * (1 + beat*1.4) * boost;
+          if (c.u > 1) c.u = 0;
+          const x = c.u*w, l = c.lane;
+          const y = h*(.22+l*.14) + Math.sin(x*.0032 + l*1.4 + t*.5)*h*.07;
+          ctx.globalAlpha = .85; ctx.fillStyle = [p.a1,p.a2,p.a3][l%3];
+          ctx.beginPath(); ctx.arc(x,y,c.r,0,6.3); ctx.fill();
+          ctx.globalAlpha = .2; ctx.beginPath(); ctx.arc(x,y,c.r*4,0,6.3); ctx.fill();
+        }
+        ctx.globalAlpha = 1; return;
+      }
+
+      if (mode === "pressure") {
+        const cx = w*.5, cy = h*.55;
+        for (let i=0;i<16;i++) {
+          const k = ((i/16) + (t*.06 % (1/16))) % 1;
+          const r = k*Math.max(w,h)*.72;
+          ctx.strokeStyle = [p.a1,p.a2,p.a3][i%3];
+          ctx.globalAlpha = (1-k)*.30*(0.6+beat*.7);
+          ctx.lineWidth = 1 + (1-k)*3;
+          ctx.beginPath(); ctx.arc(cx,cy,r,0,6.3); ctx.stroke();
+        }
+        ctx.globalAlpha = .18 + beat*.14; ctx.fillStyle = p.a1;
+        ctx.beginPath(); ctx.arc(cx,cy,40+beat*26,0,6.3); ctx.fill();
+        ctx.globalAlpha = 1; return;
+      }
+
+      if (mode === "stars") {
+        if (!parts || parts.length !== 260) parts = seed(w,h,260);
+        for (const s of parts) {
+          const dx = s.x - w/2, dy = s.y - h/2;
+          s.x += dx*.012*s.z*boost; s.y += dy*.012*s.z*boost;
+          if (s.x<0||s.x>w||s.y<0||s.y>h) { s.x = w/2+(Math.random()-.5)*80; s.y = h/2+(Math.random()-.5)*80; s.z = Math.random()+.2; }
+          ctx.strokeStyle = s.z > .8 ? p.a1 : p.a2; ctx.globalAlpha = .28+s.z*.5; ctx.lineWidth = s.z*1.5;
+          ctx.beginPath(); ctx.moveTo(s.x,s.y); ctx.lineTo(s.x-dx*.05*s.z, s.y-dy*.05*s.z); ctx.stroke();
+        }
+        ctx.globalAlpha = 1; return;
+      }
+
+      if (mode === "constellation") {
+        if (!parts || parts.length !== 90) parts = seed(w,h,90);
+        for (const s of parts) {
+          s.x += s.vx*boost; s.y += s.vy*boost;
+          if (s.x<0||s.x>w) s.vx*=-1; if (s.y<0||s.y>h) s.vy*=-1;
+          ctx.fillStyle = p.a1; ctx.globalAlpha = .55;
+          ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,6.3); ctx.fill();
+        }
+        for (let i=0;i<parts.length;i++) for (let j=i+1;j<parts.length;j++) {
+          const a=parts[i], b=parts[j], d=Math.hypot(a.x-b.x,a.y-b.y);
+          if (d<150) { ctx.globalAlpha=(1-d/150)*.28; ctx.strokeStyle=p.a2; ctx.lineWidth=1;
+            ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke(); }
+        }
+        ctx.globalAlpha = 1; return;
+      }
+
+      if (mode === "aurora") {
+        for (let b=0;b<5;b++) {
+          ctx.beginPath();
+          for (let x=0;x<=w;x+=14) {
+            const y = h*.5 + Math.sin(x*.004+t*(1+b*.22)+b)*(h*.13) + Math.sin(x*.0012+t*.6)*(h*.09) + (b-2.5)*26;
+            x === 0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+          }
+          ctx.strokeStyle = [p.a1,p.a2,p.a3][b%3]; ctx.globalAlpha = .17; ctx.lineWidth = 46; ctx.lineJoin="round"; ctx.stroke();
+        }
+        ctx.globalAlpha = 1; return;
+      }
+
+      if (mode === "plasma") {
+        const cell = 26;
+        for (let x=0;x<w;x+=cell) for (let y=0;y<h;y+=cell) {
+          const v = Math.sin(x*.008+t) + Math.sin(y*.009-t*1.3) + Math.sin((x+y)*.006+t*.7);
+          const a = (v+3)/6;
+          ctx.fillStyle = a>.62 ? p.a1 : a>.42 ? p.a2 : p.a3;
+          ctx.globalAlpha = Math.max(0,(a-.35)*.32);
+          ctx.beginPath(); ctx.arc(x+cell/2,y+cell/2,cell*.42*a+1,0,6.3); ctx.fill();
+        }
+        ctx.globalAlpha = 1; return;
+      }
+
+      if (mode === "tunnel") {
+        ctx.strokeStyle = p.a1; ctx.lineWidth = 1;
+        for (let i=0;i<26;i++) {
+          const k = ((i/26)+(t*.14 % (1/26)))%1, s = Math.pow(k,2.4);
+          ctx.globalAlpha = .38*(1-k);
+          ctx.strokeRect(w/2-w*s/2, h/2-h*s/2, w*s, h*s);
+        }
+        ctx.globalAlpha = .22; ctx.strokeStyle = p.a2;
+        for (let a=0;a<8;a++) { const ang = a/8*6.28+t*.06;
+          ctx.beginPath(); ctx.moveTo(w/2,h/2); ctx.lineTo(w/2+Math.cos(ang)*w, h/2+Math.sin(ang)*h); ctx.stroke(); }
+        ctx.globalAlpha = 1; return;
+      }
+
+      if (mode === "bokeh") {
+        if (!parts || parts.length !== 46) parts = seed(w,h,46).map(s => ({...s, r:Math.random()*90+22}));
+        for (const s of parts) {
+          s.y -= (.22+s.z*.3)*boost; s.x += Math.sin(t+s.r)*.28;
+          if (s.y < -s.r) { s.y = h+s.r; s.x = Math.random()*w; }
+          const col = s.z>.7 ? p.a1 : s.z>.4 ? p.a2 : p.a3;
+          const g = ctx.createRadialGradient(s.x,s.y,0,s.x,s.y,s.r);
+          g.addColorStop(0, col+"44"); g.addColorStop(1, col+"00");
+          ctx.fillStyle = g; ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,6.3); ctx.fill();
+        }
+        return;
+      }
+
+      if (mode === "orbits") {
+        const cx = w/2, cy = h/2;
+        for (let i=1;i<=7;i++) {
+          const r = i*Math.min(w,h)*.062;
+          ctx.strokeStyle = p.line; ctx.globalAlpha = .5; ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.arc(cx,cy,r,0,6.3); ctx.stroke();
+          const ang = t*(1.4/i)+i, x = cx+Math.cos(ang)*r, y = cy+Math.sin(ang)*r;
+          ctx.globalAlpha = .9; ctx.fillStyle = [p.a1,p.a2,p.a3][i%3];
+          ctx.beginPath(); ctx.arc(x,y,3.4+i*.5,0,6.3); ctx.fill();
+          ctx.globalAlpha = .3; ctx.beginPath(); ctx.arc(x,y,12+i,0,6.3); ctx.fill();
+        }
+        ctx.globalAlpha = 1; return;
+      }
+    };
+    this.raf = requestAnimationFrame(step);
+  }
+
+  chip(active) {
+    return {
+      border:"1px solid " + (active ? "var(--a1)" : "var(--line)"),
+      background: active ? "color-mix(in oklab,var(--a1) 16%,transparent)" : "transparent",
+      color: active ? "var(--a1)" : "var(--muted)",
+      fontFamily:"var(--fontMono)", fontSize:"11px", letterSpacing:".1em",
+      padding:"9px 12px", borderRadius:"var(--radius)", cursor:"pointer", textTransform:"uppercase",
+      transition:"border-color .5s ease,color .5s ease,background-color .5s ease"
+    };
+  }
+
+  renderVals() {
+    const st = this.state, p = this.pal(), ts = TYPESETS[st.type];
+    const page = PAGES[st.page] || PAGES.home, calm = st.calm;
+    const phone = st.band === "phone", tablet = st.band === "tablet", nar = phone || tablet;
+    // phone collapses the exotic layouts to the two that read at 375px
+    const L = phone
+      ? (st.layout === "terminal" || st.layout === "console" ? "console"
+         : st.layout === "sheet" ? "sheet" : "stack")
+      : tablet && (st.layout === "mosaic" || st.layout === "magazine" || st.layout === "ledger" || st.layout === "radial")
+        ? "cinematic" : st.layout;
+    const pad = phone ? "0 18px 64px" : tablet ? "0 26px 72px" : "0 40px 80px";
+    const faint = st.page === "notfound";
+    const bleed = "background-color .9s ease,color .9s ease,border-color .9s ease,box-shadow .9s ease";
+
+    // calm is its own aesthetic: same darkness, one accent, everything else neutral
+    const themeVars = calm ? {
+      "--bg":p.bg, "--surface":p.surface, "--line":p.line, "--fg":p.fg,
+      "--muted":p.muted, "--faint":p.faint,
+      "--a1":p.a1, "--a2":p.muted, "--a3":p.faint,
+      "--radius":"6px",
+      "--fontBody":ts.body, "--fontDisplay":ts.display, "--fontMono":ts.mono,
+      filter:"saturate(.45)", transition:"filter .9s ease"
+    } : {
+      "--bg":p.bg, "--surface":p.surface, "--line":p.line, "--fg":p.fg,
+      "--muted":p.muted, "--faint":p.faint,
+      "--a1": faint ? p.muted : p.a1, "--a2": faint ? p.faint : p.a2, "--a3":p.a3,
+      "--radius": (L === "terminal" || L === "magazine") ? "2px" : "16px",
+      "--fontBody":ts.body, "--fontDisplay":ts.display, "--fontMono":ts.mono,
+      filter: faint ? "saturate(.55)" : "none", transition:"filter .9s ease"
+    };
+
+    const wide = { position:"relative", zIndex:5, maxWidth:"1180px", margin:"0 auto", padding:pad };
+    const iris = st.nav % 2 ? "v-irisA .5s cubic-bezier(.2,.8,.2,1) both" : "v-irisB .5s cubic-bezier(.2,.8,.2,1) both";
+    const stageAnim = calm ? "none" : (st.diving ? "v-dive .62s cubic-bezier(.6,0,.3,1) both" : iris);
+    const vh = nar ? "calc(100vh - 132px)" : "calc(100vh - 86px)";
+    const stageStyle = L === "terminal"
+      ? { position:"relative", zIndex:5, margin:"34px auto", maxWidth:"1120px", border:"1px solid var(--line)", borderRadius:"10px", overflow:"hidden", background:"color-mix(in oklab,var(--surface) 55%,transparent)", boxShadow:"0 40px 120px rgba(0,0,0,.5)", animation:stageAnim, transition:bleed }
+      : L === "sidescroll"
+      ? { ...wide, height:vh, overflowX:"auto", overflowY:"hidden", display:"flex", alignItems:"center", gap:"28px", animation:stageAnim }
+      : L === "stack"
+      ? { ...wide, height:vh, overflowY:"auto", scrollSnapType:"y mandatory", animation:stageAnim }
+      : { ...wide, height:vh, overflowY:"auto", animation:stageAnim, WebkitOverflowScrolling:"touch" };
+
+    const heroBase = { position:"relative", zIndex:5, display:"flex", gap: nar ? "26px" : "48px", alignItems:"center",
+      padding: L === "terminal" ? "44px 34px" : phone ? "30px 0 26px" : "64px 0 50px",
+      flexDirection: nar ? "column" : "row", alignItems: nar ? "flex-start" : "center" };
+    const heroStyle =
+      L === "radial" ? { ...heroBase, flexWrap:"wrap", justifyContent:"center", flexDirection:"row", alignItems:"center" } :
+      L === "sidescroll" ? { ...heroBase, flex:"none", width: nar ? "84vw" : "640px", padding:0 } :
+      L === "magazine" ? { ...heroBase, flexDirection:"column", alignItems:"flex-start", gap:"18px", borderBottom: calm ? "1px solid var(--line)" : "3px solid var(--fg)", paddingBottom:"28px" } :
+      L === "marginalia" ? { ...heroBase, flexDirection:"column", alignItems:"flex-start", gap:"20px", maxWidth:"720px", margin:"0 auto" } :
+      L === "console" ? { ...heroBase, flexDirection:"column", alignItems:"flex-start", gap:"16px", fontFamily:"var(--fontMono)" } :
+      L === "ledger" ? { ...heroBase, flexDirection:"column", alignItems:"flex-start", gap:"14px", paddingBottom:"22px", borderBottom:"1px solid var(--line)" } :
+      L === "stack" ? { ...heroBase, minHeight: nar ? "auto" : "68vh", scrollSnapAlign:"start" } :
+      heroBase;
+
+    const heroTextStyle = { display:"flex", flexDirection:"column", gap:"18px", flex:"1 1 380px", minWidth:"300px", animation: calm ? "none" : "v-rise .6s cubic-bezier(.2,.8,.2,1) both" };
+
+    const h1Style = {
+      margin:0, fontFamily:"var(--fontDisplay)",
+      fontSize: L === "magazine" ? "clamp(40px,7.6vw,104px)"
+        : L === "sidescroll" ? "clamp(34px,5vw,68px)"
+        : L === "ledger" || L === "console" ? "clamp(30px,4vw,52px)"
+        : L === "marginalia" ? "clamp(32px,4.4vw,60px)"
+        : phone ? "clamp(34px,10vw,52px)" : "clamp(42px,6.2vw,90px)",
+      lineHeight:.96, letterSpacing:"-0.035em", color:"var(--fg)",
+      textShadow: calm ? "none" : "0 0 70px color-mix(in oklab,var(--a1) 42%,transparent)",
+      textTransform: L === "magazine" && !calm ? "uppercase" : "none", transition:"color .9s ease"
+    };
+
+    const valveSize = L === "radial" ? "min(62vw,540px)" : L === "magazine" ? "180px" : phone ? "132px" : tablet ? "min(34vw,240px)" : "min(38vw,340px)";
+    const valveWrapStyle = {
+      position:"relative", width:valveSize, aspectRatio:"1", flex:"none",
+      display:"grid", placeItems:"center",
+      opacity: calm ? .5 : 1,
+      animation: calm ? "none" : "v-drift 9s ease-in-out infinite"
+    };
+    const ring = (inset, colour, delay, dash) => ({
+      position:"absolute", inset, borderRadius:"50%",
+      border:(dash ? "1px dashed " : "1px solid ") + colour,
+      animation: calm ? "none" : "v-dilate 4.6s ease-in-out " + delay + " infinite",
+      transition:"border-color .9s ease"
+    });
+
+    const gridStyle =
+      L === "deck" ? { position:"relative", zIndex:5, display:"flex", gap:"22px", overflowX:"auto", scrollSnapType:"x mandatory", padding:"6px 0 26px" } :
+      L === "sidescroll" ? { position:"relative", zIndex:5, display:"flex", gap:"22px", flex:"none" } :
+      L === "split" ? { position:"relative", zIndex:5, display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:"22px" } :
+      L === "magazine" ? { position:"relative", zIndex:5, columns:"3", columnGap:"26px", paddingTop:"26px" } :
+      L === "mosaic" ? { position:"relative", zIndex:5, display:"grid", gridTemplateColumns:"repeat(6,1fr)", gridAutoRows:"minmax(120px,auto)", gap:"16px" } :
+      L === "terminal" ? { position:"relative", zIndex:5, display:"flex", flexDirection:"column", gap:"14px", padding: phone ? "0 18px 26px" : "0 34px 34px" } :
+      L === "ledger" ? { position:"relative", zIndex:5, display:"flex", flexDirection:"column", gap:0, borderTop:"1px solid var(--line)" } :
+      L === "stack" ? { position:"relative", zIndex:5, display:"flex", flexDirection:"column", gap: phone ? "16px" : "0" } :
+      L === "marginalia" ? { position:"relative", zIndex:5, display:"flex", flexDirection:"column", gap:"34px", maxWidth:"720px", margin:"0 auto", paddingTop:"20px" } :
+      L === "console" ? { position:"relative", zIndex:5, display:"flex", flexDirection:"column", gap:"10px", fontFamily:"var(--fontMono)" } :
+      L === "sheet" ? { position:"relative", zIndex:5, display:"grid", gridTemplateColumns: phone ? "repeat(2,1fr)" : tablet ? "repeat(3,1fr)" : "repeat(4,1fr)", gap: phone ? "10px" : "14px" } :
+      { position:"relative", zIndex:5, display:"grid", gridTemplateColumns: phone ? "1fr" : "repeat(auto-fit,minmax(" + (tablet ? "260px" : "300px") + ",1fr))", gap: phone ? "14px" : "20px" };
+
+    const blockStyle = (i) => {
+      const base = {
+        position:"relative", display:"flex", flexDirection:"column", gap:"13px",
+        padding: L === "magazine" ? "14px 0 22px" : "22px",
+        border: L === "magazine" ? "0" : "1px solid var(--line)",
+        borderTop: L === "magazine" ? "1px solid var(--line)" : undefined,
+        borderRadius: L === "magazine" ? 0 : "var(--radius)",
+        background: L === "magazine" ? "transparent" : "color-mix(in oklab,var(--surface) 70%,transparent)",
+        backdropFilter: L === "magazine" ? "none" : "blur(12px)",
+        boxShadow: L === "magazine" || calm ? "none" : "inset 0 1px 0 color-mix(in oklab,var(--fg) 8%,transparent), 0 20px 50px rgba(0,0,0,.28)",
+        animation: calm ? "none" : "v-rise .5s cubic-bezier(.2,.8,.2,1) both",
+        animationDelay: calm ? "0s" : (i*.05) + "s",
+        transition: bleed + ",transform .28s cubic-bezier(.2,.8,.2,1)",
+        transformStyle:"preserve-3d", willChange: calm ? "auto" : "transform"
+      };
+      if (L === "magazine") return { ...base, breakInside:"avoid", marginBottom:"22px" };
+      if (L === "deck") return { ...base, flex: phone ? "0 0 82vw" : "0 0 340px", scrollSnapAlign:"center", minHeight: phone ? "auto" : "330px" };
+      if (L === "sidescroll") return { ...base, flex: phone ? "0 0 82vw" : "0 0 320px" };
+      if (L === "ledger") return { ...base,
+        display:"grid", gridTemplateColumns: nar ? "1fr" : "minmax(180px,.9fr) 2.1fr",
+        gap: nar ? "8px" : "26px", alignItems:"start",
+        padding:"18px 4px", border:0, borderBottom:"1px solid var(--line)", borderRadius:0,
+        background: i % 2 ? "color-mix(in oklab,var(--surface) 34%,transparent)" : "transparent",
+        backdropFilter:"none", boxShadow:"none" };
+      if (L === "stack") return { ...base,
+        minHeight: phone ? "auto" : "72vh", justifyContent:"center", scrollSnapAlign:"start",
+        padding: phone ? "22px" : "56px", gap:"20px",
+        border: phone ? "1px solid var(--line)" : 0,
+        borderTop: phone ? "1px solid var(--line)" : "1px solid var(--line)",
+        borderRadius: phone ? "var(--radius)" : 0,
+        background: phone ? "color-mix(in oklab,var(--surface) 70%,transparent)" : "transparent",
+        boxShadow:"none" };
+      if (L === "marginalia") return { ...base,
+        padding: nar ? "0 0 24px" : "0 0 30px 30px",
+        borderLeft: nar ? 0 : "1px solid var(--line)",
+        border:0, borderBottom:"1px solid var(--line)", borderRadius:0,
+        background:"transparent", backdropFilter:"none", boxShadow:"none",
+        marginLeft: nar ? 0 : "-30px" };
+      if (L === "console") return { ...base,
+        padding:"14px 16px", borderRadius:"3px", gap:"9px",
+        border:"1px solid var(--line)", borderLeft:"2px solid var(--a1)",
+        background:"color-mix(in oklab,var(--surface) 52%,transparent)",
+        backdropFilter:"none", boxShadow:"none",
+        animation: calm ? "none" : "v-rise .34s cubic-bezier(.2,.8,.2,1) both",
+        animationDelay: calm ? "0s" : (i*.16) + "s" };
+      if (L === "sheet") return { ...base, padding: phone ? "10px" : "12px", gap:"9px" };
+      if (L === "terminal") return { ...base, borderRadius:"2px", fontFamily:"var(--fontMono)" };
+      if (L === "mosaic") {
+        const spans = [["span 4","span 2"],["span 2","span 1"],["span 2","span 2"],["span 4","span 1"],["span 3","span 2"],["span 3","span 1"]];
+        const s = spans[i % spans.length];
+        return { ...base, gridColumn:s[0], gridRow:s[1] };
+      }
+      return base;
+    };
+
+    const tileStyle = {
+      position:"relative", minHeight: L === "sheet" ? (phone ? "130px" : "190px") : phone ? "128px" : "150px", borderRadius:"calc(var(--radius) - 5px)",
+      border:"1px solid var(--line)", display:"grid", placeItems:"center", overflow:"hidden",
+      background:"repeating-linear-gradient(135deg,color-mix(in oklab,var(--surface) 92%,transparent) 0 9px,color-mix(in oklab,var(--bg) 78%,transparent) 9px 18px)"
+    };
+
+    const ctaStyle = (primary) => ({
+      display:"inline-flex", alignItems:"center", gap:"9px", padding:"15px 24px", minHeight:"46px", cursor:"pointer",
+      border:"1px solid " + (primary ? "var(--a1)" : "var(--line)"),
+      background: primary ? "color-mix(in oklab,var(--a1) 18%,transparent)" : "transparent",
+      color: primary ? "var(--a1)" : "var(--muted)",
+      borderRadius:"var(--radius)", fontFamily:"var(--fontMono)", fontSize:"12px",
+      letterSpacing:".14em", textTransform:"uppercase", transition:bleed,
+      boxShadow: primary && !calm ? "0 0 36px color-mix(in oklab,var(--a1) 34%,transparent)" : "none"
+    });
+
+    const navStyle = (id) => ({
+      position:"relative", border:"1px solid " + (st.page === id ? "var(--a1)" : "var(--line)"),
+      background: st.page === id ? "color-mix(in oklab,var(--a1) 16%,transparent)" : "color-mix(in oklab,var(--surface) 82%,transparent)",
+      color: st.page === id ? "var(--a1)" : "var(--muted)",
+      fontFamily:"var(--fontMono)", fontSize:"11px", letterSpacing:".16em", textTransform:"uppercase",
+      padding: nar ? "13px 16px" : "10px 14px", minHeight: nar ? "44px" : "auto",
+      display:"inline-flex", alignItems:"center", whiteSpace:"nowrap",
+      borderRadius:"999px", cursor:"pointer", transition:bleed,
+      boxShadow: st.page === id && !calm ? "0 0 22px color-mix(in oklab,var(--a1) 45%,transparent)" : "none"
+    });
+
+    const footStyle = (id) => ({
+      background:"none", border:0, padding:0, cursor:"pointer",
+      fontFamily:"var(--fontMono)", fontSize:"11px", letterSpacing:".14em", textTransform:"uppercase",
+      color: st.page === id ? "var(--a1)" : "var(--faint)", transition:bleed
+    });
+
+    const orbit = NAV.map((n, i) => {
+      const a = (i/NAV.length)*Math.PI*2 - Math.PI/2;
+      return { label:n.label, go:this.go(n.id), style:{
+        position:"absolute", left:"50%", top:"50%",
+        transform:"translate(-50%,-50%) translate(" + Math.cos(a)*160 + "%," + Math.sin(a)*160 + "%)",
+        border:"1px solid " + (st.page === n.id ? "var(--a1)" : "var(--line)"),
+        background:"color-mix(in oklab,var(--surface) 90%,transparent)",
+        color: st.page === n.id ? "var(--a1)" : "var(--muted)",
+        fontFamily:"var(--fontMono)", fontSize:"10px", letterSpacing:".14em", textTransform:"uppercase",
+        padding:"10px 12px", borderRadius:"999px", cursor:"pointer", whiteSpace:"nowrap", zIndex:6
+      }};
+    });
+
+    return {
+      themeVars, stageStyle, heroStyle, heroTextStyle, h1Style, gridStyle,
+      headerStyle:{ position:"relative", zIndex:20, padding: phone ? "14px 18px" : tablet ? "16px 26px" : "20px 40px",
+        borderBottom:"1px solid var(--line)", backdropFilter:"blur(16px)",
+        background:"color-mix(in oklab,var(--bg) 66%,transparent)", transition:bleed },
+      navRowStyle: nar
+        ? { display:"flex", alignItems:"center", gap:"7px", overflowX:"auto", overflowY:"hidden", width:"100%", order:3, padding:"2px 0 4px", scrollbarWidth:"none", WebkitOverflowScrolling:"touch" }
+        : { display:"flex", alignItems:"center", gap:"6px", flexWrap:"wrap" },
+      footerStyle:{ position:"relative", zIndex:5, display:"flex",
+        justifyContent: nar ? "flex-start" : "space-between", gap: nar ? "12px" : "20px",
+        flexWrap:"wrap", alignItems:"center", padding: phone ? "26px 0 8px" : "34px 0 10px", marginTop:"16px",
+        borderTop:"1px solid var(--line)", fontFamily:"var(--fontMono)", fontSize: phone ? "10px" : "11px",
+        letterSpacing:".14em", textTransform:"uppercase", color:"var(--faint)", transition:bleed },
+      fxRef:this.fxRef, cursorRef:this.cursorRef, stageRef:this.stageRef,
+      grain: st.grain && !calm, alive: !calm,
+      unlocked: st.unlocked,
+      canvasStyle:{ position:"absolute", inset:0, width:"100%", height:"100%", zIndex:0, opacity: calm ? 0 : .9, transition:"opacity 1.1s ease" },
+      cursorStyle:{ position:"absolute", top:0, left:0, zIndex:3, pointerEvents:"none", width:"460px", height:"460px", margin:"-230px 0 0 -230px", borderRadius:"50%", background:"radial-gradient(circle,var(--a1) 0%,transparent 60%)", opacity: calm || !st.cursor ? 0 : .13, filter:"blur(8px)", willChange:"transform", transition:"opacity .8s ease" },
+      chromeStyle:{ position:"relative", zIndex:10, opacity: st.saver ? 0 : 1, pointerEvents: st.saver ? "none" : "auto", transition:"opacity 1.6s ease" },
+      saver: st.saver && !st.panelOpen && !st.doorOpen, wake: this.wake,
+      logoRingA:{ position:"absolute", inset:0, border:"1px solid var(--a1)", borderRadius:"50%", opacity:.45, animation: calm ? "none" : "v-dilate 4.2s ease-in-out infinite" },
+      logoRingB:{ position:"absolute", inset:"6px", border:"1px solid var(--a2)", borderRadius:"50%", opacity:.5, animation: calm ? "none" : "v-dilate 4.2s ease-in-out .35s infinite" },
+      isTerminal:L === "terminal", isRadial:L === "radial", orbit,
+      showValve: L !== "sidescroll" && L !== "terminal" && L !== "ledger" && L !== "console" && L !== "sheet" && !phone,
+      valveWrapStyle,
+      valveDash:{ position:"absolute", inset:0, border:"1px dashed var(--line)", borderRadius:"50%", animation: calm ? "none" : "v-spin 60s linear infinite" },
+      valveRing1: ring("6%", "var(--a1)", "0s", false),
+      valveRing2: ring("22%", "var(--a2)", ".4s", true),
+      valveRing3: ring("38%", "var(--a3)", ".8s", false),
+      valveCore: {
+        width:"22%", aspectRatio:"1", borderRadius:"50%",
+        background:"radial-gradient(circle at 34% 30%,var(--a1),transparent 70%)",
+        boxShadow: calm ? "none" : "0 0 70px color-mix(in oklab,var(--a1) 60%,transparent)",
+        animation: calm ? "none" : "v-dilate 4.6s ease-in-out infinite"
+      },
+      termTitle:"vessel — /" + st.page,
+      eyebrow:page.eyebrow, lede:page.lede,
+      h1Text: (this.scrambling && st.h1Text && this.scrambleTarget === page.title) ? st.h1Text : page.title,
+      ctas: page.ctas.map(c => ({ label:c.label, go:this.go(c.to), style:ctaStyle(c.primary) })),
+      blocks: page.blocks.map((b,i) => ({
+        kicker:b.kicker, title:b.title, body:b.body, idx:String(i+1).padStart(2,"0"),
+        hasList:!!b.hasList, items:b.items || [],
+        hasTile:!!b.hasTile, tile:b.tile || "", tileStyle,
+        hasMail:!!b.hasMail, style:blockStyle(i), ref:this.cardRef(i)
+      })),
+      mailLabel: st.mailShown ? MAIL : "click to reveal the address",
+      revealMail: this.revealMail,
+      nav: NAV.map(n => ({ label:n.label, go:this.go(n.id), style:navStyle(n.id) })),
+      footerNav: FOOTER_NAV.map(f => ({ label:f.label, go:this.go(f.id), style:footStyle(f.id) })),
+      palettes: PALETTES.map((q,i) => ({
+        name:q.name, go:() => { this.setState({ pal:i, mode:"static" }); this.say(q.name); },
+        style:{ display:"flex", flexDirection:"column", gap:"7px", padding:"10px",
+          border:"1px solid " + (i === st.pal ? "var(--a1)" : "var(--line)"),
+          background:q.bg, borderRadius:"calc(var(--radius) - 5px)", cursor:"pointer",
+          boxShadow: i === st.pal ? "0 0 22px color-mix(in oklab,var(--a1) 45%,transparent)" : "none" },
+        s1:{ width:"12px", height:"12px", borderRadius:"50%", background:q.a1 },
+        s2:{ width:"12px", height:"12px", borderRadius:"50%", background:q.a2 },
+        s3:{ width:"12px", height:"12px", borderRadius:"50%", background:q.a3 }
+      })),
+      layouts: LAYOUTS.map(l => ({ label:l.label, go:() => { this.setState({ layout:l.id }); this.say(l.label + " layout"); }, style:this.chip(st.layout === l.id) })),
+      fxModes: FX.map(f => ({ label:f.label, go:() => { this.setState({ fx:f.id }); this.say(f.label); }, style:this.chip(st.fx === f.id) })),
+      typeSets: TYPESETS.map((t,i) => ({ label:t.label, go:() => this.setState({ type:i }), style:this.chip(st.type === i) })),
+      modes: MODES.map(m => ({ label:m.label, style:this.chip(st.mode === m.id), go:() => {
+        this.setState({ mode:m.id }, () => {
+          if (m.id === "tod") this.applyTod();
+          if (m.id === "visit") this.roll(false);
+        });
+        this.say(m.label);
+      }})),
+      scopes: SCOPES.map(s => ({ label:s.label, style:this.chip(!!st.scope[s.id]), go:() => this.setState(prev => ({ scope:{ ...prev.scope, [s.id]:!prev.scope[s.id] } })) })),
+      shuffle: this.shuffle,
+      shuffleStyle:{ padding:"13px", border:"1px solid var(--a2)", background:"color-mix(in oklab,var(--a2) 14%,transparent)", color:"var(--a2)", borderRadius:"var(--radius)", fontFamily:"var(--fontMono)", fontSize:"11px", letterSpacing:".2em", textTransform:"uppercase", cursor:"pointer" },
+      code: this.code(), copyCode: this.copyCode, pasteKey: this.pasteKey, pasteRef: this.pasteRef,
+      copyStyle: this.chip(false),
+      toggles: [
+        { label:"Grain", on:st.grain, go:() => this.setState(s => ({ grain:!s.grain })) },
+        { label:"Breathing", on:st.breathe, go:() => this.setState(s => ({ breathe:!s.breathe })) },
+        { label:"Cursor glow", on:st.cursor, go:() => this.setState(s => ({ cursor:!s.cursor })) },
+        { label:"Calm mode", on:st.calm, go:this.toggleCalm }
+      ].map(t => ({ label:t.label, go:t.go, style:this.chip(t.on) })),
+      presetName:p.name,
+      layoutName:(LAYOUTS.find(l => l.id === L) || {}).label + " layout" + (L !== st.layout ? " · adapted" : ""),
+      fxName: calm ? "calm" : (FX.find(f => f.id === st.fx) || {}).label,
+      vitals: faint ? "pressure lost" : (calm ? "resting" : "pulse 47 bpm"),
+      clock:st.clock, fiddled:"last fiddled with · aug 2026",
+      calmLabel: st.calm ? "calm ✓" : "calm",
+      calmBtnStyle:this.chip(st.calm),
+      panelOpen:st.panelOpen, togglePanel:this.togglePanel, toggleCalm:this.toggleCalm,
+      tapLogo:this.tapLogo, footerDot:this.footerDot, knock:this.knock, openConfig:this.openConfig,
+      doorOpen:st.doorOpen, doorVia:st.doorVia, closeDoor:this.closeDoor,
+      lockLabel: st.unlocked ? "found" : "locked",
+      hasToast:!!st.toast, toast:st.toast
+    };
+  }
+}
+</script>
+</body>
+</html>

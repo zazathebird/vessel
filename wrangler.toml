@@ -1,0 +1,110 @@
+#:schema node_modules/wrangler/config-schema.json
+
+# Vessel — a Worker that serves the static site and the account API.
+#
+# Workers with static assets rather than Pages, decided 2026-08-12. Pages cannot
+# define Durable Object classes, and this stack needs them twice over: rate
+# limiting in phase 1, and one signalling object per paired machine in phase 2
+# (SPEC-ACCOUNTS.md §8). A Worker holds the site, the API and the objects as one
+# artefact and one deploy.
+#
+# The static build is untouched by this. `npm run build` still produces dist/
+# exactly as before, and with every route below removed the site serves as it
+# does today.
+
+name = "vessel"
+main = "worker/index.ts"
+compatibility_date = "2026-08-12"
+compatibility_flags = ["nodejs_compat"]
+
+# The cutover, 2026-08-12. A Workers route is evaluated ahead of a Pages custom
+# domain, so this puts the Worker in front of the Pages project without deleting
+# the Pages custom domain first. That ordering is the whole point: the Pages
+# project stays intact and still holds `mcclevarty.ca`, so rolling back is
+# deleting these two lines and redeploying, not re-creating infrastructure under
+# pressure.
+#
+# Deliberately no `*.mcclevarty.ca` wildcard. Per-account subdomains are not
+# built and not specified — see design/GUIDE-SUBDOMAINS.md.
+routes = [
+  { pattern = "mcclevarty.ca/*", zone_name = "mcclevarty.ca" },
+  # `www` has a proxied DNS record but had nothing behind it, so every visitor
+  # who typed `www.` got a bare Cloudflare 522 (found 2026-08-13). This route
+  # puts the Worker there, and the Worker's only answer on a `www.` host is a
+  # 301 to the apex (worker/index.ts). Still no `*.mcclevarty.ca` wildcard —
+  # per-account subdomains remain unbuilt and unspecified.
+  { pattern = "www.mcclevarty.ca/*", zone_name = "mcclevarty.ca" },
+]
+
+# The routes above make `wrangler dev` simulate `http://mcclevarty.ca/...`, so
+# the loopback exemption in `httpsRedirect` never matches and every local
+# request 301s to itself. https matches what production sees after edge TLS.
+[dev]
+upstream_protocol = "https"
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+# Nine real URLs are routed in the client, so an unknown path must be served the
+# app shell rather than a host 404 — /404 is a real page here, not a fallback.
+# This replaces public/_redirects, which was Pages-specific.
+not_found_handling = "single-page-application"
+
+# The Worker must see HTML requests, or it cannot inline the published site
+# appearance into them (worker/site-config.ts).
+#
+# By default a request that matches a real file is answered by the asset server
+# and the Worker is never invoked — that is the whole cost model. `/contact` has
+# no file so it reached the Worker and got the injection; `/` *is* index.html,
+# so it was served straight from disk and silently did not. The site looked
+# right on every URL except the front page, which is the one everybody lands on.
+#
+# The negation keeps the hashed bundles on the fast path: they are immutable,
+# they are never HTML, and there is nothing to inject into them.
+run_worker_first = ["/*", "!/assets/*"]
+
+# D1, not KV. Grants need relational queries and revocation needs
+# read-after-write consistency, which KV's eventual consistency would quietly
+# undermine (§8).
+#
+# database_id points at the real database, created 2026-08-12 against the
+# operator's Cloudflare account. Local development uses wrangler's SQLite
+# emulation and ignores it.
+[[d1_databases]]
+binding = "DB"
+database_name = "vessel"
+database_id = "ec0f8475-8e96-4229-a4b7-80ee3d312fe2"
+migrations_dir = "migrations"
+
+# Rate-limit counters, because D1 has no atomic read-modify-write and a counter
+# that loses races is one an attacker can outrun (§4). Keyed by an HMAC of the
+# client IP under a daily-rotating salt — no raw IP is written down anywhere.
+[[durable_objects.bindings]]
+name = "RATE_LIMIT"
+class_name = "RateLimiter"
+
+# One signalling object per paired machine (SPEC-ACCOUNTS.md §8, §13) — the
+# second Durable Object this stack always needed, and the reason Pages was
+# never an option. An introducer, not a pipe: it relays SDP and ICE between
+# the agent tab and the owner's browsing tabs, persists nothing, and file
+# bytes never pass through it.
+[[durable_objects.bindings]]
+name = "SIGNAL"
+class_name = "MachineSignal"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RateLimiter"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["MachineSignal"]
+
+[observability]
+enabled = true
+
+# Secrets are set with `wrangler secret put`, never committed:
+#   AUTH_PEPPER     — HMAC key for stored auth hashes (§4)
+#   SESSION_SECRET  — HMAC key for session cookies
+#   TOTP_ENC_KEY    — wraps totp.secret_enc at rest
+#   RATE_SALT_SEED  — seeds the daily-rotating rate-limit salt

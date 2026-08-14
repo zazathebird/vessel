@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>mcclevarty.ca</title>
+    <!-- An inline data: icon, not a file: no image files and no third-party
+         assets (SPEC.md § Assets). The drawing is the client's own choice
+         (2026-08-13): the finger, offered to a small four-pane window. Having
+         *an* icon also keeps /favicon.ico from falling through to the Worker
+         and being answered with the app shell, once per visitor. -->
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%3E%3Ctext%20x='26'%20y='54'%20font-size='50'%20text-anchor='middle'%3E🖕%3C/text%3E%3Cg%20fill='none'%20stroke='%23888888'%20stroke-width='4'%3E%3Crect%20x='40'%20y='4'%20width='20'%20height='20'%20rx='2'/%3E%3Cpath%20d='M50%204v20M40%2014h20'/%3E%3C/g%3E%3C/svg%3E"
+    />
+    <meta
+      name="description"
+      content="Independent computer repair. One person, no shopfront, free diagnosis."
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

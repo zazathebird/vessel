@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  // `scripts` is deliberately absent: `auth-e2e.ts` is a Node program, so it
+  // needs `@types/node` and a lib set this config does not have, and adding it
+  // here fails on `process` and on the TS 5.7 `ArrayBuffer` variance rules. It
+  // is therefore typechecked by nothing — `test:auth` bundles it with esbuild,
+  // which strips types without checking them. Recorded in TODO.md rather than
+  // half-fixed here.
+  "include": ["src", "vite.config.ts"]
+}

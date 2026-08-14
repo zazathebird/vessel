@@ -1,0 +1,1867 @@
+/*
+ * Shared chrome: header, hero, valve, content blocks, footer. This is the
+ * Cinematic baseline plus the four layouts that need stage-level structure
+ * (Terminal, Side-scroll, Stack, Console) — see design/SPEC.md § "The thirteen
+ * layout archetypes". The other nine layouts' overrides live in layouts.css and
+ * only ever touch `.layout-*` selectors, never these base rules.
+ *
+ * Everything reads tokens from theme.ts (CSS custom properties) — no literal
+ * colours below, so the .9s palette bleed keeps working across every rule here.
+ */
+
+.v-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  opacity: 0.9;
+  transition: opacity 1.1s ease;
+}
+
+.is-calm .v-canvas {
+  opacity: 0;
+}
+
+.v-vignette {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: radial-gradient(130% 95% at 50% 8%, transparent 26%, var(--bg) 92%);
+}
+
+/*
+ * "Breathing" is the one life sign the prototype stores but never renders — the
+ * v-breathe keyframe is defined there and left unattached, so the toggle does
+ * nothing. Driving the vignette with it makes the page appear to inhale without
+ * touching layout: no reflow, no text resampling, and no scrollbar from a
+ * scaled content column. It runs at the valve's 4.6s rhythm rather than
+ * introducing a new tempo. Flagged in CLAUDE.md as a deliberate deviation.
+ */
+.has-breathe .v-vignette {
+  animation: v-breathe 4.6s ease-in-out infinite;
+}
+
+.v-grain {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  opacity: 0.14;
+  mix-blend-mode: overlay;
+  background-image: repeating-conic-gradient(var(--fg) 0% 0.0006%, transparent 0% 0.05%);
+  background-size: 3px 3px;
+  display: none;
+}
+
+.has-grain .v-grain {
+  display: block;
+}
+
+.v-cursor-glow {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 3;
+  pointer-events: none;
+  width: 460px;
+  height: 460px;
+  margin: -230px 0 0 -230px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--a1) 0%, transparent 60%);
+  opacity: 0;
+  filter: blur(8px);
+  will-change: transform;
+  transition: opacity 0.8s ease;
+}
+
+/* Two conditions, deliberately: the class is toggled by the pointer handler so
+   the glow only appears once the pointer has been somewhere, and the wrapper
+   class carries the operator's setting so switching it off takes effect at once
+   rather than on the next pointermove. */
+.has-cursor .v-cursor-glow.is-visible {
+  opacity: 0.13;
+}
+
+.is-calm .v-cursor-glow {
+  opacity: 0 !important;
+}
+
+/* Screensaver fades the whole interactive chrome, leaving only the canvas. */
+.v-chrome {
+  position: relative;
+  z-index: 10;
+  opacity: 1;
+  pointer-events: auto;
+  transition: opacity 1.6s ease;
+}
+
+.v-chrome.is-sleeping {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Header ------------------------------------------------------------------ */
+
+.v-header {
+  position: relative;
+  z-index: 20;
+  padding: var(--header-padding);
+  border-bottom: 1px solid var(--line);
+  backdrop-filter: blur(16px);
+  background: color-mix(in oklab, var(--bg) 66%, transparent);
+  transition: background-color 0.9s ease, border-color 0.9s ease;
+}
+
+.v-artery {
+  position: absolute;
+  left: 40px;
+  right: 40px;
+  top: 50%;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--a1), var(--a2), transparent);
+  opacity: 0.28;
+  overflow: hidden;
+}
+
+.v-artery-highlight {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 22%;
+  background: linear-gradient(90deg, transparent, var(--fg), transparent);
+  opacity: 0.7;
+  animation: v-travel 5.5s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+}
+
+.is-calm .v-artery-highlight {
+  display: none;
+}
+
+.v-header-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.v-logo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.v-logo-mark {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+}
+
+.v-logo-ring {
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--a1);
+  border-radius: 50%;
+  opacity: 0.45;
+  animation: v-dilate 4.2s ease-in-out infinite;
+}
+
+.v-logo-ring.b {
+  inset: 6px;
+  border-color: var(--a2);
+  opacity: 0.5;
+  animation-delay: 0.35s;
+}
+
+.v-logo-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--a1);
+  box-shadow: 0 0 16px var(--a1);
+}
+
+.v-wordmark {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--fg);
+}
+
+.v-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.band-phone .v-nav,
+.band-tablet .v-nav {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  width: 100%;
+  order: 3;
+  padding: 2px 0 4px;
+  gap: 7px;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.band-phone .v-nav::-webkit-scrollbar,
+.band-tablet .v-nav::-webkit-scrollbar {
+  display: none;
+}
+
+.v-pill {
+  border-radius: 999px !important;
+  white-space: nowrap;
+  flex: none;
+}
+
+.v-pill.is-active {
+  box-shadow: 0 0 22px color-mix(in oklab, var(--a1) 45%, transparent);
+}
+
+.v-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.v-siteconfig-btn {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid var(--line);
+  background: color-mix(in oklab, var(--surface) 78%, transparent);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  padding: 11px 15px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  text-transform: uppercase;
+  transition: background-color 0.9s ease, border-color 0.9s ease;
+}
+
+.v-siteconfig-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--a2);
+  box-shadow: 0 0 12px var(--a2);
+}
+
+/* Stage --------------------------------------------------------------------
+ * The Cinematic baseline: a wide, vertically scrolling column. Terminal,
+ * Side-scroll and Stack replace this wholesale.
+ */
+
+.v-stage {
+  position: relative;
+  z-index: 5;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: var(--page-padding);
+  height: var(--stage-height);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.layout-terminal .v-stage {
+  max-width: 1120px;
+  margin: 34px auto;
+  padding: 0;
+  height: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: color-mix(in oklab, var(--surface) 55%, transparent);
+  box-shadow: 0 40px 120px rgba(0, 0, 0, 0.5);
+}
+
+.v-termbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in oklab, var(--surface) 70%, transparent);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+}
+
+.v-termbar-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.v-termbar-title {
+  margin-left: 10px;
+}
+
+/* No overflow rule: Terminal gives the stage `height: auto`, so this box has no
+   height to scroll within and the document scrolls instead. */
+.v-termbody {
+  padding: 0 34px 34px;
+}
+
+.band-phone .v-termbody {
+  padding: 0 18px 26px;
+}
+
+.layout-sidescroll .v-stage {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.layout-stack .v-stage {
+  overflow-y: auto;
+  scroll-snap-type: y mandatory;
+}
+
+/* Hero ---------------------------------------------------------------------- */
+
+.v-hero {
+  position: relative;
+  z-index: 5;
+  display: flex;
+  gap: 48px;
+  align-items: center;
+  padding: 64px 0 50px;
+  flex-direction: row;
+  animation: v-rise 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.is-calm .v-hero {
+  animation: none;
+}
+
+.band-phone .v-hero,
+.band-tablet .v-hero {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 26px;
+}
+
+.band-phone .v-hero {
+  padding: 30px 0 26px;
+}
+
+/* The terminal window's own padding comes from .v-termbody, so the hero only
+   sets its vertical rhythm — otherwise the two stack up to 68px of gutter. */
+.layout-terminal .v-hero {
+  padding: 44px 0;
+}
+
+.layout-sidescroll .v-hero {
+  flex: none;
+  width: 640px;
+  padding: 0;
+}
+
+.band-phone.layout-sidescroll .v-hero,
+.band-tablet.layout-sidescroll .v-hero {
+  width: 84vw;
+}
+
+.layout-stack .v-hero {
+  min-height: 68vh;
+  scroll-snap-align: start;
+}
+
+.band-phone.layout-stack .v-hero {
+  min-height: auto;
+}
+
+.layout-console .v-hero {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+  font-family: var(--font-mono);
+}
+
+.v-hero-text {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  flex: 1 1 380px;
+  min-width: 300px;
+}
+
+.v-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--a1);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.v-eyebrow-rule {
+  width: 24px;
+  height: 1px;
+  background: var(--a1);
+}
+
+.v-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--h1-size);
+  line-height: 0.96;
+  letter-spacing: -0.035em;
+  color: var(--fg);
+  text-shadow: 0 0 70px color-mix(in oklab, var(--a1) 42%, transparent);
+  transition: color 0.9s ease;
+}
+
+.is-calm .v-title {
+  text-shadow: none;
+}
+
+.v-lede {
+  margin: 0;
+  max-width: 56ch;
+  font-size: clamp(15px, 1.25vw, 19px);
+  line-height: 1.65;
+  color: var(--muted);
+  text-wrap: pretty;
+}
+
+.v-cta-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-top: 6px;
+}
+
+.v-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 15px 24px;
+  min-height: 46px;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  transition: background-color 0.9s ease, color 0.9s ease, border-color 0.9s ease,
+    box-shadow 0.9s ease;
+  text-decoration: none;
+}
+
+.v-cta.is-primary {
+  border-color: var(--a1);
+  background: color-mix(in oklab, var(--a1) 18%, transparent);
+  color: var(--a1);
+  box-shadow: 0 0 36px color-mix(in oklab, var(--a1) 34%, transparent);
+}
+
+/* The hero ornament ---------------------------------------------------------
+ *
+ * One square slot, four things that can sit in it, all drawn from palette
+ * tokens. The slot owns the size, the drift and the calm behaviour, so each
+ * ornament below only has to draw itself.
+ */
+
+.v-ornament {
+  position: relative;
+  width: var(--valve-size);
+  aspect-ratio: 1;
+  flex: none;
+  display: grid;
+  place-items: center;
+  opacity: 1;
+  animation: v-drift 9s ease-in-out infinite;
+}
+
+.is-calm .v-ornament {
+  opacity: 0.5;
+  animation: none;
+}
+
+/* The phone band is deliberately absent here since the mobile-parity pass
+   (2026-08-13): phones render the ornament at the band token's size. Layouts
+   with no room for the slot still hide it everywhere. */
+.layout-sidescroll .v-ornament,
+.layout-terminal .v-ornament,
+.layout-ledger .v-ornament,
+.layout-console .v-ornament,
+.layout-sheet .v-ornament {
+  display: none;
+}
+
+/* The phone hero is a left-aligned column; the ornament centres itself in it
+   (mobile-parity pass) so a 44vw square doesn't hang off the left edge. */
+.band-phone .v-ornament {
+  margin-inline: auto;
+}
+
+.layout-radial .v-ornament {
+  width: min(62vw, 540px);
+}
+
+.layout-magazine .v-ornament {
+  width: 180px;
+}
+
+/* The duel ornament's canvas fills the square slot; internal resolution is
+   fixed (700×700, like FxCanvas's 1600×1000) and CSS stretches it. */
+.v-duelfight {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.v-valve-dash {
+  position: absolute;
+  inset: 0;
+  border: 1px dashed var(--line);
+  border-radius: 50%;
+  animation: v-spin 60s linear infinite;
+}
+
+.v-valve-ring {
+  position: absolute;
+  border-radius: 50%;
+  animation: v-dilate 4.6s ease-in-out infinite;
+  transition: border-color 0.9s ease;
+}
+
+.v-valve-ring.r1 {
+  inset: 6%;
+  border: 1px solid var(--a1);
+}
+
+.v-valve-ring.r2 {
+  inset: 22%;
+  border: 1px dashed var(--a2);
+  animation-delay: 0.4s;
+}
+
+.v-valve-ring.r3 {
+  inset: 38%;
+  border: 1px solid var(--a3);
+  animation-delay: 0.8s;
+}
+
+.v-valve-core {
+  width: 22%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(circle at 34% 30%, var(--a1), transparent 70%);
+  box-shadow: 0 0 70px color-mix(in oklab, var(--a1) 60%, transparent);
+  animation: v-dilate 4.6s ease-in-out infinite;
+}
+
+.is-calm .v-valve-dash,
+.is-calm .v-valve-ring,
+.is-calm .v-valve-core {
+  animation: none;
+}
+
+/* Lens — the default.
+ *
+ * The complaint about the valve was that `v-dilate` scales the rings as well as
+ * brightening them, so the whole assembly physically pumps. Nothing here scales
+ * or moves: the bezel is fixed, and only the light inside the pupil and the
+ * halo around it changes. A still object with moving light reads as watching;
+ * a moving object reads as a speaker cone.
+ */
+
+.v-lens-bezel {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: radial-gradient(circle at 50% 42%, var(--surface), var(--bg) 78%);
+  box-shadow: inset 0 2px 18px rgba(0, 0, 0, 0.55), inset 0 -1px 0 color-mix(in oklab, var(--fg) 10%, transparent);
+}
+
+/* The recess the pupil sits in — a second, tighter wall so the eye has depth
+   rather than being a flat disc with a dot on it. */
+.v-lens-inner {
+  position: absolute;
+  inset: 17%;
+  border-radius: 50%;
+  border: 1px solid color-mix(in oklab, var(--line) 70%, transparent);
+  background: radial-gradient(circle at 50% 60%, var(--bg), color-mix(in oklab, var(--bg) 60%, black) 90%);
+  box-shadow: inset 0 6px 22px rgba(0, 0, 0, 0.7);
+}
+
+.v-lens-halo {
+  position: absolute;
+  inset: 22%;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in oklab, var(--a1) 45%, transparent), transparent 68%);
+  filter: blur(6px);
+  animation: v-lens-breathe 5.2s ease-in-out infinite;
+}
+
+.v-lens-pupil {
+  position: relative;
+  /* Small and hot inside a large dark bezel — that ratio is what makes it read
+     as a lens with a light behind it rather than as a glowing ball. */
+  width: 22%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 42% 38%,
+    color-mix(in oklab, var(--fg) 78%, var(--a1)) 0%,
+    var(--a1) 34%,
+    color-mix(in oklab, var(--a1) 55%, var(--bg)) 72%,
+    color-mix(in oklab, var(--a1) 20%, var(--bg)) 100%
+  );
+  box-shadow: 0 0 46px color-mix(in oklab, var(--a1) 70%, transparent),
+    0 0 90px color-mix(in oklab, var(--a1) 30%, transparent);
+  animation: v-lens-breathe 5.2s ease-in-out infinite;
+}
+
+/* A thin lit rim right at the pupil's edge: the aperture the light comes through. */
+.v-lens-iris {
+  position: absolute;
+  inset: 37%;
+  border-radius: 50%;
+  border: 1px solid color-mix(in oklab, var(--a1) 85%, transparent);
+  box-shadow: 0 0 22px color-mix(in oklab, var(--a1) 45%, transparent),
+    inset 0 0 14px color-mix(in oklab, var(--a1) 30%, transparent);
+}
+
+/* The specular highlight that makes it read as glass rather than as a hole.
+   Sits on the pupil's upper left, where a light source above and in front of
+   the lens would put it. */
+.v-lens-glint {
+  position: absolute;
+  top: 41%;
+  left: 41%;
+  width: 8%;
+  height: 4.5%;
+  border-radius: 50%;
+  transform: rotate(-24deg);
+  background: color-mix(in oklab, var(--fg) 70%, transparent);
+  filter: blur(2px);
+  opacity: 0.75;
+}
+
+/* Brightness only — no transform, deliberately. */
+@keyframes v-lens-breathe {
+  0%,
+  100% {
+    opacity: 0.78;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.is-calm .v-lens-halo,
+.is-calm .v-lens-pupil {
+  animation: none;
+}
+
+/* Aperture — hard-edged blades on a slow rotation around a dark opening. */
+
+.v-ap-blades {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: repeating-conic-gradient(
+    from 0deg,
+    color-mix(in oklab, var(--surface) 92%, transparent) 0deg 55deg,
+    color-mix(in oklab, var(--line) 80%, transparent) 55deg 60deg
+  );
+  animation: v-spin 44s linear infinite;
+}
+
+.v-ap-hole {
+  position: absolute;
+  inset: 33%;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 45%, color-mix(in oklab, var(--a1) 26%, var(--bg)), var(--bg) 72%);
+  box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.75),
+    0 0 40px color-mix(in oklab, var(--a1) 34%, transparent);
+}
+
+.v-ap-rim {
+  position: absolute;
+  inset: 30%;
+  border-radius: 50%;
+  border: 1px solid var(--a1);
+  opacity: 0.75;
+}
+
+.is-calm .v-ap-blades {
+  animation: none;
+}
+
+/* Orrery — three bodies, each orbiting slower the further out it sits.
+ *
+ * The ring spins and carries the body pinned to its top edge, which is why the
+ * body is a child rather than a sibling. Nothing pulses. */
+
+.v-orrery-ring {
+  position: absolute;
+  border-radius: 50%;
+  border: 1px solid color-mix(in oklab, var(--line) 90%, transparent);
+  animation: v-spin linear infinite;
+}
+
+.v-orrery-ring.o1 {
+  inset: 8%;
+  animation-duration: 38s;
+}
+
+.v-orrery-ring.o2 {
+  inset: 26%;
+  border-style: dashed;
+  animation-duration: 23s;
+  animation-direction: reverse;
+}
+
+.v-orrery-ring.o3 {
+  inset: 42%;
+  animation-duration: 13s;
+}
+
+.v-orrery-body {
+  position: absolute;
+  top: -5px;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  margin-left: -5px;
+  border-radius: 50%;
+  background: var(--a2);
+  box-shadow: 0 0 18px var(--a2);
+}
+
+.v-orrery-ring.o1 .v-orrery-body {
+  background: var(--a3);
+  box-shadow: 0 0 18px var(--a3);
+}
+
+.v-orrery-ring.o3 .v-orrery-body {
+  background: var(--a1);
+  box-shadow: 0 0 20px var(--a1);
+}
+
+.v-orrery-sun {
+  position: relative;
+  width: 16%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(circle at 38% 34%, color-mix(in oklab, var(--fg) 60%, var(--a1)), var(--a1) 60%, transparent 78%);
+  box-shadow: 0 0 54px color-mix(in oklab, var(--a1) 60%, transparent);
+}
+
+.is-calm .v-orrery-ring {
+  animation: none;
+}
+
+/* Radial orbit: six pills distributed evenly from -90°, offset by 160% of a
+ * pill's own size. NAV has a fixed length, so this is enumerated rather than
+ * computed — which is only safe because .v-orbit holds nothing but the pills.
+ * The count was seven until the 404 pill moved behind sign-in (2026-08-13);
+ * these are the six-way positions, so if NAV's length ever changes again this
+ * block has to change with it. */
+.v-orbit {
+  position: absolute;
+  inset: 0;
+}
+
+.v-orbit-pill {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 6;
+}
+
+.v-orbit-pill:nth-child(1) {
+  transform: translate(-50%, -50%) translate(0%, -160%);
+}
+.v-orbit-pill:nth-child(2) {
+  transform: translate(-50%, -50%) translate(138.56%, -80%);
+}
+.v-orbit-pill:nth-child(3) {
+  transform: translate(-50%, -50%) translate(138.56%, 80%);
+}
+.v-orbit-pill:nth-child(4) {
+  transform: translate(-50%, -50%) translate(0%, 160%);
+}
+.v-orbit-pill:nth-child(5) {
+  transform: translate(-50%, -50%) translate(-138.56%, 80%);
+}
+.v-orbit-pill:nth-child(6) {
+  transform: translate(-50%, -50%) translate(-138.56%, -80%);
+}
+
+/* Content grid + blocks -------------------------------------------------- */
+
+.v-grid {
+  position: relative;
+  z-index: 5;
+  display: grid;
+  grid-template-columns: var(--grid-columns);
+  gap: var(--grid-gap);
+}
+
+.layout-terminal .v-grid,
+.layout-console .v-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.layout-console .v-grid {
+  gap: 10px;
+  font-family: var(--font-mono);
+}
+
+.layout-stack .v-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.band-phone.layout-stack .v-grid {
+  gap: 16px;
+}
+
+.layout-sidescroll .v-grid {
+  display: flex;
+  gap: 22px;
+  flex: none;
+}
+
+/* Narrower than Card deck's 340px, so the row reads as a filmstrip rather than
+   as the normal grid turned on its side. Without a basis here the flex children
+   would size to their content and the sideways scroll would be meaningless. */
+.layout-sidescroll .v-block {
+  flex: 0 0 320px;
+}
+
+.band-phone.layout-sidescroll .v-block {
+  flex: 0 0 82vw;
+}
+
+.v-block {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in oklab, var(--surface) 70%, transparent);
+  backdrop-filter: blur(12px);
+  box-shadow: inset 0 1px 0 color-mix(in oklab, var(--fg) 8%, transparent),
+    0 20px 50px rgba(0, 0, 0, 0.28);
+  /*
+   * `backwards`, not `both`. The stagger needs the from-state to hold during the
+   * animation-delay, but a forwards fill would leave the card's transform owned
+   * by the animation for ever — and an animated declaration outranks the style
+   * attribute, so the cursor-lean tilt written by useMotionSystems would be
+   * silently discarded on every card. The resolved state is the natural one, so
+   * there is nothing to fill forwards to.
+   */
+  animation: v-rise 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+  transition: background-color 0.9s ease, color 0.9s ease, border-color 0.9s ease,
+    box-shadow 0.9s ease, transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transform-style: preserve-3d;
+}
+
+.is-calm .v-block {
+  animation: none;
+  box-shadow: none;
+}
+
+.layout-terminal .v-block {
+  border-radius: 2px;
+  font-family: var(--font-mono);
+}
+
+.layout-console .v-block {
+  padding: 14px 16px;
+  border-radius: 3px;
+  gap: 9px;
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--a1);
+  background: color-mix(in oklab, var(--surface) 52%, transparent);
+  backdrop-filter: none;
+  box-shadow: none;
+  animation: v-rise 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+}
+
+.layout-stack .v-block {
+  min-height: 72vh;
+  justify-content: center;
+  scroll-snap-align: start;
+  padding: 56px;
+  gap: 20px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+/*
+ * Stack is the collapse target for almost every layout on a phone, so it stops
+ * being the borderless one-block-per-viewport treatment and becomes ordinary
+ * cards. The radius has to come back with the border — theme.ts already keeps
+ * --radius at 16px for Stack off desk for exactly this.
+ */
+.band-phone.layout-stack .v-block {
+  min-height: auto;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in oklab, var(--surface) 70%, transparent);
+}
+
+.v-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.v-kicker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--a2);
+}
+
+.v-kicker-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--a2);
+  box-shadow: 0 0 10px var(--a2);
+}
+
+.v-block-idx {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--faint);
+}
+
+.v-block h3 {
+  margin: 0;
+  font-size: clamp(19px, 1.6vw, 24px);
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  color: var(--fg);
+}
+
+.v-block p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.62;
+  color: var(--muted);
+}
+
+.v-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--fg);
+}
+
+.v-list li {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.v-list li::before {
+  content: "▸";
+  color: var(--a1);
+}
+
+.v-tile {
+  position: relative;
+  min-height: 150px;
+  border-radius: calc(var(--radius) - 5px);
+  border: 1px solid var(--line);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: repeating-linear-gradient(
+    135deg,
+    color-mix(in oklab, var(--surface) 92%, transparent) 0 9px,
+    color-mix(in oklab, var(--bg) 78%, transparent) 9px 18px
+  );
+}
+
+.band-phone .v-tile {
+  min-height: 128px;
+}
+
+.v-tile-glow {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 50px color-mix(in oklab, var(--a1) 26%, transparent);
+  pointer-events: none;
+}
+
+/* Placeholder photos (2026-08-13, client request). The image sits under the
+   tile's glow and caption, desaturated so twenty-four palettes don't have to
+   fight a photograph's own colour cast; the caption gets a bg scrim so it
+   stays legible over one. Temporary until the operator's own photos exist. */
+.v-tile-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+  filter: grayscale(0.85) contrast(1.05);
+  opacity: 0.8;
+}
+
+.v-tile.has-img .v-tile-caption {
+  background: color-mix(in oklab, var(--bg) 72%, transparent);
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+
+.v-tile-caption {
+  position: relative;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+}
+
+.v-mail {
+  align-self: flex-start;
+  background: none;
+  border: 0;
+  border-bottom: 2px solid var(--a1);
+  padding: 0 0 5px;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: clamp(17px, 1.7vw, 22px);
+  color: var(--a1);
+  word-break: break-all;
+  text-align: left;
+}
+
+/* Footer -------------------------------------------------------------------- */
+
+.v-footer {
+  position: relative;
+  z-index: 5;
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: var(--footer-padding);
+  margin-top: 16px;
+  border-top: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: var(--footer-size);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+  transition: border-color 0.9s ease, color 0.9s ease;
+}
+
+.band-phone .v-footer,
+.band-tablet .v-footer {
+  justify-content: flex-start;
+}
+
+.v-footer-links {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+
+.v-footer-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: inherit;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+  transition: color 0.9s ease;
+}
+
+.v-footer-link.is-active {
+  color: var(--a1);
+}
+
+/* The found sign-in link — five taps on the ornament. `backwards`, never a
+   forwards fill: v-rise animates `transform`, and a held final frame would own
+   the property for ever — the same trap .v-block documents. Hover is safe
+   either way (interaction.css moves footer links with `translate`), but the
+   convention is the convention. */
+.v-footer-link.is-found {
+  animation: v-rise 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+}
+
+.v-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 34px;
+  transform: translateX(-50%);
+  z-index: 90;
+  padding: 13px 20px;
+  border: 1px solid var(--a2);
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--surface) 92%, transparent);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  max-width: min(92vw, 480px);
+  text-align: center;
+  box-shadow: 0 0 40px color-mix(in oklab, var(--a2) 35%, transparent);
+  animation: v-rise 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.v-footer-dot {
+  background: none;
+  border: 0;
+  color: var(--faint);
+  font: inherit;
+  letter-spacing: 0.14em;
+  cursor: default;
+  padding: 0;
+}
+
+/* Accounts -------------------------------------------------------------------
+
+   The signup form. Every colour here is a palette custom property, so this page
+   bleeds at 0.9s along with everything else — there is not a literal hex in the
+   block. Hover and press states are deliberately absent: they live in
+   interaction.css at 140ms, because a colour transition and a pointer response
+   cannot share one timing.                                                    */
+
+.v-account {
+  grid-column: 1 / -1;
+  max-width: 46ch;
+  margin: 0 auto;
+  padding: 4px 0 8px;
+}
+
+.v-account-form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.v-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.v-field-label {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: var(--a1);
+}
+
+.v-input {
+  padding: 12px 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in oklab, var(--bg) 60%, transparent);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--fg);
+  outline: none;
+}
+
+.v-field-hint,
+.v-account-note {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.v-account-error {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 10px 12px;
+  border: 1px solid var(--a3);
+  border-radius: var(--radius);
+  color: var(--fg);
+}
+
+.v-btn {
+  align-self: flex-start;
+  padding: 11px 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: transparent;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.v-btn-primary {
+  border-color: var(--a1);
+  color: var(--a1);
+}
+
+/* Colour only, like the admin chips' .is-danger — a destructive button that
+   moves differently from its neighbours reads as a different kind of control. */
+.v-btn-danger {
+  border-color: var(--a3);
+  color: var(--a3);
+}
+
+.v-account-title {
+  font-family: var(--font-display);
+  font-size: 22px;
+  margin: 0 0 10px;
+  color: var(--fg);
+}
+
+/* Recovery codes are read off the screen and copied by hand, so they are set in
+   the mono face at a size that survives being photographed. */
+.v-codes {
+  list-style: none;
+  margin: 16px 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+/* Not `.v-code`: that name belongs to the share-code field in overlays.css,
+   which is imported after this file and would win on order at equal
+   specificity — taking these to 12px in --a1 with a text field's padding. */
+.v-recovery-code {
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in oklab, var(--bg) 60%, transparent);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  color: var(--fg);
+}
+
+/* The TOTP secret and its otpauth URI stack rather than sitting in the
+   two-column code grid — each is one long string, not one of a pair. */
+.v-codes-single {
+  grid-template-columns: 1fr;
+}
+
+/* A saved setup's row: the name + code fills the row and the apply/delete
+   links sit together at its end, wrapping under on narrow bands. The class
+   existed unstyled (review 2026-08-13) and fell back to the bare code-chip
+   block with the links run on inline. */
+.v-setup-row,
+.v-passkey-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.v-setup-row > span,
+.v-passkey-row > span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The URI especially has no natural break points, so it breaks anywhere rather
+   than overflowing the 46ch column. `user-select: all` makes the first click
+   take the whole string — these are copied, never edited. */
+.v-totp-secret {
+  word-break: break-all;
+  user-select: all;
+}
+
+/* The cross-links between the two account pages, and the note under each form.
+   Set as prose rather than as another button row: "no account? make one" is a
+   sentence with a control in it, and a second bordered button next to the
+   primary one would read as an equal choice, which it is not. */
+.v-account-aside {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.v-account-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--a1);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+/* The account summary. A <dl> because it is genuinely term-and-value pairs, and
+   a screen reader announcing "password, set" beats it announcing two loose
+   fragments of a table. */
+.v-facts {
+  margin: 16px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--line);
+}
+
+.v-fact {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 12px;
+  background: color-mix(in oklab, var(--bg) 82%, transparent);
+}
+
+.v-fact dt {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+
+.v-fact dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--fg);
+}
+
+/* Administration. Wider than the account forms because it is a list of rows
+   with actions, not a column of fields — but still capped, so it does not
+   become a full-bleed table on a wide screen while every other page is a
+   measured column. */
+.v-admin {
+  max-width: 68ch;
+}
+
+.v-admin-list {
+  list-style: none;
+  margin: 16px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.v-admin-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in oklab, var(--bg) 60%, transparent);
+}
+
+.v-admin-who {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  /* min-width: 0 so a long handle wraps instead of forcing the row wider than
+     its container — the same flex trap `.v-code` already documents. */
+  min-width: 0;
+}
+
+.v-admin-handle {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--fg);
+}
+
+.v-admin-facts {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.v-admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Phase 2 — machines and the sharing tab (SPEC-ACCOUNTS.md §13) -------------
+   Same account vocabulary as everything above; no literal colours. /share is
+   the one surface allowed to diverge in tone (§10) — its status line is set
+   large enough to read from across a room. */
+
+.v-share-status {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 15px;
+  color: var(--fg);
+}
+
+.v-share-count {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.v-machines {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.v-machine-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in oklab, var(--bg) 60%, transparent);
+}
+
+.v-machine-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.v-machine-name {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: var(--fg);
+}
+
+.v-online {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 11px;
+  color: var(--a1);
+}
+
+.v-online.is-off {
+  color: var(--muted);
+}
+
+.v-drive-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.v-drive-label {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--fg);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.v-drive-state {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* The explorer, List mode (§10). A dense sortable table is the accessible
+   view — calm mode has nothing to collapse here yet. */
+.v-crumbs {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.v-crumbs button {
+  font: inherit;
+  color: var(--a1);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.v-files {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.v-files th {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--muted);
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.v-files td {
+  padding: 7px 10px;
+  border-bottom: 1px solid color-mix(in oklab, var(--line) 45%, transparent);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.v-files td.v-file-cell {
+  width: 100%;
+  white-space: normal;
+}
+
+.v-file-name {
+  font: inherit;
+  font-size: 13px;
+  color: var(--fg);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.v-file-name:disabled {
+  cursor: default;
+}
+
+.v-file-name.is-dir {
+  color: var(--a1);
+}
+
+/* Sort headers — the th already carries the type; the button is invisible. */
+.v-files-sort {
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+/* The explorer's view switcher sits between the crumbs and Close. */
+.v-viewswitch {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* File-type icons (§10): stroked page in --line, type-coloured fold + glyph.
+   Colour arrives via class, never a literal, so the set recolours with the
+   palette bleed like everything else. */
+.v-fileicon {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  display: block;
+}
+
+.v-fileicon path,
+.v-fileicon circle {
+  fill: none;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.v-fileicon .v-fi-line {
+  stroke: var(--line);
+}
+
+.v-fileicon-a1 .v-fi-fold,
+.v-fileicon-a1 .v-fi-glyph {
+  stroke: var(--a1);
+}
+
+.v-fileicon-a2 .v-fi-fold,
+.v-fileicon-a2 .v-fi-glyph {
+  stroke: var(--a2);
+}
+
+/* The §10 progress wash: a left-to-right fill in --a1 instead of a spinner.
+   A background-image, so it never fights the 0.9s background-color bleed.
+   Calm drops it (the class is simply not applied there). */
+.v-wash {
+  background-image: linear-gradient(
+    to right,
+    color-mix(in oklab, var(--a1) 24%, transparent) var(--wash, 0%),
+    transparent var(--wash, 0%)
+  );
+}
+
+/* Grid mode (§10): larger tiles for folders where the name is not the point.
+   `v-ftile`, not `v-tile` — that class is the content pages' photo tile, and
+   sharing it restyles the gallery. `background-color`, never the `background`
+   shorthand, which would erase .v-wash's background-image. */
+.v-files-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 8px;
+}
+
+.v-ftile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 8px 10px;
+  border: 1px solid color-mix(in oklab, var(--line) 45%, transparent);
+  border-radius: var(--radius);
+  background-color: transparent;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  min-width: 0;
+}
+
+.v-ftile:disabled {
+  cursor: default;
+}
+
+.v-ftile .v-fileicon {
+  width: 34px;
+  height: 34px;
+}
+
+.v-ftile-label {
+  font-size: 12px;
+  color: var(--fg);
+  text-align: center;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.v-ftile.is-dir .v-ftile-label {
+  color: var(--a1);
+}
+
+.v-ftile-sub {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* Column mode (§10): Miller columns, one pane per level, sliding in on the
+   house easing. `translate`, never `transform` — the interaction split. */
+.v-cols {
+  display: flex;
+  align-items: stretch;
+  overflow-x: auto;
+  border: 1px solid color-mix(in oklab, var(--line) 45%, transparent);
+  border-radius: var(--radius);
+}
+
+.v-col {
+  flex: 0 0 216px;
+  min-width: 0;
+  max-height: 340px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  border-right: 1px solid color-mix(in oklab, var(--line) 45%, transparent);
+  animation: v-col-in 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+}
+
+.v-col:last-child {
+  border-right: 0;
+}
+
+@keyframes v-col-in {
+  from {
+    opacity: 0;
+    translate: 18px 0;
+  }
+}
+
+.v-col-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: calc(var(--radius) / 2);
+  background-color: transparent;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--fg);
+  cursor: pointer;
+  text-align: left;
+}
+
+.v-col-row .v-fileicon {
+  width: 16px;
+  height: 16px;
+}
+
+.v-col-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.v-col-more {
+  color: var(--muted);
+  flex: none;
+}
+
+.v-col-row.is-selected {
+  background-color: color-mix(in oklab, var(--a1) 16%, transparent);
+}
+
+.v-col-row.is-selected .v-col-name {
+  color: var(--a1);
+}
+
+.v-col-note {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  padding: 6px 8px;
+}
+
+/* Phones: narrower panes so two levels fit; tiles relax to touch size. */
+.band-phone .v-col {
+  flex-basis: 168px;
+}
+
+.band-phone .v-files-grid {
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+}
+
+/* The entry being fetched is disabled like its siblings, but it carries the
+   wash — dimming the one live progress indicator to 42% defeats it. */
+.vessel .v-ftile.v-wash:disabled,
+.vessel .v-col-row.v-wash:disabled {
+  opacity: 1;
+}
+
+/* Touch pass (2026-08-14 phone audit) ---------------------------------------
+   Hit areas and legibility on the narrow bands; nothing here changes desktop.
+   The 0-2-0 band selectors beat any 0-1-0 base rule regardless of file. */
+
+/* Sub-16px inputs make iOS Safari zoom on focus and leave the page panned
+   mid-flow. 16px is the documented threshold. .v-paste lives in overlays.css;
+   specificity carries this rule over it anyway. */
+.band-phone .v-input,
+.band-phone .v-paste,
+.band-tablet .v-input,
+.band-tablet .v-paste {
+  font-size: 16px;
+}
+
+/* The ten recovery codes render exactly once, and two 23ch mono columns need
+   ~410px — a 360px phone shows them clipped. One column always fits. */
+.band-phone .v-codes {
+  grid-template-columns: 1fr;
+}
+
+/* The 44px touch convention (base.css, chips) extends to account buttons. */
+.band-phone .v-btn,
+.band-tablet .v-btn {
+  min-height: 44px;
+}
+
+/* Text-sized controls gain an invisible hit area — padding pulled back by an
+   equal negative margin, so no layout shifts. The footer link is where the
+   five-tap ornament reveal lands; 10px type is not a touch target. */
+.band-phone .v-footer-link {
+  padding: 12px 6px;
+  margin: -12px -6px;
+}
+
+.band-phone .v-account-link {
+  padding: 8px 2px;
+  margin: -8px -2px;
+}
+
+/* Explorer rows reach touch size; pane width and the tile grid already did. */
+.band-phone .v-files td {
+  padding-block: 12px;
+}
+
+.band-phone .v-col-row {
+  padding-block: 11px;
+}

@@ -1,0 +1,21 @@
+# Headers for the paths the Worker never sees.
+#
+# `run_worker_first = ["/*", "!/assets/*"]` in wrangler.toml keeps the hashed
+# bundles on the asset server's fast path — they are immutable, they are never
+# HTML, and there is nothing to inject into them. The cost is that they also skip
+# `harden()` in worker/index.ts, so the site's security headers were on every
+# response *except* the JavaScript and CSS, which is exactly where `nosniff`
+# earns its keep.
+#
+# This is read as configuration by Workers static assets, the same way
+# `_redirects` is — which is why `_redirects` cannot simply be deleted and has to
+# be stripped from dist/ at deploy time. Unlike that file this one is valid for
+# both hosts, so it needs no stripping: Pages applies it too, and Pages is still
+# the rollback.
+#
+# The immutable cache header is safe only because these filenames carry a content
+# hash: a changed file is a changed URL, so nothing can go stale.
+/assets/*
+  X-Content-Type-Options: nosniff
+  Strict-Transport-Security: max-age=63072000; includeSubDomains
+  Cache-Control: public, max-age=31536000, immutable
