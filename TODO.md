@@ -192,9 +192,39 @@ the motion-primitives approach before building.
 ### 12. ~~CSP~~ — nonce plumbed and shipped **report-only** 2026-08-14
 (`cspPolicy` in `worker/index.ts`; reports to `/api/csp-report`, logged in
 `wrangler tail`, stored nowhere). Remaining half: **flip to enforcing** — one
-header rename in `harden` — after production runs quiet through the surfaces
-the harness cannot drive: a passkey ceremony, a phase-2 browse over the
-signalling socket, TOTP enrolment, each canvas effect. Harness 260 → 263.
+header rename in `harden`.
+
+**Measured against production 2026-08-14, and the blocker list is now one item,
+not four.** Session notes in `docs/DECISIONS.md`; in short:
+
+- **The reporting pipeline is proven end to end** — browser → Reporting API →
+  `POST /api/csp-report` → a log line in `wrangler tail`. It had never actually
+  been seen working. **Reports arrive ~55s late** (the `age` field said 55218ms):
+  "nothing in the tail after ten seconds" is not evidence of anything, and that
+  is almost certainly why this looked untestable.
+- **The public site runs quiet.** Zero violations across all nine content pages
+  plus `/signin`, `/signup`, `/machines`, `/share` and a genuine 404, with calm
+  **off** so the canvas renders and sound **on** so the AudioContext is built.
+  Zero Worker exceptions.
+- **Three of the four surfaces close by inspection rather than observation.**
+  Passkeys: `navigator.credentials.*` is not a CSP-governed fetch. TOTP
+  enrolment: there is no QR code at all, just text and an `otpauth://` link — no
+  image, no library, no external fetch. Canvas effects: pure 2D canvas, and
+  `src/` contains no `eval`, no `new Function`, no `dangerouslySetInnerHTML` and
+  **no external origin at all**. The phase-2 signalling socket is
+  `wss://mcclevarty.ca`, explicitly allowed, and STUN via `RTCPeerConnection` is
+  not covered by any shipped fetch directive.
+- **What is left is one line**: `saveBlob` in `MachinesPage.tsx` builds
+  `<a href="blob:…" download>`. A probe confirmed **`blob:` is not in the policy**
+  — `connect-src` and `img-src` both reject it — but a `download` anchor is not
+  governed by fetch directives, so it is *probably* fine. Probably is not good
+  enough when being wrong means the operator silently loses file downloads.
+
+**So: flip after one real download in the two-tab test**, and not before. That
+test is already owed. `blob:` was deliberately **not** added to the policy —
+it would not protect the anchor path anyway, and widening a security policy for
+an unbuilt feature is backwards. It *will* be needed in `img-src` when the
+deferred "thumbnails from actual bytes" lands (5b).
 ### 13. Cloudflare "Always Use HTTPS" — dashboard toggle, belt and braces.
 
 ---

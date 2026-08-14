@@ -173,6 +173,11 @@ Say so rather than implying otherwise.
 - **Recovery codes are shown once, to the client's browser.**
 - **`RTCPeerConnection` does not exist in Node** — the harness proves signalling and the
   ceremony's bytes; the data channel itself needs the two-tab test.
+- **CSP reports arrive about a minute late.** Measured 2026-08-14: a violation reached
+  `/api/csp-report` with `age: 55218`. The Reporting API batches, so a `wrangler tail` checked ten
+  seconds after the violation shows nothing and looks exactly like a broken endpoint. Wait a minute,
+  and navigate away — unloading the document helps flush the queue. To force a known-good violation
+  for testing the pipeline, load a `blob:` URL into an `Image()`: `blob:` is not in the policy.
 
 ---
 

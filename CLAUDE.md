@@ -721,6 +721,14 @@ ceremony, a phase-2 browse, TOTP enrolment, each effect. `style-src 'unsafe-inli
 — the theming *is* style attributes, and `style-src-attr` would blank old Safari (the comment on
 `cspPolicy` has the full reasoning). Do not add a report *store*; the log line is the product.
 
+**`blob:` is deliberately absent from the policy**, and one line depends on that staying understood:
+`saveBlob` in `MachinesPage.tsx` downloads a file through `<a href="blob:…" download>`. A download
+anchor is not governed by fetch directives, so it should survive the flip — but it is the single
+surface that has not been proven, and it is what the two-tab test exercises. **Do not flip to
+enforcing until one real file has been downloaded from a phase-2 browse.** Adding `blob:`
+pre-emptively does not help: it would not cover the anchor path. It *will* be needed in `img-src`
+when the deferred "thumbnails from actual bytes" lands. Measured 2026-08-14 — `docs/DECISIONS.md`.
+
 ## Accessibility
 
 The spec's gap list is closed: accessible button names, `aria-current` on nav, focus trapping and

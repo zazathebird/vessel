@@ -13,6 +13,73 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-14 — The CSP measured against production; the blocker list goes from four to one
+
+`TODO.md` 12's remaining half was "flip to enforcing once production runs quiet through the surfaces
+the harness cannot drive: a passkey ceremony, a phase-2 browse, TOTP enrolment, each canvas effect."
+That was written as four things to *wait for*. Measured, it is one, and three of them were never
+observable in the first place.
+
+### The reporting pipeline works, and it is slow enough to look broken
+
+Never actually seen working before today. Driven under `wrangler tail`: the browser fires
+`securitypolicyviolation`, the Reporting API batches it, `POST /api/csp-report` arrives, and
+`worker/index.ts` logs it. End to end, confirmed.
+
+**The report arrived with `age: 55218` — fifty-five seconds late.** The first check, six seconds
+after the violation, saw nothing and looked exactly like a broken endpoint. Anyone testing this
+needs to wait a minute, and unloading the document helps flush the queue. Worth recording because
+"the tail is quiet" is the evidence the whole report-only stage rests on, and quiet-because-nobody-
+is-listening and quiet-because-nothing-is-wrong look identical.
+
+`Reporting-Endpoints: csp-endpoint="/api/csp-report"` is present and correct on page responses, which
+matters: Chrome prefers `report-to` over `report-uri` when both are named, so a missing
+`Reporting-Endpoints` header would have made the whole stage silently collect nothing.
+
+### The public site is quiet, and that part is now measured rather than assumed
+
+Zero violations across all nine content pages plus `/signin`, `/signup`, `/machines`, `/share` and a
+genuine unknown URL — with **calm off** so the canvas actually renders, and **sound on** so the
+`AudioContext` is constructed. Zero Worker exceptions across the whole run.
+
+### Three of the four surfaces close by inspection
+
+They were on the list as things to observe. They are not observable, because they cannot produce a
+violation:
+
+- **Passkeys** — `navigator.credentials.create/get` is not a CSP-governed fetch. There is nothing
+  for the policy to have an opinion about.
+- **TOTP enrolment** — there is no QR code. §4 is satisfied with the secret as text and an
+  `otpauth://` URI, precisely because a QR would have needed a library. No image, no `data:` URI, no
+  external request.
+- **Every canvas effect** — 2D canvas drawing calls, which fetch nothing. Backed by a sweep of
+  `src/`: no `eval`, no `new Function`, no `dangerouslySetInnerHTML`, and **no external origin
+  anywhere in the source**.
+
+The phase-2 browse is two-thirds closed the same way: the signalling socket is `wss://mcclevarty.ca`
+and is explicitly in `connect-src`, and STUN through `RTCPeerConnection` is not covered by any
+fetch directive Chrome has shipped.
+
+### What is actually left is one line, and it is a real unknown
+
+`saveBlob` in `src/components/MachinesPage.tsx` — `URL.createObjectURL`, then
+`<a href="blob:…" download>`, then a programmatic click. A deliberate probe confirmed **`blob:` is
+not permitted by the current policy**: fetching one reported against `connect-src` and loading one
+into an `<img>` reported against `img-src`, both saved only by report-only mode.
+
+A `download` anchor is not governed by fetch directives, so this is *probably* fine. Probably is the
+wrong standard here — being wrong means the operator silently loses the ability to download their
+own files, which is the entire point of phase 2. **So the flip waits for one real download in the
+two-tab test**, which is already owed, rather than for a week of watching.
+
+**`blob:` was deliberately not added to the policy.** It would not protect the anchor path — that
+path is not fetch-governed — so adding it buys nothing against the actual risk while widening a
+security policy for a feature that does not exist. It *will* be needed in `img-src` when the
+deferred "image thumbnails from actual bytes" lands (`TODO.md` 5b); that is the moment to add it,
+with something real behind it.
+
+---
+
 ## 2026-08-14 — The site gets a voice, and a stored preference stops falling through
 
 `TODO.md` 7 — asked for twice, never built, and correctly flagged as a spec change rather than a
