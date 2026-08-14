@@ -96,10 +96,22 @@ Digest Type  2    (SHA-256)
 Digest       3FAAEC048F49192EF2108527E35C474900FCAC628B9F0F6D764C10ABAA6F640E
 ```
 
-**Why it stopped there.** Namespro was not authenticated in the automation browser — it presented a
-login form with the password autofilled by the password manager. Clicking through it would be
-authenticating as the client, which is not something to do on someone's behalf whatever permission
-has been given. The registrar half needs a human at the keyboard.
+**Why it stopped there — and it is not the login.** The client signed in, and the account was then
+searched properly. **Namespro's control panel does not expose DS record management at all.** Checked
+exhaustively while signed in: *Edit domain settings* for `mcclevarty.ca` runs general settings →
+web settings (nameservers) → e-mail settings → Save, with no DNSSEC section anywhere; and *Useful
+Tools* offers exactly five tools — create registrant, domain push, bulk DNS server edit, bulk domain
+renewal, whitelist addition. No DNSSEC among them. Their knowledge base does carry a
+"What is DNSSec and how to use it?" article, but it 403s on direct URL access.
+
+So the remaining step is **a support ticket to Namespro** asking them to publish the DS record above
+to CIRA, not a form to fill in. That is the normal route for a registrar without a DNSSEC UI, and it
+is why this could not simply be finished once logged in.
+
+**Noticed in passing, and worth its own decision**: `mcclevarty.ca` has **auto-renew disabled**
+(expiry 2027-Aug-09). A domain that does not auto-renew is a domain that can lapse, and every other
+protection in this document is worth nothing the day it does. Not changed — it is a billing choice,
+not a security setting — but it should be a deliberate one.
 
 **The risk to respect when doing it**: a wrong DS makes every validating resolver refuse the domain
 — not the site, the *domain*, mail included — and the fix has to propagate through CIRA. Verify

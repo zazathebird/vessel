@@ -326,12 +326,15 @@ a `permerror`, not a lenient policy.**
 - **DNSSEC: half done.** Cloudflare's half is enabled and the zone is signed;
   the DS is **not** published, so it is inert and safe to leave. The exact DS to
   publish at Namespro is in `docs/SECURITY-AUDIT.md` §7, derived from the live
-  DNSKEY and cross-checked against Cloudflare's own digest. **The registrar half
-  needs a human**: Namespro was not authenticated in the automation browser and
-  presented a login form with the password autofilled, and authenticating as the
-  client is not something to do on their behalf. A wrong DS takes the whole
-  domain down for validating resolvers, so verify with `dig +dnssec` straight
-  after and keep Cloudflare's "Cancel Setup" in reach.
+  DNSKEY and cross-checked against Cloudflare's own digest. **Namespro has no
+  DNSSEC UI** — verified while signed in, across both *Edit domain settings* and
+  all five *Useful Tools* — so the remaining step is a **support ticket** asking
+  them to publish the DS to CIRA, not a form. A wrong DS takes the whole domain
+  down for validating resolvers, so verify with `dig +dnssec` straight after and
+  keep Cloudflare's "Cancel Setup" in reach.
+- **Auto-renew is disabled on `mcclevarty.ca`** (expiry 2027-Aug-09). Noticed
+  while in the registrar; not changed, because it is a billing choice. But every
+  other protection here is worth nothing the day the domain lapses.
 
 **Nothing here is reachable from this machine**: the wrangler OAuth token carries
 `account (read)` and `zone (read)` only, no `dns_records (write)`. Doing any of
