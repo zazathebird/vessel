@@ -311,23 +311,25 @@ before anything accepts a real grant. `docs/DECISIONS.md` 2026-08-14.
 ### 16. DNS hardening, in the dashboards (2026-08-13 audit; records in
 `docs/SECURITY-AUDIT.md`). **Live state re-checked 2026-08-14:**
 
-- **DMARC already exists** and is not a record to create — the client offered to
-  have one made, and there is one:
-  `v=DMARC1; p=none; rua=mailto:…@dmarc-reports.cloudflare.net;`. The pending
-  work is **escalating** it, `p=none` → `p=quarantine` → `p=reject`, and the
-  audit is explicit that this must not happen until a couple of weeks of reports
-  have been read. **`mcclevarty.ca` forwards mail** (`MX → mailroot8.namespro.ca`)
-  and forwarding is precisely what strict SPF/DMARC breaks, so escalating blind
-  risks quarantining the operator's real mail. Same reason SPF stays `~all` for
-  now. This is a read-the-reports task, not a typing task.
+- ~~**DMARC**~~ — **done 2026-08-14, `p=reject`.** The two-week observation this
+  item prescribed was made unnecessary by a fact, not skipped: the client
+  confirmed neither domain has mail set up or needed, and a domain that sends
+  nothing has no legitimate mail for a strict policy to break. Live:
+  `v=DMARC1; p=reject; sp=reject; adkim=s; aspf=s; rua=…`. SPF is `-all`.
 - **CAA: still none** (confirmed by query). The one item here that is a pure
   addition. `docs/SECURITY-AUDIT.md` §8 has Cloudflare's documented set verbatim.
   **Risk if done carelessly**: a CAA set that omits a CA Cloudflare actually uses
   makes certificate *renewal* fail silently, weeks later. The dashboard validates
   the set against its own issuance; the API does not.
-- **DNSSEC: still no DS record.** Needs Cloudflare to generate it *and* the
-  registrar (**Namespro**) to publish it — the registrar half cannot be done from
-  here at all.
+- **DNSSEC: half done.** Cloudflare's half is enabled and the zone is signed;
+  the DS is **not** published, so it is inert and safe to leave. The exact DS to
+  publish at Namespro is in `docs/SECURITY-AUDIT.md` §7, derived from the live
+  DNSKEY and cross-checked against Cloudflare's own digest. **The registrar half
+  needs a human**: Namespro was not authenticated in the automation browser and
+  presented a login form with the password autofilled, and authenticating as the
+  client is not something to do on their behalf. A wrong DS takes the whole
+  domain down for validating resolvers, so verify with `dig +dnssec` straight
+  after and keep Cloudflare's "Cancel Setup" in reach.
 
 **Nothing here is reachable from this machine**: the wrangler OAuth token carries
 `account (read)` and `zone (read)` only, no `dns_records (write)`. Doing any of

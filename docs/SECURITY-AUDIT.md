@@ -76,7 +76,37 @@ relationship; the site opens no popups and loses nothing.
 
 Verified live on 2026-08-13. In rough priority order:
 
-### 7. DNSSEC is not enabled
+### 7. DNSSEC — **half done 2026-08-14: signed at Cloudflare, DS not yet published**
+
+Cloudflare's half is done — DNSSEC is enabled and the zone is signed, so `mcclevarty.ca` now
+publishes DNSKEY records. **It is deliberately inert**: DNSSEC does nothing until the DS record is
+published at the registrar, and none is. `dig mcclevarty.ca DS` returns nothing, resolution and the
+site are unaffected, and leaving it in this state indefinitely is harmless.
+
+**The DS record to publish at Namespro**, derived independently from the published DNSKEY rather
+than transcribed from the dashboard (whose fields truncate), and cross-checked against Cloudflare's
+own displayed digest:
+
+```
+mcclevarty.ca.  IN DS  2371 13 2 3FAAEC048F49192EF2108527E35C474900FCAC628B9F0F6D764C10ABAA6F640E
+
+Key Tag      2371
+Algorithm    13   (ECDSAP256SHA256)
+Digest Type  2    (SHA-256)
+Digest       3FAAEC048F49192EF2108527E35C474900FCAC628B9F0F6D764C10ABAA6F640E
+```
+
+**Why it stopped there.** Namespro was not authenticated in the automation browser — it presented a
+login form with the password autofilled by the password manager. Clicking through it would be
+authenticating as the client, which is not something to do on someone's behalf whatever permission
+has been given. The registrar half needs a human at the keyboard.
+
+**The risk to respect when doing it**: a wrong DS makes every validating resolver refuse the domain
+— not the site, the *domain*, mail included — and the fix has to propagate through CIRA. Verify
+immediately after with `dig +dnssec mcclevarty.ca` and remove the DS at the registrar if anything
+looks wrong. Cloudflare's "Cancel Setup" is the other half of the rollback.
+
+### 7b. Original finding: DNSSEC is not enabled
 
 No DS record exists at CIRA for `mcclevarty.ca`. Without it, responses for the zone can be spoofed
 by an on-path resolver attacker — which, for a site whose accounts derive keys from parameters
@@ -133,11 +163,11 @@ legitimate mail for a strict policy to break, so there is nothing to observe and
 - **SPF is now `v=spf1 -all`** (was `v=spf1 mx include:_spf.mailroots.namespro.ca ~all`). Verified
   live. This declares that *no* server may send as `@mcclevarty.ca`, which is the strongest possible
   statement and is simply true today.
-- **DMARC is still `p=none`.** The intended value is
-  `v=DMARC1; p=reject; sp=reject; adkim=s; aspf=s; rua=…` keeping the existing Cloudflare report
-  address. **This edit was blocked by a safety classifier mid-change and was not applied** — the
-  record was left untouched rather than half-written. It needs the client to apply it or to allow
-  the action.
+- **DMARC is now `p=reject`** (client allowed the action after a classifier blocked the first
+  attempt). Live and verified:
+  `v=DMARC1; p=reject; sp=reject; adkim=s; aspf=s; rua=mailto:…@dmarc-reports.cloudflare.net;`
+  `sp=reject` covers subdomains, and `adkim=s`/`aspf=s` require strict alignment — all safe on a
+  domain that sends nothing. **Audit item 9 is closed.**
 - **MX and the mail CNAMEs/SRVs were deliberately left alone.** Removing them is cleanup, not
   hardening: SPF and DMARC govern *sending*, so the anti-spoofing benefit is already complete, and
   leaving inbound as-is costs nothing while keeping the door open if mail is ever wanted here.
