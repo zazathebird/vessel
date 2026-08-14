@@ -296,7 +296,9 @@ async function route(
     // no-current-password branch eventually becomes reachable without a ticket.
     case "POST /api/account/set-password":
       return accounts.setPassword(request, env);
-    case "GET /api/account/slot":
+    // POST, not GET: the body carries the password proof (`assertPassword` in
+    // the handler) — the slot is never handed to a session cookie alone.
+    case "POST /api/account/slot":
       return accounts.keySlot(request, env);
     case "POST /api/totp/enrol":
       return accounts.totpEnrol(request, env);

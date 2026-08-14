@@ -7,7 +7,8 @@
       "Bash(sudo apt-get install -y git)",
       "Bash(sudo -n true)",
       "Bash(sudo -v)",
-      "Bash(echo \"exit:$?\")"
+      "Bash(echo \"exit:$?\")",
+      "Bash(kill 31877 31878 31885 31896 31902 31924)"
     ]
   }
 }

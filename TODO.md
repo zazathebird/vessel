@@ -7,7 +7,7 @@ what is left to do.
 Last updated 2026-08-14: **SPEC-ACCOUNTS phase 2 is built and harness-proven**
 — machines, drives, the per-machine signalling Durable Object, the connect
 ceremony, the file protocol, and the `/share` + `/machines` pages. The spec
-grew §13 and §12 K–S; the harness is at **258**. Done items below are kept as
+grew §13 and §12 K–S; the harness is at **260**. Done items below are kept as
 one-liners because their numbers are cross-referenced from `docs/DECISIONS.md`.
 
 ---
@@ -101,9 +101,14 @@ site-config injection. Worth doing properly, not badly.
 ### 14. Password change is not a session-revocation event. Bounded by the
 30-minute TTL / 12-hour ceiling; closing it needs a session table (design
 change, not a patch).
-### 15. `/api/account/slot` authorises on the session alone. Not exploitable
-today (returns ciphertext only); **add the password-proof + current-TOTP gate
-before phase 3**, not with it.
+### 15. ~~`/api/account/slot` authorises on the session alone~~ — password-proof
+gate done 2026-08-14 (`assertPassword`, rate-limited; harness 258 → 260). The
+TOTP half deliberately did **not** land there: the slot bytes are identical
+whatever the caller intends, so a code requirement on that endpoint cannot
+tell §12 K's password-only connect from §3's sign gesture — an attacker would
+claim the weaker purpose. **The fresh-TOTP check moves to the phase-3
+grant-submission endpoint**, which sees the signed grant itself; build it
+before anything accepts a real grant. `docs/DECISIONS.md` 2026-08-14.
 ### 16. DNS hardening, in the dashboards (2026-08-13 audit; records in
 `docs/SECURITY-AUDIT.md`): enable DNSSEC + DS at Namespro; add CAA; DMARC
 `p=none` → observe two weeks → `p=quarantine` → `p=reject`.
