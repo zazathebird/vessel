@@ -13,6 +13,55 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-14 — `/setup`, the first new page since the spec
+
+`TODO.md` 9, open since 2026-08-12 as one line — "a setup guide page/download (Tailscale et al.)"
+— which did not say who reads it. Asked, and the answer was **remote access before a callout**: the
+page the operator sends someone so a fix does not need a drive.
+
+**A page, not a download.** It needs no file asset, works on anything, and a visitor who wants it on
+paper can still print it. The brief allowed either.
+
+### What the copy does, and why in that order
+
+**Quick Assist leads, not Tailscale.** For a one-off look, "already on your machine, nothing to
+install, nothing to sign up for, and it stops existing when you close the window" beats an account
+signup, and it is the honest first recommendation even though it is the least impressive one.
+Tailscale is the *standing* option — worth ten minutes only if the operator is in that machine more
+than once — and it is described as what it actually is: a private link between two machines, with
+screen sharing running **inside** it. Tailscale is not screen sharing, and a guide that implied it
+was would send people round in circles.
+
+Then three blocks that exist because of what the page is asking people to do: what the operator can
+see (the screen, while you watch, never unattended), how to turn it off (uninstall takes his way in
+with it, and you do not have to tell him), and **the scam warning**, which was not in the brief. A
+page telling people to install remote-access software is precisely the page a scammer would like
+them to have read first, so it says so — *"the difference is that you rang me"* — and ends on gift
+cards, which is the tell that costs people the most.
+
+macOS gets a deliberately short block: screen sharing exists but has moved between versions, and
+"tell me which one you're on and I'll send the three right steps" is more honest than four wrong
+ones written in advance.
+
+### Placement, and the one word it cost
+
+A **footer** page beside Now and Changelog rather than a seventh nav pill. The six pills are a
+settled design, and there is a mechanical reason too: `NAV` is what `useOperatorRoutes` cycles with
+the arrow keys and what Radial's orbit renders, so a seventh entry there changes two unrelated
+behaviours as a side effect. `FOOTER_NAV` changes neither.
+
+**It moved a line of protected copy.** The 404 says "There are eight other pages and all of them are
+more interesting than this one" — and `setup` made eight wrong. The counts on the 404 are jokes that
+depend on being true, which is *why* the client kept them verbatim, so preserving the word would
+have been the change rather than correcting it. One word; the four-item example list beneath it was
+not touched. Recorded in `CLAUDE.md` under *Copy changes*, with the note that another content page
+moves it again.
+
+Tailscale is named in prose and not linked. The site has no outbound links anywhere and this page
+was not the place to start.
+
+---
+
 ## 2026-08-14 — Share codes get harness coverage; 263 → 301
 
 The share code is the site's most dangerous wire format and had **no automated coverage at all**,

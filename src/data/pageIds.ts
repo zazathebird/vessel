@@ -1,16 +1,16 @@
 /**
- * The fourteen pages and their real URLs — the spec's nine, plus signup,
+ * The fifteen pages and their real URLs — the spec's nine, plus setup, plus signup,
  * signin and admin (phase 1), and machines and share (phase 2,
  * SPEC-ACCOUNTS.md §13).
  *
  * The prototype swaps pages in place with no URL change; the spec is explicit
  * that this is a prototype limitation, not a design decision, so the real build
- * gets fourteen addressable routes.
+ * gets fifteen addressable routes.
  */
 
 export type PageId =
   | "home" | "about" | "work" | "gallery" | "contact"
-  | "guestbook" | "now" | "changelog" | "notfound" | "signup" | "signin" | "admin"
+  | "guestbook" | "now" | "changelog" | "setup" | "notfound" | "signup" | "signin" | "admin"
   | "machines" | "share";
 
 /**
@@ -64,6 +64,11 @@ export const OPERATOR_NAV: { id: PageId; label: string }[] = [
 export const FOOTER_NAV: { id: PageId; label: string }[] = [
   { id: "now", label: "Now" },
   { id: "changelog", label: "Changelog" },
+  // Setup joins them rather than `NAV` (2026-08-14, client request — TODO 9).
+  // It is a secondary page in the same sense they are, and the six pills are a
+  // settled design; adding a seventh would also change what the operator door's
+  // arrow-key cycling walks, since `useOperatorRoutes` cycles `NAV`.
+  { id: "setup", label: "Setup" },
 ];
 
 export const PATHS: Record<PageId, string> = {
@@ -75,6 +80,7 @@ export const PATHS: Record<PageId, string> = {
   guestbook: "/guestbook",
   now: "/now",
   changelog: "/changelog",
+  setup: "/setup",
   notfound: "/404",
   signup: "/signup",
   signin: "/signin",

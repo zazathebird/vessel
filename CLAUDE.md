@@ -265,10 +265,12 @@ ones most likely to be "fixed" by accident:
   (deviation 8 below). Deliberate. If it needs to return it wants its own affordance rather than
   the whole readout coming back
 - **Routing**: the prototype swaps pages in place with no URL change. That is a prototype
-  limitation, not a design decision — **fourteen** real URLs are wired in `src/data/pageIds.ts`:
-  the spec's nine content pages plus `/signup`, `/signin`, `/admin`, and (phase 2) `/machines`
-  and `/share`. The phase-2 pair follow the account pages' unlinked convention — typed routes
-  (`machines`, `share`) and links from the `/signin` summary, nothing in the public nav
+  limitation, not a design decision — **fifteen** real URLs are wired in `src/data/pageIds.ts`:
+  the spec's nine content pages plus `/setup` (2026-08-14, a footer page), `/signup`, `/signin`,
+  `/admin`, and (phase 2) `/machines` and `/share`. The phase-2 pair follow the account pages'
+  unlinked convention — typed routes (`machines`, `share`) and links from the `/signin` summary,
+  nothing in the public nav. **Adding a content page moves the 404's page count** — see *Copy
+  changes* below
 - **The 404 pill left the public nav on 2026-08-13, by client decision.** "404 genuinely in the
   nav" was the spec's joke; the client pulled it behind sign-in. It now leads `OPERATOR_NAV`
   (404 / Account / Admin), the operator-only tabs the header appends for a signed-in operator,
@@ -470,9 +472,25 @@ voice ("Dangerously over-engineered" / "No AI, just a guy"). Do not restore the 
 
 The two palette *gags* stay: changelog v2.4 ("Added six palettes nobody will pick") and the
 404's "consolation" block ("Have a palette instead") are jokes, not spec sheets, and the client
-kept them. The 404's other counts — "eight other pages", "six ways into a panel", "12 background
-modes", "5 type systems" — remain correct and verbatim. Every line of copy outside the replaced
-home block is verbatim-only.
+kept them.
+
+**`/setup` is a whole new page of new copy** (2026-08-14, TODO 9, client-approved scope and text):
+remote access *before a callout* — Windows Quick Assist first because it needs no install and ends
+when the window closes, Tailscale as the standing option for machines the operator is in
+repeatedly, and a scam-awareness block, because a page telling people to install remote-access
+software is exactly the page a scammer wants them to have read. It is a **footer** page beside Now
+and Changelog, deliberately not a seventh nav pill: the six are a settled design, and `NAV` is what
+`useOperatorRoutes` cycles and Radial's orbit renders. Tailscale is named in prose, not linked —
+the site has no outbound links anywhere.
+
+**The 404's count moved with it: "eight other pages" → "nine".** The counts on that page are jokes
+that depend on being true, which is why the client kept them, so leaving the old number would have
+been the change rather than correcting it. **If another content page is ever added, this number
+moves again.** The 404's other counts — "six ways into a panel", "5 type systems" — remain correct
+and verbatim, and its four-item example list was not touched.
+
+Every line of copy outside the replaced home block, the `setup` page and that one word is
+verbatim-only.
 
 ## Accounts — the invariants
 

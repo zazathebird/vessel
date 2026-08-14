@@ -24,7 +24,7 @@ import { CommandPalette } from "./components/CommandPalette";
 
 /**
  * The whole site: one chrome — header, hero with the valve, content grid,
- * footer — shared by all twelve pages and restyled per layout by CSS alone,
+ * footer — shared by every page and restyled per layout by CSS alone,
  * over the canvas and under the three overlays.
  *
  * The overlays are siblings of `.v-chrome` rather than children, because the

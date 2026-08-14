@@ -1,6 +1,7 @@
 /**
- * Final page copy for all twelve pages — the spec's nine, plus the three
- * account pages, whose hero copy was written for this build.
+ * Final page copy for all thirteen pages that render blocks — the spec's nine,
+ * `setup` (2026-08-14), plus the three account pages, whose hero copy was
+ * written for this build.
  * Copied verbatim from the prototype's PAGES object (Site v2 - Vessel.dc.html:366).
  *
  * COPY CHANGES, both approved by the client (see CLAUDE.md):
@@ -9,7 +10,13 @@
  *    option-count list told visitors about switches they cannot flip. It is
  *    jokes now, written for this build; the two palette *gags* (changelog
  *    v2.4, 404's "consolation") stay.
- * 2. Every other line in this file, including every other stale-looking
+ * 2. `setup` is a whole new page, written for this build on 2026-08-14 (TODO 9).
+ *    Scope agreed with the client: remote access *before a callout*.
+ * 3. The 404's "eight other pages" became "nine", because `setup` made the old
+ *    number false. The counts on that page are jokes that depend on being true,
+ *    which is why the client kept them; leaving it wrong would have been the
+ *    change. One word — nothing else on the 404 moved.
+ * 4. Every other line in this file, including every other stale-looking
  *    count, is verbatim from the prototype.
  */
 
@@ -191,6 +198,87 @@ export const PAGES: Record<PageId, Page> = {
       { kicker: "personal", title: "Something old, being restored badly", body: "Not for a client. Not going well. Continuing anyway." },
     ],
   },
+  /**
+   * NEW COPY, written for this build (2026-08-14, TODO 9 — "a setup guide
+   * page/download (Tailscale et al.)"). Not from the prototype and not from the
+   * spec, so it is the second block of copy on the site that is not verbatim,
+   * after home's "the site" block. Scope agreed with the client: remote access
+   * *before a callout* — the page you send someone so a fix does not need a
+   * drive — with Tailscale as the standing option and the simpler ones named.
+   *
+   * Three site rules it is written to keep: no city is named, there is no form
+   * and no email in the markup (the CTA points at Contact, which assembles the
+   * address at runtime), and nothing here is a link, because the site has no
+   * outbound links anywhere.
+   */
+  setup: {
+    eyebrow: "before the callout",
+    title: "Let me look from here.",
+    lede: "A good half of what goes wrong doesn't need me in the room. Set one of these up and I can see the machine from mine — same fix, no drive, no afternoon spent waiting in.",
+    // One CTA, like Contact's. Two buttons pointing at the same page is a wart,
+    // and everything here funnels to the same place anyway: email first.
+    ctas: [{ label: "Tell me what's wrong first →", to: "contact", primary: true }],
+    blocks: [
+      {
+        kicker: "first",
+        title: "Ask before you install anything",
+        body: "Say what the machine is doing and I'll tell you whether remote is any use. A computer that won't turn on, a drive that's stopped spinning, anything that smells hot — that needs hands and a bench. This page is for the rest of it, which is most of it.",
+      },
+      {
+        kicker: "windows",
+        title: "Quick Assist, already on your machine",
+        body: "Nothing to install, nothing to sign up for, and it stops existing the moment you close the window. Reach for this one first.",
+        hasList: true,
+        items: [
+          "Press Start, type Quick Assist, open it",
+          "Choose the option to get help — it asks for a code",
+          "I read you the code over the phone, you type it in",
+          "Agree to share the screen, and you watch the whole thing",
+          "Close the window when we're done. That's the end of it",
+        ],
+      },
+      {
+        kicker: "mac",
+        title: "Tell me which version you're on",
+        body: "macOS has screen sharing built in, but where it lives moved around between versions and I would rather send you the three right steps than four wrong ones. One line in an email and I'll send them back.",
+      },
+      {
+        kicker: "if it's regular",
+        title: "Tailscale, for machines I look after",
+        body: "Worth ten minutes if I'm in your machine more than once. It builds a private link between your computer and mine — nothing else on the internet can reach it, and it survives reboots, so neither of us sets it up again.",
+        hasList: true,
+        items: [
+          "Install it from the Tailscale website on that machine",
+          "Sign in with an account you already have",
+          "Tell me the name it gives the machine",
+          "Screen sharing then runs inside that private link, not out in the open",
+          "Free, for the amount of it we need",
+        ],
+      },
+      {
+        kicker: "what i can see",
+        title: "Your screen, while you're watching it",
+        body: "All of these show me the screen and ask you to agree before they do. You watch the whole session, you can stop it at any point, and none of them let me in while the machine is sitting there on its own. A tool that works any other way is not on this page.",
+      },
+      {
+        kicker: "turning it off",
+        title: "Whenever you feel like it",
+        body: "Quick Assist ends when you close the window. Tailscale uninstalls like any other program, and taking it off the machine takes my way in with it. You don't have to tell me first.",
+      },
+      {
+        kicker: "the warning",
+        title: "If they rang you, it's a scam",
+        body: "Microsoft does not phone people. Neither does your bank's security department, nor anyone who has found a virus on a computer they have never seen. They will talk you into installing exactly the kind of tool this page describes. The difference is that you rang me.",
+        hasList: true,
+        items: [
+          "Hang up — you don't owe them the rest of the call",
+          "Don't install anything they name, however official it sounds",
+          "If you already did, unplug the network cable or turn off the wifi, then ring me",
+          "Nobody legitimate asks for gift cards. Nobody. Ever",
+        ],
+      },
+    ],
+  },
   changelog: {
     eyebrow: "site edits",
     title: "Things I changed.",
@@ -228,7 +316,11 @@ export const PAGES: Record<PageId, Page> = {
     ],
     blocks: [
       { kicker: "trace", title: "resource not found", body: "/var/www/whatever_you_wanted → exists = false" },
-      { kicker: "suggestion", title: "Try the parts that exist", body: "There are eight other pages and all of them are more interesting than this one.", hasList: true, items: ["Landing — the joke", "Contact — the useful one", "Now — what's on the bench", "Gallery — the dumping ground"] },
+      // "eight" → "nine" (2026-08-14): the Setup page made the count wrong. The
+      // client kept this line *because* it was correct — the counts on the 404
+      // are jokes that depend on being true — so keeping the word would have
+      // been the change, not correcting it. One word; nothing else here moved.
+      { kicker: "suggestion", title: "Try the parts that exist", body: "There are nine other pages and all of them are more interesting than this one.", hasList: true, items: ["Landing — the joke", "Contact — the useful one", "Now — what's on the bench", "Gallery — the dumping ground"] },
       { kicker: "consolation", title: "Have a palette instead", body: "Twenty-four of them. None will find your page." },
     ],
   },

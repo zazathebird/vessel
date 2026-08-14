@@ -178,7 +178,28 @@ is interface feedback.
 
 ### 8. Edit mode — operator-editable copy/images. Large; blocked on the images
 spec change (R2 or similar).
-### 9. A setup guide page/download (Tailscale et al.) — asked for 2026-08-12.
+### 9. ~~A setup guide page~~ — built 2026-08-14 as `/setup`, "Let me look from here."
+
+Scope agreed with the client: **remote access before a callout** — the page you
+send someone so the fix does not need a drive. A page, not a download: a page
+needs no file asset, works everywhere, and the visitor can still print it.
+
+Order is deliberate. **Windows Quick Assist leads** because for a one-off look
+"already on your machine, nothing to install, gone when you close it" beats an
+account signup. **Tailscale is the standing option** for machines the operator
+is in repeatedly, and is described honestly as what it is — a private link, with
+screen sharing running *inside* it, not screen sharing on its own. Then what the
+operator can see, how to turn it off, and a **scam-awareness block**, which was
+not in the brief: a page telling people to install remote-access software is
+exactly the page a scammer wants them to have read.
+
+A **footer** page beside Now and Changelog, not a seventh nav pill — the six are
+a settled design, and `NAV` is what `useOperatorRoutes` cycles and Radial's orbit
+renders. Tailscale is named in prose, not linked; the site has no outbound links.
+
+**It moved one word of protected copy**: the 404's "eight other pages" → "nine".
+Those counts are jokes that depend on being true. Recorded in `CLAUDE.md` under
+*Copy changes*. **Adding another content page moves it again.**
 ### 10. Photo slots hold Wikimedia placeholders (`docs/PHOTOS.md`); swap for
 the operator's own when they exist, same treatment (EXIF stripped, lazy,
 desaturated).
