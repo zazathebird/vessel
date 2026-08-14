@@ -52,7 +52,13 @@ drives every route, the ceremony crypto, and the path validator — the WebRTC
 hop itself needs two real Chromium tabs, which is the client's walk-through.
 Remaining inside phase 2:
 
-- **Grid and Column explorer modes** (§10 fixes the design; List shipped).
+- ~~**Grid and Column explorer modes**~~ — done 2026-08-14 (view switcher
+  remembered per drive under `vessel.explorer.v1`, palette-drawn SVG file-type
+  icons, Miller columns with cached panes, §10 progress wash, sortable List
+  headers; calm collapses to List). Still inside §10 and deliberately
+  deferred: **image thumbnails from actual bytes** — reading whole files over
+  the channel to decorate a grid wants the phase-3 read-cap conversation
+  first, so tiles use the drawn icons for now.
 - **TURN** — mechanics specified (§12 P), enablement is a client spend
   decision; without it a hard-NAT pair fails with an honest message.
 - **The Pi sharing host** (`docs/pi-sharing-host.md`) can now point its final
@@ -108,7 +114,8 @@ before phase 3**, not with it.
 
 - **All of phase 2 by eye**: pairing, drive picking, the agent tab's states,
   a real two-tab WebRTC browse and download, offline/re-attach/take-over
-  flows, the `/machines` explorer. The harness proves every route and the
+  flows, the `/machines` explorer — now including the Grid and Column modes,
+  the icons, the wash, and the column slide (2026-08-14, unseen). The harness proves every route and the
   ceremony's bytes; it cannot run `RTCPeerConnection`.
 - **Matrix rain fall speed** — rebuilt, never confirmed by eye.
 - **Several palettes fail WCAG AA** — deliberate; calm mode is the remedy.

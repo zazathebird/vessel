@@ -13,6 +13,24 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-14 — The §10 explorer completes: Grid and Column modes
+
+List shipped with phase 2 as the floor; the other two §10 view modes now exist
+(`src/components/MachinesPage.tsx`). What §10 fixed, built as fixed: a toolbar switcher
+remembered **per drive** (`vessel.explorer.v1`, validated on read like all storage); **Grid** as
+tiles over drawn file-type icons — `src/components/FileIcon.tsx`, ~14 categories, a stroked page
+in `--line` with a type-coloured fold and glyph in `--a1`/`--a2` via CSS class, never a literal,
+so icons recolour with the bleed; **Column** as Miller columns, pane *d* listing
+`path.slice(0, d)`, panes cached against their path prefix and guarded by a token so a superseded
+load cannot paint over a live one, sliding in on the house 0.34s easing (`translate`, never
+`transform`); the **progress wash** in `--a1` as a `background-image` gradient so it cannot fight
+the 0.9s `background-color` bleed; **List gained sortable headers** (`aria-sort`, directories
+always first) and its Kind column now names the drawn category. Calm collapses everything to List
+and drops the wash — §10 calls that the correct behaviour, not a degradation. The explorer is
+keyed by drive id so state cannot leak between drives. **Deliberately deferred from §10: image
+thumbnails from actual bytes** — decorating a grid by reading whole files belongs after the
+phase-3 read-cap conversation (`TODO.md` 5b). Unseen by any eye, like the rest of phase 2.
+
 ## 2026-08-14 — SPEC-ACCOUNTS phase 2: machines, signalling, brokered browsing; docs condensed
 
 **Spec first, per §7.** `design/SPEC-ACCOUNTS.md` gained §13 (the concrete pairing, signalling,

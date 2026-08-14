@@ -465,7 +465,7 @@ function AgentPanel({
             ) : (
               row.drives.map((drive) => (
                 <div key={drive.id} className="v-drive-row">
-                  <span>{drive.label}</span>
+                  <span className="v-drive-label">{drive.label}</span>
                   {attach[drive.id] === "attached" ? (
                     <span className="v-field-hint">attached</span>
                   ) : attach[drive.id] === "needs-permission" ? (

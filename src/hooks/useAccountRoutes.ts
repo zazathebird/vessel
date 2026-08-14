@@ -121,6 +121,11 @@ export function useAccountRoutes(): void {
       dragFrom.current = null;
       if (from === null) return;
       if (isModalOpen()) return;
+      // A finger is not a mouse (2026-08-14 phone audit): a mostly-horizontal
+      // swipe over non-scrollable page never gets a pointercancel, so an
+      // ordinary reading gesture would yank the visitor to /signin. Phones
+      // have their own deliberate route in — five taps on the ornament.
+      if (event.pointerType === "touch") return;
       if (window.getSelection()?.toString()) return;
       // Leftward, where the door is rightward. `useOperatorRoutes` owns the
       // other direction and the two thresholds are equal on purpose, so the

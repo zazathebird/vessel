@@ -201,3 +201,25 @@
   translate: 0 0;
   scale: 0.97;
 }
+
+/* The explorer's tiles, column rows and sort headers. Same split as ever:
+   lift/press here at the fast timing, every colour stays the palette's. */
+.vessel .v-tile,
+.vessel .v-col-row,
+.vessel .v-files-sort {
+  transition: background-color 0.9s ease, color 0.9s ease, border-color 0.9s ease,
+    translate var(--t-hover) var(--ease-ui), scale var(--t-press) var(--ease-ui);
+}
+
+.vessel .v-tile:hover:not(:disabled),
+.vessel .v-col-row:hover:not(:disabled),
+.vessel .v-files-sort:hover:not(:disabled) {
+  translate: 0 -1px;
+}
+
+.vessel .v-tile:active:not(:disabled),
+.vessel .v-col-row:active:not(:disabled),
+.vessel .v-files-sort:active:not(:disabled) {
+  translate: 0 0;
+  scale: 0.985;
+}

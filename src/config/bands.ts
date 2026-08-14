@@ -63,7 +63,9 @@ export const BAND_TOKENS: Record<Band, BandTokens> = {
   phone: {
     pagePadding: "0 18px 64px",
     headerPadding: "14px 18px",
-    stageHeight: "calc(100vh - 132px)",
+    // dvh, not vh: the stage scrolls internally, so iOS Safari's URL bar never
+    // collapses and 100vh (the large viewport) hides the stage's bottom ~60px.
+    stageHeight: "calc(100dvh - 132px)",
     gridColumns: "1fr",
     gridGap: "14px",
     // Sized, not hidden (mobile parity, client request 2026-08-13): the
@@ -80,7 +82,7 @@ export const BAND_TOKENS: Record<Band, BandTokens> = {
   tablet: {
     pagePadding: "0 26px 72px",
     headerPadding: "16px 26px",
-    stageHeight: "calc(100vh - 132px)",
+    stageHeight: "calc(100dvh - 132px)",
     gridColumns: "repeat(auto-fit, minmax(260px, 1fr))",
     gridGap: "20px",
     valveSize: "min(34vw, 240px)",

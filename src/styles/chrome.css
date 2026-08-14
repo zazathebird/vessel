@@ -1162,6 +1162,8 @@
   font-size: 11px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
+  max-width: min(92vw, 480px);
+  text-align: center;
   box-shadow: 0 0 40px color-mix(in oklab, var(--a2) 35%, transparent);
   animation: v-rise 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
@@ -1307,14 +1309,16 @@
    links sit together at its end, wrapping under on narrow bands. The class
    existed unstyled (review 2026-08-13) and fell back to the bare code-chip
    block with the links run on inline. */
-.v-setup-row {
+.v-setup-row,
+.v-passkey-row {
   display: flex;
   align-items: baseline;
   gap: 10px;
   flex-wrap: wrap;
 }
 
-.v-setup-row > span {
+.v-setup-row > span,
+.v-passkey-row > span {
   flex: 1 1 auto;
   min-width: 0;
   overflow-wrap: anywhere;
@@ -1597,4 +1601,267 @@
 
 .v-file-name.is-dir {
   color: var(--a1);
+}
+
+/* Sort headers — the th already carries the type; the button is invisible. */
+.v-files-sort {
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+/* The explorer's view switcher sits between the crumbs and Close. */
+.v-viewswitch {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* File-type icons (§10): stroked page in --line, type-coloured fold + glyph.
+   Colour arrives via class, never a literal, so the set recolours with the
+   palette bleed like everything else. */
+.v-fileicon {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  display: block;
+}
+
+.v-fileicon path,
+.v-fileicon circle {
+  fill: none;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.v-fileicon .v-fi-line {
+  stroke: var(--line);
+}
+
+.v-fileicon-a1 .v-fi-fold,
+.v-fileicon-a1 .v-fi-glyph {
+  stroke: var(--a1);
+}
+
+.v-fileicon-a2 .v-fi-fold,
+.v-fileicon-a2 .v-fi-glyph {
+  stroke: var(--a2);
+}
+
+/* The §10 progress wash: a left-to-right fill in --a1 instead of a spinner.
+   A background-image, so it never fights the 0.9s background-color bleed.
+   Calm drops it (the class is simply not applied there). */
+.v-wash {
+  background-image: linear-gradient(
+    to right,
+    color-mix(in oklab, var(--a1) 24%, transparent) var(--wash, 0%),
+    transparent var(--wash, 0%)
+  );
+}
+
+/* Grid mode (§10): larger tiles for folders where the name is not the point.
+   `v-ftile`, not `v-tile` — that class is the content pages' photo tile, and
+   sharing it restyles the gallery. `background-color`, never the `background`
+   shorthand, which would erase .v-wash's background-image. */
+.v-files-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 8px;
+}
+
+.v-ftile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 8px 10px;
+  border: 1px solid color-mix(in oklab, var(--line) 45%, transparent);
+  border-radius: var(--radius);
+  background-color: transparent;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  min-width: 0;
+}
+
+.v-ftile:disabled {
+  cursor: default;
+}
+
+.v-ftile .v-fileicon {
+  width: 34px;
+  height: 34px;
+}
+
+.v-ftile-label {
+  font-size: 12px;
+  color: var(--fg);
+  text-align: center;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.v-ftile.is-dir .v-ftile-label {
+  color: var(--a1);
+}
+
+.v-ftile-sub {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* Column mode (§10): Miller columns, one pane per level, sliding in on the
+   house easing. `translate`, never `transform` — the interaction split. */
+.v-cols {
+  display: flex;
+  align-items: stretch;
+  overflow-x: auto;
+  border: 1px solid color-mix(in oklab, var(--line) 45%, transparent);
+  border-radius: var(--radius);
+}
+
+.v-col {
+  flex: 0 0 216px;
+  min-width: 0;
+  max-height: 340px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  border-right: 1px solid color-mix(in oklab, var(--line) 45%, transparent);
+  animation: v-col-in 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+}
+
+.v-col:last-child {
+  border-right: 0;
+}
+
+@keyframes v-col-in {
+  from {
+    opacity: 0;
+    translate: 18px 0;
+  }
+}
+
+.v-col-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: calc(var(--radius) / 2);
+  background-color: transparent;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--fg);
+  cursor: pointer;
+  text-align: left;
+}
+
+.v-col-row .v-fileicon {
+  width: 16px;
+  height: 16px;
+}
+
+.v-col-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.v-col-more {
+  color: var(--muted);
+  flex: none;
+}
+
+.v-col-row.is-selected {
+  background-color: color-mix(in oklab, var(--a1) 16%, transparent);
+}
+
+.v-col-row.is-selected .v-col-name {
+  color: var(--a1);
+}
+
+.v-col-note {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  padding: 6px 8px;
+}
+
+/* Phones: narrower panes so two levels fit; tiles relax to touch size. */
+.band-phone .v-col {
+  flex-basis: 168px;
+}
+
+.band-phone .v-files-grid {
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+}
+
+/* The entry being fetched is disabled like its siblings, but it carries the
+   wash — dimming the one live progress indicator to 42% defeats it. */
+.vessel .v-ftile.v-wash:disabled,
+.vessel .v-col-row.v-wash:disabled {
+  opacity: 1;
+}
+
+/* Touch pass (2026-08-14 phone audit) ---------------------------------------
+   Hit areas and legibility on the narrow bands; nothing here changes desktop.
+   The 0-2-0 band selectors beat any 0-1-0 base rule regardless of file. */
+
+/* Sub-16px inputs make iOS Safari zoom on focus and leave the page panned
+   mid-flow. 16px is the documented threshold. .v-paste lives in overlays.css;
+   specificity carries this rule over it anyway. */
+.band-phone .v-input,
+.band-phone .v-paste,
+.band-tablet .v-input,
+.band-tablet .v-paste {
+  font-size: 16px;
+}
+
+/* The ten recovery codes render exactly once, and two 23ch mono columns need
+   ~410px — a 360px phone shows them clipped. One column always fits. */
+.band-phone .v-codes {
+  grid-template-columns: 1fr;
+}
+
+/* The 44px touch convention (base.css, chips) extends to account buttons. */
+.band-phone .v-btn,
+.band-tablet .v-btn {
+  min-height: 44px;
+}
+
+/* Text-sized controls gain an invisible hit area — padding pulled back by an
+   equal negative margin, so no layout shifts. The footer link is where the
+   five-tap ornament reveal lands; 10px type is not a touch target. */
+.band-phone .v-footer-link {
+  padding: 12px 6px;
+  margin: -12px -6px;
+}
+
+.band-phone .v-account-link {
+  padding: 8px 2px;
+  margin: -8px -2px;
+}
+
+/* Explorer rows reach touch size; pane width and the tile grid already did. */
+.band-phone .v-files td {
+  padding-block: 12px;
+}
+
+.band-phone .v-col-row {
+  padding-block: 11px;
 }
