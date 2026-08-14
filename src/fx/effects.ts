@@ -85,7 +85,13 @@ interface RainColumn {
 export interface FxCache {
   rain?: { columns: number; rows: number; streams: RainColumn[] } | null;
   parts?: Particle[] | null;
-  tree?: Branch[] | null;
+  /**
+   * The grown tree, with the box it was grown for and the pool of random
+   * numbers it was grown from. Both are part of the cache because `vessels` is
+   * the one effect whose geometry is neither recomputed per frame nor able to
+   * wrap back into a new box — see the note on `buildTree`.
+   */
+  tree?: { w: number; h: number; pool: number[]; branches: Branch[] } | null;
   flow?: Channel[] | null;
   /** The duel's match state — fighters, health, sparks, the match counter. */
   duel?: DuelState | null;
@@ -104,17 +110,36 @@ function seed(w: number, h: number, n: number): Particle[] {
   }));
 }
 
-/** Recursively grown branching tree, depth 6, rooted below the bottom edge. */
-function buildTree(w: number, h: number): Branch[] {
+/**
+ * Recursively grown branching tree, depth 6, rooted below the bottom edge.
+ *
+ * The randomness comes from `pool` rather than from `Math.random()` directly,
+ * and the pool is kept in the cache. That is what lets the tree be rebuilt at a
+ * new canvas size and come back as the *same* tree, merely re-fitted — the two
+ * alternatives on a resize are both visibly wrong. Keep the old geometry and
+ * the trunk (rooted at `w * 0.5`) drifts off-centre while the two side branches
+ * (rooted at `-10` and `w + 10`) detach from the edges and float in mid-canvas.
+ * Re-roll it and the whole tree reshuffles on every frame of a drag-resize.
+ *
+ * Depth can still change with the box, because the `len < 14` floor bites at a
+ * different level on a short canvas; the pool keeps that to a local difference
+ * instead of a new tree.
+ */
+function buildTree(w: number, h: number, pool: number[]): Branch[] {
   const branches: Branch[] = [];
+  let taken = 0;
+  const rnd = () => {
+    while (pool.length <= taken) pool.push(Math.random());
+    return pool[taken++];
+  };
   const grow = (x: number, y: number, ang: number, len: number, depth: number) => {
     if (depth > 6 || len < 14) return;
     const x2 = x + Math.cos(ang) * len;
     const y2 = y + Math.sin(ang) * len;
-    branches.push({ x, y, x2, y2, depth, phase: Math.random() * 6.28 });
-    const n = depth < 2 ? 3 : 2;
-    for (let i = 0; i < n; i++) {
-      grow(x2, y2, ang + (Math.random() - 0.5) * 1.25, len * (0.62 + Math.random() * 0.2), depth + 1);
+    branches.push({ x, y, x2, y2, depth, phase: rnd() * 6.28 });
+    const kids = depth < 2 ? 3 : 2;
+    for (let i = 0; i < kids; i++) {
+      grow(x2, y2, ang + (rnd() - 0.5) * 1.25, len * (0.62 + rnd() * 0.2), depth + 1);
     }
   };
   grow(w * 0.5, h * 1.05, -Math.PI / 2, h * 0.19, 0);
@@ -127,8 +152,15 @@ type Effect = (f: Frame, cache: FxCache) => void;
 
 /** 1. Vessels — the default. A branching tree that brightens near the cursor. */
 const vessels: Effect = ({ ctx, w, h, p, t, beat, mx, my }, cache) => {
-  if (!cache.tree) cache.tree = buildTree(w, h);
-  for (const b of cache.tree) {
+  // Rebuilt on a box change, not only on an effect change. `FxCanvas` drops the
+  // cache only when the effect id changes, on the grounds that a resize is
+  // absorbed by the effects themselves — every particle field wraps back in and
+  // `rain` rebuilds its columns. The tree does neither, so it has to say so.
+  if (!cache.tree || cache.tree.w !== w || cache.tree.h !== h) {
+    const pool = cache.tree?.pool ?? [];
+    cache.tree = { w, h, pool, branches: buildTree(w, h, pool) };
+  }
+  for (const b of cache.tree.branches) {
     const near = 1 - Math.min(1, Math.hypot(b.x2 - mx * w, b.y2 - my * h) / 420);
     const wave = (Math.sin(t * 2.2 - b.depth * 0.9 + b.phase) + 1) / 2;
     ctx.strokeStyle = b.depth < 2 ? p.a1 : b.depth < 4 ? p.a2 : p.a3;

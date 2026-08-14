@@ -256,6 +256,17 @@ ones most likely to be "fixed" by accident:
   handing them device pixels silently doubles their density on a retina display. The per-frame
   `setTransform` also means a missed `ctx.restore()` — `rain` flips the world inside a save/restore
   pair — can no longer mirror the site permanently.
+- **A resize is absorbed by each effect, never by the cache.** `FxCanvas` drops the effect cache
+  only when the effect *id* changes, so anything holding geometry has to notice a new box itself:
+  `rain` compares its column and row counts, and `vessels` compares the box its tree was grown for.
+  Particle fields need nothing — they wrap back in within seconds. **An effect that caches absolute
+  coordinates and does not check the box will strand itself on the first resize**, which `vessels`
+  did (2026-08-14): the trunk is rooted at `w * 0.5` and the side branches at `-10` and `w + 10`,
+  so a widened window left the trunk off-centre and the side branches floating detached in
+  mid-page. It could not happen before the buffer change, when `w`/`h` were a constant 1600×1000.
+  `vessels` rebuilds from a **stored pool of random numbers**, not from `Math.random()` — that is
+  what makes a rebuild re-fit *the same* tree instead of rolling a new one on every frame of a
+  drag-resize.
 - **`FX` is the wire format; `PICKABLE_FX` is the menu.** Entries carry an optional `hidden`, and
   the two lightsword duels sit at their reserved indices 12 and 13 flagged hidden — the withdrawal
   decision is unchanged and lifting the flag is the whole of "re-list them". Anything offering a
@@ -326,6 +337,27 @@ All deliberate. Add to this list rather than silently diverging.
    same day the four silhouettes were upgraded to read unmistakably — hair/halo/aura/robe,
    curved horns/bat wing/spade tail, hood/belt/tunic, dome helmet/chest panel/floor cape — with
    every non-blade colour still palette-supplied.
+
+   **The figures gained a skeleton on 2026-08-14** (client request: "make the characters look
+   better and the fight sequences more realistic"). Until then a fighter was literally two
+   rectangles and a line — no arms, no legs, and a sword hand welded to the torso by two
+   constants, so a swing could only pivot. `drawFighter` now works in **body-local units** with
+   `scale(facing, 1)` (which is what makes limbs affordable: the old version inlined `cx` and
+   `facing` into every coordinate), limbs are two-bone chains from one `joint()` helper, and the
+   blade is sprung toward a target rather than set directly, so no action snaps in or out. Three
+   rules here are load-bearing and easy to undo:
+
+   - **Bone lengths stay only slightly longer than the reach they cover.** A chain much longer
+     than its target distance puts the slack in a joint sticking out sideways.
+   - **The sword arm draws *before* the torso.** Ink over ink at the same alpha stacks, so an arm
+     crossing the chest paints itself as a bright band.
+   - **`dist` remains the sole authority on whether a blow lands.** Sparks now come off the blade's
+     real tip, but gating *damage* on the tip reaching would make misses routine, stop health
+     draining, and hang the match-reset loop, which has no timeout.
+
+   A reactive block/parry state was proposed at the same time and **declined**: it is the only
+   change that can alter match outcomes, and a mutual block lock would leave the match never
+   ending. That is a decision, not an omission.
 10. **All visible "vessel" branding is gone** (client request, 2026-08-13). The wordmark, page
    titles, termbar, TOTP issuer and passkey rp name now read `mcclevarty.ca`; the "Vessels"
    effect *label* is "Branches"; the favicon is an inline SVG data: URI (the finger, offered to

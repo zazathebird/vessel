@@ -13,6 +13,106 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-14 — The canvas effects, finally looked at; and the duel gets a skeleton
+
+Two things, both downstream of the same fact: the HUD pass shipped with its canvas work
+**unverified by eye**, because the verification browser reported `document.hidden` and the render
+loop correctly parks. `TODO.md` 2d recorded that honestly. This entry closes it.
+
+### Why nothing was visible last time, and it was two things, not one
+
+`document.hidden` was the half that got written down. The other half only showed up on the real
+site: the verification browser also reports **`prefers-reduced-motion: reduce`**, which
+`ConfigContext` turns into calm, and **calm hides the canvas**. So even with a visible tab, the
+front page renders no effect at all until calm is toggled off. Anyone repeating this check needs
+both: a visible tab *and* calm off. It is not a bug — both behaviours are correct — but it is the
+reason two sessions in a row could not see a canvas.
+
+All sixteen effects were then rendered at 1568×778 and at 1026×832, against Nebula Drift and Cold
+Open, plus `hud`+`scan`, `hud`+`telemetry` and `terminal`+`rain` on the real site. The circles are
+round, `plasma`'s grid comes out at ~58 columns across 1526 CSS pixels (i.e. the 26px cell is
+receiving CSS pixels, not device pixels — the load-bearing `setTransform` is doing its job), and
+`scan` and `telemetry` read as intended.
+
+### `vessels` was stranded by the buffer resize — a real regression
+
+**The one bug the pass introduced, and it was in the default effect.** `buildTree` grows the tree
+against `w`/`h` once and `FxCanvas` drops the effect cache only when the *effect id* changes, on the
+documented grounds that a resize is absorbed by the effects themselves. Every particle field wraps
+back in and `rain` compares its column count, but the tree does neither — so after a window resize
+the trunk, rooted at `w * 0.5`, sits off-centre and the two side branches, rooted at `-10` and
+`w + 10`, **detach from the edges and float in the middle of the page**.
+
+This could not happen before the HUD pass: `w` and `h` were the constant 1600×1000 and CSS did the
+stretching, so there was nothing for the tree to go stale against. Widening the window from 1050 to
+1600 on the live site reproduces it every time.
+
+The fix is `rain`'s own pattern — the cache carries the box it was built for — plus one addition:
+it also carries the **pool of random numbers** the tree was grown from. Rebuilding from the pool
+re-fits *the same tree*. Without it the two options are both visibly wrong: keep the old geometry
+and the branches stay detached, or re-roll and the whole tree reshuffles on every frame of a
+drag-resize. Depth can still shift with the box because the `len < 14` floor bites at a different
+level on a short canvas; the pool keeps that to a local difference instead of a new tree.
+
+### The duel gets a skeleton, at the client's request
+
+"Make the characters look better, and the fight sequences more realistic." What was actually there:
+a fighter was **two rectangles and a line** — one `fillRect` torso, one `fillRect` head, no arms, no
+legs, no hands. The sword hand was a pair of constants welded to the torso, so a swing could only
+*pivot*; the blade never travelled through space. There was no wind-up (the blade jumped 0.95rad in
+a single frame on the opening frame of an attack), no follow-through, and `force`, `kicking` and the
+victory pose were bare constants that snapped in and out. The only thing on the whole figure with
+idle motion was the horned fighter's tail.
+
+What changed:
+
+- **A local transform.** `drawFighter` now works in body-local units with `scale(facing, 1)`, which
+  deletes every mirror term. This is why limbs became affordable at all — the old version inlined
+  `cx` and `facing` into every coordinate, so every part had to be written twice in the author's
+  head.
+- **Articulated limbs**, two arms and two legs, from one ~10-line law-of-cosines `joint()` helper.
+  Bone lengths are deliberately only slightly longer than the reach they cover: a chain much longer
+  than its target distance puts the slack in a joint sticking out sideways, which is exactly what
+  the first attempt looked like.
+- **The sword hand orbits its shoulder on a shorter, phase-shifted arc than the blade**, so the arm
+  does not collapse into a straight line with it and the tip travels rather than pivots.
+- **Anticipation and follow-through.** `SLASH_FRAMES` 15 → 20, split three ways, damage moved from
+  frame 5 to frame 11 so the hit lands at the bottom of the swing. `KICK_FRAMES` 20 → 16 pays the
+  frames back. Measured over ten simulated minutes, the average match went 9.6s → 10.5s.
+- **A damped spring on the blade angle**, in the fixed step so it cannot depend on frame rate. Every
+  action now sets a *target*; the spring is what removes all four snaps at once.
+- **A blade smear**, keyed to how fast the blade is *turning*, not how fast it is moving — the
+  samples are world positions, so a fighter sliding sideways with a still blade first swept out a
+  clean filled rectangle. Correct, and it read as a slab of colour. It also starts halfway down the
+  blade, because a fan drawn all the way to the fist reads as a cape.
+- **Ground contact**: both shadows drawn before either body (or the second fighter's shadow paints
+  over the first one's legs), shrinking and fading with height, plus a landing squash about the feet.
+- **Sparks come off the blade's actual tip**, clamped into the body it struck, biased along the
+  swing, and drawn as streaks rather than discs. They used to spawn at the midpoint between the two
+  fighters, which had nothing to do with where the visible blade was — that is why a clash never
+  looked like contact. **`dist` remains the sole authority on whether damage lands**: gate that on
+  the tip actually reaching and misses become routine, health stops draining, and the match-reset
+  loop has no timeout.
+- **Death keeps its identity.** The death branch ran its own transform and re-drew only the two
+  rectangles, so the halo, horns, cape and tail vanished on the frame of death — for the two seconds
+  anyone actually looks at the loser, the two pairings were indistinguishable.
+- **Idle motion for all four costumes**: the cape trails against travel, the aura breathes, the halo
+  bobs clear of the head, the chest panel's cells blink out of phase, the bat wing flares on a leap.
+
+The blocking/parry state from the same review was **not** taken. It is the only proposed change that
+can alter match outcomes — a mutual block lock would leave `over` never firing — and it is not worth
+that risk for a background ornament. Recorded here so it is a decision rather than an oversight.
+
+### One thing deliberately not left behind
+
+The verification used a temporary `fxlab.html` (all sixteen effects on one page, driven through
+`FxCanvas`'s exact frame maths) and a temporary `?site=<base64>` parameter in `index.html` standing
+in for the Worker's injection. Both were removed. Committing either is a product decision — a
+permanent dev-only page and a URL that overrides published config — not a tidy-up, so neither was
+taken unilaterally. They are three minutes to rebuild if the client wants them.
+
+---
+
 ## 2026-08-14 — The HUD pass: thirteen layouts upgraded, a fourteenth added
 
 From a written proposal the client approved in full ("I'll trust you for everything"). Two halves:

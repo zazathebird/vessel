@@ -52,13 +52,22 @@ the client and are one line each to reverse:
   proposal described them as something a visitor could pick; making that true is
   a product decision about who controls the site's look, so it was not taken.
 
-**Cannot be verified from this side, and should be looked at once:** the canvas
-effects. The verification browser reported `document.hidden`, which correctly
-parks the render loop, so nothing on the canvas was ever seen — including the
-new `scan` and `telemetry`, the sharpened existing effects at the new buffer
-size, and Terminal's frosted window over `rain`. All fifteen were run against a
-recording 2D context at three viewport shapes (no NaN coordinates, no
-out-of-range alpha), which is not the same as having looked at them.
+~~**Cannot be verified from this side**: the canvas effects.~~ **Done
+2026-08-14.** All sixteen were rendered and looked at, at two viewport sizes and
+two palettes, plus `hud`+`scan`, `hud`+`telemetry` and `terminal`+`rain` on the
+real site. Circles are round; `plasma`'s grid arrives at ~58 columns across 1526
+CSS pixels, so the per-frame `setTransform` is handing effects CSS pixels and not
+device pixels. `scan` and `telemetry` read as intended.
+
+Two things worth knowing for the next person who tries: nothing is visible unless
+the tab is visible **and** calm is off. The verification browser reports both
+`document.hidden` *and* `prefers-reduced-motion: reduce`, and calm hides the
+canvas — that second half is why this looked unverifiable twice.
+
+It found one real bug, in the default effect: `vessels` never rebuilt its tree on
+a resize, so after a window resize the trunk sat off-centre and the side branches
+floated detached in mid-page. A regression from the buffer change (before it,
+`w`/`h` were constant). Fixed — `docs/DECISIONS.md` 2026-08-14 has the reasoning.
 
 ---
 

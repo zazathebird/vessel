@@ -97,6 +97,28 @@ authoritative statement of what "animated a LOT better" means. Its decisions:
 *matches with winners*, not a continuous exchange. That is what the earlier
 version lacked and why it had nothing to build tension toward.
 
+### Where the shipped version now departs from the reference (2026-08-14)
+
+The table above is the reference, and stays as written. The client then asked for
+better-looking characters and fights, so three of its rows no longer describe
+what ships. Everything else — the match loop, the decision function, the damage
+numbers, the per-match power roll — is unchanged.
+
+- **Bodies** are no longer plain rectangles. The torso stops at the hips and the
+  figures have two articulated arms and two legs, solved as two-bone chains.
+- **Timing**: the slash is 20 frames, not 15, split into anticipation, strike and
+  follow-through, with the damage frame moved from 5 to 11 so the blow lands at
+  the bottom of the swing. The kick drops 20 → 16 to pay the frames back; the
+  measured effect on match length was 9.6s → 10.5s.
+- **Feedback**: sparks spawn at the blade's real tip rather than the midpoint
+  between the two fighters, biased along the swing, and draw as streaks.
+
+Still deliberately absent, and it is the reference's own gap: **there is no block
+or parry state**. A miss is a coin flip rolled before the swing starts, and the
+defender does nothing about it. Adding one is the only change that can alter
+match outcomes — a mutual block lock would leave a match never ending — so it
+was declined rather than forgotten.
+
 ## Porting it into this codebase
 
 The reference is a standalone page and cannot be dropped in as-is. Four things
