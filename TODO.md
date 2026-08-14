@@ -176,8 +176,27 @@ is interface feedback.
 
 ## Content and copy
 
-### 8. Edit mode — operator-editable copy/images. Large; blocked on the images
-spec change (R2 or similar).
+### 8. Edit mode — operator-editable copy/images. **Architecture designed
+2026-08-14; copy is unblocked, images are not.**
+
+Copy follows the published-site-config pattern exactly: a **sparse overlay** in
+D1 (new migration `0005`), injected into the shell by the Worker with its own
+nonced script, validated field-by-field on the client with `pages.ts` as the
+floor. That satisfies §11 literally — `ConfigContext` gains no fetch and the
+first render stays synchronous.
+
+Editable: `eyebrow`, `title`, `lede`, and per block `kicker`/`title`/`body`/
+`items[]`, plus CTA labels. Not editable: block count and order (layouts are
+tuned to them), CTA targets (a wrong `PageId` is a dead button), `img`, and
+`hasMail`. **The five account pages are excluded** — their ledes make security
+claims an operator must not be able to falsify from a text box.
+
+**Images remain blocked** on the storage decision (R2 or similar).
+
+Client decisions still needed before building: whether a block may be *blanked*
+as well as rewritten; whether there is a draft/preview state (appearance has
+none); and an acknowledgement that this makes the 404's joke counts
+operator-overridable, quietly ending the verbatim-copy rule.
 ### 9. ~~A setup guide page~~ — built 2026-08-14 as `/setup`, "Let me look from here."
 
 Scope agreed with the client: **remote access before a callout** — the page you
@@ -208,8 +227,34 @@ desaturated).
 
 ## Polish
 
-### 11. Richer transitions/slide-overs/typewriter — after accounts; confirm
-the motion-primitives approach before building.
+### 11. Richer transitions/slide-overs/typewriter — **approach confirmed
+2026-08-14, planned, not yet built.**
+
+**Entrance-per-archetype**, chosen over two alternatives: each of the 14 layouts
+enters in a way derived from its own structure, so the motion says *which
+archetype you are in* rather than decorating. Typewriter confined to Terminal's
+termbar path — not body copy, which is the scramble trap in another costume.
+One shared slide-over primitive replaces the three separate keyframes the panel,
+door and dialogs use today.
+
+**A boot/page-load sequence was considered and cut.** The site already runs five
+motion systems; a front-door sequence delays first paint for every visitor to
+buy a moment only first-timers see, and it competes with the title scramble that
+already owns that instant.
+
+Full plan (14 entrances, six shared families, the primitive set, the cut list)
+is in the session notes. Key constraints when building:
+
+- Compositor-only properties. The client's requirement is literally "as long as
+  the site doesn't lag."
+- Ships behind an **Entrances** toggle in the Life signs row, defaulting on.
+- **The share-code bit must be stored inverted** — bit 32 meaning *entrances
+  off*. The default is on and every code in circulation has that bit clear, so a
+  clear bit has to decode to *on*. `sound` got away with the plain reading only
+  because its default was off.
+- Bit 32 takes the toggle bitfield past one base-36 character (max 63 → `"1R"`).
+  Harmless, but the comment in `shareCode.ts` and CLAUDE.md both say one
+  character and would become wrong.
 ### 12. ~~CSP~~ — nonce plumbed and shipped **report-only** 2026-08-14
 (`cspPolicy` in `worker/index.ts`; reports to `/api/csp-report`, logged in
 `wrangler tail`, stored nowhere). Remaining half: **flip to enforcing** — one

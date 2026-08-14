@@ -204,6 +204,19 @@ Five CSS gotchas that have already bitten once each, all worth knowing before ed
   the style attribute, so a forwards fill would leave `v-rise`'s `transform: translateY(0)` owning
   the card for ever and the cursor-lean tilt — which is written to `el.style.transform` — would
   never render. The stagger only needs the from-state held during the delay.
+- **The chrome is a flex column, and Terminal is the one layout that opts out.** `.v-chrome` is
+  `height: 100dvh` with `.v-stage` at `flex: 1; min-height: 0`, so the stage takes whatever the
+  header actually leaves — it used to subtract a hardcoded `132px`, which drifted the moment a chip
+  was added to the header (the real phone header is 147px) and left the *document* scrolling behind
+  the already-scrolling stage. **`min-height: 0` is load-bearing**: a flex child defaults to
+  `min-height: auto` and refuses to shrink below its content. **Terminal overrides to
+  `height: auto; min-height: 100dvh` with `flex: 0 0 auto` on its stage**, because its stage is
+  `height: auto; overflow: hidden` and expects the *document* to scroll; clamped, it clips instead —
+  which shipped for an hour and made most of every page unreachable. Do not "simplify" the clamp to
+  `min-height` for everyone: that makes every stage size to its content and nothing scrolls
+  internally at all. **`.vessel` and `.v-chrome` must use the same viewport unit** (`dvh`); `vh`
+  resolves against the large viewport and reintroduces the nested scroll on any mobile browser
+  showing its URL bar
 - **`.v-stage` scrolls vertically, so its `overflow-x` computes to `auto`, not `visible`** — one
   axis cannot be visible while the other is not. Anything hanging off the side of a child, a
   pseudo-element included, gives the whole stage a horizontal scrollbar. The hero's stage wash did

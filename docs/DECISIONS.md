@@ -13,6 +13,88 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-14 — The visual audit begins, finds a real bug, and the fix breaks Terminal
+
+The client asked for "a complete audit of all graphic things … then a gameplan". The blanket version
+was argued against and not taken: `design/SPEC.md` is authoritative, its oddities are deliberate —
+palettes that fail WCAG AA, copy that mocks its own site, a Guestbook with no form — and a
+sweep-and-improve pass sands those off while writing no *why* for any of it. What was taken instead
+is a **targeted audit**: look at the rendered site, report only what is genuinely broken, leave what
+is deliberate. That distinction earned itself twice inside an hour.
+
+### The technique
+
+The browser's window-resize is unreliable in this environment, so bands were forced from code — a
+temporary `localStorage` override inside `bandForWidth`, plus a pinned `DEFAULT_CONFIG.layout`,
+both reverted before commit. That gives any band at any window size, deterministically. **It has one
+limit worth knowing**: it forces the *band* without narrowing the *window*, so anything that depends
+on real width (a nav row overflowing) cannot be reproduced with it — only observed at a genuinely
+small size.
+
+### Two real defects
+
+**The phone scrolled two things at once.** `stageHeight: "calc(100dvh - 132px)"` was a hardcoded
+guess at the header's height; the real phone header is **147px**, because it wraps to two rows. The
+chrome came out 15px taller than the viewport, so the *document* scrolled behind the
+already-scrolling `.v-stage` — two nested vertical scroll containers on the band least able to
+afford them.
+
+The interesting part is that **the number was correct when it was written and drifted afterwards**:
+the header grows whenever a chip is added to it, and one was added the same morning (`sound`). So
+the fix is not a better number. `.v-chrome` became a flex column and `.v-stage` `flex: 1` with
+`min-height: 0` — which measures instead of guessing. `--stage-height` is deleted from `BandTokens`,
+`theme.ts` and the CSS, with a note on `BandTokens` saying why it must not come back.
+
+**The nav hid a page.** The phone pill row overflows by a measured 66px with its scrollbar
+deliberately hidden, and the last pill was sliced mid-word — "GUE" — with nothing to say there was
+more. Guestbook was, in practice, invisible on a phone. A trailing `mask-image` fixes it: a cut
+letter reads as broken, a fading one reads as continuing.
+
+### …and the fix broke Terminal, in production
+
+`height: 100dvh` is right for every layout whose stage scrolls internally and **wrong for the one
+whose document scrolls**. Terminal's stage is deliberately `height: auto; overflow: hidden`; clamped
+inside a one-viewport column it stopped scrolling and started **clipping** — a measured 1677px of
+content in a 531px box, with the document unable to take over. Most of every page became unreachable
+by wheel, keyboard or touch, on desk and tablet both. It was live for about an hour.
+
+It was caught by an agent sweep pointed at *the same class of bug* — "find every other place a
+hardcoded length guesses another element's measured size" — which is the strongest argument in this
+entry for auditing by class rather than by page.
+
+**The first attempt at the fix was worse than the bug**, and that is the part worth keeping.
+Softening the clamp to `min-height` let `.v-stage` (flex-basis `auto`) size to its content
+*everywhere*, so no layout scrolled internally any more and the document scrolled on all fourteen —
+silently discarding the fixed-header/scrolling-stage design, Stack's snap sections and the
+scroll-velocity boost. Measured before shipping: phone went from `docOverflow: 0` to `1371`. One
+layout needed an exception, so one layout gets one: `.layout-terminal .v-chrome { height: auto;
+min-height: 100dvh }` and `flex: 0 0 auto` on its stage.
+
+### Two more the sweep found
+
+- **`.vessel` was `min-height: 100vh` while `.v-chrome` is `100dvh`.** `vh` resolves against the
+  *large* viewport, so on any mobile browser showing its URL bar the wrapper stood 60–90px taller
+  than the window while the chrome fitted exactly — the same nested-scroll bug by a second route,
+  live on every phone visit. The two must use the same unit.
+- **The nav fade went on tablet too**, on the reasoning that the row always overflows. True of a
+  phone, false of a tablet, where 900px fits the six public pills with room to spare — so every
+  tablet visitor got a permanently faded "Guestbook" with nothing behind it. An affordance pointing
+  at nothing is worse than none.
+
+### Two process notes, both cheap and both nearly missed
+
+**A scripted edit left an orphaned comment fragment**, and its stray `*/` swallowed the selector
+underneath, so the nav rule was silently dead. Nothing in the file *looked* wrong. It surfaced only
+because the verification read the **computed style** rather than the source — check what the browser
+did, not what the file says.
+
+**An early "16px still overflowing" reading was a broken dev server**, serving without `base.css` at
+all (`box-sizing` was `content-box` and the `html, body { margin: 0 }` reset was absent). Confirming
+*why* before fixing is the only reason a non-bug did not receive a fix — and a fix to a non-bug is
+how the next real regression gets introduced.
+
+---
+
 ## 2026-08-14 — The line-by-line review, run six ways at once; eight fixes
 
 `docs/HANDOFF.md` has carried this as "open for a future session, at the client's request — *look over
