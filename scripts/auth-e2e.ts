@@ -134,6 +134,19 @@ async function refusal(
 }
 
 /**
+ * The password proof `/api/account/slot` now demands (TODO 15): derive the
+ * account's auth secret the way the browser does, via the challenge route.
+ */
+async function slotProof(handle: string, password: string): Promise<string> {
+  const { kdf } = await api.challenge(handle);
+  const derived = await deriveFromPassword(password, {
+    salt: fromBase64Url(kdf.salt),
+    iterations: kdf.iterations,
+  });
+  return derived.authSecret;
+}
+
+/**
  * Run one statement against the local D1 the Worker under test is using.
  *
  * The admin section needs an operator, `is_operator` is not settable through any
@@ -553,15 +566,21 @@ async function main(): Promise<void> {
 
   section("The key slot round trip, through the server");
   {
-    const slot = await client.call("/api/account/slot");
-    check("the account's own slot comes back", client.lastStatus === 200);
-    check("the slot is 40 bytes", fromBase64Url(slot.wrappedGrantKey ?? "").length === 40);
+    // The gate first (TODO 15): a session cookie alone must not fetch the
+    // ciphertext an offline password grind would turn into grant authority.
+    const sessionOnly = await client.call("/api/account/slot", { body: {} });
+    check("the session alone does not fetch the slot", client.lastStatus === 401, sessionOnly.error);
 
     const { kdf } = await client.call("/api/auth/challenge", { body: { handle } });
     const derived = await deriveFromPassword(password, {
       salt: fromBase64Url(kdf.salt),
       iterations: kdf.iterations,
     });
+    const slot = await client.call("/api/account/slot", {
+      body: { authSecret: derived.authSecret },
+    });
+    check("the account's own slot comes back", client.lastStatus === 200);
+    check("the slot is 40 bytes", fromBase64Url(slot.wrappedGrantKey ?? "").length === 40);
     const key = await unwrapSlot(
       fromBase64Url(slot.wrappedGrantKey),
       derived.wrappingKey,
@@ -982,7 +1001,9 @@ async function main(): Promise<void> {
     });
     check("the new password signs in", signedIn.status === "signed-in", signedIn.error);
 
-    const slot = await fresh.call("/api/account/slot");
+    const slot = await fresh.call("/api/account/slot", {
+      body: { authSecret: reDerived.authSecret },
+    });
     const reopened = await unwrapSlot(
       fromBase64Url(slot.wrappedGrantKey),
       reDerived.wrappingKey,
@@ -1079,7 +1100,18 @@ async function main(): Promise<void> {
 
     const good = await signInFlow(flowsHandle, password);
     check("signIn signs in", good.status === "signed-in");
-    grantPubkeyAtSignup = (await api.keySlot()).grantPubkey;
+
+    // TODO 15's gate: the slot is ciphertext a password grind turns into grant
+    // authority, so the session alone must not fetch it.
+    const misproved = await refusal(async () =>
+      api.keySlot(await slotProof(flowsHandle, "definitely not the password")),
+    );
+    check(
+      "the key slot is refused without the password proof",
+      misproved?.status === 401,
+      misproved?.message,
+    );
+    grantPubkeyAtSignup = (await api.keySlot(await slotProof(flowsHandle, password))).grantPubkey;
 
     // Change-password, previously an untested endpoint. The flow re-wraps the
     // slot ciphertext-to-ciphertext, so the proof is that the *new* password
@@ -1095,9 +1127,10 @@ async function main(): Promise<void> {
     const changed = await signInFlow(flowsHandle, secondPassword);
     check("the changed password signs in", changed.status === "signed-in");
 
-    // §3's single-operation unwrap. The TOTP half is browser-side format
-    // checking only for now — `/api/account/slot` authorising on the session
-    // alone is TODO #15 — so any six digits pass, deliberately.
+    // §3's single-operation unwrap. The slot endpoint now checks the password
+    // (TODO 15); the TOTP half stays browser-side format checking until the
+    // phase-3 grant-submission endpoint exists — so any six digits pass here,
+    // deliberately.
     const opened = await openGrantKey(secondPassword, "000000");
     const message = new TextEncoder().encode("one signature, then the key dies");
     const pub = await crypto.subtle.importKey(
@@ -1277,13 +1310,13 @@ async function main(): Promise<void> {
     const oneFactor = await signInFlow(flowsHandle, finalPassword);
     check("after reset-totp the fixture signs in with one factor", oneFactor.status === "signed-in");
 
-    const slot = await api.keySlot();
-    check("the grant public key never moved", slot.grantPubkey === grantPubkeyAtSignup);
     const { kdf } = await api.challenge(flowsHandle);
     const reDerived = await deriveFromPassword(finalPassword, {
       salt: fromBase64Url(kdf.salt),
       iterations: kdf.iterations,
     });
+    const slot = await api.keySlot(reDerived.authSecret);
+    check("the grant public key never moved", slot.grantPubkey === grantPubkeyAtSignup);
     const reopened = await unwrapSlot(
       fromBase64Url(slot.wrappedGrantKey),
       reDerived.wrappingKey,
@@ -1368,7 +1401,8 @@ async function main(): Promise<void> {
     );
     check(
       "the grant public key survived the operator reset too",
-      (await api.keySlot()).grantPubkey === grantPubkeyAtSignup,
+      (await api.keySlot(await slotProof(flowsHandle, postResetPassword))).grantPubkey ===
+        grantPubkeyAtSignup,
     );
 
     // The refusal that keeps reset honest: with no unspent recovery code, the
@@ -1407,12 +1441,27 @@ async function main(): Promise<void> {
     const readBack = (await reader.call("/api/site-config")).config as Record<string, unknown>;
     check("the published config reads back", readBack?.pal === 7 && readBack?.layout === 2);
 
-    const html = await (await fetch(`${BASE}/`)).text();
+    const shell = await fetch(`${BASE}/`);
+    const html = await shell.text();
     check(
       "the app shell carries the injected config",
       html.includes("window.__VESSEL_SITE__") && html.includes('"pal":7'),
       "no __VESSEL_SITE__ injection in served HTML",
     );
+
+    // TODO 12: the report-only CSP, and the nonce that ties the one legitimate
+    // inline script to it. The header and the attribute must agree per request
+    // or the policy would report the site's own injection.
+    const csp = shell.headers.get("content-security-policy-report-only") ?? "";
+    const nonce = /'nonce-([^']+)'/.exec(csp)?.[1];
+    check("the shell carries the report-only CSP", csp.includes("default-src 'self'"), csp.slice(0, 100));
+    check(
+      "the injected script carries the CSP's own nonce",
+      !!nonce && html.includes(`<script nonce="${nonce}">window.__VESSEL_SITE__`),
+      csp.slice(0, 100),
+    );
+    const report = await fetch(`${BASE}/api/csp-report`, { method: "POST", body: "{}" });
+    check("a violation report is answered with 204", report.status === 204);
 
     // Leave the local database's published look the way this run found it.
     if (original) {
@@ -1433,7 +1482,7 @@ async function main(): Promise<void> {
     asBrowser(new BrowserSession());
     const pkHandle = `harness-pk-${RUN}`;
     await signUpFlow(pkHandle, password);
-    const grantPubkey = (await api.keySlot()).grantPubkey;
+    const grantPubkey = (await api.keySlot(await slotProof(pkHandle, password))).grantPubkey;
 
     // rpId and origin exactly as the Worker will check them, learned from the
     // anonymous challenge route — the sim has no browser to learn them from.
@@ -1442,7 +1491,7 @@ async function main(): Promise<void> {
 
     const wrongPassword = await refusal(() => addPasskey("not the password", "x", authenticator));
     check(
-      "addPasskey refuses a wrong password locally, at the re-wrap",
+      "addPasskey refuses a wrong password before the authenticator ceremony",
       wrongPassword?.status === -1,
       wrongPassword?.message,
     );
@@ -1757,7 +1806,7 @@ async function main(): Promise<void> {
       iterations: kdf.iterations,
     });
 
-    const slot = await api.keySlot();
+    const slot = await api.keySlot(derived.authSecret);
     ownerGrantPubkey = slot.grantPubkey;
     ownerGrantKey = await unwrapSlot(
       fromBase64Url(slot.wrappedGrantKey),

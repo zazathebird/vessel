@@ -18,7 +18,7 @@
  * the same CBOR and DER shapes a real one does.
  */
 
-import { api, type PasskeySignInResult } from "./api";
+import { ApiError, api, type PasskeySignInResult } from "./api";
 import { DEFAULT_ITERATIONS, checkIterations, deriveFromPassword } from "./derive";
 import { fromBase64Url, randomBytes, toBase64Url } from "./encoding";
 import { SLOT_ALG, rewrapSlot } from "./grantKey";
@@ -204,7 +204,7 @@ export interface AddPasskeyResult {
  * (§4, and `assertPassword` on the Worker refuses without it) — and because it
  * is what opens the password slot so the grant key can be re-wrapped for the
  * new credential without ever existing as bytes here. A wrong password fails
- * locally at the re-wrap, before the registration is sent.
+ * server-side at the slot fetch, before the authenticator ceremony runs.
  */
 export async function addPasskey(
   password: string,
@@ -218,6 +218,19 @@ export async function addPasskey(
     iterations: checkIterations(kdf.iterations, DEFAULT_ITERATIONS),
   });
 
+  // The slot fetch is also the server's password check (TODO 15's gate), so it
+  // happens *before* the authenticator ceremony: a wrong password fails here,
+  // rate-limited, without the user having been asked to touch anything.
+  let source: { wrappedGrantKey: string };
+  try {
+    source = await api.keySlot(derived.authSecret);
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      throw new Error("That is not your password.");
+    }
+    throw error;
+  }
+
   const { token, challenge } = await api.passkeyChallenge();
   const created = await authenticator.create({
     challenge: fromBase64Url(challenge),
@@ -227,7 +240,6 @@ export async function addPasskey(
 
   let slot: string | undefined;
   if (created.prfOutput) {
-    const source = await api.keySlot();
     // Decoding and the prf key derivation happen *outside* the try: a slot that
     // will not even parse is corrupt data from the server, and reporting it as
     // "wrong password" points the user at exactly the wrong remedy (a reset —
@@ -238,8 +250,9 @@ export async function addPasskey(
     try {
       rewrapped = await rewrapSlot(sourceBytes, derived.wrappingKey, prfKey);
     } catch {
-      // AES-KW fails closed on a wrong key, which here means a wrong password —
-      // the same local refusal `changePassword` relies on.
+      // AES-KW fails closed on a wrong key. The server verified the password at
+      // the slot fetch above, so reaching this means damaged slot bytes — but
+      // the password wording stays: retyping it is the only action available.
       throw new Error("That is not your password.");
     }
     slot = toBase64Url(rewrapped);

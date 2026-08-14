@@ -13,6 +13,73 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-14 — Deployed to production; TODO 2 proven in a real browser
+
+The overnight commits (`bf292e1` slot-endpoint password gate, `db9cb43` report-only CSP) went
+live once wrangler was re-authenticated (OAuth, approved by the client in-session). Full
+`HANDOFF.md` verification block passed: bundle hashes match, one HTTPS redirect, six headers,
+the report-only CSP riding pages, www→apex 301, `/api/health` 8 tables, SPA routes 200, assets
+`nosniff`.
+
+**TODO 2 — recovery-code redemption — is done**, driven end to end in a real Chromium against
+production with a throwaway non-operator account (`fable-check`), so the operator's ten codes
+are untouched: signup showed the codes once; sign-out; redeem code #1; the set-password ticket
+screen; signed in with `9 of 10` left; sign-out; sign-in with the new password succeeded. The
+account row is left in D1 deliberately (removing it is an `/admin` or break-glass write the
+client may prefer to do, or ask for); its password is known only from this session.
+
+`wrangler tail` ran through the entire browse — signup, redemption, set-password, two
+sign-ins, sign-outs — and logged **zero CSP reports**, the first production evidence toward
+the flip to enforcing. Still unexercised: passkey ceremony, phase-2 browse, TOTP enrolment,
+the other canvas effects.
+
+GitHub remote `https://github.com/zazathebird/vessel.git` is configured, but pushing needs
+credentials this machine does not have (no PAT, no SSH key, no `gh`); `git push` also needs
+`GIT_EXEC_PATH=/home/user/.local/git-root/usr/lib/git-core` because the local git's default
+exec-path is an empty directory.
+
+---
+
+## 2026-08-14 — TODO 12 lands as far as it safely can: a nonced CSP, report-only
+
+The blocker was always the inlined site-config script; the nonce now exists (`cspNonce` per
+request in `worker/index.ts`, stamped by `withSiteConfig`, named by `cspPolicy`). The policy
+ships **report-only**: it cannot blank anything — the documented failure mode of doing this
+badly — while every violation it would have blocked posts to `/api/csp-report`, which logs a
+truncated line for `wrangler tail` and stores nothing (§9's inventory deliberately gains no
+field; do not add a report table). `style-src` keeps `'unsafe-inline'` because the theming is
+style attributes and `style-src-attr` would blank pre-15.4 Safari; `connect-src` names
+`ws(s)://<host>` beside `'self'` for old WebKit's sake; `frame-ancestors 'none'` restates
+`x-frame-options` on purpose. Verified: harness 260 → **263** (header present, injected script
+carries the header's own nonce, report endpoint answers 204), and a six-page browse in a real
+Chromium produced zero violation reports. **The flip to enforcing is one header rename in
+`harden`**, once production has run quiet through a passkey ceremony, a phase-2 browse, TOTP
+enrolment and the effects — the surfaces the harness cannot drive.
+
+## 2026-08-14 — TODO 15 lands: `/api/account/slot` demands the password, and the TOTP half moves
+
+The slot endpoint was the last place a session cookie alone bought the wrapped grant key — the
+input to an offline password grind that ends in grant authority, which is the escalation §5
+exists to prevent. It is now `POST` and the body carries the derived `authSecret`, checked by
+`assertPassword` — so the rate limiting lives inside the check, per the invariant, and a wrong
+password at any slot-fetching flow now counts against the buckets instead of failing silently at
+AES-KW. Callers updated: `changePassword` and `openGrantKey` (`src/auth/flows.ts`),
+`unlockForConnect` (`src/share/unlock.ts`, which maps the endpoint's credential-change 401
+wording back to the ceremony's own "That is not your password." while letting §4's rate-limit
+wording through), and `addPasskey` (`src/auth/passkeys.ts`), where the slot fetch **moved before
+the authenticator ceremony** — the server's password check now fires before the user is asked to
+touch anything, keeping "wrong password fails before the registration is sent" true.
+
+**The TODO's TOTP half deliberately did not land on this endpoint, and should not.** The
+response is the same ciphertext whatever the caller intends, so a TOTP requirement here could
+not distinguish §12 K's password-only connect ceremony from §3's password-plus-TOTP sign
+gesture — an attacker would simply claim the weaker purpose, and honest §12 K users would pay a
+per-connect TOTP prompt §12 K explicitly decided against. The enforceable home for the fresh-TOTP
+check is the **phase-3 grant-submission endpoint**, which sees the guarded action (the signed
+grant) rather than an intention. `openGrantKey`'s comment now says so; build that check before
+anything accepts a real grant. Harness 258 → **260** (session-only fetch refused; wrong proof
+refused).
+
 ## 2026-08-14 — The §10 explorer completes: Grid and Column modes
 
 List shipped with phase 2 as the floor; the other two §10 view modes now exist

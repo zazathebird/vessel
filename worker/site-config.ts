@@ -147,8 +147,17 @@ export async function publishSiteConfig(request: Request, env: Env): Promise<Res
  * the HTML parser is looking for `</script>` and nothing else can stop it. The
  * values here come from an operator, not a visitor — but a rule that depends on
  * who typed it is one that breaks the day it stops being true.
+ *
+ * The `nonce` comes from `harden`'s caller in `index.ts` and ties this one
+ * inline script to the page's CSP (TODO 12): the policy names the nonce, this
+ * attribute matches it, and everything inline that *didn't* come through here
+ * stays a violation. The nonce is server-minted base64, never visitor input.
  */
-export async function withSiteConfig(response: Response, env: Env): Promise<Response> {
+export async function withSiteConfig(
+  response: Response,
+  env: Env,
+  nonce?: string,
+): Promise<Response> {
   const type = response.headers.get("content-type") ?? "";
   if (!type.includes("text/html")) return response;
 
@@ -156,11 +165,12 @@ export async function withSiteConfig(response: Response, env: Env): Promise<Resp
   if (!raw) return response;
 
   const payload = raw.replace(/</g, "\\u003c");
+  const attr = nonce ? ` nonce="${nonce}"` : "";
 
   return new HTMLRewriter()
     .on("head", {
       element(head) {
-        head.append(`<script>window.__VESSEL_SITE__=${payload}</script>`, { html: true });
+        head.append(`<script${attr}>window.__VESSEL_SITE__=${payload}</script>`, { html: true });
       },
     })
     .transform(response);

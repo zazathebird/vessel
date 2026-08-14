@@ -336,7 +336,7 @@ export async function changePassword(
   });
   const next = await deriveFromPassword(newPassword, { salt, iterations: DEFAULT_ITERATIONS });
 
-  const slot = await api.keySlot();
+  const slot = await api.keySlot(current.authSecret);
   const rewrapped = await rewrapSlot(
     fromBase64Url(slot.wrappedGrantKey),
     current.wrappingKey,
@@ -374,22 +374,23 @@ export async function openGrantKey(password: string, totpCode: string): Promise<
   // optional so this function cannot be adopted in phase 3 as a
   // password-only path by someone reading its signature instead of the spec.
   //
-  // The server-side half is not built: `/api/account/slot` today authorises on
-  // the session alone. Before anything signs a real grant, that endpoint must
-  // require this code too — a check the browser makes and the server does not is
-  // not a check.
+  // The password half is now server-checked: `/api/account/slot` demands the
+  // derived `authSecret` (rate-limited via `assertPassword`). The TOTP half
+  // deliberately is not — the slot bytes are the same whatever the caller
+  // intends, so a code requirement there could not tell this gesture from
+  // §12 K's password-only connect. The server-side TOTP check belongs to the
+  // phase-3 grant-*submission* endpoint, which sees the signed grant itself;
+  // build it before anything accepts a real grant.
   if (!/^[0-9]{6}$/.test(totpCode.replace(/\s/g, ""))) {
     throw new Error("Enter the six-digit code from your authenticator.");
   }
 
-  const [{ kdf }, slot] = await Promise.all([
-    api.challenge(await currentHandle()),
-    api.keySlot(),
-  ]);
+  const { kdf } = await api.challenge(await currentHandle());
   const derived = await deriveFromPassword(password, {
     salt: fromBase64Url(kdf.salt),
     iterations: checkIterations(kdf.iterations, DEFAULT_ITERATIONS),
   });
+  const slot = await api.keySlot(derived.authSecret);
   return unwrapSlot(
     fromBase64Url(slot.wrappedGrantKey),
     derived.wrappingKey,

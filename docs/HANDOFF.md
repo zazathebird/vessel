@@ -2,7 +2,7 @@
 
 Updated 2026-08-14: **SPEC-ACCOUNTS phase 2 is built, harness-proven and deployed** — spec
 §13 + §12 K–S, migration `0004`, `worker/machines.ts`, the `MachineSignal` signalling Durable
-Object, `src/share/*`, and the `/share` + `/machines` pages. Harness is at **258**. The docs
+Object, `src/share/*`, and the `/share` + `/machines` pages. Harness is at **263**. The docs
 were condensed the same day (`FABLE-FINDINGS.md` deleted, its durable content moved —
 `docs/DECISIONS.md` 2026-08-14 has the map). Read `TODO.md` for what to do and
 `docs/DECISIONS.md` for why things are as they are; this file is how to pick the work up and
@@ -17,12 +17,13 @@ Paste this to begin:
 > Read `CLAUDE.md`, `TODO.md` and `docs/HANDOFF.md` before doing anything. The site is live at
 > `mcclevarty.ca`; everything in `main` is deployed. First prove the ground: kill stray
 > `wrangler dev` processes, run `npm run test:auth` against `npm run dev:worker`, and confirm
-> all 258 checks pass before anything else.
+> all 263 checks pass before anything else.
 >
 > Then pick up `TODO.md` from the top. Phase 2 is built but **unverified by eye** — if I am
 > present, walk me through the two-tab test below first. Phase 3 (grants to others) must not
-> start until `/api/account/slot` gets its password-proof gate (TODO 15) and I have signed off
-> the list at the bottom of `TODO.md`.
+> start until I have signed off the list at the bottom of `TODO.md` (the slot endpoint's
+> password-proof gate landed 2026-08-14; phase 3's grant-submission endpoint owes the TOTP
+> check — `docs/DECISIONS.md`).
 >
 > Deploy only if typecheck, build and the harness are all green, then run the verification
 > block below. Commit and push at the end. Batch everything needing my eye or sign-off into
@@ -47,17 +48,17 @@ the other models") — best run as its own dedicated session with fresh context.
   password, passkeys, saved setups, `/admin`, published site config, forced HTTPS) plus
   **phase 2**: machine pairing (password ceremony), drives, the per-machine signalling DO,
   the signed-fingerprint connect ceremony, the v1 file protocol, `/share` and `/machines`.
-- **The harness is at 258** and covers every route end to end, negatives included. It cannot
+- **The harness is at 263** and covers every route end to end, negatives included. It cannot
   run `RTCPeerConnection` — the WebRTC hop itself and every phase-2 screen need the client's
   eye (the two-tab test above).
 - **Phase boundaries hold**: no `grants`/`invites` tables, no TURN (client spend decision),
-  no read cap (phase 3), `/api/account/slot` still session-only (gate lands *before* phase 3 —
-  TODO 15).
+  no read cap (phase 3). `/api/account/slot` gained its password-proof gate 2026-08-14
+  (TODO 15 — done); the fresh-TOTP check belongs to the phase-3 grant-submission endpoint
+  (`docs/DECISIONS.md` 2026-08-14).
 - **Sign-off list** at the bottom of `TODO.md`: `totp.last_step`, §3's operator wording, `⌘K`'s
   double claim, signup's 409, TURN, the Contact mailbox (`outlook.com` vs `hotmail.ca`),
   subdomains yes/no, Pages retirement, the free-diagnostic copy.
-- **Unproven in a browser** (accumulated): recovery-code sign-in on the live site (TODO 2),
-  the `/admin` dialogs, TOTP enrolment screen, Passkeys + Saved setups sections, command
+- **Unproven in a browser** (accumulated): the `/admin` dialogs, TOTP enrolment screen, Passkeys + Saved setups sections, command
   palette, duel motion, matrix rain speed, mobile parity on a real phone — and all of
   phase 2, now including the §10 Grid/Column explorer modes, the drawn file icons, the
   progress wash, and the 2026-08-14 phone touch pass (16px inputs, 44px buttons, dvh stage,
@@ -81,6 +82,9 @@ curl -s -L -o /dev/null -w "redirects=%{num_redirects} final=%{url_effective} st
 
 # 3. All six security headers present (expect 6).
 curl -s -i https://mcclevarty.ca/ | grep -icE 'strict-transport|x-content-type-options|referrer-policy|x-frame-options|permissions-policy|cross-origin-opener'
+
+# 3a. The report-only CSP rides page responses, nonce included (expect 1).
+curl -s -i https://mcclevarty.ca/ | grep -ic 'content-security-policy-report-only'
 
 # 3b. www 301s to the apex, path preserved.
 curl -s -o /dev/null -w "status=%{http_code} location=%{redirect_url}\n" https://www.mcclevarty.ca/services

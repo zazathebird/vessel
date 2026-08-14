@@ -7,7 +7,7 @@ what is left to do.
 Last updated 2026-08-14: **SPEC-ACCOUNTS phase 2 is built and harness-proven**
 — machines, drives, the per-machine signalling Durable Object, the connect
 ceremony, the file protocol, and the `/share` + `/machines` pages. The spec
-grew §13 and §12 K–S; the harness is at **258**. Done items below are kept as
+grew §13 and §12 K–S; the harness is at **263**. Done items below are kept as
 one-liners because their numbers are cross-referenced from `docs/DECISIONS.md`.
 
 ---
@@ -21,10 +21,14 @@ second instance silently takes 8788); delete `dist/_redirects` or run
 `npm run predeploy`, never bare `npm run build`, before `dev:worker`; the
 last-operator guard check skips if a non-`harness-` operator exists in local D1.
 
-### 2. Redeem one recovery code on the live site, once, deliberately
+### 2. ~~Redeem one recovery code on the live site~~ — done 2026-08-14
 
-Nobody has ever completed the flow end to end in a browser. It spends one of
-ten codes. The harness proves the bytes; only a browser proves the screens.
+Driven in a real Chromium against production with a throwaway account
+(`fable-check` — non-operator, left in D1; remove via `/admin` if unwanted)
+so the operator's own ten codes are untouched: signup → codes shown once →
+sign out → redeem code → set-password ticket → signed in, `9 of 10` left →
+sign out → sign in again with the new password. `wrangler tail` ran through
+the whole browse: zero CSP reports.
 
 ### 2b. ~~App-shell/UI review~~ — done 2026-08-13 (eight findings fixed)
 
@@ -90,8 +94,12 @@ desaturated).
 
 ### 11. Richer transitions/slide-overs/typewriter — after accounts; confirm
 the motion-primitives approach before building.
-### 12. CSP — deliberately absent until a nonce is plumbed through the
-site-config injection. Worth doing properly, not badly.
+### 12. ~~CSP~~ — nonce plumbed and shipped **report-only** 2026-08-14
+(`cspPolicy` in `worker/index.ts`; reports to `/api/csp-report`, logged in
+`wrangler tail`, stored nowhere). Remaining half: **flip to enforcing** — one
+header rename in `harden` — after production runs quiet through the surfaces
+the harness cannot drive: a passkey ceremony, a phase-2 browse over the
+signalling socket, TOTP enrolment, each canvas effect. Harness 260 → 263.
 ### 13. Cloudflare "Always Use HTTPS" — dashboard toggle, belt and braces.
 
 ---
@@ -101,9 +109,14 @@ site-config injection. Worth doing properly, not badly.
 ### 14. Password change is not a session-revocation event. Bounded by the
 30-minute TTL / 12-hour ceiling; closing it needs a session table (design
 change, not a patch).
-### 15. `/api/account/slot` authorises on the session alone. Not exploitable
-today (returns ciphertext only); **add the password-proof + current-TOTP gate
-before phase 3**, not with it.
+### 15. ~~`/api/account/slot` authorises on the session alone~~ — password-proof
+gate done 2026-08-14 (`assertPassword`, rate-limited; harness 258 → 260). The
+TOTP half deliberately did **not** land there: the slot bytes are identical
+whatever the caller intends, so a code requirement on that endpoint cannot
+tell §12 K's password-only connect from §3's sign gesture — an attacker would
+claim the weaker purpose. **The fresh-TOTP check moves to the phase-3
+grant-submission endpoint**, which sees the signed grant itself; build it
+before anything accepts a real grant. `docs/DECISIONS.md` 2026-08-14.
 ### 16. DNS hardening, in the dashboards (2026-08-13 audit; records in
 `docs/SECURITY-AUDIT.md`): enable DNSSEC + DS at Namespro; add CAA; DMARC
 `p=none` → observe two weeks → `p=quarantine` → `p=reject`.

@@ -196,8 +196,13 @@ export const api = {
   changePassword: (body: unknown) => post<{ status: string }>("/api/account/password", body),
   /** The same, for someone who arrived by recovery code and has no current password. */
   setPassword: (body: unknown) => post<{ status: string }>("/api/account/set-password", body),
-  keySlot: () =>
-    call<{ wrappedGrantKey: string; grantPubkey: string; alg: string }>("/api/account/slot"),
+  // The slot is ciphertext the password's wrapping key opens, so the request
+  // proves the password (`authSecret`) — a session alone is not enough. See
+  // `keySlot` in `worker/accounts.ts` for what that closes off.
+  keySlot: (authSecret: string) =>
+    post<{ wrappedGrantKey: string; grantPubkey: string; alg: string }>("/api/account/slot", {
+      authSecret,
+    }),
   // Both TOTP calls demand the password (`authSecret` in the body): adding a
   // credential is a credential change, and the Worker's `requirePassword` 401s
   // without it. The enrolment screen derives it and passes the whole body here.

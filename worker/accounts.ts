@@ -1182,9 +1182,22 @@ export async function me(request: Request, env: Env): Promise<Response> {
  * Phase 3 is what calls this in anger, for the one signing operation §3 requires
  * a fresh gesture for. It exists now because a slot that has never been reopened
  * is a slot nobody has really tested.
+ *
+ * **The request proves the password, not just the session** (`assertPassword`,
+ * which carries the rate limiting inside it). A session says who you are, never
+ * how you proved it — and this ciphertext is the input to an offline password
+ * grind that ends in grant authority, so handing it to a stolen cookie was the
+ * escalation §5 exists to prevent. The TOTP half of the old TODO deliberately
+ * does *not* live here: the response is the same bytes whatever the caller
+ * intends, so a code requirement on this endpoint could not distinguish §12 K's
+ * password-only connect ceremony from §3's sign gesture — an attacker would
+ * simply claim the weaker purpose. The fresh-TOTP check belongs to the phase-3
+ * grant-submission endpoint, where the guarded *action* is visible to the
+ * server. `docs/DECISIONS.md` 2026-08-14.
  */
 export async function keySlot(request: Request, env: Env): Promise<Response> {
   const account = await requireAccount(request, env);
+  await requirePassword(request, env, account);
 
   const row = await env.DB.prepare(
     `SELECT s.wrapped_grant_key AS wrapped, s.alg AS alg, a.grant_pubkey AS pubkey

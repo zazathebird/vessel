@@ -545,10 +545,15 @@ cookie, and same-site subdomains, which `design/GUIDE-SUBDOMAINS.md` would creat
 `scripts/auth-e2e.ts` is one of those. Do not tighten that to "require an Origin" without fixing
 the harness first.
 
-**There is deliberately no CSP.** The app shell has the published site config *inlined* as a script
-(`worker/site-config.ts`), so a `script-src` without a nonce plumbed through that injection would
-blank the site's appearance on first paint. Worth doing properly; not worth doing badly —
-`TODO.md` #12.
+**The CSP is report-only, deliberately** (2026-08-14). The nonce is minted per request in
+`worker/index.ts`, stamped on the inlined site-config script by `withSiteConfig`, and named by
+`cspPolicy` — the plumbing that made a real `script-src` possible. Report-only is stage one, not
+cowardice: the policy cannot blank anything, and violations arrive at `/api/csp-report` (visible
+in `wrangler tail`, written nowhere — §9 gains no field). **Flipping to enforcing is one header
+rename in `harden`**, after production runs quiet through what the harness cannot drive: a passkey
+ceremony, a phase-2 browse, TOTP enrolment, each effect. `style-src 'unsafe-inline'` is deliberate
+— the theming *is* style attributes, and `style-src-attr` would blank old Safari (the comment on
+`cspPolicy` has the full reasoning). Do not add a report *store*; the log line is the product.
 
 ## Accessibility
 
