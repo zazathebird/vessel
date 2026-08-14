@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 
-import { play } from "../audio/engine";
 import { api } from "../auth/api";
 import { useSession } from "../auth/SessionContext";
 import { publishable } from "../config/siteConfig";
@@ -24,7 +23,7 @@ import { useFocusTrap } from "../hooks/useFocusTrap";
  * is theatre and guards nothing but these settings (CLAUDE.md).
  */
 export function SiteConfigPanel() {
-  const { config, update, say, panelOpen, closePanel, shuffle, setMode } = useConfig();
+  const { config, update, say, chime, panelOpen, closePanel, shuffle, setMode } = useConfig();
   const { refresh } = useSession();
   const panelRef = useRef<HTMLElement | null>(null);
   const [pasted, setPasted] = useState("");
@@ -345,7 +344,13 @@ export function SiteConfigPanel() {
               // three toggles do. Publishing it is separate and still the
               // operator's; this is the operator's own ears.
               saveSoundPreference(sound);
-              if (sound) play("toggle");
+              // Through `chime`, never `play`. CLAUDE.md says `chime` is the
+              // single gate and that calm silences sound entirely — and this
+              // chip, unlike the header's, is *visible in calm*, so a direct
+              // `play` here made a noise in the one mode that promises none.
+              // `update` freshens `live.current` in the same tick, so the gate
+              // sees the value just set.
+              chime("toggle");
             }}
           >
             Sound

@@ -412,8 +412,25 @@ const constellation: Effect = ({ ctx, w, h, p, boost }, cache) => {
   for (const s of parts) {
     s.x += s.vx * boost;
     s.y += s.vy * boost;
-    if (s.x < 0 || s.x > w) s.vx *= -1;
-    if (s.y < 0 || s.y > h) s.vy *= -1;
+    // Bounce *and* clamp back inside. Flipping the velocity alone is correct at
+    // the edge, where the node is one frame outside and comes straight back —
+    // and a trap once a node is far outside, which a **window shrink** does to
+    // roughly half of them at once: the flip then reverses every single frame
+    // and the node oscillates about its old position for ever, stranded.
+    //
+    // This is the class of bug CLAUDE.md records for `vessels`, and the note
+    // there says particle fields "wrap back in within seconds". They do — but
+    // only because `stars` teleports to the centre and `bokeh` reassigns `x` on
+    // wrap. `constellation` did neither, so it was the one field the claim was
+    // not true of. Clamping costs nothing at the edge and is the whole fix.
+    if (s.x < 0 || s.x > w) {
+      s.vx *= -1;
+      s.x = Math.min(Math.max(s.x, 0), w);
+    }
+    if (s.y < 0 || s.y > h) {
+      s.vy *= -1;
+      s.y = Math.min(Math.max(s.y, 0), h);
+    }
     ctx.fillStyle = p.a1;
     ctx.globalAlpha = 0.55;
     ctx.beginPath();

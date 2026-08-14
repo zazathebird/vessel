@@ -1462,11 +1462,28 @@
   animation: v-rise 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
 }
 
+/*
+ * The toast centres with `translate`, not `transform`, and that is load-bearing.
+ *
+ * It used to be `transform: translateX(-50%)` alongside `animation: v-rise …
+ * both`. `v-rise` animates `transform`, and an animated declaration outranks a
+ * normal one — with a *forwards* fill it outranks it for ever — so the centring
+ * never applied at any point in the toast's life. Its left edge sat on the
+ * viewport's centre line, which on a 390px phone ran a 359px toast most of the
+ * way off the right-hand edge. The tell was that toggling calm fixed it: calm
+ * kills `animation` with `!important`, handing `transform` back.
+ *
+ * This is the same trap CLAUDE.md documents for `.v-block`, and `.v-shock`
+ * dodges it by folding its centring into its own keyframes. Using `translate`
+ * is the better answer here and is the rule interaction.css already states:
+ * `translate` and `transform` are separate properties that compose, so the
+ * keyframe can own `transform` while this rule keeps the centring.
+ */
 .v-toast {
   position: fixed;
   left: 50%;
   bottom: 34px;
-  transform: translateX(-50%);
+  translate: -50%;
   z-index: 90;
   padding: 13px 20px;
   border: 1px solid var(--a2);

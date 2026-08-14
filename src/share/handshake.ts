@@ -56,10 +56,41 @@ export function normalizeFingerprint(fingerprint: string): string {
   return `${parts[0].toLowerCase()} ${parts[1].toUpperCase()}`;
 }
 
-/** The `a=fingerprint` attribute of an SDP, or null when it has none. */
+/**
+ * The `a=fingerprint` attribute of an SDP, or null when it has none — **or when
+ * it has more than one distinct value**.
+ *
+ * The plural matters, and it is the whole of this function's security value.
+ * This used to be `/^a=fingerprint:(.+)$/m` with `.exec`, which returns the
+ * *first* match and says nothing about the rest of the document. An SDP may
+ * carry a session-level fingerprint and a different media-level one, and RFC
+ * 8122 §5 says the media-level value wins for that m-section — so the value
+ * this function returned, which is the value both peers sign and verify against
+ * the trust root, need not have been the value DTLS actually enforced.
+ *
+ * A hostile signalling service is explicitly in scope (§3, §12 R: the DO relays
+ * opaque payloads and is not trusted). It relays both the SDP and the signature,
+ * so it can take a genuine `{sdp, signature}` pair, prepend the owner's real
+ * fingerprint at session level to *its own* SDP, and leave its own fingerprint
+ * in the `m=application` section. Verification passes against a value DTLS then
+ * ignores, both legs terminate at the relay, and it reads every byte — without
+ * forging a signature. That would make §3's first row ("the operator cannot read
+ * any user's files") false.
+ *
+ * **Refuse, never repair** — the same rule as `src/share/paths.ts`. An SDP whose
+ * fingerprints disagree is not something to pick a winner from; there is no
+ * honest reason for a peer to offer two, so the connection does not happen.
+ * Identical repeats are allowed: a multi-bundle SDP legitimately restates the
+ * same fingerprint per m-section, and normalising before comparing is what makes
+ * that a repeat rather than a disagreement.
+ */
 export function fingerprintFromSdp(sdp: string): string | null {
-  const match = /^a=fingerprint:(.+)$/m.exec(sdp);
-  return match ? normalizeFingerprint(match[1]) : null;
+  const found = new Set<string>();
+  for (const match of sdp.matchAll(/^a=fingerprint:(.+)$/gm)) {
+    found.add(normalizeFingerprint(match[1]));
+  }
+  if (found.size !== 1) return null;
+  return [...found][0];
 }
 
 /** The exact bytes both sides sign and verify. Exported for the harness. */

@@ -1,6 +1,5 @@
 import { useCallback, useRef } from "react";
 
-import { play } from "../audio/engine";
 import { useConfig } from "../config/ConfigContext";
 import { saveCalmPreference, saveSoundPreference } from "../config/persistence";
 import { useSession } from "../auth/SessionContext";
@@ -12,7 +11,7 @@ import { openCommandPalette } from "./CommandPalette";
  * the siteconfig button (visible only once the operator door has ever opened).
  */
 export function Header() {
-  const { band, config, go, update, say, togglePanel, openDoor, panelOpen } = useConfig();
+  const { band, config, go, update, say, chime, togglePanel, openDoor, panelOpen } = useConfig();
   // Operator tabs (404 / Account / Admin / Config) appear only once the session
   // probe answers operator. Like everything session-gated they start hidden and
   // arrive — never flash and vanish (SessionContext's rule).
@@ -144,13 +143,17 @@ export function Header() {
                 // more important direction is off: being told to be quiet is an
                 // instruction, not a preference for one session.
                 saveSoundPreference(sound);
-                // Played directly rather than through `chime`, for two reasons.
-                // The gate reads the previous render's config and would still
-                // see sound off; and this is the one gesture where the sound
-                // *is* the feedback — you have just asked to hear it, so
-                // hearing it is the confirmation. Switching off stays silent,
-                // which is the only correct answer to "be quiet".
-                if (sound) play("toggle");
+                // Through `chime`, the single gate — `update` above freshens
+                // `live.current` in the same tick, so the gate sees the value
+                // just set. This used to call `play` directly, on the belief
+                // that the gate would still read the previous render's `sound:
+                // false`. It read the previous render's `sound: **true**` on the
+                // way *off*, so "switching off stays silent" was false: the tick
+                // played and the release effect then closed the context a frame
+                // later, mid-envelope, turning it into the click `blip` exists
+                // to avoid. Switching on is the confirmation; switching off is
+                // silent. Both now actually behave that way.
+                chime("toggle");
                 say(sound ? "sound on" : "sound off");
               }}
             >

@@ -1781,6 +1781,35 @@ async function main(): Promise<void> {
       fingerprintFromSdp(probe.sdp) === normalizeFingerprint(probe.fingerprint),
     );
     check("an SDP with no fingerprint yields null", fingerprintFromSdp("v=0\r\ns=-\r\n") === null);
+
+    /**
+     * The multi-fingerprint refusal (2026-08-14 review).
+     *
+     * `fingerprintFromSdp` used `.exec` on a non-global regex, so it returned
+     * the *first* `a=fingerprint` line and said nothing about the rest. RFC 8122
+     * §5 lets a media-level fingerprint override a session-level one, and the
+     * whole unmodified SDP goes to `setRemoteDescription` — so a hostile
+     * signalling service (in scope per §3 and §12 R) could prepend the owner's
+     * genuine fingerprint at session level to its own SDP, pass verification
+     * against the trust root, and have DTLS pin to *its* key. Both legs would
+     * terminate at the relay and it would read every byte, without forging a
+     * signature. Refuse, never repair — the `paths.ts` rule.
+     */
+    const twoFp =
+      "v=0\r\ns=-\r\na=fingerprint:sha-256 AA:BB\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\na=fingerprint:sha-256 CC:DD\r\n";
+    check("an SDP carrying two different fingerprints is refused", fingerprintFromSdp(twoFp) === null);
+    const repeatFp =
+      "v=0\r\ns=-\r\na=fingerprint:sha-256 AA:BB\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\na=fingerprint:SHA-256 aa:bb\r\n";
+    check(
+      "the same fingerprint restated per m-section is still accepted",
+      fingerprintFromSdp(repeatFp) === normalizeFingerprint("sha-256 AA:BB"),
+    );
+    check(
+      "a second fingerprint differing only in hash algorithm is refused",
+      fingerprintFromSdp(
+        "a=fingerprint:sha-256 AA:BB\r\na=fingerprint:sha-1 AA:BB\r\n",
+      ) === null,
+    );
   }
 
   /**

@@ -264,8 +264,29 @@ claim the weaker purpose. **The fresh-TOTP check moves to the phase-3
 grant-submission endpoint**, which sees the signed grant itself; build it
 before anything accepts a real grant. `docs/DECISIONS.md` 2026-08-14.
 ### 16. DNS hardening, in the dashboards (2026-08-13 audit; records in
-`docs/SECURITY-AUDIT.md`): enable DNSSEC + DS at Namespro; add CAA; DMARC
-`p=none` → observe two weeks → `p=quarantine` → `p=reject`.
+`docs/SECURITY-AUDIT.md`). **Live state re-checked 2026-08-14:**
+
+- **DMARC already exists** and is not a record to create — the client offered to
+  have one made, and there is one:
+  `v=DMARC1; p=none; rua=mailto:…@dmarc-reports.cloudflare.net;`. The pending
+  work is **escalating** it, `p=none` → `p=quarantine` → `p=reject`, and the
+  audit is explicit that this must not happen until a couple of weeks of reports
+  have been read. **`mcclevarty.ca` forwards mail** (`MX → mailroot8.namespro.ca`)
+  and forwarding is precisely what strict SPF/DMARC breaks, so escalating blind
+  risks quarantining the operator's real mail. Same reason SPF stays `~all` for
+  now. This is a read-the-reports task, not a typing task.
+- **CAA: still none** (confirmed by query). The one item here that is a pure
+  addition. `docs/SECURITY-AUDIT.md` §8 has Cloudflare's documented set verbatim.
+  **Risk if done carelessly**: a CAA set that omits a CA Cloudflare actually uses
+  makes certificate *renewal* fail silently, weeks later. The dashboard validates
+  the set against its own issuance; the API does not.
+- **DNSSEC: still no DS record.** Needs Cloudflare to generate it *and* the
+  registrar (**Namespro**) to publish it — the registrar half cannot be done from
+  here at all.
+
+**Nothing here is reachable from this machine**: the wrangler OAuth token carries
+`account (read)` and `zone (read)` only, no `dns_records (write)`. Doing any of
+it needs either the dashboard or a scoped API token.
 
 ---
 

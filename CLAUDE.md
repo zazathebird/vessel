@@ -185,6 +185,14 @@ Five CSS gotchas that have already bitten once each, all worth knowing before ed
 - **`band-*` and `layout-*` are on the same element.** `.band-phone .layout-stack` matches nothing;
   it has to be `.band-phone.layout-stack`. Every phone override was silently dead until this was
   found — and phones collapse almost everything to Stack, so it was the main phone path.
+- **An animated `transform` beats a declared one — so centre with `translate`.** `.v-toast` set
+  `transform: translateX(-50%)` next to `animation: v-rise … both`, and `v-rise` animates
+  `transform`; with a forwards fill the centring never applied *at any point*, so every toast the
+  site has ever shown sat with its left edge on the viewport's centre line. Calm hid it, by killing
+  `animation`. Fixed 2026-08-14 by centring with the `translate` property, which composes with
+  `transform` instead of fighting it — the same rule interaction.css states for hover. This is the
+  next bullet's trap in a second place; check for it whenever a rule declares a transform and an
+  animation together.
 - **`.v-block` uses `animation-fill-mode: backwards`, not `both`.** An animated declaration outranks
   the style attribute, so a forwards fill would leave `v-rise`'s `transform: translateY(0)` owning
   the card for ever and the cursor-lean tilt — which is written to `el.style.transform` — would
@@ -581,7 +589,11 @@ The design decisions most likely to be broken by someone who has not read it:
 - **Rate limiting reserves and checks in one round-trip** (`assertAttempt` → `/attempt`). `/check`
   then `/fail` was two, so N concurrent sign-ins all passed the check before any failure landed.
   **`challenge` deliberately stays on `/check`**: asking for a salt is not a failable attempt, and
-  counting it would let anyone lock an owner out.
+  counting it would let anyone lock an owner out. **`signup` was still on `/check` until 2026-08-14**
+  — the same race, on the one route that *creates* rows: 500 concurrent signups all passed against
+  an allowance of twelve. It reserves now, and its two trailing `recordFailure` calls went with the
+  move, so the cost stays one unit per signup. `challenge` is the only exception left; if you add a
+  route that consumes an allowance, it reserves.
 - **The rate limiting lives inside `assertPassword`, not in its callers.** Two callers had none and
   left an unthrottled online password oracle usable by anyone holding a session obtained *without*
   the password. Putting the counting inside the check means a future caller cannot forget it.
@@ -644,6 +656,14 @@ The design decisions most likely to be broken by someone who has not read it:
   zero operators, a confirmed TOTP's secret replaced under it. Zero `meta.changes` is the refusal;
   the audit row is written only after it, so it can never record an act the guard declined. Do
   not "simplify" these back into a pre-check plus an unconditional write.
+- **An SDP must carry exactly one distinct DTLS fingerprint, and `fingerprintFromSdp` refuses
+  otherwise** (2026-08-14). It matched only the *first* `a=fingerprint` line and said nothing about
+  the rest, while the whole unmodified SDP went to `setRemoteDescription` — and RFC 8122 §5 lets a
+  media-level fingerprint override a session-level one. A hostile signalling service, which is in
+  scope, could prepend the owner's genuine fingerprint to its own SDP, pass verification against a
+  value DTLS then ignored, and read every byte without forging a signature. **Do not "simplify" it
+  back to a single match, and do not make it pick a winner** — identical repeats are allowed because
+  a bundled SDP restates the same fingerprint per m-section; disagreement is refused.
 - **The agent verifies peers itself; it never trusts the signalling introduction** (§12 K,
   phase 2). A browsing tab proves possession of the grant key by signing its DTLS fingerprint;
   the agent checks it against the trust root **stored at pair time in IndexedDB and never

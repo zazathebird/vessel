@@ -13,6 +13,138 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-14 — The line-by-line review, run six ways at once; eight fixes
+
+`docs/HANDOFF.md` has carried this as "open for a future session, at the client's request — *look over
+every single line of code made by the other models*", parked because it wanted fresh context. The
+client authorised parallel agents, which is fresh context by construction: six reviewers, one per
+area — `worker/`, `src/auth`+`src/share`, `src/config`+hooks, `src/components`, `src/fx`+`src/data`+
+`src/styles`, and one on **this session's own new code**, because nobody should review their own.
+
+Each was told to read `CLAUDE.md` in full first and to drop any finding it could not attach a
+concrete failure scenario to. That mattered: this codebase is dense with things that look like bugs
+and are recorded decisions, and every reviewer returned a "checked and deliberately not reported"
+list naming them — the blade literals, `recordSuccess`'s asymmetry, the prf-less slotless passkey,
+`dist` as the sole damage authority, the stateless WebAuthn challenges. **Everything below was
+verified by hand before it was touched.**
+
+### The one that matters most: an SDP could carry two fingerprints
+
+`src/share/handshake.ts` matched `/^a=fingerprint:(.+)$/m` with `.exec` — the *first* line, with no
+constraint on the rest — and the whole unmodified SDP then went to `setRemoteDescription`. RFC 8122
+§5 lets a media-level fingerprint override a session-level one.
+
+A hostile signalling service is explicitly in scope (§3, §12 R: the DO relays opaque payloads and is
+not trusted). It relays both the SDP and its signature, so it could take a genuine pair, prepend the
+owner's real fingerprint at session level to **its own** SDP, and leave its own fingerprint in the
+`m=application` section. Verification passes against a value DTLS then ignores; both legs terminate
+at the relay; it reads every byte — **without forging a signature**. That is §3's first row ("the
+operator cannot read any user's files") made false.
+
+Now: match all of them, normalise, and refuse unless exactly one distinct value remains. Identical
+repeats are fine — a bundled SDP legitimately restates the same fingerprint per m-section, and
+normalising before comparing is what makes that a repeat rather than a disagreement. Refuse, never
+repair, the same rule as `paths.ts`. Three harness checks pin it.
+
+### The signup quota was bypassable by concurrency
+
+`worker/accounts.ts` used `assertAllowed` — the **non-consuming** `/check` — and recorded the
+attempt only after the account had been written. That is the exact race the 2026-08-13 audit closed
+for sign-in, missed on this one route: 500 concurrent signups from one address all check before any
+counts, all see zero, and all 500 accounts are created against an allowance of twelve, at ~23 D1
+rows each. A quota of "12 per window" was really "one unbounded burst per hour".
+
+Now `assertAttempt`, which reserves and checks in one round trip. The two trailing `recordFailure`
+calls are gone with it, so the cost stays one unit per signup and the harness's eight-per-run still
+sits under the allowance — the same trade the credential paths made when they moved. The harness's
+rate-limit section passes unchanged, which is the check that mattered.
+
+### The toast was never centred, on any screen, ever
+
+`.v-toast` set `transform: translateX(-50%)` and `animation: v-rise … both`. `v-rise` animates
+`transform`, an animated declaration outranks a normal one, and a **forwards** fill outranks it
+permanently — so the centring never applied at any point in the toast's life. Its left edge sat on
+the viewport's centre line; on a 390px phone a 359px toast ran most of the way off the right edge.
+The tell is that calm *fixed* it, because calm kills `animation` with `!important`.
+
+This is the trap `CLAUDE.md` already documents for `.v-block`, in a second place. Fixed with the
+rule `interaction.css` already states: **`translate`, not `transform`** — they are separate
+properties that compose, so the keyframe keeps `transform` and the rule keeps its centring.
+
+### `constellation` stranded half its field on any window shrink
+
+The note on the `vessels` regression says particle fields "wrap back in within seconds". True of
+`stars` (teleports to centre) and `bokeh` (reassigns `x` on wrap) — and not of `constellation`,
+which bounced by flipping velocity without repositioning. At the edge that is correct; far outside
+the box it flips every frame and oscillates about its old position for ever. Shrink a 1600px window
+to 800 and roughly half of the ninety nodes freeze off-canvas for the rest of the visit. Now it
+clamps back inside as it flips, which costs nothing at the edge.
+
+### Four defects in this session's own code, found by the sixth reviewer
+
+The reason to run one: all four were mine, from today.
+
+1. **A timer could fire a voice.** The hourly time-of-day palette change called `say`, which chimed
+   — so with `mode: "tod"` and `sound` both published, a page nobody had touched would build an
+   `AudioContext` and queue a blip into a suspended clock, which then fired late and attached to
+   nothing when the visitor finally clicked. That falsifies the engine's headline promise. `say`
+   gains `{ silent: true }` for the callers that are not a gesture.
+2. **That same call sat inside a `setConfig` updater**, which must be pure — the rule four
+   neighbouring call sites carry a comment about. Hoisted out.
+3. **The gate read stale config.** `chime` reads `live.current`, which the post-render effect writes,
+   so inside one handler it held the *previous* render's values: the sound toggle's "switching off
+   stays silent" was false, and turning calm **on** played a tick that the release effect then cut
+   off mid-envelope — the click `blip` exists to avoid. `update` now freshens the ref in the same
+   tick, which fixes the whole class.
+4. **The panel's Sound chip bypassed the gate**, calling `play` directly. The header's chip is
+   hidden in calm so its direct call was safe; the panel's is visible in calm, so it made a noise in
+   the one mode that promises none. Both now go through `chime`, which is what `CLAUDE.md` already
+   claimed was the single gate.
+
+### Two more, from the same reviewers, fixed
+
+**Arrow paging had no modifier guard.** `useAccountRoutes` has always had one; this hook did not, so
+**Alt+← / ⌘+← — the browser's Back — also paged the site**. The browser navigated, then the dive's
+`commit` ran 300ms later, saw the URL was not the page it had started moving to, and `pushState`d a
+third on top. Back landed somewhere nobody chose, and Back again only returned to the start. The
+keyboard Back shortcut was unusable on all six NAV pages.
+
+**The door's drag route never got the phone touch guard** its mirror was given on 2026-08-14. A
+mostly-horizontal swipe over non-scrollable page produces no `pointercancel`, so ordinary reading
+read as a 260px drag — the account side was yanking visitors to `/signin`, and this side opened the
+operator door over the page. It survived the audit only because `openDoor` refuses everyone else.
+The two directions are one gesture with two meanings, so they now carry the same guards.
+
+### Confirmed and deliberately deferred
+
+Real, verified, and not fixed in this pass — each is a bigger change than the ones above and none is
+a security issue:
+
+- **The `/machines` explorer re-lists every minute.** `onStale` is an inline arrow, so it changes
+  identity on every parent render; `list`/`listColumns` carry it in their deps and the effect
+  re-fires. The parent re-renders once a minute because the context value carries `clock`. Reading a
+  large folder, the table blanks to "Listing…" and returns scrolled to the top, once a minute.
+- **The explorer's Retry cannot succeed after the channel folds** — `onStale` drops the connection
+  from the parent's map, but the Explorer's own prop still points at the dead object, so every
+  Retry sends on a closed channel. Each attempt also leaks a pending-map entry.
+- **Tablet-band Stack gets neither the shade pool nor a card** — `.band-desk.layout-stack` and
+  `.band-phone.layout-stack` between them miss `tablet`, and `adaptLayout` leaves Stack alone there,
+  so body copy can sit straight on a live canvas. `:not(.band-phone)` would cover both.
+- **Phone Stack restores the card background but not its `backdrop-filter`**, which is the half that
+  makes 58% translucency readable over a sharp canvas.
+- **`totpConfirm` and `setPassword` are check-then-act** where their siblings moved the guard into
+  the write's `WHERE`. Both need concurrent identical requests, and both UIs gate on `busy`, so
+  neither is reachable through the browser today.
+- **The signalling upgrade has no `Origin` check** — `crossOrigin` returns false for GET and the
+  upgrade is special-cased ahead of it anyway. `SameSite=Lax` covers it today; it would stop
+  covering it the moment per-account subdomains exist, so it belongs with that decision.
+- **The two "pure, before any wire" harness sections run last**, after the reachability gate that
+  exits the process — so a developer who appends to a catalogue and runs the harness without
+  `dev:worker` gets none of the wire-format checks. The section titles and `CLAUDE.md` both claim
+  otherwise; moving them above the health check would make the claim true.
+
+---
+
 ## 2026-08-14 — `/setup`, the first new page since the spec
 
 `TODO.md` 9, open since 2026-08-12 as one line — "a setup guide page/download (Tailscale et al.)"

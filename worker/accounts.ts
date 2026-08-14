@@ -550,7 +550,23 @@ export async function signup(request: Request, env: Env): Promise<Response> {
   // SIGNUP_FREE_ATTEMPTS while sign-in traffic keeps its fifty. Index 0 is the
   // client bucket by construction — see `buckets`.
   names.push(`signup:${names[0].slice("client:".length)}`);
-  await assertAllowed(env, names);
+  // `assertAttempt`, not `assertAllowed` — reserve and check in one round trip.
+  //
+  // This was the non-consuming `/check` until 2026-08-14, with the consume
+  // happening after the account had already been written. That is exactly the
+  // race the 2026-08-13 audit closed for sign-in, missed here: 500 concurrent
+  // signups from one address all called `/check` before any of them counted,
+  // all saw zero failures, and all 500 accounts were created against an
+  // allowance of twelve — about 23 D1 rows each. The bucket only shut *after*
+  // the burst, so a quota of "12 per window" was really "one unbounded burst
+  // per hour". Every other credential path already reserved; `challenge` is the
+  // one deliberate exception (asking for a salt is not a failable attempt).
+  //
+  // The rate is unchanged at one unit per signup, so the harness's eight-per-run
+  // still sits under SIGNUP_FREE_ATTEMPTS — the reservation replaces the
+  // trailing `recordFailure` rather than adding to it, which is the same trade
+  // the credential paths made when they moved.
+  await assertAttempt(env, names);
 
   const body = await readJson(request);
   const handle = expectHandle(body.handle);
@@ -662,19 +678,20 @@ export async function signup(request: Request, env: Env): Promise<Response> {
     // refusal back into the answer the caller was already expecting, rather than
     // the generic 500 an unrecognised throw would become.
     if (String(error).includes("UNIQUE") || String(error).includes("constraint")) {
-      await recordFailure(env, names);
+      // No `recordFailure` here: `assertAttempt` above already reserved this
+      // attempt, and counting it twice would halve the real allowance.
       throw new BadRequest("That handle is taken. Pick another.", 409);
     }
     throw error;
   }
 
-  // Signup consumes attempts the way a failure does. The Durable Object counts
-  // failures only, so this is a mild repurposing of it and worth naming: the
-  // intent is a quota on account creation from one place, enforced by the
-  // `signup:` bucket at SIGNUP_FREE_ATTEMPTS before backoff — the shared client
-  // bucket also counts it, but its allowance is an order of magnitude looser.
-  await recordFailure(env, names);
-
+  // Signup consumes attempts the way a failure does — the Durable Object counts
+  // failures only, so this is a mild repurposing of it, and the intent is a
+  // quota on account creation from one place, held by the `signup:` bucket at
+  // SIGNUP_FREE_ATTEMPTS before backoff. **The consume now happens in
+  // `assertAttempt` above, before any work**, which is what makes the quota
+  // hold under concurrency; there is deliberately no trailing `recordFailure`
+  // here any more, or every signup would cost two.
   const account = await accountById(env, accountId);
   // Carries the fresh session cookie — account state, so `no-store` like every
   // other response under the convention.

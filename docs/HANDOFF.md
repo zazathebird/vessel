@@ -48,6 +48,11 @@ the other models") — best run as its own dedicated session with fresh context.
   password, passkeys, saved setups, `/admin`, published site config, forced HTTPS) plus
   **phase 2**: machine pairing (password ceremony), drives, the per-machine signalling DO,
   the signed-fingerprint connect ceremony, the v1 file protocol, `/share` and `/machines`.
+- **Shipped 2026-08-14, after phase 2**: the four open HUD-pass design calls decided (duel
+  backgrounds re-listed, contact-sheet duotone kept in calm at full strength, presets left
+  operator-only), a dev-only effects bench at `fxlab.html`, the duel's **screensaver attract
+  mode**, **interface sounds** (`src/audio/engine.ts` — synthesised, gesture-only, a `sound`
+  chip beside `calm`), and **`/setup`**, the site's tenth content page, linked from the footer.
 - **The harness is at 301** and covers every route end to end, negatives included. It cannot
   run `RTCPeerConnection` — the WebRTC hop itself and every phase-2 screen need the client's
   eye (the two-tab test above).
@@ -63,7 +68,11 @@ the other models") — best run as its own dedicated session with fresh context.
   phase 2, now including the §10 Grid/Column explorer modes, the drawn file icons, the
   progress wash, and the 2026-08-14 phone touch pass (16px inputs, 44px buttons, dvh stage,
   single-column recovery codes, hit-area expansions, touch-swipe no longer routes to
-  `/signin`).
+  `/signin`). Since 2026-08-14 add: **the duel's attract mode easing in over the
+  screensaver's sixty seconds** (the ease itself was driven end to end on `fxlab.html`, but
+  the sixty-second path cannot be driven from here), **what the interface sounds actually
+  sound like** (the voices fire correctly and the palette retunes them; nobody has heard
+  them), and **`/setup` read by someone who is not the person who wrote it**.
 
 ---
 

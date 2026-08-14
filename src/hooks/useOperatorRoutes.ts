@@ -114,6 +114,17 @@ export function useOperatorRoutes(): void {
       // one to leave and one because it is a global command.
       if (isEditable(event.target)) return;
 
+      // …and none of it may run under a modifier, which is the browser's.
+      // `useAccountRoutes` has always had this guard; this hook did not, and the
+      // cost was specific: **Alt+← / ⌘+← is Back**, and both fired. The browser
+      // navigated, then 300ms later the dive's `commit` ran, saw the URL was not
+      // the page it had begun moving to, and `pushState`d a third one on top —
+      // so Back landed somewhere the visitor never chose and Back again only
+      // returned them to where they started. The keyboard Back shortcut was
+      // unusable on all six NAV pages. ⌘K is above this line because a modifier
+      // is the point of it.
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+
       // The buffer is read before paging, not after, because an arrow key can
       // belong to either and the sequence has the stronger claim on it.
       keys.push(key);
@@ -156,6 +167,16 @@ export function useOperatorRoutes(): void {
       dragFrom = null;
       if (from === null) return;
       if (isModalOpen()) return;
+      // A finger is not a mouse — the same guard `useAccountRoutes` gained in
+      // the 2026-08-14 phone audit, which this mirrored handler did not get.
+      // A mostly-horizontal swipe over non-scrollable page never produces a
+      // `pointercancel`, so an ordinary reading gesture reads as a 260px drag.
+      // The account side was yanking phone visitors to `/signin`; this side
+      // opened the operator door over the page an operator was reading. It
+      // survived the audit only because `openDoor` refuses everyone else.
+      // The two directions are one gesture with two meanings, so they get the
+      // same guards.
+      if (event.pointerType === "touch") return;
       if (window.getSelection()?.toString()) return;
       if (event.clientX - from > DRAG_THRESHOLD) openDoor("dragged sideways");
     };

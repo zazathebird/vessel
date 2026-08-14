@@ -38,7 +38,8 @@ interface ConfigContextValue {
   layout: Config["layout"];
   adapted: boolean;
   toast: string;
-  say: (message: string) => void;
+  /** Toast. `silent` suppresses the sound for callers that are not a gesture. */
+  say: (message: string, opts?: { silent?: boolean }) => void;
   /**
    * Fire an interface sound. A no-op unless the visitor has switched sound on,
    * and always a no-op in calm.
@@ -180,14 +181,41 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     play(voice);
   }, []);
 
-  const say = useCallback((message: string) => {
-    window.clearTimeout(toastTimer.current);
-    setToast(message);
-    chime("toast");
-    toastTimer.current = window.setTimeout(() => setToast(""), 2600);
-  }, [chime]);
+  /**
+   * `silent` is for the callers that are not a gesture.
+   *
+   * Almost every toast follows something the visitor just did, so a tick is
+   * feedback. The exceptions are the ones a *timer* or a *socket* raises — the
+   * hourly time-of-day palette change, and a `replaced` frame arriving on the
+   * signalling socket — and those must stay quiet, because `src/audio/engine.ts`
+   * promises nothing plays without a gesture and a promise with an exception in
+   * it is not one.
+   */
+  const say = useCallback(
+    (message: string, opts?: { silent?: boolean }) => {
+      window.clearTimeout(toastTimer.current);
+      setToast(message);
+      if (!opts?.silent) chime("toast");
+      toastTimer.current = window.setTimeout(() => setToast(""), 2600);
+    },
+    [chime],
+  );
 
   const update = useCallback((patch: Partial<Config>) => {
+    // Freshen the ref in the same tick, not just in the post-render effect.
+    //
+    // `live.current` is what `chime` reads, and inside one event handler the
+    // effect has not run yet — so a handler that called `update({ sound: false })`
+    // and then `say(...)` chimed anyway, on the previous render's `sound: true`.
+    // The sound toggle's own "switching off stays silent" was therefore false,
+    // and worse, the release effect closed the AudioContext a frame later, mid
+    // envelope, turning the tone it should never have played into a click. Same
+    // shape for calm: turning the accessibility escape hatch *on* announced
+    // itself with a truncated tick.
+    //
+    // Writing a ref from an event handler is safe — this is not render — and it
+    // only ever makes `live.current` fresher than the effect would.
+    live.current = { ...live.current, config: { ...live.current.config, ...patch } };
     setConfig((previous) => ({ ...previous, ...patch }));
   }, []);
 
@@ -329,13 +357,27 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       const hour = now.getHours();
       if (hour === bootHour.current) return;
       bootHour.current = hour;
-      setConfig((previous) => {
-        if (previous.mode !== "tod") return previous;
-        const pal = paletteIndexForHour(hour);
-        if (pal === previous.pal) return previous;
-        say(PALETTES[pal].name);
-        return { ...previous, pal };
-      });
+
+      // Decided out here, not inside the updater. `say` dispatches state, arms
+      // a timer on a ref and can fire a sound — and a `setConfig` updater must
+      // be pure, because StrictMode double-invokes it. `shuffle`, `setMode`,
+      // `go` and the boot effect each carry that reasoning already; this was
+      // the one call site that still did it inside.
+      const current = live.current.config;
+      if (current.mode !== "tod") return;
+      const pal = paletteIndexForHour(hour);
+      if (pal === current.pal) return;
+      setConfig((previous) =>
+        previous.mode === "tod" && previous.pal !== pal ? { ...previous, pal } : previous,
+      );
+      // `silent` because **this is a timer, and nothing on a timer may make a
+      // sound**. `src/audio/engine.ts` promises there is no ambient bed, no loop
+      // and no timer, and an hourly palette announcement that chimed would have
+      // been all three at once: with `mode: "tod"` and `sound` both published, a
+      // page nobody had touched would build an AudioContext and queue a voice
+      // into a suspended clock, which then fired late, attached to nothing, the
+      // moment the visitor finally clicked something.
+      say(PALETTES[pal].name, { silent: true });
     }, 1000);
     return () => window.clearInterval(id);
   }, [say]);
