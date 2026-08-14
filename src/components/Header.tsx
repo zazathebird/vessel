@@ -1,7 +1,8 @@
 import { useCallback, useRef } from "react";
 
+import { play } from "../audio/engine";
 import { useConfig } from "../config/ConfigContext";
-import { saveCalmPreference } from "../config/persistence";
+import { saveCalmPreference, saveSoundPreference } from "../config/persistence";
 import { useSession } from "../auth/SessionContext";
 import { NAV, OPERATOR_NAV, PATHS } from "../data/pageIds";
 import { openCommandPalette } from "./CommandPalette";
@@ -128,6 +129,34 @@ export function Header() {
           >
             {config.calm ? "calm ✓" : "calm"}
           </button>
+          {!config.calm && (
+            // Hidden in calm rather than disabled: calm silences sound anyway,
+            // so a switch that visibly does nothing would be worse than no
+            // switch. It returns, holding its value, when calm goes off.
+            <button
+              type="button"
+              className="chip"
+              aria-pressed={config.sound}
+              onClick={() => {
+                const sound = !config.sound;
+                update({ sound });
+                // The second setting that follows the visitor home, and the
+                // more important direction is off: being told to be quiet is an
+                // instruction, not a preference for one session.
+                saveSoundPreference(sound);
+                // Played directly rather than through `chime`, for two reasons.
+                // The gate reads the previous render's config and would still
+                // see sound off; and this is the one gesture where the sound
+                // *is* the feedback — you have just asked to hear it, so
+                // hearing it is the confirmation. Switching off stays silent,
+                // which is the only correct answer to "be quiet".
+                if (sound) play("toggle");
+                say(sound ? "sound on" : "sound off");
+              }}
+            >
+              {config.sound ? "sound ✓" : "sound"}
+            </button>
+          )}
           {config.unlocked && (
             <button type="button" className="v-siteconfig-btn" onClick={togglePanel}>
               <span className="v-siteconfig-dot" aria-hidden="true" />

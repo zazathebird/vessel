@@ -13,6 +13,82 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-14 — The site gets a voice, and a stored preference stops falling through
+
+`TODO.md` 7 — asked for twice, never built, and correctly flagged as a spec change rather than a
+patch: it needs a control, a persisted toggle and a share-code field.
+
+### Synthesised, because the Assets rule already decided it
+
+`SPEC.md`'s *Assets* rule is no third-party libraries, no webfonts, no images. Audio was never named
+but the reasoning covers it, so `src/audio/engine.ts` is oscillators and envelopes — there is no
+`.mp3` here and the whole feature costs nothing over the wire.
+
+**The pitch comes from the palette.** `src/theme.ts` exists so that no component contains a literal
+colour; this is the audible half — no voice contains a literal frequency, they are intervals above a
+root the palette picks, from a pentatonic set so no two palettes can land on a tritone mid-bleed.
+Changing palette retunes the site, which is worth the twenty lines it costs.
+
+Seven voices, all under 200ms: `nav`, `toggle`, `open`, `close`, `toast`, `shuffle`, `deny`. A site
+that chimes at every opportunity is a site people mute.
+
+### Autoplay is satisfied by construction, not by asking
+
+**There is no ambient bed, no loop and no timer.** Every voice is fired by a gesture the visitor
+made, so there is nothing that *could* play uninvited, and the `AudioContext` is not constructed
+until the first `play()` — a visitor who never turns sound on never allocates one. `releaseAudio()`
+gives the device back when sound goes off or calm comes on, because a live context marks the tab as
+playing audio and can hold a Bluetooth headset in its high-latency profile.
+
+**Calm silences everything.** Calm is the quiet mode in every other sense — no motion, no shadow, no
+canvas — and it would be a strange one that still chimed. The header chip is *hidden* in calm rather
+than disabled: a switch that visibly does nothing is worse than no switch.
+
+### The bitfield had a spare bit, so there is no seventh field
+
+Share codes carry sound as **bit 16** of the existing toggle bitfield rather than a new field. Every
+code in circulation has that bit clear, which decodes as sound off — the correct default and the one
+a visitor would want. The field count does not change, so nothing that counts hyphens breaks, and
+base-36 still renders the full bitfield (max 31, `V`) in one character. Verified: legacy five- and
+six-field codes decode `sound: false`, both directions round-trip, garbage still returns null.
+
+### It is publishable, and the asymmetry is written down
+
+`sound` joins `PUBLISHED_KEYS` in both halves — the client's `src/config/siteConfig.ts` and the
+Worker's `worker/site-config.ts`, which are separate lists and silently drop anything missing from
+either. It belongs there because the share code already carries it, and a pasted code being able to
+do something publishing cannot would be the odd asymmetry.
+
+But `calm` and `sound` are not equivalent: publishing calm makes the site gentler for everyone and
+publishing sound makes it louder for everyone. Two guarantees hold that in check and both must stay
+true — nothing plays without a gesture, and **a visitor's stored preference always beats the
+published value**, permanently and in both directions. Recommendation to the client: leave it off
+when publishing, and let people opt in.
+
+### The stored-preference rule, restated — and the bug that was hiding under it
+
+`CLAUDE.md` said calm was "the one stored field" and warned against extending the carve-out. Sound
+extends it, deliberately, and the rule is better stated than the exception was: **the stored fields
+are the ones a visitor can set for themselves.** Everything else is appearance and belongs to the
+operator. Today exactly two controls are public — the two header chips — and they are these two. The
+test for adding a third is not "is this useful to remember" but "can a visitor set it at all".
+
+Calm must survive because a visitor turned it *on*; sound must survive because a visitor turned it
+*off*. Being told to be quiet is an instruction, not a session preference.
+
+**Adding the second one exposed a real bug in the first.** `loadConfig` opened with
+`if (published is not an object) return { ...DEFAULT_CONFIG }` — an early return that never reached
+the stored-calm lookup. So calm silently stopped persisting whenever nothing was injected: before
+the first publish, and, the case that matters, **whenever D1 is unreachable and
+`worker/site-config.ts` correctly injects nothing.** The accessibility escape hatch switched itself
+off in exactly the degraded state where someone is least able to go hunting for it. Production hid
+it because a config *is* published, so the early return was never taken there.
+
+That branch now applies both stored preferences before returning. Verified with nothing published:
+stored-on gives on, stored-off gives off, and no preference still falls through to the defaults.
+
+---
+
 ## 2026-08-14 — The duel gets an attract mode, and the screensaver turns out to be older than the idea
 
 The client asked whether the screensaver should run the lightsword fight, and the matrix rain when

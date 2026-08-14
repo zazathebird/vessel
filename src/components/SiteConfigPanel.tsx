@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 
+import { play } from "../audio/engine";
 import { api } from "../auth/api";
 import { useSession } from "../auth/SessionContext";
 import { publishable } from "../config/siteConfig";
 import { useConfig } from "../config/ConfigContext";
-import { saveCalmPreference } from "../config/persistence";
+import { saveCalmPreference, saveSoundPreference } from "../config/persistence";
 import { decodeShareCode, encodeShareCode } from "../config/shareCode";
 import { LAYOUTS, MODES, PICKABLE_FX, SCOPES, TYPESETS } from "../data/catalog";
 import type { ScopeId } from "../data/catalog";
@@ -331,6 +332,23 @@ export function SiteConfigPanel() {
             onClick={() => update({ cursor: !config.cursor })}
           >
             Cursor glow
+          </button>
+          <button
+            type="button"
+            className={`chip${config.sound ? " is-active" : ""}`}
+            aria-pressed={config.sound}
+            onClick={() => {
+              const sound = !config.sound;
+              update({ sound });
+              // Every deliberate sound toggle records the preference — the
+              // header chip, the command palette and here — exactly as calm's
+              // three toggles do. Publishing it is separate and still the
+              // operator's; this is the operator's own ears.
+              saveSoundPreference(sound);
+              if (sound) play("toggle");
+            }}
+          >
+            Sound
           </button>
           <button
             type="button"

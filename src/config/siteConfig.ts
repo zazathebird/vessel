@@ -28,6 +28,18 @@ export function publishedConfig(): Partial<Config> | null {
 /**
  * The fields an operator publishes. `page` is per-visit, and `unlocked` is
  * per-session — omitting it here is what makes it false again on every reload.
+ *
+ * **`sound` is publishable, and the asymmetry is worth stating** (2026-08-14).
+ * It sits here for the same reason `calm` does — it is a site setting the
+ * operator owns, and the share code already carries it, so leaving it out would
+ * mean a pasted code could do something publishing could not. But the two are
+ * not equivalent in their failure mode: publishing `calm: true` makes the site
+ * gentler for everyone, and publishing `sound: true` makes it louder for
+ * everyone. Two things keep that honest, and both must stay true — **nothing
+ * plays without a gesture** (there is no ambient bed and no timer in
+ * `src/audio/engine.ts`), and **a visitor's stored preference always beats the
+ * published value**, in `loadConfig`, permanently and in both directions.
+ * Publishing it on is still the operator's call to make deliberately.
  */
 export const PUBLISHED_KEYS = [
   "pal",
@@ -41,6 +53,7 @@ export const PUBLISHED_KEYS = [
   "grain",
   "breathe",
   "cursor",
+  "sound",
 ] as const;
 
 /** Narrow a full config down to the slice that gets published. */

@@ -20,12 +20,23 @@ export const SAVE_DEBOUNCE_MS = 250;
  * changes them is visible only when signed in as the operator, so a visitor has
  * no way to set these and nothing of theirs to remember.
  *
- * **Calm is the one exception, and it is read back from storage.** The calm
- * toggle sits in the header for everyone, and CLAUDE.md names it the
- * accessibility escape hatch for the deliberately low-contrast palettes. A
- * visitor who needs it and does not carry OS-level reduced-motion should not
- * have to find the button again on every visit — an accessibility preference
- * is precisely "theirs to remember". Everything else stays published-only.
+ * **Two fields are read back from storage, and the rule is what they have in
+ * common: they are the settings a visitor can set for themselves.** Everything
+ * else on the site is appearance, which belongs to the operator; these two are
+ * about the visitor's own eyes and ears, so they follow the visitor rather than
+ * the site.
+ *
+ * - **`calm`** — the accessibility escape hatch for the deliberately
+ *   low-contrast palettes. A visitor who needs it and does not carry OS-level
+ *   reduced-motion should not have to find the button again every visit.
+ * - **`sound`** (2026-08-14) — the same argument, pointing the other way.
+ *   Calm must survive because a visitor turned it *on*; sound must survive
+ *   because a visitor turned it *off*. A site that makes noise again on every
+ *   visit despite being told not to is worse than one that never made any.
+ *
+ * That is the whole list, and the test for adding to it is not "is this
+ * useful to remember" but "can a visitor set this at all". Today exactly two
+ * controls are public — the two chips in the header — and they are these.
  *
  * One consequence is worth stating plainly, because it is a feature: the
  * operator sees exactly what a visitor sees. Their unpublished fiddling lives
@@ -39,7 +50,21 @@ export const SAVE_DEBOUNCE_MS = 250;
  */
 export function loadConfig(): Config {
   const raw: unknown = publishedConfig();
-  if (typeof raw !== "object" || raw === null) return { ...DEFAULT_CONFIG };
+  if (typeof raw !== "object" || raw === null) {
+    // Nothing published — but the visitor's own two settings are not the
+    // operator's to lose. This branch used to return the bare defaults, which
+    // meant calm silently stopped persisting whenever the injection was absent:
+    // before the first publish, and — the case that matters — whenever D1 is
+    // unreachable and `worker/site-config.ts` correctly injects nothing. The
+    // accessibility escape hatch must not switch itself off in the degraded
+    // case, which is precisely when someone is least able to go hunting for it.
+    // Found 2026-08-14 while adding `sound`, which had inherited the same bug.
+    return {
+      ...DEFAULT_CONFIG,
+      calm: storedCalm() ?? DEFAULT_CONFIG.calm,
+      sound: storedSound() ?? DEFAULT_CONFIG.sound,
+    };
+  }
   const saved = raw as Partial<Record<keyof Config, unknown>>;
 
   const index = (value: unknown, length: number, fallback: number) =>
@@ -75,6 +100,7 @@ export function loadConfig(): Config {
     grain: bool(saved.grain, DEFAULT_CONFIG.grain),
     breathe: bool(saved.breathe, DEFAULT_CONFIG.breathe),
     cursor: bool(saved.cursor, DEFAULT_CONFIG.cursor),
+    sound: storedSound() ?? bool(saved.sound, DEFAULT_CONFIG.sound),
     unlocked: bool(saved.unlocked, DEFAULT_CONFIG.unlocked),
   };
 }
@@ -102,6 +128,36 @@ export function saveCalmPreference(calm: boolean): void {
 function storedCalm(): boolean | null {
   try {
     const raw = localStorage.getItem(CALM_KEY);
+    return raw === "1" ? true : raw === "0" ? false : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Sound's own key, for the same reason calm has one: `saveConfig` echoes the
+ * whole config, so reading it back from there would pin sound to whatever was
+ * published on the first visit.
+ *
+ * Written only by the deliberate sound toggles — the header chip, the panel and
+ * the command palette. Absent means no preference, which resolves to the
+ * published value and, failing that, to off.
+ */
+const SOUND_KEY = "vessel.sound.v1";
+
+/** Record a deliberate sound toggle. Off is the direction that matters most:
+ * being told to be quiet is an instruction, not a session preference. */
+export function saveSoundPreference(sound: boolean): void {
+  try {
+    localStorage.setItem(SOUND_KEY, sound ? "1" : "0");
+  } catch {
+    // Storage full or unavailable. The toggle still works for this visit.
+  }
+}
+
+function storedSound(): boolean | null {
+  try {
+    const raw = localStorage.getItem(SOUND_KEY);
     return raw === "1" ? true : raw === "0" ? false : null;
   } catch {
     return null;

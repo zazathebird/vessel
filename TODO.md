@@ -146,8 +146,31 @@ Remaining inside phase 2:
   fighters are in the match, so a fixed offset trades one layout's collision for
   another's. Flagged in `src/fx/effects.ts`.
 
-### 7. Sound — asked for twice, not built. A spec change (control, persisted
-toggle, share-code field), not a patch.
+### 7. ~~Sound~~ — built 2026-08-14. All three parts it was flagged as needing:
+
+- **Control**: a `sound` chip in the header beside `calm` (hidden in calm, which
+  silences audio anyway), plus the siteconfig panel and the command palette.
+- **Persisted toggle**: its own key `vessel.sound.v1`, written only by the three
+  deliberate toggles — calm's exact pattern, and now calm's exact rule. See
+  `loadConfig`: the stored fields are the ones a visitor can set for themselves,
+  and there are exactly two.
+- **Share-code field**: **bit 16 of the existing toggle bitfield**, not a seventh
+  field. Every code already minted has it clear, which decodes as sound off.
+
+Synthesised in `src/audio/engine.ts` — oscillators and envelopes, no files, so
+`SPEC.md`'s *Assets* rule holds. Pitch comes from the palette, so changing
+palette retunes the site. Nothing plays without a gesture: no ambient bed, no
+loop, no timer, and no `AudioContext` until the first voice.
+
+**One thing for the client**: `sound` is publishable, so you *can* ship the site
+with it on. Recommendation is don't — publishing calm makes the site gentler for
+everyone and publishing sound makes it louder for everyone. A visitor's stored
+preference always beats the published value, in both directions, so nobody is
+ever stuck with it.
+
+Not built, and a deliberate stopping point: **no ambient/generative bed**. That
+is a different feature with different autoplay and taste problems, and this one
+is interface feedback.
 
 ---
 

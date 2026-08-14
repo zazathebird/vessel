@@ -225,11 +225,28 @@ ones most likely to be "fixed" by accident:
   `ConfigContext` via `hasVisited()`
 - **Persistence** is validated field by field in `src/config/persistence.ts`, not trusted. A stored
   layout id that no longer exists would otherwise render an unstyled page forever
-- **Calm is the one stored field `loadConfig` reads back** (2026-08-13), under its own key
-  (`vessel.calm.v1`), written only by the three deliberate calm toggles. It is the accessibility
-  escape hatch and must survive reload for visitors. Do not read it from the full-config echo
-  `saveConfig` writes — that would freeze whatever was published on the first visit — and do not
-  extend the carve-out to other fields: everything else stays published-only
+- **Two fields are stored and read back, and the rule is what they share: they are the settings a
+  visitor can set for themselves.** `calm` (2026-08-13) and `sound` (2026-08-14), each under its own
+  key (`vessel.calm.v1`, `vessel.sound.v1`), written only by their three deliberate toggles — the
+  header chip, the panel, the command palette. Everything else is *appearance*, which belongs to the
+  operator and stays published-only. Calm must survive because a visitor turned it on; sound must
+  survive because a visitor turned it off. Do not read either from the full-config echo `saveConfig`
+  writes — that would freeze whatever was published on the first visit. **The test for adding a
+  third is not "is this useful to remember" but "can a visitor set it at all"**: today exactly two
+  controls are public, and they are these two.
+- **`loadConfig`'s no-published-config branch must still apply those two.** It used to return the
+  bare defaults, so calm silently stopped persisting whenever nothing was injected — including when
+  D1 is unreachable and `worker/site-config.ts` correctly injects nothing, i.e. the accessibility
+  escape hatch switching itself off in exactly the degraded case. Production hid it because a config
+  *is* published. Fixed 2026-08-14; do not "simplify" that branch back to `{ ...DEFAULT_CONFIG }`
+- **The site's sound is synthesised and cannot play uninvited** (`src/audio/engine.ts`). No files, so
+  `SPEC.md`'s *Assets* rule holds; the pitch is derived from the palette exactly as every colour is,
+  so no voice contains a literal frequency. **There is no ambient bed, no loop and no timer** — every
+  voice is fired by a gesture, which is how autoplay policy is satisfied here, and the `AudioContext`
+  is not constructed until the first voice. Adding anything self-starting breaks that guarantee and
+  is a product decision, not a feature. Calm silences it entirely and `releaseAudio()` hands the
+  device back. `chime` in `ConfigContext` is the single gate; `play` never reads config, so the
+  audio layer cannot become a second opinion about a setting the user can see a checkbox for
 - **The calm/404 `filter` lives on `.vessel`'s children, never on `.vessel`** (`base.css`). A
   filter on the wrapper makes it the containing block for every fixed-position overlay, which in
   Terminal (document scrolls) re-anchors toasts and scrims to the document instead of the viewport
@@ -311,6 +328,14 @@ ones most likely to be "fixed" by accident:
   indices the decoder will, so the two cannot disagree. They are operator-gated, like every other
   appearance control in the command palette; `.v-paste` is in the operator-only panel, so share
   codes are in practice operator-only too. Making them public is a product decision, not a fix.
+- **The toggle bitfield is where a new boolean goes, while bits remain.** `sound` took bit 16
+  (2026-08-14) rather than a seventh share-code field: every code already in circulation has it
+  clear, which decodes as off — the correct default — the field count does not change, so nothing
+  counting hyphens breaks, and base-36 still renders the whole bitfield (max 31) in one character.
+  Bits 32 and up are free. **Both `PUBLISHED_KEYS` lists must gain the field too** — the client's in
+  `src/config/siteConfig.ts` and the Worker's in `worker/site-config.ts` are separate arrays and
+  either one missing it silently drops the value on publish, so the operator sees a setting that
+  never reached anybody else
 - **Share codes are base-36 and `FX` order is a wire format.** Effect index 12 is `C`, not `12`;
   `0-0-12-0-7-0` parses `12` as 38, falls through `FX[38] ?? FX[0]` and applies the default effect (id `vessels`,
   labelled "Branches" since the de-branding), which looks exactly like a failed deploy. Append to

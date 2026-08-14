@@ -9,6 +9,8 @@ import {
 } from "react";
 import type { ReactNode } from "react";
 
+import { play, releaseAudio, setAudioPalette } from "../audio/engine";
+import type { VoiceId } from "../audio/engine";
 import { MAIL } from "../data/mail";
 import { MODES } from "../data/catalog";
 import type { ModeId } from "../data/catalog";
@@ -37,6 +39,15 @@ interface ConfigContextValue {
   adapted: boolean;
   toast: string;
   say: (message: string) => void;
+  /**
+   * Fire an interface sound. A no-op unless the visitor has switched sound on,
+   * and always a no-op in calm.
+   *
+   * Exposed rather than left inside this module because the components that
+   * know an interaction happened are the ones that should name it — a dialog
+   * knows it is opening, and nothing here can infer that from a state change.
+   */
+  chime: (voice: VoiceId) => void;
   /** HH:MM · local, ticking. */
   clock: string;
 
@@ -129,11 +140,52 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     live.current = { config, panelOpen, doorOpen, saverHeld };
   });
 
+  // The synth is tuned by the palette, the same way everything visible is
+  // coloured by it — see `src/audio/engine.ts`. Pushed rather than pulled so
+  // the audio module imports nothing and cannot hold a second opinion about
+  // which palette is current.
+  useEffect(() => {
+    setAudioPalette(config.pal);
+  }, [config.pal]);
+
+  // Give the audio device back the moment sound is not wanted. A live
+  // AudioContext marks the tab as playing audio and can hold a Bluetooth
+  // headset in its high-latency profile; somebody who switched this off, or who
+  // is in calm, should not pay for it. `play` rebuilds it on demand.
+  useEffect(() => {
+    if (!config.sound || config.calm) releaseAudio();
+  }, [config.sound, config.calm]);
+
+  /**
+   * The gate every sound passes through: off unless the visitor asked for it,
+   * and off in calm regardless. Calm is the site's quiet mode in every other
+   * sense — no motion, no shadow, no canvas — and it would be a strange one
+   * that still chimed.
+   *
+   * Reads `live.current` rather than `config` so it needs no dependency list
+   * and cannot go stale in a callback. The one-render lag that costs is
+   * irrelevant here and is deliberately worked around in the sound toggle
+   * itself, which knows the value it is setting and plays its own confirmation.
+   */
+  const lastChime = useRef(0);
+  const chime = useCallback((voice: VoiceId) => {
+    const current = live.current.config;
+    if (!current.sound || current.calm) return;
+    const now = performance.now();
+    // A toast almost always accompanies an action that already has a voice —
+    // shuffle is the obvious one. Without this, rolling the dice plays the
+    // flourish and then a tick on top of it.
+    if (voice === "toast" && now - lastChime.current < 150) return;
+    lastChime.current = now;
+    play(voice);
+  }, []);
+
   const say = useCallback((message: string) => {
     window.clearTimeout(toastTimer.current);
     setToast(message);
+    chime("toast");
     toastTimer.current = window.setTimeout(() => setToast(""), 2600);
-  }, []);
+  }, [chime]);
 
   const update = useCallback((patch: Partial<Config>) => {
     setConfig((previous) => ({ ...previous, ...patch }));
@@ -146,12 +198,14 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     const result = roll(live.current.config);
     if (!result) {
       // 60 attempts all blocked — the scope switches have painted into a corner.
+      chime("deny");
       say("nothing legal to roll");
       return;
     }
+    chime("shuffle");
     say(describeRoll(result));
     setConfig((previous) => ({ ...previous, ...result }));
-  }, [say]);
+  }, [say, chime]);
 
   /**
    * The address is never in static markup — it is assembled from parts at
@@ -308,6 +362,9 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   const go = useCallback((page: PageId) => {
     poke();
     if (live.current.config.page === page) return;
+    // Fired here, not in `commit`: the dive takes 300ms before the page swaps,
+    // and a sound that waited for it would land after the motion it belongs to.
+    chime("nav");
 
     const commit = () => {
       if (window.location.pathname !== PATHS[page]) {
@@ -348,21 +405,29 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
    */
   const togglePanel = useCallback(() => {
     if (!isOperator) return;
+    chime(live.current.panelOpen ? "close" : "open");
     setPanelOpen((v) => !v);
-  }, [isOperator]);
-  const closePanel = useCallback(() => setPanelOpen(false), []);
+  }, [isOperator, chime]);
+  const closePanel = useCallback(() => {
+    if (live.current.panelOpen) chime("close");
+    setPanelOpen(false);
+  }, [chime]);
 
   const openDoor = useCallback(
     (via: string) => {
       if (!isOperator) return false;
+      chime("open");
       setDoorVia(`unlocked via ${via}`);
       setDoorOpen(true);
       setPanelOpen(false);
       return true;
     },
-    [isOperator],
+    [isOperator, chime],
   );
-  const closeDoor = useCallback(() => setDoorOpen(false), []);
+  const closeDoor = useCallback(() => {
+    if (live.current.doorOpen) chime("close");
+    setDoorOpen(false);
+  }, [chime]);
 
   // Gating the openers is not enough: an operator who signs out while the panel
   // is open would otherwise keep it, and keep publishing from it. Losing the
@@ -397,6 +462,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       adapted: isAdapted(config.layout, band),
       toast,
       say,
+      chime,
       clock,
       diving,
       nav,
@@ -425,6 +491,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       band,
       toast,
       say,
+      chime,
       clock,
       diving,
       nav,

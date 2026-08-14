@@ -36,6 +36,11 @@ const PUBLISHED_KEYS = [
   "grain",
   "breathe",
   "cursor",
+  // Interface sounds (2026-08-14). Kept in step with `PUBLISHED_KEYS` in
+  // src/config/siteConfig.ts, which carries the reasoning: a key missing here
+  // is silently dropped on publish, so the operator's own browser would show a
+  // setting that never reached anybody else.
+  "sound",
 ] as const;
 
 /**

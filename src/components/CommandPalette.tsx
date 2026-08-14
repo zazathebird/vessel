@@ -4,7 +4,7 @@ import { useConfig } from "../config/ConfigContext";
 import { useSession } from "../auth/SessionContext";
 import { api, type SavedSetup } from "../auth/api";
 import { decodeShareCode } from "../config/shareCode";
-import { saveCalmPreference } from "../config/persistence";
+import { saveCalmPreference, saveSoundPreference } from "../config/persistence";
 import { LAYOUTS, PICKABLE_FX, TYPESETS } from "../data/catalog";
 import { ORNAMENTS } from "../data/ornaments";
 import { PRESETS } from "../data/presets";
@@ -218,12 +218,15 @@ export function CommandPalette() {
         ["breathe", config.breathe],
         ["cursor", config.cursor],
         ["calm", config.calm],
+        ["sound", config.sound],
       ] as const;
       for (const [key, value] of toggles) {
         add(`toggle-${key}`, `toggle — ${key} ${value ? "off" : "on"}`, () => {
-          // Calm follows the visitor home from every toggle that flips it
-          // deliberately — the header, the panel, and here.
+          // Calm and sound follow the visitor home from every toggle that flips
+          // them deliberately — the header, the panel, and here. They are the
+          // only two settings that do; see `loadConfig`'s note on why.
           if (key === "calm") saveCalmPreference(!value);
+          if (key === "sound") saveSoundPreference(!value);
           update({ [key]: !value });
         });
       }

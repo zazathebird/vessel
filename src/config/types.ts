@@ -27,6 +27,18 @@ export interface Config {
   breathe: boolean;
   cursor: boolean;
   /**
+   * Interface feedback sounds (`src/audio/engine.ts`). **Off by default and
+   * off in calm**, and the second of the two settings a visitor can set for
+   * themselves — see `loadConfig`'s note on why those two are stored and
+   * nothing else is.
+   *
+   * Nothing plays without a gesture: every voice is fired by an interaction,
+   * so a published `sound: true` still makes no noise until the visitor
+   * touches something. That is autoplay policy satisfied by construction, and
+   * it is also simply good manners.
+   */
+  sound: boolean;
+  /**
    * Has the operator door been opened in this session. Not persisted and not
    * published, so it is false again after every reload — `loadConfig` reads the
    * published config only, and `unlocked` is not one of its keys. Nothing is
@@ -48,5 +60,7 @@ export const DEFAULT_CONFIG: Config = {
   grain: true,
   breathe: true,
   cursor: true,
+  sound: false, // a site that makes noise uninvited is a site people leave
+
   unlocked: false,
 };
