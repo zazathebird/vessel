@@ -79,7 +79,15 @@ export const PAGES: Record<PageId, Page> = {
       // was a spec sheet for switches visitors cannot flip. Jokes instead.
       { kicker: "the site", title: "Dangerously over-engineered", body: "Built like a flight simulator, used like a business card. It is entirely unnecessary. That is the point.", hasList: true, items: ["No cookies — there is a tin of real ones at the bench", "No AI, just a guy", "The 404 page is load-bearing", "Fixing computers remains the only useful feature"] },
       { kicker: "the honesty", title: "What this is not", body: "Not an agency. Not a startup. Not looking for funding, partnerships, or your synergy. One person and a bench." },
-      { kicker: "the rate", title: "Free diagnosis, always", body: "If it can't be fixed you pay nothing and you get it back in the same number of pieces it arrived in." },
+      // COPY CHANGE 2026-08-14, client: "i dont do free diag. a mechanic will
+      // still charge you to diagnose your cars issues." The old line promised
+      // "Free diagnosis, always", which was not true of the business, and a
+      // false promise on the page that sends people to Contact is the worst
+      // place on the site to have one. Written to state only what the client
+      // said — it names no fee, because none was given, and it drops the "you
+      // pay nothing" guarantee rather than silently keeping a claim that the
+      // same message contradicts. See TODO sign-off 9.
+      { kicker: "the rate", title: "Diagnosis isn't free", body: "Finding out what's wrong is the job, not a free sample — a mechanic doesn't look at your car for nothing either. You'll know what it costs before I start, and it comes back in the same number of pieces it arrived in." },
       { kicker: "the door", title: "Some of this is hidden", body: "There are six ways into a panel you will never need. Cosmetic to you, load-bearing to me." },
     ],
   },

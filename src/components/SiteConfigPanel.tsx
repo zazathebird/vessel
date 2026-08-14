@@ -368,10 +368,10 @@ export function SiteConfigPanel() {
               // Recorded like the header's toggle: a deliberate calm choice
               // survives reload, whoever makes it.
               saveCalmPreference(calm);
-              say(calm ? "calm — one accent, no motion" : "calm off");
+              say(calm ? "plain — one accent, no motion" : "plain off");
             }}
           >
-            Calm mode
+            Plain
           </button>
         </div>
       </section>

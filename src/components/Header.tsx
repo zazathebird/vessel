@@ -112,6 +112,20 @@ export function Header() {
             type="button"
             className="chip"
             aria-pressed={config.calm}
+            /*
+             * Labelled "plain", not "calm" (2026-08-14, client: "people won't
+             * know what that means"). They were right — "calm" names a mood, not
+             * a function, and this is the control that makes the low-contrast
+             * palettes readable, so a visitor who needs it has to be able to
+             * guess what it is. **The label is the only thing that changed**:
+             * `config.calm`, `.is-calm`, `vessel.calm.v1` and share-code bit 8
+             * all keep the old name, because renaming them breaks stored
+             * preferences and codes already in circulation for zero visible
+             * gain — the same rule the de-branding followed.
+             *
+             * The title says what it does, since two words on a chip cannot.
+             */
+            title="Plain: one accent colour, no motion, higher contrast"
             onClick={() => {
               const calm = !config.calm;
               // Calm alone: `themeClasses` already suppresses grain/breathe
@@ -123,10 +137,10 @@ export function Header() {
               // an accessibility escape hatch that resets every visit is
               // a button someone has to find again every visit.
               saveCalmPreference(calm);
-              say(calm ? "calm — one accent, no motion" : "calm off");
+              say(calm ? "plain — one accent, no motion" : "plain off");
             }}
           >
-            {config.calm ? "calm ✓" : "calm"}
+            {config.calm ? "plain ✓" : "plain"}
           </button>
           {!config.calm && (
             // Hidden in calm rather than disabled: calm silences sound anyway,

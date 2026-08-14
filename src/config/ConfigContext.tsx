@@ -19,7 +19,7 @@ import { PATHS, pageFromPath } from "../data/pageIds";
 import type { PageId } from "../data/pageIds";
 import { adaptLayout, bandForWidth, isAdapted } from "./bands";
 import type { Band } from "./bands";
-import { SAVE_DEBOUNCE_MS, hasVisited, loadConfig, saveConfig } from "./persistence";
+import { SAVE_DEBOUNCE_MS, calmPreference, hasVisited, loadConfig, saveConfig } from "./persistence";
 import { describeRoll, roll } from "./randomiser";
 import { useSession } from "../auth/SessionContext";
 import { DEFAULT_CONFIG } from "./types";
@@ -105,8 +105,23 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     if (typeof window === "undefined") return { ...DEFAULT_CONFIG };
     const loaded = loadConfig();
     const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-    // Reduced motion lands the visitor in calm automatically — a settled decision.
-    const motion = reduced ? { calm: true, grain: false, breathe: false } : null;
+    /*
+     * Reduced motion lands the visitor in calm automatically — still a settled
+     * decision, and unchanged for anyone who has not touched the chip.
+     *
+     * What changed (2026-08-14, client report): it no longer overrides an
+     * *expressed* preference. This spread sat after `loaded`, so it beat
+     * `storedCalm()` every time — a visitor with OS reduce-motion who clicked
+     * calm off had `vessel.calm.v1 = "0"` written, and then had it read and
+     * discarded one line later, on every reload, for ever. `persistence.ts` says
+     * in as many words that either direction is a preference; this was the code
+     * disagreeing with it.
+     *
+     * `null` means no preference was ever expressed, which is the only case the
+     * OS hint should decide. The CSS half of the same fix is in base.css.
+     */
+    const chosen = calmPreference();
+    const motion = reduced && chosen === null ? { calm: true, grain: false, breathe: false } : null;
     return { ...loaded, ...motion, page: pageFromPath(window.location.pathname) };
   });
 

@@ -116,10 +116,27 @@ body {
 }
 
 /* Honour the OS preference in CSS too, not only in app state. */
+/*
+ * OS reduced-motion, honoured — but only while the visitor is actually in calm.
+ *
+ * `:not(.is-alive)` is what makes the calm chip mean something (2026-08-14,
+ * client report: "the animations are not active on the live site"). This block
+ * used to be unconditional, and `!important` beat everything, so a visitor whose
+ * OS says "reduce motion" got no animation **no matter what they clicked**.
+ * Between this and `ConfigContext` forcing calm on the same signal, the header's
+ * calm toggle was a control that could turn motion off and never back on. A
+ * switch that only goes one way is worse than no switch.
+ *
+ * The default is unchanged and still correct: reduced-motion visitors land in
+ * calm and see none of this. `is-alive` appears only when calm is off, and with
+ * the stored-preference fix in `ConfigContext` that state is now reachable only
+ * by a deliberate press of the chip — which is exactly the explicit opt-in that
+ * should be allowed to override an OS-level default.
+ */
 @media (prefers-reduced-motion: reduce) {
-  .vessel *,
-  .vessel *::before,
-  .vessel *::after {
+  .vessel:not(.is-alive) *,
+  .vessel:not(.is-alive) *::before,
+  .vessel:not(.is-alive) *::after {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;

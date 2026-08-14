@@ -125,6 +125,17 @@ export function saveCalmPreference(calm: boolean): void {
   }
 }
 
+/**
+ * The stored calm preference, or `null` when the visitor has never expressed
+ * one. Exported because `ConfigContext` needs to tell those apart: OS
+ * reduced-motion should set the *default*, and an explicit press of the chip
+ * should beat it — which is impossible to express without knowing whether a
+ * preference exists at all.
+ */
+export function calmPreference(): boolean | null {
+  return storedCalm();
+}
+
 function storedCalm(): boolean | null {
   try {
     const raw = localStorage.getItem(CALM_KEY);

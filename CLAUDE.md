@@ -504,7 +504,19 @@ been the change rather than correcting it. **If another content page is ever add
 moves again.** The 404's other counts — "six ways into a panel", "5 type systems" — remain correct
 and verbatim, and its four-item example list was not touched.
 
-Every line of copy outside the replaced home block, the `setup` page and that one word is
+**The home page's "the rate" block was replaced 2026-08-14**, at the client's word: *"i dont do
+free diag. a mechanic will still charge you to diagnose your cars issues."* It read "Free diagnosis,
+always" and promised "you pay nothing", neither of which was true of the business — a false promise
+on the block that sends people to Contact. It now says diagnosis is not free and names no fee,
+because none was given. The `no fix, no fee` claim still standing in Contact's "Three steps"
+(*"Fixed, or you pay nothing"*) is **unresolved** and needs the client — see `TODO.md` sign-off 9.
+
+**"Calm" is labelled "Plain" in the interface, and only in the interface** (2026-08-14, client:
+"people won't know what that means"). `config.calm`, `.is-calm`, `vessel.calm.v1` and share-code
+bit 8 all keep the old name — renaming them breaks stored preferences and codes in circulation for
+zero visible gain, exactly as the de-branding decided for `.vessel` and the storage keys.
+
+Every line of copy outside the replaced home blocks, the `setup` page and that one word is
 verbatim-only.
 
 ## Accounts — the invariants
