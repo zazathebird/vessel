@@ -83,20 +83,35 @@ by an on-path resolver attacker — which, for a site whose accounts derive keys
 fetched over the network, is worth closing. Cloudflare: **DNS → Settings → Enable DNSSEC**, then
 add the DS record it produces at **Namespro** (the registrar). Two-step, ~10 minutes, one-time.
 
-### 8. No CAA records
+### 8. ~~No CAA records~~ — DONE 2026-08-14
 
-Any public CA will currently issue a certificate for `mcclevarty.ca` to anyone who passes its
-validation. Add CAA records restricting issuance to the CAs Cloudflare Universal SSL actually
-uses. In Cloudflare DNS, add for the apex:
+Any public CA could previously be talked into issuing a certificate for `mcclevarty.ca`. Three
+`issue` records were added by hand in the Cloudflare dashboard — `letsencrypt.org`,
+`pki.goog; cansignhttpexchanges=yes`, `ssl.com`.
+
+**Cloudflare then completed the set itself, and that detail matters more than the three records
+did.** The moment the first CAA record existed, Cloudflare injected its full CA list, so the live
+answer is ten records, not three:
 
 ```
-CAA 0 issue "letsencrypt.org"
-CAA 0 issue "pki.goog; cansignhttpexchanges=yes"
-CAA 0 issue "ssl.com"
-CAA 0 issuewild "letsencrypt.org"
-CAA 0 issuewild "pki.goog; cansignhttpexchanges=yes"
-CAA 0 issuewild "ssl.com"
+0 issue     "letsencrypt.org" / "pki.goog; cansignhttpexchanges=yes" / "ssl.com"
+            / "comodoca.com" / "digicert.com; cansignhttpexchanges=yes"
+0 issuewild  (the same five)
 ```
+
+**The six-record list this section used to prescribe was incomplete** — it omitted `comodoca.com`
+and `digicert.com`, both of which Cloudflare actually uses. Had those six been written to the zone
+somewhere that does *not* auto-complete (the API, or another DNS host), certificate **renewal**
+would have started failing silently, weeks later, with nothing obviously connecting the two. That is
+the exact failure mode that made "do this in the dashboard, not over the API" the standing advice
+here; the dashboard validating against its own issuance is not a nicety.
+
+The `issuewild` records also turned out to need no separate thought: RFC 8659 falls back to `issue`
+when no `issuewild` is present, so the three `issue` records alone would already have governed
+wildcard issuance identically. Cloudflare added them anyway.
+
+Verified after the change: `dig mcclevarty.ca CAA` returns the ten, and the site still serves 200
+over TLS.
 
 (Cloudflare's own documented set for Universal SSL; it will refuse the config if it would break
 its own issuance.)
@@ -108,12 +123,27 @@ Current records:
 - SPF: `v=spf1 mx include:_spf.mailroots.namespro.ca ~all` — softfail
 - DMARC: `v=DMARC1; p=none; rua=mailto:…@dmarc-reports.cloudflare.net;` — monitor-only
 
-`p=none` means a spoofed `@mcclevarty.ca` mail is delivered anyway; the domain forwards mail
-(Namespro, see the 2026-08-12 incident) and sends none itself, so spoofing is the whole risk.
-After reviewing a couple of weeks of the Cloudflare DMARC reports to confirm nothing legitimate
-fails: move DMARC to `p=quarantine`, then `p=reject`, and consider SPF `-all`. Do it in that
-order — forwarding is exactly the case that surprises strict SPF, which is why this is a
-dashboard-and-observe change, not a repo edit.
+**Updated 2026-08-14, and the plan changed because a fact did.** The two-week observation this
+section prescribed existed for one reason: the domain forwards mail, and forwarding is what
+surprises strict SPF. The client then confirmed **neither `mcclevarty.ca` nor the `.com` has mail
+set up, and neither is needed** — the Namespro records are registrar defaults, and the mail CNAMEs
+are even *proxied*, which cannot work for IMAP/POP3/SMTP at all. A domain that sends nothing has no
+legitimate mail for a strict policy to break, so there is nothing to observe and no reason to wait.
+
+- **SPF is now `v=spf1 -all`** (was `v=spf1 mx include:_spf.mailroots.namespro.ca ~all`). Verified
+  live. This declares that *no* server may send as `@mcclevarty.ca`, which is the strongest possible
+  statement and is simply true today.
+- **DMARC is still `p=none`.** The intended value is
+  `v=DMARC1; p=reject; sp=reject; adkim=s; aspf=s; rua=…` keeping the existing Cloudflare report
+  address. **This edit was blocked by a safety classifier mid-change and was not applied** — the
+  record was left untouched rather than half-written. It needs the client to apply it or to allow
+  the action.
+- **MX and the mail CNAMEs/SRVs were deliberately left alone.** Removing them is cleanup, not
+  hardening: SPF and DMARC govern *sending*, so the anti-spoofing benefit is already complete, and
+  leaving inbound as-is costs nothing while keeping the door open if mail is ever wanted here.
+
+**Reverting is one field each** if mail ever lands on this domain: SPF back to a real sender list,
+DMARC back to `p=none` while it is observed.
 
 ### 10. TODO #13 stands: turn on "Always Use HTTPS" at the edge
 
