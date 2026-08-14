@@ -1208,7 +1208,21 @@
  * silently dead until someone found it. Getting it wrong here would paint the
  * shade pool inside the phone band's ordinary cards.
  */
-.band-desk.layout-stack .v-block {
+/*
+ * `:not(.band-phone)`, not `.band-desk` (2026-08-14 review).
+ *
+ * The prefix was chosen to keep the shade pool out of the phone band's ordinary
+ * cards — right intent, wrong selector, because it also excluded **tablet**.
+ * `adaptLayout` leaves Stack alone on that band (`TABLET_LAYOUTS` has no `stack`
+ * entry), so `.band-tablet.layout-stack` is reachable, and it matched neither
+ * this rule nor the phone card rule below. `.layout-stack .v-block` strips the
+ * panel wholesale — no border, no background, no shadow, no backdrop-filter —
+ * so on an iPad in portrait, body copy sat directly on a live canvas with
+ * nothing behind it. There is no guardrail for `stack` either, so any effect
+ * could be running. Phone has its own rule, so excluding phone is all this
+ * needed to say. The `.v-kicker::after` arrival rules below take the same fix.
+ */
+:not(.band-phone).layout-stack .v-block {
   background: radial-gradient(
     112% 78% at 16% 50%,
     color-mix(in oklab, var(--bg) 88%, transparent) 0%,
@@ -1228,7 +1242,7 @@
  * feedback's 140ms — the split in interaction.css is between palette colour and
  * pointer response, and an arrival is neither.
  */
-.band-desk.layout-stack .v-kicker::after {
+:not(.band-phone).layout-stack .v-kicker::after {
   content: "";
   flex: 1 1 auto;
   max-width: 240px;
@@ -1239,7 +1253,7 @@
   transition: scale 0.62s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-.band-desk.layout-stack .v-block.is-onstage .v-kicker::after {
+:not(.band-phone).layout-stack .v-block.is-onstage .v-kicker::after {
   scale: 1 1;
 }
 
@@ -1262,6 +1276,17 @@
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: color-mix(in oklab, var(--surface) var(--panel, 70%), transparent);
+  /*
+   * The frost has to come back with the background (2026-08-14 review).
+   * `.layout-stack .v-block` sets `backdrop-filter: none` at 0-2-0 and this rule
+   * restored everything else but not that — so a card at ~58% surface sat over a
+   * *sharp* canvas, which is the exact pairing Terminal's guardrail existed to
+   * prevent before it gained a blur. Stack is the collapse target for nearly
+   * every layout on the phone band, so any published config lands here, and
+   * `rain` or `plasma` behind unblurred 58% is where body copy has least room to
+   * spare.
+   */
+  backdrop-filter: blur(18px) saturate(1.25);
 }
 
 .v-block-head {

@@ -438,6 +438,37 @@ async function signalUpgrade(request: Request, env: Env, url: URL): Promise<Resp
     throw new BadRequest("That endpoint speaks WebSocket.", 426);
   }
 
+  /**
+   * The origin check `crossOrigin` structurally cannot make (2026-08-14 review).
+   *
+   * This route is special-cased ahead of `crossOrigin` so the 101 survives
+   * `harden`, and `crossOrigin` returns false for GET anyway — which every
+   * WebSocket handshake is. So the one endpoint that opens a **long-lived
+   * authenticated channel** was the one endpoint with no origin check at all.
+   *
+   * `SameSite=Lax` covers it today. It stops covering it the moment
+   * `design/GUIDE-SUBDOMAINS.md` is acted on: a page on `alice.mcclevarty.ca`
+   * could open `wss://mcclevarty.ca/api/signal/<id>` with the victim's cookie
+   * attached, and nothing here would refuse. §12 K bounds the damage — the agent
+   * verifies the peer's grant-key signature and would refuse the browse — so the
+   * prize is signalling relay and agent-presence disclosure, not files. Small,
+   * and not worth leaving for a future subdomain decision to remember.
+   *
+   * **A missing `Origin` is still allowed**, the same deliberate carve-out
+   * `crossOrigin` documents: non-browser clients omit it and `scripts/auth-e2e.ts`
+   * is one of those. This refuses a *present and foreign* origin only.
+   */
+  const origin = request.headers.get("origin");
+  if (origin) {
+    let foreign = true;
+    try {
+      foreign = new URL(origin).host !== url.host;
+    } catch {
+      foreign = true;
+    }
+    if (foreign) throw new BadRequest("That request came from somewhere else.", 403);
+  }
+
   const account = await accounts.requireAccount(request, env);
 
   const machineId = url.pathname.slice("/api/signal/".length);

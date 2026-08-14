@@ -28,9 +28,16 @@ Worker and local D1 and prints its own check count on completion. There is still
 the site's *rendering* — but two of the site's own pure modules are covered there because both are
 **wire formats whose failures are silent**: `src/share/paths.ts` (§12 S) and, since 2026-08-14,
 `src/config/shareCode.ts`. A wrong share code is a *working* code pointing at the wrong palette, so
-nothing ever throws and nothing ever logs. Both sections run before any network call. If you append
-to `FX`, `LAYOUTS`, `PALETTES`, `TYPESETS` or `ORNAMENTS`, the harness is what tells you whether
-every code already in circulation still means what it meant.
+nothing ever throws and nothing ever logs. If you append to `FX`, `LAYOUTS`, `PALETTES`, `TYPESETS`
+or `ORNAMENTS`, the harness is what tells you whether every code already in circulation still means
+what it meant.
+
+**Both sections are pure but neither runs first, and that is a known wart** (2026-08-14). Their
+titles say "before any wire" and they are self-contained — but they sit ~1300 lines down, *after*
+the reachability gate that `process.exit(1)`s when the Worker is not answering. So appending to a
+catalogue and running `npm run test:auth` without `npm run dev:worker` runs **none** of the
+wire-format checks and exits looking like an environment problem. Moving both blocks above the
+health check would make the titles true; until then, start the Worker.
 
 **`fxlab.html` (project root) is the canvas bench** — open `http://localhost:5173/fxlab.html` with
 `npm run dev` running. All sixteen effects on one page through `FxCanvas`'s exact frame maths,

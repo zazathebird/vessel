@@ -1439,7 +1439,31 @@ export async function setPassword(request: Request, env: Env): Promise<Response>
     auditStatement(env, account.id, "auth.password.set", null),
   );
 
-  await env.DB.batch(statements);
+  /**
+   * The UNIQUE violation is caught, because losing this race must not look like
+   * a failure (2026-08-14 review).
+   *
+   * Two concurrent set-passwords on one ticket both find no existing password
+   * row and both build an INSERT. A commits; B violates
+   * `idx_credentials_one_password`, which is not a `BadRequest`, so `index.ts`
+   * turns it into a generic 500 — on the screen that says "do not close this
+   * page until it succeeds", for the person whose recovery code is already
+   * spent. Retrying then fails differently: A's batch has already deleted the
+   * redeemed credential's key slot, so the ticket check refuses and tells them
+   * to burn a second of their ten codes. For an operation that *succeeded*.
+   *
+   * `signup` and `passkeys.register` already catch their own UNIQUE this way.
+   * No privilege is involved — both requests are the same legitimate ticket
+   * holder — so the honest answer is the one the winner got.
+   */
+  try {
+    await env.DB.batch(statements);
+  } catch (error) {
+    if (String(error).includes("UNIQUE") || String(error).includes("constraint")) {
+      return json({ status: "set" });
+    }
+    throw error;
+  }
 
   return json({ status: "set" });
 }
@@ -1528,12 +1552,31 @@ export async function totpConfirm(request: Request, env: Env): Promise<Response>
     ),
   );
 
-  await env.DB.batch([
+  /**
+   * `AND confirmed_at IS NULL`, and the zero-`changes` refusal, are the guard —
+   * not the `row.confirmed_at` read above (2026-08-14 review).
+   *
+   * `totpEnrol` moved its guard into the write's WHERE in the 2026-08-13 pass;
+   * its counterpart here was missed and stayed check-then-act. Two concurrent
+   * confirms with the same valid code — a retried request, or any non-browser
+   * client — both read `confirmed_at IS NULL`, both pass `verifyTotp` (this
+   * route has no replay guard, unlike `signinTotp`), both generate **ten
+   * distinct backup codes**, and both commit. The caller is shown request A's
+   * ten; request B's hashes are what is stored. Every code the user writes down
+   * is dead, and nothing anywhere reports it.
+   *
+   * The audit row is inside the same batch and therefore cannot record an
+   * enrolment the guard declined.
+   */
+  const written = await env.DB.batch([
     env.DB.prepare(
-      "UPDATE totp SET confirmed_at = ?, backup_codes_hash = ?, last_step = ? WHERE account_id = ?",
+      "UPDATE totp SET confirmed_at = ?, backup_codes_hash = ?, last_step = ? WHERE account_id = ? AND confirmed_at IS NULL",
     ).bind(Date.now(), JSON.stringify(hashes), step, account.id),
     auditStatement(env, account.id, "auth.totp.enrolled", null),
   ]);
+  if (!written[0]?.meta?.changes) {
+    throw new BadRequest("Two-factor is already set up on this account.", 409);
+  }
 
   // no-store: the only plaintext appearance the backup codes ever make.
   return noStore(json({ backupCodes: codes }));

@@ -116,7 +116,13 @@ function Explorer({
   onClose,
 }: {
   open: OpenDrive;
-  /** The connection folded mid-errand — the parent drops it so Retry reconnects. */
+  /**
+   * The connection folded mid-errand. The parent drops it, says so on the
+   * drive's card and closes this explorer — because once the channel is closed
+   * there is nothing here that can recover, and Retry on a dead connection just
+   * throws forever. **Must be referentially stable**: it is in `list` and
+   * `listColumns`'s deps, and those are in the listing effect's.
+   */
   onStale: () => void;
   onClose: () => void;
 }) {
@@ -476,6 +482,44 @@ export function MachinesPage() {
   // channel folds so the next Open reconnects instead of failing forever.
   const connections = useRef(new Map<string, DriveConnection>());
 
+  /**
+   * What to do when a connection folds under the explorer. **Stable**, and both
+   * halves of that matter (2026-08-14 review).
+   *
+   * It used to be an inline `onStale={() => …}` in the JSX, which is a new
+   * function on every render of this page — and `Explorer`'s `list` and
+   * `listColumns` both carry it in their `useCallback` deps, and its listing
+   * effect depends on those. This page calls `useConfig()`, whose value carries
+   * the ticking `clock`, so it re-renders **once a minute** with no user action
+   * at all. The result: reading a large folder, the whole table blanked to
+   * "Listing…", a redundant round-trip went out over the data channel, and the
+   * rebuilt table came back scrolled to the top. Every minute. `useCallback`
+   * with an empty dep list is the fix, and the ref is what lets it stay empty.
+   *
+   * It also now *acts* rather than only bookkeeping. Dropping the dead
+   * connection from the map left `Explorer` still holding the same closed
+   * object in its props, so its "Retry" button sent on a closed channel and
+   * could never succeed — for the rest of the visit, with Close/Open the only
+   * escape. The old comment on the prop claimed "the parent drops it so Retry
+   * reconnects", which was the intent and not the behaviour. Closing the
+   * explorer and surfacing the reason on the drive's own card puts the visitor
+   * one click from a real reconnect, which is what Retry was promising.
+   */
+  const openRef = useRef(open);
+  useEffect(() => {
+    openRef.current = open;
+  });
+  const handleStale = useCallback(() => {
+    const current = openRef.current;
+    if (!current) return;
+    connections.current.delete(current.machine.id);
+    setCardErrors((errors) => ({
+      ...errors,
+      [current.machine.id]: "That connection closed. Open the drive again to reconnect.",
+    }));
+    setOpen(null);
+  }, []);
+
   const load = useCallback(async () => {
     setListError(null);
     try {
@@ -571,7 +615,7 @@ export function MachinesPage() {
         <Explorer
           key={open.drive.id}
           open={open}
-          onStale={() => connections.current.delete(open.machine.id)}
+          onStale={handleStale}
           onClose={() => setOpen(null)}
         />
       ) : null}
