@@ -58,8 +58,7 @@ the other models") — best run as its own dedicated session with fresh context.
 - **Sign-off list** at the bottom of `TODO.md`: `totp.last_step`, §3's operator wording, `⌘K`'s
   double claim, signup's 409, TURN, the Contact mailbox (`outlook.com` vs `hotmail.ca`),
   subdomains yes/no, Pages retirement, the free-diagnostic copy.
-- **Unproven in a browser** (accumulated): recovery-code sign-in on the live site (TODO 2),
-  the `/admin` dialogs, TOTP enrolment screen, Passkeys + Saved setups sections, command
+- **Unproven in a browser** (accumulated): the `/admin` dialogs, TOTP enrolment screen, Passkeys + Saved setups sections, command
   palette, duel motion, matrix rain speed, mobile parity on a real phone — and all of
   phase 2, now including the §10 Grid/Column explorer modes, the drawn file icons, the
   progress wash, and the 2026-08-14 phone touch pass (16px inputs, 44px buttons, dvh stage,

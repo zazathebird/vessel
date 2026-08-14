@@ -21,10 +21,14 @@ second instance silently takes 8788); delete `dist/_redirects` or run
 `npm run predeploy`, never bare `npm run build`, before `dev:worker`; the
 last-operator guard check skips if a non-`harness-` operator exists in local D1.
 
-### 2. Redeem one recovery code on the live site, once, deliberately
+### 2. ~~Redeem one recovery code on the live site~~ — done 2026-08-14
 
-Nobody has ever completed the flow end to end in a browser. It spends one of
-ten codes. The harness proves the bytes; only a browser proves the screens.
+Driven in a real Chromium against production with a throwaway account
+(`fable-check` — non-operator, left in D1; remove via `/admin` if unwanted)
+so the operator's own ten codes are untouched: signup → codes shown once →
+sign out → redeem code → set-password ticket → signed in, `9 of 10` left →
+sign out → sign in again with the new password. `wrangler tail` ran through
+the whole browse: zero CSP reports.
 
 ### 2b. ~~App-shell/UI review~~ — done 2026-08-13 (eight findings fixed)
 

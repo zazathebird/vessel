@@ -13,6 +13,33 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-14 — Deployed to production; TODO 2 proven in a real browser
+
+The overnight commits (`bf292e1` slot-endpoint password gate, `db9cb43` report-only CSP) went
+live once wrangler was re-authenticated (OAuth, approved by the client in-session). Full
+`HANDOFF.md` verification block passed: bundle hashes match, one HTTPS redirect, six headers,
+the report-only CSP riding pages, www→apex 301, `/api/health` 8 tables, SPA routes 200, assets
+`nosniff`.
+
+**TODO 2 — recovery-code redemption — is done**, driven end to end in a real Chromium against
+production with a throwaway non-operator account (`fable-check`), so the operator's ten codes
+are untouched: signup showed the codes once; sign-out; redeem code #1; the set-password ticket
+screen; signed in with `9 of 10` left; sign-out; sign-in with the new password succeeded. The
+account row is left in D1 deliberately (removing it is an `/admin` or break-glass write the
+client may prefer to do, or ask for); its password is known only from this session.
+
+`wrangler tail` ran through the entire browse — signup, redemption, set-password, two
+sign-ins, sign-outs — and logged **zero CSP reports**, the first production evidence toward
+the flip to enforcing. Still unexercised: passkey ceremony, phase-2 browse, TOTP enrolment,
+the other canvas effects.
+
+GitHub remote `https://github.com/zazathebird/vessel.git` is configured, but pushing needs
+credentials this machine does not have (no PAT, no SSH key, no `gh`); `git push` also needs
+`GIT_EXEC_PATH=/home/user/.local/git-root/usr/lib/git-core` because the local git's default
+exec-path is an empty directory.
+
+---
+
 ## 2026-08-14 — TODO 12 lands as far as it safely can: a nonced CSP, report-only
 
 The blocker was always the inlined site-config script; the nonce now exists (`cspNonce` per
