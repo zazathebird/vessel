@@ -44,7 +44,13 @@ body {
 
 .vessel {
   position: relative;
-  min-height: 100vh;
+  /* dvh, matching `.v-chrome` (2026-08-14 audit). `vh` resolves against the
+     LARGE viewport — toolbar hidden — so on any mobile browser showing its URL
+     bar this was 60-90px taller than the window while the chrome fitted
+     exactly, and the document scrolled behind the already-scrolling stage. The
+     same nested-scroll bug the stage-height fix removed, arriving by a second
+     route. The two must use the same unit. */
+  min-height: 100dvh;
   background: var(--bg);
   color: var(--fg);
   font-family: var(--font-body);

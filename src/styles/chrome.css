@@ -90,23 +90,34 @@
 
 /* Screensaver fades the whole interactive chrome, leaving only the canvas. */
 /*
- * A flex column, so the stage takes the room the header actually leaves.
+ * A flex column exactly one viewport tall, so the stage takes the room the
+ * header actually leaves.
  *
- * `--stage-height` used to be `calc(100dvh - 132px)` on phone: a **hardcoded
- * guess at the header's height**. The real phone header is 147px, because it
- * wraps to two rows there — so the chrome came to 15px taller than the viewport
- * and the *document* scrolled behind the already-scrolling `.v-stage`. Two
- * nested vertical scroll containers on the band least able to afford them: you
- * swipe, and sometimes the wrong one moves.
+ * `height: 100dvh` clamped the column to exactly one viewport, which is right
+ * for every layout whose stage scrolls internally and **wrong for Terminal**,
+ * whose stage is deliberately `height: auto; overflow: hidden` because it
+ * expects the *document* to scroll (a documented property — CLAUDE.md's note on
+ * the calm/404 filter turns on it). Clamped, Terminal's window kept
+ * `overflow: hidden` and simply clipped: 1677px of content in a 531px box, with
+ * the document unable to take over either. Most of every page became
+ * unreachable by wheel, keyboard or touch. Caught by an audit sweep minutes
+ * after it shipped.
  *
- * Nothing caught it because the number was right when it was written and
- * drifted afterwards — the header gains height whenever a chip is added, and
- * one was (`sound`, this morning). `flex: 1` cannot drift; it measures.
+ * `--stage-height` used to be `calc(100dvh - 132px)` on phone: a hardcoded
+ * guess at the header's height, and the real phone header is 147px because it
+ * wraps to two rows there. The chrome came out 15px taller than the viewport and
+ * the *document* scrolled behind the already-scrolling `.v-stage` — two nested
+ * vertical scroll containers on the band least able to afford them. The number
+ * was right when written and drifted when a chip was added to the header, which
+ * is the whole problem with measuring one element by hardcoding another's size.
+ * `flex: 1` cannot drift; it measures.
  *
  * `min-height: 0` on the stage is the load-bearing half: a flex child defaults
  * to `min-height: auto`, which refuses to shrink below its content, so without
  * it the stage would grow to fit and push the overflow straight back onto the
  * document.
+ *
+ * Terminal is the single exception and overrides this below.
  */
 .v-chrome {
   position: relative;
@@ -117,6 +128,22 @@
   opacity: 1;
   pointer-events: auto;
   transition: opacity 1.6s ease;
+}
+
+/*
+ * Terminal is the one layout whose *document* scrolls, so it opts out of the
+ * viewport clamp above rather than the clamp being softened for everyone.
+ *
+ * Softening it to `min-height` was the first attempt and it was wrong in a way
+ * worth recording: with the column free to grow, `.v-stage` (flex-basis auto)
+ * simply sized to its content everywhere, so no layout scrolled internally any
+ * more and the document scrolled on all fourteen. That silently discards the
+ * fixed-header/scrolling-stage design, Stack's snap sections and the
+ * scroll-velocity boost. One layout needed the exception; one layout gets it.
+ */
+.layout-terminal .v-chrome {
+  height: auto;
+  min-height: 100dvh;
 }
 
 .v-chrome > .v-header {
@@ -245,20 +272,28 @@
   gap: 7px;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
-  /*
-   * The scroll has to look like a scroll (2026-08-14 audit).
-   *
-   * Measured on the phone band: the pill row overflows by 66px, the scrollbar
-   * is hidden by the line above, and the last pill is simply sliced mid-word —
-   * "GUE". Nothing said there was more to the right, so Guestbook was, in
-   * practice, hidden on a phone. A fade at the trailing edge is the whole fix:
-   * a cut letter reads as broken, a fading one reads as continuing.
-   *
-   * `mask-image`, not an overlay pseudo-element: the row is a scroll container,
-   * so a positioned child would scroll away with the content. And it is
-   * unconditional rather than toggled on overflow, because detecting overflow
-   * needs JS and this band always overflows — six pills never fit a phone.
-   */
+}
+
+/*
+ * The scroll has to look like a scroll (2026-08-14 audit).
+ *
+ * Measured on the phone band: the pill row overflows by 66px, its scrollbar is
+ * hidden by the rule above, and the last pill was simply sliced mid-word —
+ * "GUE". Nothing said there was more to the right, so Guestbook was, in
+ * practice, hidden on a phone. A fade at the trailing edge is the whole fix: a
+ * cut letter reads as broken, a fading one reads as continuing.
+ *
+ * `mask-image`, not an overlay pseudo-element: the row is a scroll container,
+ * so a positioned child would scroll away with the content.
+ *
+ * **Phone only.** It went on tablet too at first, on the reasoning that the row
+ * always overflows — true of a phone, false of a tablet, where 900px fits the
+ * six public pills with room to spare. That gave every tablet visitor a
+ * permanently faded "Guestbook" with nothing scrolled off behind it, and an
+ * affordance pointing at nothing is worse than none. Unconditional within the
+ * phone band is fine: six pills never fit a phone.
+ */
+.band-phone .v-nav {
   mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 34px), transparent 100%);
 }
 
@@ -356,6 +391,16 @@
   margin: 34px auto;
   padding: 0;
   height: auto;
+  /*
+   * Opts out of the flex sizing every other layout wants. `.v-stage` is
+   * `flex: 1 1 auto; min-height: 0` so it can shrink and scroll inside the
+   * viewport; this layout must do the opposite — size to its content and let
+   * the *document* scroll, which is what `height: auto` above has always meant
+   * and what `overflow: hidden` below assumes. Without both of these the window
+   * clips instead of scrolling.
+   */
+  flex: 0 0 auto;
+  min-height: auto;
   border: 1px solid var(--line);
   border-radius: 10px;
   overflow: hidden;
