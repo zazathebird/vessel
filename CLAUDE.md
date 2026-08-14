@@ -508,8 +508,14 @@ and verbatim, and its four-item example list was not touched.
 free diag. a mechanic will still charge you to diagnose your cars issues."* It read "Free diagnosis,
 always" and promised "you pay nothing", neither of which was true of the business — a false promise
 on the block that sends people to Contact. It now says diagnosis is not free and names no fee,
-because none was given. The `no fix, no fee` claim still standing in Contact's "Three steps"
-(*"Fixed, or you pay nothing"*) is **unresolved** and needs the client — see `TODO.md` sign-off 9.
+because none was given. Contact's "Three steps" lost the same promise the same day: step three was
+*"Fixed, or you pay nothing"* and is now *"You say go, and I get on with it"* — the step that
+actually happens, rather than a replacement guarantee. **Nothing in either block promises anything
+the client has not said**, and neither names a fee. *"Rough quote back, free"* is deliberately
+untouched and still true: a rough estimate from an emailed description is not a diagnosis, and it is
+the one thing in the flow that genuinely costs nothing. **A diagnostic fee is still unnamed on the
+site by choice** — the copy is written to stay true at any price, so setting one is a client
+decision and not a copy change (`TODO.md` sign-off 9).
 
 **"Calm" is labelled "Plain" in the interface, and only in the interface** (2026-08-14, client:
 "people won't know what that means"). `config.calm`, `.is-calm`, `vessel.calm.v1` and share-code

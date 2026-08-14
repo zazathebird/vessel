@@ -82,12 +82,24 @@ export const PAGES: Record<PageId, Page> = {
       // COPY CHANGE 2026-08-14, client: "i dont do free diag. a mechanic will
       // still charge you to diagnose your cars issues." The old line promised
       // "Free diagnosis, always", which was not true of the business, and a
-      // false promise on the page that sends people to Contact is the worst
-      // place on the site to have one. Written to state only what the client
-      // said — it names no fee, because none was given, and it drops the "you
-      // pay nothing" guarantee rather than silently keeping a claim that the
-      // same message contradicts. See TODO sign-off 9.
-      { kicker: "the rate", title: "Diagnosis isn't free", body: "Finding out what's wrong is the job, not a free sample — a mechanic doesn't look at your car for nothing either. You'll know what it costs before I start, and it comes back in the same number of pieces it arrived in." },
+      // false promise on the block whose job is sending people to Contact is
+      // the worst place on the site to have one.
+      //
+      // **No figure, deliberately** — the client offered either an invented
+      // number or "discussed on contact" and left the choice here. No number,
+      // for three reasons that all point the same way: the site already refuses
+      // to be a quote machine ("no quote form, no ticket system"), Contact's
+      // own three steps already put a price in step two, and one flat
+      // diagnostic fee cannot honestly cover both a laptop that will not boot
+      // and a drive that has stopped spinning. So the copy describes the flow
+      // that already exists rather than inventing a commitment, and stays true
+      // whatever the client eventually charges.
+      //
+      // No credentials named either, though the client has them. `about` is
+      // built on "No name, no face, no city … the work speaks", and a list of
+      // MSP vendor certs would contradict that page and mean nothing to someone
+      // with a slow laptop.
+      { kicker: "the rate", title: "Diagnosis isn't free", body: "Finding out what's wrong is the work — a mechanic doesn't look at your car for nothing either. The cost comes back with the quote, before you agree to anything, and the machine returns in the same number of pieces it arrived in." },
       { kicker: "the door", title: "Some of this is hidden", body: "There are six ways into a panel you will never need. Cosmetic to you, load-bearing to me." },
     ],
   },
@@ -188,7 +200,15 @@ export const PAGES: Record<PageId, Page> = {
       { kicker: "what i fix", title: "Most of it", body: "", hasList: true, items: ["Laptops and desktops — Windows, macOS, Linux", "Won't boot, blue screens, random shutdowns", "SSD and RAM upgrades for slow machines", "Malware removal and clean reinstalls", "Data recovery from failing drives", "Screens, keyboards, batteries, fans", "Home wifi, routers, printers (reluctantly)", "Backups, so it doesn't happen twice"] },
       { kicker: "what i don't", title: "A short list", body: "", hasList: true, items: ["Phone and tablet glass", "Getting into an account that isn't yours", "Crypto wallet recovery", "3am emergencies, unless genuinely on fire"] },
       { kicker: "area", title: "Local, plus about thirty minutes around it", body: "Drop-off or collection by arrangement. Remote fixes over the phone where they'll actually work. Ask and I'll tell you if you're in range." },
-      { kicker: "how it works", title: "Three steps", body: "", hasList: true, items: ["Email what's wrong", "Rough quote back, free", "Fixed, or you pay nothing"] },
+      // COPY CHANGE 2026-08-14, following the home page's "the rate" block.
+      // Step three was "Fixed, or you pay nothing" — the same no-fix-no-fee
+      // promise the client has now contradicted, so it could not stay. It is
+      // replaced with the step that actually happens rather than a new
+      // guarantee: nothing here promises anything the client has not said.
+      // "Rough quote back, free" is untouched and still true — a rough estimate
+      // from an emailed description is not a diagnosis, and it is the one thing
+      // in this flow that genuinely costs nothing.
+      { kicker: "how it works", title: "Three steps", body: "", hasList: true, items: ["Email what's wrong", "Rough quote back, free", "You say go, and I get on with it"] },
       { kicker: "include", title: "To save a round trip", body: "Make and model, what it does, and when it started doing it. One sentence is fine." },
     ],
   },

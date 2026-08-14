@@ -325,8 +325,25 @@ Found while building; none blocking. Reasoning in `CLAUDE.md` unless noted.
    land first (`design/GUIDE-SUBDOMAINS.md`); if no, the guide can be closed.
 8. **When to retire the Pages project** — it is the rollback; retiring it
    deletes the `_redirects` trap class.
-9. **Free-diagnostic copy rewrite** — client leaning yes; wording and any fee
-   pending.
+9. ~~**Free-diagnostic copy rewrite**~~ — done 2026-08-14. The client's words:
+   *"i dont do free diag. a mechanic will still charge you to diagnose your cars
+   issues."* Home's "the rate" block ("Free diagnosis, always" / "you pay
+   nothing") and Contact's step three ("Fixed, or you pay nothing") both carried
+   a promise the business does not make, on the two blocks whose job is sending
+   people to Contact. Both replaced; neither names a fee.
+   **No figure on the site, by decision.** The client offered either an invented
+   number or "discussed on contact" and left the choice to this side. No number:
+   the site already refuses to be a quote machine, Contact's three steps already
+   put a price in step two, and one flat fee cannot honestly cover both a laptop
+   that will not boot and a drive that has stopped spinning. The copy describes
+   the flow that already exists and stays true whatever the client charges, so
+   setting a rate is a business decision that needs no further copy change.
+
+   **No credentials named either**, though the client has them (senior analyst
+   and sysadmin, college credits, vendor certs). `about` is built on "No name,
+   no face, no city … the work speaks"; a list of MSP vendor logos would
+   contradict that page and means nothing to someone with a slow laptop. The
+   client's own instinct — "less is more for this part" — is the right one.
 
 ---
 
