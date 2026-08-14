@@ -309,7 +309,9 @@ claim the weaker purpose. **The fresh-TOTP check moves to the phase-3
 grant-submission endpoint**, which sees the signed grant itself; build it
 before anything accepts a real grant. `docs/DECISIONS.md` 2026-08-14.
 ### 16. DNS hardening, in the dashboards (2026-08-13 audit; records in
-`docs/SECURITY-AUDIT.md`). **Live state re-checked 2026-08-14:**
+`docs/SECURITY-AUDIT.md`). **Live state re-checked 2026-08-14, and
+`mcclevarty.com` hardened the same day (§9b) — it had two SPF records, which is
+a `permerror`, not a lenient policy.**
 
 - ~~**DMARC**~~ — **done 2026-08-14, `p=reject`.** The two-week observation this
   item prescribed was made unnecessary by a fact, not skipped: the client

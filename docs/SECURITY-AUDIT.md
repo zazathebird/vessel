@@ -175,6 +175,33 @@ legitimate mail for a strict policy to break, so there is nothing to observe and
 **Reverting is one field each** if mail ever lands on this domain: SPF back to a real sender list,
 DMARC back to `p=none` while it is observed.
 
+### 9b. mcclevarty.com — hardened 2026-08-14, and it had a live bug
+
+The client asked for the `.com` to be set up too. It is registered, sits in the **same Cloudflare
+account** (same nameservers) and already 301s to `mcclevarty.ca` on http, https and www — so as a
+defensive/vanity domain it was already doing its job.
+
+**It had two SPF records**, which RFC 7208 forbids: a receiver seeing more than one is required to
+return `permerror`, so the domain's SPF was **invalid rather than permissive**. One was the Namespro
+default (`v=spf1 mx include:_spf.mailroots.namespro.ca ~all`), the other pointed at the `.ca`
+(`v=spf1 include:mcclevarty.ca ~all`). Consolidated to a single `v=spf1 -all` — correct, because
+this domain redirects and sends nothing — and the duplicate deleted.
+
+DMARC was `p=none` **with no `rua`**, i.e. monitor-only while monitoring nothing. Now
+`v=DMARC1; p=reject; sp=reject; adkim=s; aspf=s;`. No `rua`: the `.ca`'s report address is issued
+per-zone by Cloudflare and is not valid here, and a domain that sends nothing has nothing to report
+on. Protection is unaffected — `rua` is telemetry, not policy.
+
+CAA: none existed. One `issue "letsencrypt.org"` added, and Cloudflare auto-completed its full set
+exactly as it did on the `.ca` — ten records, including the `comodoca.com` and `digicert.com` that
+a hand-written list would have missed.
+
+Verified live: exactly one SPF record, DMARC `p=reject` (confirmed against the authoritative
+nameserver and both 1.1.1.1 and 8.8.8.8 — a local resolver was briefly serving a cached `p=none`),
+ten CAA records, and the 301 to the `.ca` still working.
+
+**Not done here either: DNSSEC.** Same registrar blocker as the `.ca` (§7).
+
 ### 10. TODO #13 stands: turn on "Always Use HTTPS" at the edge
 
 The Worker's redirect works (verified live: `http://` → 301 → `https://`), so this is belt and
