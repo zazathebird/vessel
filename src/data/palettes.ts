@@ -10,7 +10,8 @@ export type PaletteId =
   | "nebula" | "reef" | "vapor" | "obsidian" | "chrome" | "solar"
   | "halftone" | "blueprint" | "deco" | "holo" | "clay" | "datamosh"
   | "toxic" | "ember" | "arctic" | "uv" | "terracotta" | "phosphor"
-  | "oxide" | "flare" | "peat" | "xerox" | "anodised" | "sodium";
+  | "oxide" | "flare" | "peat" | "xerox" | "anodised" | "sodium"
+  | "coldopen";
 
 export interface Palette {
   id: PaletteId;
@@ -51,6 +52,20 @@ export const PALETTES: Palette[] = [
   { id: "xerox", name: "Xerox", bg: "#111112", surface: "#1B1B1D", line: "#2E2E31", fg: "#EDEDEE", muted: "#9B9B9F", faint: "#5E5E63", a1: "#00B8C4", a2: "#B4B4B8", a3: "#7A7A7F" },
   { id: "anodised", name: "Anodised", bg: "#0C0F16", surface: "#151A24", line: "#26303F", fg: "#E4EBF5", muted: "#97A5BA", faint: "#5B687D", a1: "#6E8CFF", a2: "#A98CFF", a3: "#7FD4E8" },
   { id: "sodium", name: "Sodium", bg: "#0A0F1C", surface: "#111829", line: "#1F2A45", fg: "#F2E9D8", muted: "#B0A78F", faint: "#6E6A5C", a1: "#FFA028", a2: "#FFC97A", a3: "#5E8BC4" },
+  /*
+   * The twenty-fifth, and the first that is not from the prototype. Appended at
+   * index 24, never inserted — shareCode.ts sends the palette as this array's
+   * index, and index 24 is the base-36 digit `O`.
+   *
+   * Built for the HUD archetype and the one palette here designed against a
+   * role rather than a mood: `a3` is the site's danger token (.v-btn-danger,
+   * the account error border), so in a HUD it is the alarm colour and the only
+   * warm thing on screen. The ground is darker than any of the twenty-four
+   * above, because floating panels need the field behind them to disappear;
+   * fg lands near 17:1 on it, which the dense 10–12px mono this pairs with
+   * needs.
+   */
+  { id: "coldopen", name: "Cold Open", bg: "#05080C", surface: "#0B1118", line: "#16232E", fg: "#E6F4FA", muted: "#8FA8B6", faint: "#4E626F", a1: "#58E8FF", a2: "#6FA0FF", a3: "#FF8A3D" },
 ];
 
 /** Nebula Drift — what a stranger sees on a first visit. A settled product decision. */

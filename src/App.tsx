@@ -84,6 +84,12 @@ export default function App() {
           // what remounts the cards and replays their staggered entrance.
           <ContentBlock key={`${block.kicker}-${i}`} block={block} index={i} staggerMs={staggerMs} />
         ))}
+        {/* Console's prompt: the line the log is still writing to. Rendered
+            always and shown by CSS on that one layout, so the grid memo does
+            not have to depend on the layout to know whether to emit it. */}
+        <div className="v-caret" aria-hidden="true">
+          ready
+        </div>
       </div>
     ),
     [page, staggerMs],

@@ -36,6 +36,30 @@ the whole browse: zero CSP reports.
 
 Everything listed under *Unverified by eye* at the bottom.
 
+### 2d. The HUD pass — built 2026-08-14, two things need the client
+
+The layout upgrade and the three presets are in and the build is clean;
+`docs/DECISIONS.md` 2026-08-14 has the full note. Two items were decided *for*
+the client and are one line each to reverse:
+
+- **The contact sheet keeps its palette duotone in calm, at 10%.** `calm` does
+  not strip `mix-blend-mode`, so this was a decision either way. Reasoning: calm
+  exists for body-copy legibility and a photograph is not body copy. If the
+  client wants calm to be tint-free, it is `opacity: 0` on
+  `.is-calm.layout-sheet .v-tile.has-img::after` in `layouts.css`.
+- **Presets are operator-only**, because every appearance control in the command
+  palette already is, and `.v-paste` lives in the operator-only panel. The
+  proposal described them as something a visitor could pick; making that true is
+  a product decision about who controls the site's look, so it was not taken.
+
+**Cannot be verified from this side, and should be looked at once:** the canvas
+effects. The verification browser reported `document.hidden`, which correctly
+parks the render loop, so nothing on the canvas was ever seen — including the
+new `scan` and `telemetry`, the sharpened existing effects at the new buffer
+size, and Terminal's frosted window over `rain`. All fifteen were run against a
+recording 2D context at three viewport shapes (no NaN coordinates, no
+out-of-range alpha), which is not the same as having looked at them.
+
 ---
 
 ## Accounts
@@ -70,9 +94,13 @@ Remaining inside phase 2:
 
 ### 6. ~~Lightsword duel rebuild~~ — ornament home done 2026-08-13
 
-- **6b. Re-add the background `FX` entries once the client passes the
-  ornament's motion.** Append at indices 12/13, never insert; re-dating the
-  404's "12 background modes" line travels with it.
+- **6b. Un-hide the background `FX` entries once the client passes the
+  ornament's motion.** Since 2026-08-14 they are *in* `FX` at indices 12 and 13
+  carrying `hidden: true`, so this is now deleting two flags rather than an
+  append — the HUD pass needed those indices reserved concretely, not by
+  comment, before appending `scan` and `telemetry` at 14/15. The 404 copy note
+  that used to travel with this was wrong: no "12 background modes" string
+  exists in `pages.ts`. See `docs/DECISIONS.md` 2026-08-14.
 
 ### 7. Sound — asked for twice, not built. A spec change (control, persisted
 toggle, share-code field), not a patch.

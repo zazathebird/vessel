@@ -283,6 +283,26 @@
   -webkit-overflow-scrolling: touch;
 }
 
+/*
+ * Terminal's window.
+ *
+ * The `backdrop-filter` is the change that makes this layout work. Without it a
+ * 55%-opaque window sat over a *sharp* canvas, which is the whole reason the
+ * guardrail allowed only three effects behind it — anything with structure was
+ * unreadable through mono body text. Blurred, the rain behind the window
+ * becomes diffused light: better looking and more legible at once, which is why
+ * the guardrail could loosen (see src/data/guardrails.ts).
+ *
+ * **This makes the stage a containing block for `position: fixed`
+ * descendants** — the same trap the calm/404 filter documents in base.css.
+ * Verified safe in App.tsx: the toast, both scrims, the panel, the door, the
+ * screensaver and the command palette are all siblings of `.v-chrome`, and
+ * Dialog portals to the wrapper, so nothing fixed lives inside the stage.
+ * Re-check that if anything ever moves in here.
+ *
+ * The zero-blur shadow is an outer rim: the window now sits *in* light rather
+ * than on a flat field, and needs an edge against it.
+ */
 .layout-terminal .v-stage {
   max-width: 1120px;
   margin: 34px auto;
@@ -292,7 +312,17 @@
   border-radius: 10px;
   overflow: hidden;
   background: color-mix(in oklab, var(--surface) 55%, transparent);
-  box-shadow: 0 40px 120px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(20px) saturate(1.15);
+  -webkit-backdrop-filter: blur(20px) saturate(1.15);
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--fg) 10%, transparent),
+    0 40px 120px rgba(0, 0, 0, 0.5);
+}
+
+/* Calm hides the canvas, so there is nothing to blur and the frost is only
+   cost. The shadow goes on its own via base.css's blanket rule. */
+.is-calm.layout-terminal .v-stage {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .v-termbar {
@@ -328,13 +358,42 @@
   padding: 0 18px 26px;
 }
 
+/*
+ * Side-scroll's track. The mask is the change worth making: cards used to clip
+ * dead at the viewport edge, and now they arrive from and leave into the field,
+ * which is the feeling a sideways track is reaching for in the first place.
+ *
+ * A mask does *not* create a containing block for fixed descendants — unlike
+ * filter, transform, backdrop-filter and perspective, which is the distinction
+ * base.css was bitten by. Safe on a scroll container: the mask applies to the
+ * element's own box, so the fade sits at the visual edges rather than at the
+ * ends of the scrolled content.
+ */
 .layout-sidescroll .v-stage {
   display: flex;
   align-items: center;
   gap: 28px;
   overflow-x: auto;
   overflow-y: hidden;
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 40px,
+    #000 calc(100% - 120px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 40px,
+    #000 calc(100% - 120px),
+    transparent 100%
+  );
 }
+
+/* The mask's own colour is irrelevant — only its alpha is read — so the two
+   literals above are not a palette violation. Calm keeps it: it is not motion
+   and not a contrast reduction on anything but the track's own edges. */
 
 .layout-stack .v-stage {
   overflow-y: auto;
@@ -358,6 +417,69 @@
   animation: none;
 }
 
+/*
+ * The stage wash. A wide, weak pool of --a1 behind the hero, so the canvas
+ * reads as a light source above the title rather than as a texture behind the
+ * whole page. It is a background-image, not a shadow, so it costs no layout and
+ * nothing on the palette's 0.9s timing has to chase it.
+ *
+ * z-index: -1 keeps it behind the hero's own content while staying inside the
+ * hero's stacking context (.v-hero is position: relative, z-index: 5), so it
+ * cannot escape upward over the header or downward under the canvas.
+ *
+ * The four print/table/essay layouts opt out below: a glow behind a printed
+ * page is a category error, and Terminal's hero already sits inside a lit
+ * window.
+ */
+/*
+ * `left`/`right` are pinned to the hero's own box, not bled outward.
+ *
+ * `.v-stage` scrolls vertically, which forces its horizontal overflow from
+ * `visible` to `auto` — one axis cannot be visible while the other is not. So
+ * anything hanging off the side of the hero, pseudo-element included, gives the
+ * whole stage a horizontal scrollbar. Verified: at -14% it added exactly 91px.
+ * The pool is widened instead of moved outward.
+ */
+.v-hero::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  left: 0;
+  right: 0;
+  top: -18%;
+  bottom: -6%;
+  pointer-events: none;
+  background: radial-gradient(
+    72% 68% at 34% 44%,
+    color-mix(in oklab, var(--a1) 8%, transparent),
+    transparent 74%
+  );
+}
+
+/* The valve's rhythm, not a new one — and opacity only, so nothing reflows. */
+.has-breathe .v-hero::before {
+  animation: v-hero-wash 4.6s ease-in-out infinite;
+}
+
+@keyframes v-hero-wash {
+  0%,
+  100% {
+    opacity: 0.72;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.layout-magazine .v-hero::before,
+.layout-ledger .v-hero::before,
+.layout-marginalia .v-hero::before,
+.layout-console .v-hero::before,
+.layout-terminal .v-hero::before,
+.is-calm .v-hero::before {
+  display: none;
+}
+
 .band-phone .v-hero,
 .band-tablet .v-hero {
   flex-direction: column;
@@ -375,10 +497,13 @@
   padding: 44px 0;
 }
 
+/* The hero is the title card the track begins after, not card zero — so it is
+   ruled off from the strip rather than merely spaced from it. */
 .layout-sidescroll .v-hero {
   flex: none;
   width: 640px;
-  padding: 0;
+  padding: 0 30px 0 0;
+  border-right: 1px solid var(--line);
 }
 
 .band-phone.layout-sidescroll .v-hero,
@@ -805,8 +930,53 @@
   z-index: 6;
 }
 
+/*
+ * Tethers. The pills used to float unattached, which is why the layout read as
+ * six buttons near a circle rather than as a dial. Each now has a spoke running
+ * back to the centre, and the active one's lights.
+ *
+ * The rotations are enumerated for the same reason the positions above are, and
+ * they are the same six angles read backwards: a pill at -30° has its centre at
+ * 150°. This block already carries the note that a change to NAV's length means
+ * editing it — that now costs twelve rules rather than six.
+ */
+.v-orbit-pill::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 96px;
+  height: 1px;
+  transform-origin: left center;
+  background: linear-gradient(to right, transparent, var(--line));
+  pointer-events: none;
+  transition: background 0.9s ease;
+}
+
+.v-orbit-pill.is-active::before {
+  background: linear-gradient(to right, transparent, var(--a1));
+}
+
 .v-orbit-pill:nth-child(1) {
   transform: translate(-50%, -50%) translate(0%, -160%);
+}
+.v-orbit-pill:nth-child(1)::before {
+  transform: rotate(90deg);
+}
+.v-orbit-pill:nth-child(2)::before {
+  transform: rotate(150deg);
+}
+.v-orbit-pill:nth-child(3)::before {
+  transform: rotate(210deg);
+}
+.v-orbit-pill:nth-child(4)::before {
+  transform: rotate(270deg);
+}
+.v-orbit-pill:nth-child(5)::before {
+  transform: rotate(330deg);
+}
+.v-orbit-pill:nth-child(6)::before {
+  transform: rotate(30deg);
 }
 .v-orbit-pill:nth-child(2) {
   transform: translate(-50%, -50%) translate(138.56%, -80%);
@@ -881,10 +1051,29 @@
   padding: 22px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: color-mix(in oklab, var(--surface) 70%, transparent);
-  backdrop-filter: blur(12px);
-  box-shadow: inset 0 1px 0 color-mix(in oklab, var(--fg) 8%, transparent),
-    0 20px 50px rgba(0, 0, 0, 0.28);
+  /*
+   * Translucency and elevation are tokens now (theme.ts), not literals. The
+   * frost is deliberately deeper than the 12px it replaced and carries a
+   * saturate: at 70% opacity the canvas behind a card was merely dimmed, and
+   * at 58% with a real blur it becomes diffused light that tints the glass —
+   * which is the whole point of running an effect behind panels rather than
+   * behind a flat fill.
+   *
+   * The inset highlight runs top *and* left, matching the light direction the
+   * rest of the site already implies: the lens glint sits at 41%/41%, the photo
+   * tile's hatch runs at 135°. It is the difference between a panel that is lit
+   * and a panel with a line on it.
+   */
+  background: color-mix(
+    in oklab,
+    var(--surface) clamp(42%, calc(var(--panel, 70%) + var(--panel-shift, 0%)), 94%),
+    transparent
+  );
+  backdrop-filter: blur(18px) saturate(1.25);
+  -webkit-backdrop-filter: blur(18px) saturate(1.25);
+  box-shadow: inset 0 1px 0 color-mix(in oklab, var(--fg) 12%, transparent),
+    inset 1px 0 0 color-mix(in oklab, var(--fg) 5%, transparent),
+    0 calc(26px * var(--elev, 1)) calc(62px * var(--elev, 1)) rgba(0, 0, 0, 0.42);
   /*
    * `backwards`, not `both`. The stagger needs the from-state to hold during the
    * animation-delay, but a forwards fill would leave the card's transform owned
@@ -909,6 +1098,10 @@
   font-family: var(--font-mono);
 }
 
+/* Console: log output. The rail bleeds to the right as a soft inset glow, so it
+   lights the panel edge instead of merely ruling it. Still on the 0.9s layer —
+   .v-block's own transition list — because it is a palette colour, not pointer
+   feedback (see the note at the top of interaction.css). */
 .layout-console .v-block {
   padding: 14px 16px;
   border-radius: 3px;
@@ -917,8 +1110,75 @@
   border-left: 2px solid var(--a1);
   background: color-mix(in oklab, var(--surface) 52%, transparent);
   backdrop-filter: none;
-  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: inset 11px 0 22px -12px color-mix(in oklab, var(--a1) 80%, transparent);
   animation: v-rise 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+}
+
+/*
+ * The kicker wipes in as each block streams. Only the kicker: it is a short
+ * string in a fixed mono cell, so there is no reflow and nothing is resampled.
+ * Doing this to body copy is the scramble trap in another costume — see the
+ * useScramble note in CLAUDE.md.
+ *
+ * `animation-delay: inherit` takes the value ContentBlock writes to the block's
+ * style attribute, so the wipe is on the same 160ms stagger as its own card
+ * without the component having to pass the number down twice.
+ *
+ * `backwards`, never `both`: the resolved state is the natural one, and the
+ * house rule about forwards fills owning a property forever is the house rule.
+ */
+.layout-console .v-kicker {
+  animation: v-console-wipe 0.26s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+  animation-delay: inherit;
+}
+
+@keyframes v-console-wipe {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+/* The prompt the log is still writing to. Blinks at a terminal's rate; calm
+   stops it on a solid block, which is a console at rest rather than a console
+   with the cursor removed. */
+.v-caret {
+  display: none;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 0 0 18px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.layout-console .v-caret {
+  display: flex;
+}
+
+.v-caret::after {
+  content: "";
+  width: 8px;
+  height: 15px;
+  background: var(--a1);
+  box-shadow: 0 0 12px color-mix(in oklab, var(--a1) 60%, transparent);
+  animation: v-blink 1.06s steps(1, end) infinite;
+}
+
+@keyframes v-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0.12;
+  }
 }
 
 .layout-stack .v-block {
@@ -936,6 +1196,61 @@
 }
 
 /*
+ * Stack has no panel, so the canvas is fully visible behind full-viewport type.
+ * It gets a pool of shade rather than a sheet of glass: the copy sits in a soft
+ * well of --bg and the effect stays alive around it. Nothing is frosted,
+ * nothing is bordered, and the background is the subject rather than a texture
+ * behind one.
+ *
+ * `.band-desk.layout-stack`, one element, no descendant combinator. Written as
+ * `.band-desk .layout-stack` it would match nothing at all — both classes are
+ * on the wrapper — which is precisely how every phone override on this site was
+ * silently dead until someone found it. Getting it wrong here would paint the
+ * shade pool inside the phone band's ordinary cards.
+ */
+.band-desk.layout-stack .v-block {
+  background: radial-gradient(
+    112% 78% at 16% 50%,
+    color-mix(in oklab, var(--bg) 88%, transparent) 0%,
+    color-mix(in oklab, var(--bg) 60%, transparent) 44%,
+    transparent 74%
+  );
+}
+
+/*
+ * The kicker's rule draws itself as a block reaches its snap point — the class
+ * is toggled by an IntersectionObserver in useMotionSystems, which is an
+ * event-rate system rather than a per-frame one and so does not owe the state
+ * a ref.
+ *
+ * `scale`, not `width`: no reflow, and it is the property the interaction layer
+ * already owns. The duration is an entrance's (v-rise runs 0.5s), not pointer
+ * feedback's 140ms — the split in interaction.css is between palette colour and
+ * pointer response, and an arrival is neither.
+ */
+.band-desk.layout-stack .v-kicker::after {
+  content: "";
+  flex: 1 1 auto;
+  max-width: 240px;
+  height: 1px;
+  background: var(--a2);
+  transform-origin: left center;
+  scale: 0 1;
+  transition: scale 0.62s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.band-desk.layout-stack .v-block.is-onstage .v-kicker::after {
+  scale: 1 1;
+}
+
+/* Calm means no ambient motion, and a rule that draws itself on scroll is
+   exactly that. It arrives drawn instead. */
+.is-calm.layout-stack .v-kicker::after {
+  scale: 1 1;
+  transition: none;
+}
+
+/*
  * Stack is the collapse target for almost every layout on a phone, so it stops
  * being the borderless one-block-per-viewport treatment and becomes ordinary
  * cards. The radius has to come back with the border — theme.ts already keeps
@@ -946,7 +1261,7 @@
   padding: 22px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: color-mix(in oklab, var(--surface) 70%, transparent);
+  background: color-mix(in oklab, var(--surface) var(--panel, 70%), transparent);
 }
 
 .v-block-head {

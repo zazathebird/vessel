@@ -20,6 +20,28 @@ body {
   color-scheme: dark;
 }
 
+/*
+ * The shared pointer light (useMotionSystems). Registered rather than left as
+ * plain custom properties for two reasons: a typed `<number>` cannot be
+ * poisoned by a stray unit, and a registered property interpolates, so a light
+ * built on these can transition instead of jumping between pointer events.
+ *
+ * The initial value is the centre, which is what every layout reading them sees
+ * before the pointer has been anywhere — and again in calm, where the hook
+ * removes them rather than continuing to write.
+ */
+@property --mx {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0.5;
+}
+
+@property --my {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0.5;
+}
+
 .vessel {
   position: relative;
   min-height: 100vh;

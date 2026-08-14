@@ -5,8 +5,9 @@ import { useSession } from "../auth/SessionContext";
 import { api, type SavedSetup } from "../auth/api";
 import { decodeShareCode } from "../config/shareCode";
 import { saveCalmPreference } from "../config/persistence";
-import { FX, LAYOUTS, TYPESETS } from "../data/catalog";
+import { LAYOUTS, PICKABLE_FX, TYPESETS } from "../data/catalog";
 import { ORNAMENTS } from "../data/ornaments";
+import { PRESETS } from "../data/presets";
 import { PALETTES } from "../data/palettes";
 import { FOOTER_NAV, NAV } from "../data/pageIds";
 import { isEditable } from "../hooks/useOperatorRoutes";
@@ -179,7 +180,18 @@ export function CommandPalette() {
       for (const layout of LAYOUTS) {
         add(`layout-${layout.id}`, `layout — ${layout.label}`, () => update({ layout: layout.id }));
       }
-      for (const fx of FX) {
+      // The three named presets, applied the way a pasted code is — this is
+      // the route a visitor has to them, since the siteconfig panel is
+      // operator-only and the palette is not.
+      for (const preset of PRESETS) {
+        add(`preset-${preset.id}`, `preset — ${preset.name}`, () => {
+          const shared = decodeShareCode(preset.shareCode);
+          if (shared) update(shared);
+        });
+      }
+      // PICKABLE_FX, not FX: the array carries hidden entries that hold a
+      // share-code index without being offered as a choice.
+      for (const fx of PICKABLE_FX) {
         add(`fx-${fx.id}`, `background — ${fx.label}`, () => update({ fx: fx.id }));
       }
       TYPESETS.forEach((typeset, index) =>

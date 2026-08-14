@@ -13,6 +13,145 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-14 — The HUD pass: thirteen layouts upgraded, a fourteenth added
+
+From a written proposal the client approved in full ("I'll trust you for everything"). Two halves:
+an upgrade pass over the existing layouts, and three named presets, one of which needed new
+machinery. The proposal itself is an artifact; what follows is what actually shipped and the
+places where building it changed the plan.
+
+### The canvas was drawing ellipses
+
+`FxCanvas` rendered into a fixed 1600×1000 buffer that CSS stretched to fill. The stretch is
+anisotropic, so **every circle in `orbits`, `constellation`, `bokeh` and the tunnel's spokes
+rendered as an ellipse** whose eccentricity was whatever the viewport's aspect happened to be, and
+anything wider than 1600px was an upscale of a smaller image. The buffer now follows the element
+via `ResizeObserver`, capped at `min(devicePixelRatio, 2)` and a 2600px long edge.
+
+The context carries a base `setTransform(scale, …)` so every effect keeps working in **CSS pixels**.
+That part is load-bearing and easy to undo: `rain` sizes its columns off `w` at a 16px cell and
+`plasma` its grid at 26px, so handing them device pixels would silently double their density on a
+retina display. The per-frame `setTransform` also means a missed `ctx.restore()` — `rain` flips the
+world with `scale(-1, 1)` inside a save/restore pair — can no longer mirror the site permanently.
+
+### Two theme tokens, and one that is not a palette token
+
+`--panel` (translucency) and `--elev` (a unitless shadow multiplier) join `--radius` in `theme.ts`.
+Panel translucency was a literal `70%` inside `.v-block`, so every layout wanting something else
+restated the whole background.
+
+**Nothing in this pass needed a tenth colour on the palettes.** Every glass tint, lit edge and glow
+derives from `--surface`, `--line` and `--a1` through `color-mix`, which kept `palettes.ts` a pure
+data file and left share codes alone.
+
+Two floors on `--panel`, both deliberate:
+
+- **Calm goes to 92%.** Calm also hides the canvas, so there is nothing left to see through the
+  glass and a translucent panel with no backdrop is just a weaker edge — on exactly the palettes
+  calm exists for.
+- **`LOW_CONTRAST` palettes go to 80%.** On Peat, `--surface` and `--bg` are about four points of
+  luminance apart; halving that difference deletes the panel edge.
+
+Mosaic and the HUD therefore shift translucency with `--panel-shift` rather than setting `--panel`
+outright — an absolute value would drive straight through both floors. `.v-block` clamps the sum.
+
+### Glass turned out to be calm-safe by construction
+
+The expected accessibility problem — a translucent panel over a moving canvas — does not exist
+here, because calm sets `.v-canvas { opacity: 0 }`. A blur over a flat field is a flat field. Calm
+also strips `box-shadow` and `animation` globally with `!important`, so every glow added in this
+pass dies there on its own, and the parallax rigs are disabled in JS by the existing `config.calm`
+checks. The whole calm bill for Part A came to two decisions: the `--panel` floor above, and the
+contact sheet's duotone (below).
+
+### Three things that only showed up in a browser
+
+1. **A floated `::first-letter` is invisible inside a multi-column container.** Magazine's drop cap
+   reserved its box — the text wrapped around a two-line notch — and never painted the glyph.
+   Verified with the identical rule: visible at `columns: auto`, invisible at `columns: 3`. Since
+   Magazine is the only layout with columns, the obvious implementation could not work in the one
+   place it was wanted. It uses `initial-letter: 3 3` behind `@supports`, which does work there.
+2. **`.v-stage` scrolls vertically, which forces its `overflow-x` from `visible` to `auto`.** The
+   hero's stage-wash pseudo-element bled 14% past the hero on each side and gave the whole stage a
+   horizontal scrollbar — measured at exactly 91px. Every ambient-light pseudo-element in this pass
+   is now pinned to `0` horizontally and widened instead of moved outward.
+3. **The verification tab was `document.hidden`,** so the render loop was correctly parked and the
+   canvas never drew. The new effects were checked instead by running all fifteen against a
+   recording 2D context at three viewport shapes over forty frames — no NaN or Infinity
+   coordinates, no out-of-range alpha.
+
+### Guardrails
+
+Terminal's window gained a `backdrop-filter`, which is the change the layout was waiting for: a
+55%-opaque box over a *sharp* canvas is why its allowlist was only `rain`, `tunnel`, `off`. Blurred,
+the background arrives as diffused light, so `constellation`, `stars`, `aurora` and `scan` joined
+it. Two new blocks were added with the translucency drop — `plasma` on Deck, `plasma` and `rain` on
+Mosaic — because at 54–58% those fields read *through* body copy where at 70% they did not.
+
+Note what a guardrail is and is not: `isAllowed` is consulted by the randomiser only, and a
+hand-picked config or an applied share code goes straight past it. So anything that could make copy
+genuinely unreadable is handled in CSS — the translucency floors, Stack's shade pool — and never by
+adding a row to the table.
+
+### `hud`, and why it needed to be a new archetype
+
+Appended at index 13. Blocks sit on three z-planes and physically overlap, and the near plane's
+`backdrop-filter` blurs the plane behind it. That is genuine occlusion, and none of the thirteen
+existing layouts can express it — every one is a grid, a column or a track.
+
+The chamfered corners are a `clip-path`, and **`clip-path` clips `box-shadow` away**, so elevation
+here is a `drop-shadow` filter instead: a filter follows the clipped silhouette. `filter` makes an
+element a containing block for `position: fixed` descendants, which is safe on a content block and
+would not be on the grid or the stage.
+
+`TABLET_LAYOUTS` maps `hud → cinematic`, not `→ mosaic`. `adaptLayout` is a single lookup and does
+not chain, so mapping to a layout that itself collapses on that band would have rendered real
+six-column Mosaic at 700px — the thing the mapping exists to prevent. Phones fall through to Stack
+already.
+
+### The duels keep indices 12 and 13, as a hidden entry
+
+`FX` gained a `hidden?: boolean` and the two lightsword duels are back in the array at the two
+indices `catalog.ts` had promised them, flagged hidden. The decision that withdrew them is
+unchanged — they return to the picker when the client's eye has passed the ornament, and lifting
+the flag is the whole of "re-list them".
+
+They are in the array because **the array is a wire format**. Appending `scan` and `telemetry` to an
+eleven-entry list would have taken 12 and 13 and broken that promise, or worse, been "fixed" later
+by inserting the duels ahead of them and silently repointing every share code minted in between.
+`PICKABLE_FX` is what the panel, the command palette and the shuffle read; `FX` is what persistence
+and `decodeShareCode` read, because a hidden effect is unlisted, not invalid.
+
+**The 404's "12 background modes" line does not exist.** Two code comments claimed a copy
+correction would be needed here; the string is in neither `pages.ts` nor anywhere else, having gone
+with the vitals strip. No copy changed in this pass.
+
+### The contact sheet's duotone — the one judgement call left open
+
+Full greyscale plus an `--a1` field at `mix-blend-mode: color`, capped at 22%. The placeholder
+photographs were the one element on the site that did not recolour with the palette.
+
+`mix-blend-mode` is not something calm strips, so its behaviour there is a decision rather than a
+default: **it stays, at 10%.** Calm exists so body copy stays readable on the low-contrast palettes,
+and a photograph is not body copy; removing the tint outright would make calm the one mode where the
+images visibly disagree with the palette around them. Reversible in one line if the client disagrees.
+
+### Presets are operator-gated, which is a smaller claim than the proposal made
+
+`PRESETS` (`src/data/presets.ts`) defines each preset **structurally and derives its share code**,
+never as a typed string — a hardcoded `"N-7-5-3-5-3"` would be correct until something is appended
+to a catalogue and then silently wrong, and the wrongness would be a *working* code pointing at the
+wrong palette.
+
+They appear in the siteconfig panel and in the command palette's operator block. The proposal
+described them as something "a visitor can select or reach via share code"; that is not true of this
+codebase as it stands, and was not made true here. Every appearance control in the command palette
+is already behind `isOperator`, and `.v-paste` — the only place a share code can be applied — lives
+in the operator-only panel. Making presets public would be a product decision about who controls the
+site's look, not an implementation detail. Flagged, not taken.
+
+---
+
 ## 2026-08-14 — Deployed to production; TODO 2 proven in a real browser
 
 The overnight commits (`bf292e1` slot-endpoint password gate, `db9cb43` report-only CSP) went

@@ -1,6 +1,9 @@
 /**
- * The twelve canvas backgrounds (SPEC.md § "The twelve canvas backgrounds"),
- * ported from the prototype's startFx() (design/prototype.html:823).
+ * The canvas backgrounds. Twelve are the spec's (SPEC.md § "The twelve canvas
+ * backgrounds"), ported from the prototype's startFx()
+ * (design/prototype.html:823); the two duels and the two HUD effects are this
+ * codebase's own — see FX in src/data/catalog.ts for what is listed and what is
+ * merely holding an index.
  *
  * Every effect reads the live palette off the frame rather than closing over
  * one, which is what lets the canvas recolour smoothly during the .9s palette
@@ -498,6 +501,166 @@ const orbits: Effect = ({ ctx, w, h, p, t }) => {
   ctx.globalAlpha = 1;
 };
 
+/**
+ * 15. Sweep — a wireframe sphere with a radar arc running round it.
+ *
+ * Built for the HUD archetype: the one image the reference is actually about,
+ * and the reason FxCanvas stopped stretching a fixed buffer. A sweep drawn into
+ * a 1600×1000 buffer on a 21:9 display traced an ellipse and the "sphere" was an
+ * egg; both are round now because the buffer follows the element.
+ *
+ * Deterministic throughout — no cache, no seeded field. The blips are computed
+ * from their index, so the effect looks the same on every load and there is
+ * nothing to drop when the palette changes.
+ */
+const scan: Effect = ({ ctx, w, h, p, t, mx, my }) => {
+  // A shallow pointer drift, not a follow: the instrument is mounted, and a
+  // sphere that chases the cursor reads as a toy.
+  const cx = w / 2 + (mx - 0.5) * w * 0.05;
+  const cy = h / 2 + (my - 0.5) * h * 0.05;
+  const r = Math.min(w, h) * 0.4;
+
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = p.line;
+  ctx.globalAlpha = 0.85;
+
+  // Longitudes: ellipses whose width is the cosine of their own angle, which is
+  // what a set of great circles looks like seen edge-on.
+  for (let i = 0; i < 7; i++) {
+    const k = (i / 6) * Math.PI - Math.PI / 2;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, Math.abs(Math.cos(k)) * r, r, 0, 0, TAU);
+    ctx.stroke();
+  }
+
+  // Latitudes: flattened ellipses stepped down the sphere.
+  for (let j = 1; j < 6; j++) {
+    const f = j / 6;
+    const rr = Math.sin(f * Math.PI) * r;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy - r + f * 2 * r, rr, rr * 0.16, 0, 0, TAU);
+    ctx.stroke();
+  }
+
+  // Eight ticks outside the rim, the furniture that makes it an instrument.
+  ctx.strokeStyle = p.faint;
+  for (let a = 0; a < 8; a++) {
+    const ang = (a / 8) * TAU;
+    const c = Math.cos(ang);
+    const s = Math.sin(ang);
+    ctx.beginPath();
+    ctx.moveTo(cx + c * r * 1.06, cy + s * r * 1.06);
+    ctx.lineTo(cx + c * r * 1.13, cy + s * r * 1.13);
+    ctx.stroke();
+  }
+
+  // The sweep: one revolution per 6.4s of effect time, trailing a wedge that
+  // decays behind the leading edge rather than a hard sector.
+  const ang = (t / 6.4) * TAU;
+  ctx.strokeStyle = p.a1;
+  ctx.lineWidth = 2;
+  for (let s = 0; s < 26; s++) {
+    const back = ang - s * 0.035;
+    ctx.globalAlpha = 0.3 * (1 - s / 26);
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + Math.cos(back) * r, cy + Math.sin(back) * r);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 0.95;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(cx + Math.cos(ang) * r, cy + Math.sin(ang) * r);
+  ctx.stroke();
+
+  // Six contacts, lit as the sweep crosses them and fading over ~2s of the
+  // 6.4s revolution.
+  for (let b = 0; b < 6; b++) {
+    const bang = b * 1.047 + 0.4;
+    const brad = 0.26 + (((b * 7) % 10) / 10) * 0.6;
+    const since = ((ang - bang) % TAU + TAU) % TAU;
+    const life = Math.max(0, 1 - (since / TAU) * 6.4 / 2);
+    if (life <= 0) continue;
+
+    const bx = cx + Math.cos(bang) * r * brad;
+    const by = cy + Math.sin(bang) * r * brad;
+    ctx.fillStyle = [p.a1, p.a2, p.a3][b % 3];
+    ctx.globalAlpha = life;
+    ctx.beginPath();
+    ctx.arc(bx, by, 3.4, 0, TAU);
+    ctx.fill();
+    ctx.globalAlpha = life * 0.26;
+    ctx.beginPath();
+    ctx.arc(bx, by, 3.4 + (1 - life) * 24, 0, TAU);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+};
+
+/**
+ * 16. Telemetry — five oscilloscope lanes under a travelling playhead.
+ *
+ * The HUD's status strip. Each lane has its own two-term frequency so they
+ * never phase-lock into one shape, and the playhead brightens what it is
+ * passing, which is what makes it read as data arriving rather than as five
+ * sine waves.
+ *
+ * Deterministic, like `scan` — nothing to seed, nothing to cache.
+ */
+const telemetry: Effect = ({ ctx, w, h, p, t }) => {
+  const lanes = 5;
+  const gap = h / (lanes + 1);
+  const head = ((t * 0.13) % 1) * w;
+
+  for (let i = 0; i < lanes; i++) {
+    const y0 = gap * (i + 1);
+    const amp = gap * (0.13 + (i % 3) * 0.07);
+    const f1 = 0.004 + i * 0.0016;
+    const f2 = 0.011 + i * 0.0009;
+    const speed = 0.8 + i * 0.36;
+
+    // The lane's own baseline, so an idle stretch still reads as a channel.
+    ctx.strokeStyle = p.line;
+    ctx.globalAlpha = 0.5;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, y0);
+    ctx.lineTo(w, y0);
+    ctx.stroke();
+
+    ctx.strokeStyle = [p.a1, p.a2, p.a3][i % 3];
+    ctx.lineWidth = 1.6;
+    ctx.lineJoin = "round";
+
+    // Drawn in short runs rather than one path, so alpha can vary along the
+    // lane — brightest just behind the playhead, falling away ahead of it.
+    for (let x = 0; x < w; x += 8) {
+      const near = 1 - Math.min(1, Math.abs(x - head) / (w * 0.34));
+      ctx.globalAlpha = 0.12 + near * 0.5;
+      ctx.beginPath();
+      for (let s = 0; s <= 8; s += 4) {
+        const px = x + s;
+        const py =
+          y0 +
+          Math.sin(px * f1 + t * speed) * amp +
+          Math.sin(px * f2 - t * speed * 0.6) * amp * 0.45;
+        if (s === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    }
+  }
+
+  ctx.strokeStyle = p.fg;
+  ctx.globalAlpha = 0.32;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(head, 0);
+  ctx.lineTo(head, h);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+};
+
 // Duelling figures ------------------------------------------------------------
 
 /**
@@ -512,10 +675,16 @@ const orbits: Effect = ({ ctx, w, h, p, t }) => {
  * client has rejected two background duels from this side, and motion cannot be
  * verified in this environment, so the rebuilt fight ships in the ornament slot
  * first — the original request — and returns to the effect picker only after
- * the client's eye passes it there. When it does return, the two entries are
- * **appended** at indices 12 and 13 (`0-0-C-…`, `0-0-D-…`): the index is the
- * share-code wire format. Re-listing also puts the 404's "12 background modes"
- * line out of date, which is a copy correction needing sign-off.
+ * the client's eye passes it there.
+ *
+ * Since 2026-08-14 they hold indices 12 and 13 in `FX` (`0-0-C-…`, `0-0-D-…`)
+ * with `hidden: true`, rather than being absent from it — the array is the
+ * share-code wire format, and leaving a gap invited the next appended effect to
+ * take those two slots. Lifting the flag is the whole of "re-list them".
+ *
+ * The note that once stood here about the 404's "12 background modes" line was
+ * wrong: no such string exists in `pages.ts` or anywhere else. It went with the
+ * hero vitals strip. No copy correction is owed.
  */
 function duelling(left: FighterStyle, right: FighterStyle): Effect {
   return ({ ctx, w, h, p, t }, cache) => {
@@ -569,6 +738,8 @@ const EFFECTS: Record<Exclude<FxId, "off">, Effect> = {
   orbits,
   duel,
   duelholy,
+  scan,
+  telemetry,
 };
 
 /** Draw one frame. "None" clears; the rest get an opaque palette ground first. */

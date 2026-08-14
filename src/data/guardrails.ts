@@ -29,16 +29,51 @@ export interface Guardrail {
 
 export const GUARDRAILS: Guardrail[] = [
   { layout: "magazine", fx: ["rain", "plasma"] },
-  { layout: "terminal", fxNot: ["rain", "tunnel", "off"] },
+  /*
+   * Terminal's allowlist, loosened.
+   *
+   * It was `rain`, `tunnel`, `off` and nothing else, and the reason was that the
+   * window had no `backdrop-filter`: a 55%-opaque box over a *sharp* canvas made
+   * anything with structure unreadable behind mono body text. The window is
+   * frosted now (chrome.css), so the background arrives as diffused light and
+   * three more effects become legible behind it.
+   *
+   * Still excluded: `plasma` and `plasma`-like fields whose contrast survives a
+   * 20px blur, and `bokeh`, whose discs are large enough to read through frost
+   * as moving blotches under the text.
+   */
+  { layout: "terminal", fxNot: ["rain", "tunnel", "off", "constellation", "stars", "aurora", "scan"] },
   { layout: "terminal", type: ["condensed"] },
   { type: ["editorial"], pal: ["datamosh"] },
   { layout: "sidescroll", fx: ["rain", "plasma", "vessels", "bokeh"] },
   { layout: "radial", fx: ["plasma", "rain"] },
   { layout: "ledger", fx: ["plasma", "bokeh"] },
   { layout: "ledger", type: ["condensed"] },
-  { layout: "console", fxNot: ["rain", "tunnel", "off", "constellation"] },
+  { layout: "console", fxNot: ["rain", "tunnel", "off", "constellation", "telemetry"] },
   { layout: "marginalia", fx: ["rain", "plasma", "stars"] },
   { layout: "sheet", fx: ["rain", "plasma"] },
+
+  /*
+   * New, with the panel translucency drop (theme.ts `--panel`). At 70% opacity
+   * a card hid whatever was behind it; at 54–58% with a real blur, `plasma`'s
+   * moving dot field reads *through* body copy on the layouts whose panels grew
+   * more transparent rather than less.
+   *
+   * Mosaic takes `rain` as well: its large spans sit at the deepest
+   * translucency on the site outside the HUD, and a falling column behind a
+   * paragraph is legible enough through that to compete with it.
+   */
+  { layout: "deck", fx: ["plasma"] },
+  { layout: "mosaic", fx: ["plasma", "rain"] },
+
+  /*
+   * The HUD's allowlist, Terminal's in spirit. Three overlapping translucent
+   * planes are the most demanding thing on the site to read through, so only
+   * the effects that stay quiet under two layers of frost are allowed: the two
+   * built for it, plus the two structured fields that already survive being
+   * blurred.
+   */
+  { layout: "hud", fxNot: ["scan", "telemetry", "tunnel", "constellation", "off"] },
 ];
 
 export interface Combination {

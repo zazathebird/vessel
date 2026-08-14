@@ -7,10 +7,11 @@ import { publishable } from "../config/siteConfig";
 import { useConfig } from "../config/ConfigContext";
 import { saveCalmPreference } from "../config/persistence";
 import { decodeShareCode, encodeShareCode } from "../config/shareCode";
-import { FX, LAYOUTS, MODES, SCOPES, TYPESETS } from "../data/catalog";
+import { LAYOUTS, MODES, PICKABLE_FX, SCOPES, TYPESETS } from "../data/catalog";
 import type { ScopeId } from "../data/catalog";
 import { ORNAMENTS } from "../data/ornaments";
 import { PALETTES } from "../data/palettes";
+import { PRESETS } from "../data/presets";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 
 /**
@@ -200,6 +201,31 @@ export function SiteConfigPanel() {
         </div>
       </section>
 
+      {/* Presets: a whole look under a name. Applied through decodeShareCode so
+          the behaviour is identical to pasting the code below or applying a
+          saved setup — one path, including the pin to Static. */}
+      <section className="v-panel-section">
+        <h2 className="v-panel-label">Presets — {PRESETS.length}</h2>
+        <div className="v-chip-row">
+          {PRESETS.map((preset) => (
+            <button
+              key={preset.id}
+              type="button"
+              className="chip"
+              title={preset.note}
+              onClick={() => {
+                const shared = decodeShareCode(preset.shareCode);
+                if (!shared) return;
+                update(shared);
+                say(preset.name);
+              }}
+            >
+              {preset.name}
+            </button>
+          ))}
+        </div>
+      </section>
+
       <section className="v-panel-section">
         <h2 className="v-panel-label">Layout — {LAYOUTS.length}</h2>
         <div className="v-chip-row">
@@ -221,9 +247,11 @@ export function SiteConfigPanel() {
       </section>
 
       <section className="v-panel-section">
-        <h2 className="v-panel-label">Background — {FX.length}</h2>
+        {/* PICKABLE_FX on both the count and the list, so the number is the number
+            of chips below it rather than the length of the wire format. */}
+        <h2 className="v-panel-label">Background — {PICKABLE_FX.length}</h2>
         <div className="v-chip-row">
-          {FX.map((effect) => (
+          {PICKABLE_FX.map((effect) => (
             <button
               key={effect.id}
               type="button"

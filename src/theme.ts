@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 
-import { PALETTES } from "./data/palettes";
+import { LOW_CONTRAST, PALETTES } from "./data/palettes";
 import { TYPESETS } from "./data/catalog";
 import type { LayoutId } from "./data/catalog";
 import { BAND_TOKENS } from "./config/bands";
@@ -25,6 +25,9 @@ const LAYOUT_RADIUS: Partial<Record<LayoutId, string>> = {
   ledger: "0px",
   marginalia: "0px",
   stack: "0px",
+  // The HUD's corners are cut, not rounded — the chamfer is a clip-path in
+  // layouts.css and a radius under it would fight the polygon.
+  hud: "0px",
 };
 
 /**
@@ -39,6 +42,52 @@ const LAYOUT_H1: Partial<Record<LayoutId, string>> = {
   ledger: "clamp(30px, 4vw, 52px)",
   console: "clamp(30px, 4vw, 52px)",
   marginalia: "clamp(32px, 4.4vw, 60px)",
+  // Smaller than the baseline: the HUD's subject is the panel field, and a 90px
+  // headline over it turns the panels into a caption for the title.
+  hud: "clamp(30px, 4.2vw, 58px)",
+};
+
+/**
+ * Panel translucency and elevation.
+ *
+ * `--panel` is how much of `--surface` survives in a card's background; the
+ * rest is transparent, and `backdrop-filter` turns whatever the canvas is
+ * doing behind it into diffused light. It was a literal `70%` inside
+ * `.v-block`, which meant every layout wanting something else had to restate
+ * the whole background — the same reason `--radius` is a token and not a
+ * literal.
+ *
+ * `--elev` is a unitless multiplier on the drop shadow, so a layout can say
+ * "nearer" without knowing the shadow's geometry. Mosaic drives it per span.
+ *
+ * Two floors, both load-bearing:
+ *
+ *  - **Calm goes nearly opaque.** Calm also hides the canvas, so there is
+ *    nothing left to see through the glass, and a translucent panel with no
+ *    backdrop is just a weaker edge — on exactly the palettes calm exists for.
+ *  - **The low-contrast palettes go opaque too.** On Peat, `--surface` and
+ *    `--bg` are about four points of luminance apart. Halve that difference
+ *    and the panel edge stops existing.
+ */
+const DEFAULT_PANEL = 58;
+const CALM_PANEL = 92;
+const LOW_CONTRAST_PANEL = 80;
+
+const LAYOUT_PANEL: Partial<Record<LayoutId, number>> = {
+  deck: 54,
+  sidescroll: 56,
+  terminal: 62,
+  sheet: 66,
+  hud: 74,
+};
+
+const DEFAULT_ELEV = 1;
+
+const LAYOUT_ELEV: Partial<Record<LayoutId, number>> = {
+  deck: 1.25,
+  sidescroll: 1.1,
+  sheet: 0.9,
+  hud: 1.3,
 };
 
 function radiusFor(layout: LayoutId, band: Band, calm: boolean): string {
@@ -76,6 +125,14 @@ export function themeVars(config: Config, layout: LayoutId, band: Band): CSSProp
     "--font-mono": type.mono,
 
     "--radius": radiusFor(layout, band, calm),
+    "--panel": `${
+      calm
+        ? CALM_PANEL
+        : LOW_CONTRAST.includes(palette.id)
+          ? Math.max(LAYOUT_PANEL[layout] ?? DEFAULT_PANEL, LOW_CONTRAST_PANEL)
+          : LAYOUT_PANEL[layout] ?? DEFAULT_PANEL
+    }%`,
+    "--elev": String(calm ? 0 : LAYOUT_ELEV[layout] ?? DEFAULT_ELEV),
 
     "--page-padding": tokens.pagePadding,
     "--header-padding": tokens.headerPadding,

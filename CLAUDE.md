@@ -77,6 +77,24 @@ properties on one wrapper element, plus class names (`layout-*`, `band-*`, `is-c
 branches on. **No component should contain a literal colour** — a palette change has to be a
 variable swap, which is what makes the 0.9s palette bleed work.
 
+Three of those tokens carry rules rather than values:
+
+- **`--panel`** is how much of `--surface` survives in a card's background, and it has two floors
+  that are accessibility decisions, not tuning. Calm raises it to 92% (calm also hides the canvas,
+  so translucency buys nothing there and costs the panel its edge) and the `LOW_CONTRAST` palettes
+  to 80% (on Peat, `--surface` and `--bg` are four points of luminance apart to begin with).
+- **`--panel-shift`** is how a layout adjusts translucency per block — Mosaic by span area, the HUD
+  by plane. **Never set `--panel` directly on a block**: an absolute value drives through both
+  floors above. `.v-block` clamps the sum.
+- **`--elev`** is a unitless multiplier on the drop shadow, so a layout can say "nearer" without
+  knowing the shadow's geometry.
+
+`--mx` / `--my` are the shared pointer light: normalised coordinates written to the wrapper by
+`useMotionSystems` on every pointermove and registered with `@property` so they are typed and
+interpolate. Split, Mosaic and the HUD all hang their light and parallax off these two numbers, so
+every layout's light agrees with every other's instead of each growing its own listener. They stop
+being written in calm, and nothing reads them there.
+
 Per-frame values (mouse position, scroll velocity, card element list, keystroke buffer, drag origin,
 scramble token) belong in refs, outside React state. The spec is explicit about this.
 
@@ -148,7 +166,7 @@ accident:
 `box-shadow` is the one property both systems want and it is given the fast timing deliberately; the
 cost is documented at the top of the file.
 
-Two CSS gotchas that have already bitten once each, both worth knowing before editing styles:
+Five CSS gotchas that have already bitten once each, all worth knowing before editing styles:
 
 - **`band-*` and `layout-*` are on the same element.** `.band-phone .layout-stack` matches nothing;
   it has to be `.band-phone.layout-stack`. Every phone override was silently dead until this was
@@ -157,6 +175,19 @@ Two CSS gotchas that have already bitten once each, both worth knowing before ed
   the style attribute, so a forwards fill would leave `v-rise`'s `transform: translateY(0)` owning
   the card for ever and the cursor-lean tilt — which is written to `el.style.transform` — would
   never render. The stagger only needs the from-state held during the delay.
+- **`.v-stage` scrolls vertically, so its `overflow-x` computes to `auto`, not `visible`** — one
+  axis cannot be visible while the other is not. Anything hanging off the side of a child, a
+  pseudo-element included, gives the whole stage a horizontal scrollbar. The hero's stage wash did
+  exactly that at `left: -14%`, for a measured 91px. Every ambient-light pseudo-element is pinned to
+  `0` horizontally and widened instead of bled outward.
+- **A floated `::first-letter` is invisible inside a multi-column container.** Chrome reserves the
+  float's box — the text wraps around a notch — and never paints the glyph. Magazine is the only
+  layout with `columns`, so it is the only place a drop cap was wanted and the only place the usual
+  implementation cannot work. It uses `initial-letter: 3 3` behind `@supports`, which does.
+- **`clip-path` clips `box-shadow` away.** The HUD's chamfered corners are a `clip-path`, so its
+  elevation is a `drop-shadow` *filter*, which follows the clipped silhouette. Note the second
+  consequence: `filter` makes an element a containing block for `position: fixed` descendants — safe
+  on a content block, not safe if it ever moves to the grid or the stage.
 
 ## Constraints that are decisions, not oversights
 
@@ -216,6 +247,28 @@ ones most likely to be "fixed" by accident:
   panel's **Leave operator mode** button (same day) is the counterpart: it signs the session out,
   which collapses the tabs, the panel and the door in one motion, and clears `unlocked` so the
   header's siteconfig button retires with them
+- **The FX canvas renders in CSS pixels, into a buffer sized to its own box.** It used to render
+  into a fixed 1600×1000 and let CSS stretch it, which drew every circle in `orbits`,
+  `constellation`, `bokeh` and the tunnel's spokes as an ellipse. `FxCanvas` now sizes the buffer
+  from a `ResizeObserver` at `min(devicePixelRatio, 2)` capped to a 2600px long edge, and sets a
+  base `setTransform` each frame so effects keep receiving CSS pixels. **That last part is
+  load-bearing**: `rain` sizes its columns off `w` at a 16px cell and `plasma` its grid at 26px, so
+  handing them device pixels silently doubles their density on a retina display. The per-frame
+  `setTransform` also means a missed `ctx.restore()` — `rain` flips the world inside a save/restore
+  pair — can no longer mirror the site permanently.
+- **`FX` is the wire format; `PICKABLE_FX` is the menu.** Entries carry an optional `hidden`, and
+  the two lightsword duels sit at their reserved indices 12 and 13 flagged hidden — the withdrawal
+  decision is unchanged and lifting the flag is the whole of "re-list them". Anything offering a
+  choice to a human (the panel, the command palette, the shuffle) reads `PICKABLE_FX`; anything
+  *resolving* a stored or shared value reads `FX`, because a hidden effect is unlisted, not invalid.
+  `scan` and `telemetry` are appended at 14 and 15.
+- **Presets define themselves structurally and derive their share code** (`src/data/presets.ts`). A
+  hardcoded `"N-7-5-3-5-3"` stays correct until something is appended to a catalogue and then goes
+  silently wrong — and the wrongness is a *working* code pointing at the wrong palette, which is the
+  exact failure the wire-format discipline exists to prevent. `encodeShareCode` reads the same
+  indices the decoder will, so the two cannot disagree. They are operator-gated, like every other
+  appearance control in the command palette; `.v-paste` is in the operator-only panel, so share
+  codes are in practice operator-only too. Making them public is a product decision, not a fix.
 - **Share codes are base-36 and `FX` order is a wire format.** Effect index 12 is `C`, not `12`;
   `0-0-12-0-7-0` parses `12` as 38, falls through `FX[38] ?? FX[0]` and applies the default effect (id `vessels`,
   labelled "Branches" since the de-branding), which looks exactly like a failed deploy. Append to
@@ -288,6 +341,27 @@ All deliberate. Add to this list rather than silently diverging.
    (`.v-tile-img`, `chrome.css`) so the palettes stay in charge. Temporary until the operator's
    own photos exist; the spec's *no images* rule still holds for design assets — these fill
    slots that were always destined for photographs.
+12. **The contact sheet duotones its photographs, and keeps doing so in calm** (2026-08-14). Full
+   greyscale plus an `--a1` field at `mix-blend-mode: color`, capped at 22% — the placeholder
+   photographs were the one element on the site that did not recolour with the palette. `calm` does
+   not strip `mix-blend-mode`, so its behaviour there is a decision: **it stays, at 10%.** Calm
+   exists so body copy holds up on the low-contrast palettes and a photograph is not body copy;
+   removing the tint would make calm the one mode where the images disagree with the palette around
+   them. The one item in the HUD pass the client has not explicitly ruled on.
+13. **There are fourteen layouts, twenty-five palettes and sixteen effects** (2026-08-14, from the
+   approved HUD proposal). The additions: the `hud` archetype at layout index 13, the Cold Open
+   palette at index 24, and `scan` / `telemetry` at effect indices 14 and 15. All appended, never
+   inserted.
+
+   `hud` is the only archetype that is not a grid, a column or a track: blocks sit on three z-planes
+   and physically overlap, and the near plane's `backdrop-filter` blurs the plane behind it. That
+   occlusion is the point — scale and shadow only imply depth. `TABLET_LAYOUTS` maps it to
+   **Cinematic, not Mosaic**: `adaptLayout` is a single lookup and does not chain, so mapping to a
+   layout that itself collapses on that band would render real six-column Mosaic at 700px.
+
+   Cold Open is the first palette not from the prototype, and the only one designed against a
+   *role*: `a3` is already the site's danger token (`.v-btn-danger`, the account error border), so
+   there it is the alarm colour and the only warm thing on screen.
 
 ## Copy changes, approved by the client
 

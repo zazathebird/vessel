@@ -26,7 +26,7 @@ export function useMotionSystems({
   /** Changes whenever the card list does, so the tilt targets are re-collected. */
   gridKey: string;
 }): void {
-  const { config, band, saver } = useConfig();
+  const { config, band, layout, saver } = useConfig();
   const cardsRef = useRef<HTMLElement[]>([]);
 
   const live = useRef({ calm: config.calm, cursor: config.cursor, saver, tilt: SUPPORTS_TILT[band] });
@@ -47,6 +47,54 @@ export function useMotionSystems({
     for (const card of cardsRef.current) card.style.transform = "";
   }, [band, config.calm, gridKey]);
 
+  /*
+   * Stack's snap arrival: each block's kicker rule draws itself as the block
+   * reaches its snap point.
+   *
+   * An IntersectionObserver rather than a scroll handler, and the one thing in
+   * this file that legitimately owns a class instead of a ref. The spec's
+   * refs-not-state rule is about values that change at frame rate; this is a
+   * discrete state change a handful of times per page, and the observer already
+   * batches it off the main scroll path.
+   *
+   * Desk only, and never in calm: on phones Stack is the collapse target for
+   * almost everything and renders as ordinary cards, where a rule drawing on
+   * scroll would be noise rather than arrival.
+   */
+  useEffect(() => {
+    if (layout !== "stack" || band !== "desk" || config.calm) return;
+    if (typeof IntersectionObserver === "undefined") return;
+    const cards = cardsRef.current;
+    if (!cards.length) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          entry.target.classList.toggle("is-onstage", entry.isIntersecting);
+        }
+      },
+      { root: stageRef.current, threshold: 0.55 },
+    );
+    for (const card of cards) observer.observe(card);
+
+    return () => {
+      observer.disconnect();
+      // Leave nothing behind: a card frozen mid-draw after a layout change
+      // would keep a half-length rule for ever.
+      for (const card of cards) card.classList.remove("is-onstage");
+    };
+  }, [layout, band, config.calm, gridKey, stageRef]);
+
+  // Recentre the shared light when calm takes over, so a layout that reads it
+  // cannot be left lit from wherever the pointer happened to be sitting.
+  useEffect(() => {
+    if (!config.calm) return;
+    const host = hostRef.current;
+    if (!host) return;
+    host.style.removeProperty("--mx");
+    host.style.removeProperty("--my");
+  }, [hostRef, config.calm]);
+
   useEffect(() => {
     const onMove = (event: PointerEvent) => {
       const host = hostRef.current;
@@ -57,6 +105,22 @@ export function useMotionSystems({
       motion.mouse = { x: x / rect.width, y: y / rect.height };
 
       const { calm, cursor, saver: sleeping, tilt } = live.current;
+
+      // The shared pointer light. Split, Mosaic and the HUD hang a single
+      // light source off these two numbers, and the HUD's planes parallax
+      // from them — one input, so every layout's light agrees with every
+      // other's rather than each growing its own listener.
+      //
+      // Written to the *host*, not the stage: it is the element the pointer is
+      // measured against, and a stage-level write would be re-applied on every
+      // layout change. Cheap in absolute terms but not free — a custom
+      // property write invalidates style on the subtree, unlike the glow's
+      // compositor-only transform below — so it stops in calm, where nothing
+      // reads them.
+      if (!calm) {
+        host.style.setProperty("--mx", (x / rect.width).toFixed(4));
+        host.style.setProperty("--my", (y / rect.height).toFixed(4));
+      }
 
       const glow = glowRef.current;
       if (glow) {

@@ -1,4 +1,4 @@
-import { FX, LAYOUTS, TYPESETS } from "../data/catalog";
+import { LAYOUTS, PICKABLE_FX, TYPESETS } from "../data/catalog";
 import { ORNAMENTS } from "../data/ornaments";
 import { PALETTES } from "../data/palettes";
 import { isAllowed } from "../data/guardrails";
@@ -32,7 +32,9 @@ export function roll(config: Config): RollResult | null {
     const candidate: RollResult = {
       pal: scope.pal ? pickIndex(PALETTES.length) : config.pal,
       layout: scope.layout ? pick(LAYOUTS).id : config.layout,
-      fx: scope.fx ? pick(FX).id : config.fx,
+      // PICKABLE_FX: a withdrawn effect is not a legal roll, even though a
+      // share code carrying it still applies.
+      fx: scope.fx ? pick(PICKABLE_FX).id : config.fx,
       ornament: scope.ornament ? pick(ORNAMENTS).id : config.ornament,
       type: scope.type ? pickIndex(TYPESETS.length) : config.type,
       grain: scope.toggles ? Math.random() > 0.35 : config.grain,

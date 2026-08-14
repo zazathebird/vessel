@@ -31,6 +31,14 @@ const TABLET_LAYOUTS: Partial<Record<LayoutId, LayoutId>> = {
   magazine: "cinematic",
   ledger: "cinematic",
   radial: "cinematic",
+  // The HUD's three overlapping planes need room on both axes; at 700px the
+  // near plane covers the far one instead of occluding a corner of it.
+  //
+  // Cinematic, not Mosaic, even though Mosaic is the closer relative:
+  // adaptLayout is a single lookup and does not chain, so mapping here to a
+  // layout that itself collapses on this band would render real six-column
+  // Mosaic at tablet width — which is the thing that mapping exists to prevent.
+  hud: "cinematic",
 };
 
 /** The layout actually rendered at this width, which may differ from the stored choice. */

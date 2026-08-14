@@ -33,11 +33,57 @@
   text-transform: none;
 }
 
+/* Three columns and, until now, nothing between them. A column rule is the one
+   thing that makes this read as a printed page rather than as text that
+   happens to be in three parts; the gap widens to give it room. */
 .layout-magazine .v-grid {
   display: block;
   columns: 3;
-  column-gap: 26px;
+  column-gap: 34px;
+  column-rule: 1px solid var(--line);
   padding-top: 26px;
+}
+
+/*
+ * A drop cap on the opening block, and only there — a second one further down
+ * the page is an ornament rather than an entry point.
+ *
+ * `initial-letter`, not the classic `float: left` + large `font-size`. The
+ * float version is broken in exactly the one context this layout provides:
+ * inside a multi-column container Chrome reserves the float's box — the text
+ * wraps around a two-line notch — and never paints the glyph in it. Verified in
+ * a browser 2026-08-14: identical rule, cap visible with `columns: auto`,
+ * invisible at `columns: 3`. So Magazine, the only layout with columns, was the
+ * only place the obvious implementation could not work.
+ *
+ * Behind `@supports` because a browser without `initial-letter` should get an
+ * ordinary first letter rather than a reserved gap — the same failure the float
+ * produced.
+ */
+@supports (initial-letter: 3 3) or (-webkit-initial-letter: 3 3) {
+  .layout-magazine .v-block:first-child p::first-letter {
+    -webkit-initial-letter: 3 3;
+    initial-letter: 3 3;
+    font-family: var(--font-display);
+    padding-right: 10px;
+    color: var(--a1);
+  }
+}
+
+/*
+ * Magazine reads the canvas as stock the type is printed on, not as something
+ * happening behind it: the effect drops back and the vignette stops closing in.
+ *
+ * `:not(.is-calm)` takes this to 0-3-0 deliberately. At 0-2-0 it would tie with
+ * `.is-calm .v-canvas` in chrome.css and win on import order, which would leave
+ * the canvas running in calm on this one layout.
+ */
+.layout-magazine:not(.is-calm) .v-canvas {
+  opacity: 0.28;
+}
+
+.layout-magazine .v-vignette {
+  background: radial-gradient(150% 120% at 50% 8%, transparent 52%, var(--bg) 98%);
 }
 
 .layout-magazine .v-block {
@@ -66,17 +112,128 @@
   flex: var(--deck-card);
   scroll-snap-align: center;
   min-height: 330px;
+  border-color: color-mix(in oklab, var(--a1) 14%, var(--line));
 }
 
 .band-phone.layout-deck .v-block {
   min-height: auto;
 }
 
+/*
+ * Depth bound to travel. The cards physically move through the viewport, so the
+ * one at the snap centre stands forward and its neighbours fall back — driven
+ * by the browser from scroll position, with no JavaScript and no listener.
+ *
+ * Two animations on one element: the existing entrance keeps its own timeline
+ * (`auto`) and the depth pass runs on a view timeline. The longhands are spelt
+ * out rather than using the `animation` shorthand because the shorthand would
+ * reset `animation-delay`, which ContentBlock writes to the style attribute for
+ * the stagger.
+ *
+ * `both` on the depth pass is required — a view-timeline animation must hold
+ * its end states outside the range — and is safe here for the reason the
+ * `backwards` note on .v-block explains: nothing writes `scale` or `opacity` to
+ * these elements imperatively. The cursor-lean writes `transform`, which this
+ * does not touch.
+ */
+@supports (animation-timeline: view()) {
+  .layout-deck .v-block {
+    animation-name: v-rise, v-deck-depth;
+    animation-duration: 0.5s, auto;
+    animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1), linear;
+    animation-fill-mode: backwards, both;
+    animation-timeline: auto, view(inline);
+    animation-range: normal, entry 4% exit 96%;
+  }
+
+  @keyframes v-deck-depth {
+    0% {
+      scale: 0.9;
+      opacity: 0.5;
+    }
+    50% {
+      scale: 1;
+      opacity: 1;
+    }
+    100% {
+      scale: 0.9;
+      opacity: 0.5;
+    }
+  }
+
+  /*
+   * base.css collapses animation-duration to 0.001ms under reduced motion,
+   * which neutralises every other animation on the site. It does **not**
+   * neutralise this one: a scroll-driven animation is progress-driven and
+   * ignores duration entirely. So the timeline has to be taken away by hand.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    .layout-deck .v-block {
+      animation-name: v-rise;
+      animation-timeline: auto;
+    }
+  }
+
+  /* Calm means no ambient motion, and depth that changes as you scroll is
+     ambient motion. */
+  .is-calm.layout-deck .v-block {
+    animation-name: none;
+    animation-timeline: auto;
+  }
+}
+
 /* Split ------------------------------------------------------------------- */
 
 .layout-split .v-grid {
+  position: relative;
   grid-template-columns: repeat(2, 1fr);
   gap: 22px;
+}
+
+/*
+ * Split's identity is the pair, so the pair is made to mean something: the
+ * second of each two sits on a further plane. `translate`, never `transform` —
+ * transform belongs to the cursor-lean, and these two must be able to compose.
+ */
+.layout-split .v-block:nth-child(even) {
+  translate: 0 14px;
+  --elev: 0.68;
+}
+
+/*
+ * The shared pointer light. One source behind both columns, positioned from the
+ * --mx/--my written by useMotionSystems, so moving the pointer lights one
+ * panel's edge and lets the other fall back. Depth from a light source rather
+ * than from another degree of rotation.
+ *
+ * The coordinates are normalised against the whole wrapper and applied within
+ * the grid, so the mapping is approximate vertically — the grid is shorter than
+ * the viewport, so the light runs ahead of the pointer. That is why it is wide
+ * and weak: at this size the imprecision reads as a light being large, not as a
+ * light being wrong. The fallbacks keep it centred where @property is
+ * unsupported.
+ *
+ * z-index: -1 stays inside .v-grid's own stacking context (position: relative,
+ * z-index: 5), so it cannot slide under the canvas or over the header.
+ */
+.layout-split .v-grid::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  /* Zero on the horizontal axis: .v-stage scrolls vertically, which forces its
+     overflow-x from visible to auto, so anything hanging off the side — a
+     pseudo-element included — gives the stage a horizontal scrollbar. */
+  inset: -14% 0;
+  pointer-events: none;
+  background: radial-gradient(
+    40% 48% at calc(var(--mx, 0.5) * 100%) calc(var(--my, 0.5) * 100%),
+    color-mix(in oklab, var(--a1) 11%, transparent),
+    transparent 72%
+  );
+}
+
+.is-calm.layout-split .v-grid::before {
+  display: none;
 }
 
 /* Radial orbit ------------------------------------------------------------ */
@@ -93,35 +250,79 @@
 /* Mosaic ------------------------------------------------------------------ */
 
 .layout-mosaic .v-grid {
+  position: relative;
   grid-template-columns: repeat(6, 1fr);
   grid-auto-rows: minmax(120px, auto);
   gap: 16px;
 }
 
-/* A repeating six-step span pattern: 4×2, 2×1, 2×2, 4×1, 3×2, 3×1. */
+/*
+ * A repeating six-step span pattern: 4×2, 2×1, 2×2, 4×1, 3×2, 3×1 — now with
+ * elevation bound to area. Every tile used to sit on one plane, so a 4×2 beside
+ * a 2×1 read as a broken grid; with the large spans nearer (deeper frost, taller
+ * shadow) and the small ones flat and opaque, the same arrangement becomes a
+ * composition with a foreground.
+ *
+ * `--panel-shift` rather than `--panel`, deliberately: theme.ts raises `--panel`
+ * toward opaque on the low-contrast palettes and in calm, and an absolute value
+ * here would drive straight through both floors. A shift composes with them, and
+ * .v-block clamps the result.
+ */
 .layout-mosaic .v-block:nth-child(6n + 1) {
   grid-column: span 4;
   grid-row: span 2;
+  --panel-shift: -9%;
+  --elev: 1.5;
 }
 .layout-mosaic .v-block:nth-child(6n + 2) {
   grid-column: span 2;
   grid-row: span 1;
+  --panel-shift: 16%;
+  --elev: 0.55;
 }
 .layout-mosaic .v-block:nth-child(6n + 3) {
   grid-column: span 2;
   grid-row: span 2;
+  --panel-shift: 0%;
+  --elev: 1.1;
 }
 .layout-mosaic .v-block:nth-child(6n + 4) {
   grid-column: span 4;
   grid-row: span 1;
+  --panel-shift: 9%;
+  --elev: 0.8;
 }
 .layout-mosaic .v-block:nth-child(6n + 5) {
   grid-column: span 3;
   grid-row: span 2;
+  --panel-shift: -5%;
+  --elev: 1.3;
 }
 .layout-mosaic .v-block:nth-child(6n + 6) {
   grid-column: span 3;
   grid-row: span 1;
+  --panel-shift: 13%;
+  --elev: 0.7;
+}
+
+/* One light over the whole mosaic, caught by the panels' borders as it passes —
+   the same source Split uses, at a wider setting for a bigger field. */
+.layout-mosaic .v-grid::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  /* Zero horizontally, for the overflow-x reason Split documents above. */
+  inset: -10% 0;
+  pointer-events: none;
+  background: radial-gradient(
+    34% 40% at calc(var(--mx, 0.5) * 100%) calc(var(--my, 0.5) * 100%),
+    color-mix(in oklab, var(--a1) 10%, transparent),
+    transparent 74%
+  );
+}
+
+.is-calm.layout-mosaic .v-grid::before {
+  display: none;
 }
 
 /* Ledger ------------------------------------------------------------------ */
@@ -142,22 +343,76 @@
 }
 
 .layout-ledger .v-block {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(180px, 0.9fr) 2.1fr;
   gap: 26px;
   align-items: start;
-  padding: 18px 4px;
+  padding: 18px 4px 18px 16px;
   border: 0;
   border-bottom: 1px solid var(--line);
   border-radius: 0;
   background: transparent;
   backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   box-shadow: none;
 }
 
-/* Banding on the odd-indexed rows — the second, fourth, sixth block. */
+/*
+ * Banding on the odd-indexed rows — the second, fourth, sixth block — now
+ * fading out to the right, so it reads as ruled paper rather than as a striped
+ * table. Ledger is a table and gets denser, not deeper: no glass here.
+ */
 .layout-ledger .v-block:nth-child(even) {
-  background: color-mix(in oklab, var(--surface) 34%, transparent);
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklab, var(--surface) 42%, transparent),
+    transparent 76%
+  );
+}
+
+/* The internal column boundary the two-column grid only implied. Positioned at
+   the same fraction the template describes, so the rule and the columns agree
+   at any width the layout survives. */
+.layout-ledger .v-block::after {
+  content: "";
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: clamp(196px, calc(16px + (100% - 16px - 26px) * 0.3), 42%);
+  width: 1px;
+  background: color-mix(in oklab, var(--line) 70%, transparent);
+  pointer-events: none;
+}
+
+/*
+ * The hover rail: the one interaction state this layout has never had. A 2px
+ * bar scaling up from the left edge — `scale`, on a pseudo-element, with the
+ * colour static — so it belongs to the fast layer without dragging .v-block's
+ * panel glow onto the fast timing with it (see interaction.css).
+ */
+.layout-ledger .v-block::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--a1);
+  box-shadow: 6px 0 16px -6px var(--a1);
+  transform-origin: center;
+  scale: 1 0;
+  transition: scale var(--t-hover, 140ms) var(--ease-ui, ease);
+  pointer-events: none;
+}
+
+.layout-ledger .v-block:hover::before {
+  scale: 1 1;
+}
+
+.band-phone.layout-ledger .v-block::after,
+.band-tablet.layout-ledger .v-block::after {
+  display: none;
 }
 
 /* Ledger collapses to Cinematic below 900px, so this only guards against a
@@ -208,6 +463,204 @@
   border-left: 0;
 }
 
+/*
+ * The margin gets its notes.
+ *
+ * The layout is named for marginalia and had none: the kicker and index sat
+ * inline above each block exactly as in every other layout, and the gutter held
+ * a hairline and nothing else. Above 1100px the block becomes a two-column grid
+ * with the head in the margin, where the name says it should be.
+ *
+ * Gated on width rather than on band because the measure is fixed at 720px and
+ * centred — the question is whether there is room beside it, which the desk
+ * band alone does not answer at 940px.
+ */
+@media (min-width: 1100px) {
+  /*
+   * The measure does not move. The block hangs further left instead: at
+   * margin-left -148px the 30px padding and the 92px + 26px gutter column land
+   * the prose column back at exactly 0, which is where the 720px measure's left
+   * edge already was. The hairline goes with the block, out into the margin
+   * where it belongs.
+   */
+  .layout-marginalia .v-block {
+    display: grid;
+    grid-template-columns: 92px 1fr;
+    column-gap: 26px;
+    align-items: start;
+    margin-left: -148px;
+    padding-left: 30px;
+  }
+
+  /* A marginal note is set narrow, stacked and ranged right against the text it
+     annotates — not as the row of chrome it is in every other layout. */
+  .layout-marginalia .v-block-head {
+    grid-column: 1;
+    grid-row: 1;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+    text-align: right;
+    padding-top: 3px;
+  }
+
+  .layout-marginalia .v-kicker {
+    flex-direction: row-reverse;
+    line-height: 1.5;
+  }
+
+  .layout-marginalia .v-block > *:not(.v-block-head) {
+    grid-column: 2;
+  }
+}
+
+/* HUD ---------------------------------------------------------------------
+ *
+ * The fourteenth archetype, and the only one that is not a grid, a column or a
+ * track. Blocks sit on three z-planes and physically overlap: the near plane's
+ * backdrop-filter blurs the plane behind it, which is genuine occlusion. Scale
+ * and shadow only *imply* depth; one panel eating the corner of another is what
+ * actually sells it, and none of the thirteen layouts above can express that.
+ *
+ * Three things are worth knowing before editing this:
+ *
+ *  - **The chamfer is a clip-path, and clip-path clips box-shadow away.** So
+ *    elevation is a `drop-shadow` filter here rather than the `--elev` box
+ *    shadow every other layout uses — a filter follows the clipped silhouette,
+ *    which is the whole reason to reach for one.
+ *  - **`filter` makes an element a containing block for `position: fixed`
+ *    descendants** (base.css documents what that cost the calm filter). A
+ *    content block contains no fixed element, so this is safe; it would not be
+ *    safe on the grid or the stage.
+ *  - The parallax reads `--mx`/`--my` from useMotionSystems. `translate`, never
+ *    `transform` — transform belongs to the cursor-lean, and the two have to
+ *    compose on the same element here more than anywhere else on the site.
+ */
+
+.layout-hud .v-grid {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  grid-auto-rows: minmax(74px, auto);
+  gap: 0;
+  padding-top: 22px;
+}
+
+.layout-hud .v-block {
+  --c: 16px;
+  --px: 10px;
+  position: relative;
+  padding: 16px 20px 18px;
+  border: 1px solid color-mix(in oklab, var(--a1) 24%, var(--line));
+  border-radius: 0;
+  clip-path: polygon(
+    var(--c) 0,
+    100% 0,
+    100% calc(100% - var(--c)),
+    calc(100% - var(--c)) 100%,
+    0 100%,
+    0 var(--c)
+  );
+  box-shadow: none;
+  filter: drop-shadow(0 calc(16px * var(--elev, 1)) calc(26px * var(--elev, 1)) rgba(0, 0, 0, 0.5));
+  translate: calc((var(--mx, 0.5) - 0.5) * var(--px)) calc((var(--my, 0.5) - 0.5) * var(--px));
+  transition: background-color 0.9s ease, color 0.9s ease, border-color 0.9s ease,
+    translate 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* The lit top edge. Inside the clip, so it follows the cut corner. */
+.layout-hud .v-block::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--a1) 24%, var(--a1) 62%, transparent);
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+/*
+ * Three planes on a repeating three-step pattern. Each block takes an explicit
+ * column span, so grid places them on successive rows; the negative top margin
+ * is what pulls them back into each other. z-index orders the stack, --px sets
+ * how far each plane parallaxes, --panel-shift how much of the field shows
+ * through it.
+ *
+ * --panel-shift rather than an absolute --panel, for the reason Mosaic
+ * documents: theme.ts raises translucency toward opaque on the low-contrast
+ * palettes and in calm, and an absolute value here would drive through both.
+ */
+.layout-hud .v-block:nth-child(3n + 1) {
+  grid-column: 1 / span 7;
+  z-index: 3;
+  --px: 16px;
+  --elev: 1.5;
+  --panel-shift: -6%;
+}
+
+.layout-hud .v-block:nth-child(3n + 2) {
+  grid-column: 6 / span 7;
+  z-index: 2;
+  margin-top: -30px;
+  --px: 10px;
+  --elev: 1.1;
+  --panel-shift: 2%;
+}
+
+.layout-hud .v-block:nth-child(3n + 3) {
+  grid-column: 3 / span 8;
+  z-index: 1;
+  margin-top: -22px;
+  --px: 6px;
+  --elev: 0.7;
+  --panel-shift: 8%;
+}
+
+/* The kicker row becomes a header strip: a HUD panel is titled at its top edge,
+   not introduced by a line of chrome floating above its content. */
+.layout-hud .v-block-head {
+  margin: -16px -20px 4px;
+  padding: 8px 20px;
+  border-bottom: 1px solid color-mix(in oklab, var(--a1) 18%, var(--line));
+  background: color-mix(in oklab, var(--a1) 7%, transparent);
+}
+
+.layout-hud .v-block h3 {
+  font-family: var(--font-mono);
+  font-size: clamp(15px, 1.2vw, 18px);
+  letter-spacing: 0.01em;
+}
+
+/*
+ * Calm: the schematic version of the HUD.
+ *
+ * The chamfer, the hairlines, the header strips and the dense mono all survive
+ * — the identity here is line work, not light, which is why this is the least
+ * diminished of the presets in calm. What goes is the elevation, the parallax
+ * and the frost. The panels also stop overlapping: with no canvas behind them
+ * and no blur between them, three translucent planes stacked on each other are
+ * three sheets of the same grey rather than depth.
+ */
+.is-calm.layout-hud .v-block {
+  filter: none;
+  translate: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.is-calm.layout-hud .v-block:nth-child(3n + 2),
+.is-calm.layout-hud .v-block:nth-child(3n + 3) {
+  margin-top: 12px;
+}
+
+.is-calm.layout-hud .v-block:nth-child(3n + 1),
+.is-calm.layout-hud .v-block:nth-child(3n + 2),
+.is-calm.layout-hud .v-block:nth-child(3n + 3) {
+  grid-column: 1 / span 12;
+}
+
 /* Contact sheet ----------------------------------------------------------- */
 
 .layout-sheet .v-grid {
@@ -231,8 +684,81 @@
 /* Image-first: the tiles grow and the text becomes subordinate to them. */
 .layout-sheet .v-tile {
   min-height: 190px;
+  /* A thin lit rim so the frame reads as a print on a sheet rather than as a
+     photo in a box. Its 140ms timing comes from interaction.css, which is the
+     documented trade for box-shadow being the one property both systems want. */
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--fg) 9%, transparent);
 }
 
 .band-phone.layout-sheet .v-tile {
   min-height: 130px;
+}
+
+/*
+ * Contact-sheet furniture: the frame's caption strip belongs under the frame,
+ * not above it. The whole head moves rather than only the index — "service ·
+ * 03" beneath the picture is what a contact sheet actually looks like, and
+ * moving one half of a pair would read as a mistake.
+ *
+ * Explicit orders on all four, because a flex item left at the default 0 would
+ * jump ahead of everything numbered.
+ */
+.layout-sheet .v-tile {
+  order: 1;
+}
+.layout-sheet .v-block h3 {
+  order: 2;
+}
+.layout-sheet .v-block p {
+  order: 3;
+}
+.layout-sheet .v-block-head {
+  order: 4;
+  padding-top: 2px;
+  border-top: 1px solid color-mix(in oklab, var(--line) 60%, transparent);
+}
+
+/*
+ * The palette duotone.
+ *
+ * The placeholder photographs were the one element on the site that did not
+ * recolour with the palette — twenty-four themes and one fixed grey. Full
+ * greyscale plus a colour-blend field in --a1 makes every palette tint its own
+ * contact sheet, with no literal colour, no new asset and no image processing.
+ *
+ * The blend sits above the image and below the caption (which is given a
+ * stacking order below), so type is never blended — only the photograph is.
+ */
+.layout-sheet .v-tile-img {
+  filter: grayscale(1) contrast(1.08);
+}
+
+.layout-sheet .v-tile.has-img::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  background: var(--a1);
+  mix-blend-mode: color;
+  opacity: 0.22;
+  pointer-events: none;
+  transition: background-color 0.9s ease;
+}
+
+.layout-sheet .v-tile-caption {
+  z-index: 2;
+}
+
+/*
+ * Calm keeps the duotone, at less than half strength.
+ *
+ * `mix-blend-mode` is not one of the things base.css strips, so this is a
+ * deliberate decision rather than an oversight: calm exists so that body copy
+ * stays readable on the low-contrast palettes, and a photograph is not body
+ * copy. Removing the tint outright would make calm the one mode where the
+ * images visibly disagree with the palette around them.
+ */
+.is-calm.layout-sheet .v-tile.has-img::after {
+  opacity: 0.1;
 }

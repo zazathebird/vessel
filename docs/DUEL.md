@@ -17,11 +17,14 @@ engine is `src/fx/duel.ts`, the ornament host is
 `src/components/DuelOrnament.tsx`, and both pairings are pickable in
 siteconfig's Ornament section (`Lightswords: light & dark`,
 `Lightswords: saint & serpent` — ornament share-code indices 5 and 6). The
-**background-effect home is still withdrawn from `FX`**: two background
-versions were rejected, motion cannot be verified from this side, and
-re-listing dates the 404's "12 background modes" copy. When the client's eye
-passes the ornament, re-adding is an append at `FX` indices 12/13 — the
-`EFFECTS` record already points at the new engine. `docs/DECISIONS.md`
+**background-effect home is still withheld from the picker**: two background
+versions were rejected and motion cannot be verified from this side. Since
+2026-08-14 the two entries *are* in `FX` at indices 12 and 13 carrying
+`hidden: true` — the HUD pass appended `scan` and `telemetry` and needed those
+indices held concretely rather than by comment — so when the client's eye
+passes the ornament, re-listing is deleting two flags. The `EFFECTS` record
+already points at the new engine. (The old note here about re-listing dating
+the 404's "12 background modes" copy was wrong: no such string exists.) `docs/DECISIONS.md`
 2026-08-13 has the build note; the sections below remain the spec the rebuild
 was built to.
 
