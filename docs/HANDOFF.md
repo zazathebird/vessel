@@ -157,6 +157,16 @@ npx wrangler d1 execute vessel --remote \
 Say so rather than implying otherwise.
 
 - **Animation cannot be checked from a screenshot** — an occluded Chrome window freezes rAF.
+  **For the canvas effects there is now a way round it**: `fxlab.html` at the project root
+  (`npm run dev`, then `/fxlab.html`) advances the clock from a Step button rather than rAF, so
+  all sixteen effects render in a hidden tab. It gives you *frames*, not *motion* — timing and
+  easing still need the client's eye. Two traps it exists because of: an automated browser
+  reports `document.hidden` **and** `prefers-reduced-motion: reduce`, and the second becomes calm,
+  which hides the canvas. On the real site you need a visible tab *and* calm off.
+- **`zoom` in the browser-automation tool leaves a device-metrics override behind** — the page's
+  `innerWidth` stays clamped to the zoom region while `outerWidth` looks normal, and
+  `resize_window` does not clear it. Every screenshot after that is of a phone-width layout.
+  Open a fresh tab to recover; prefer full screenshots over `zoom`.
 - **CSS `:hover`/`:active` never fire under automation.**
 - **Accounts cannot be created / passwords typed** into the live site through automation; test
   auth through the harness.

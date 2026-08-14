@@ -53,6 +53,13 @@ export interface FxEntry {
    * kept out of the effect picker, the command palette and the shuffle. The
    * array is a wire format; the picker is a product decision, and the two
    * stopped being the same list when the duels were withdrawn.
+   *
+   * **No entry carries it today** (the duels were re-listed 2026-08-14), so
+   * `PICKABLE_FX` currently equals `FX`. Keep the flag and keep the two lists
+   * distinct anyway: this is the mechanism for withdrawing an effect without
+   * moving anyone's share code, and collapsing them back into one array is
+   * exactly the "tidy-up" that would force the next withdrawal to delete an
+   * index instead of flagging it.
    */
   hidden?: boolean;
 }
@@ -74,26 +81,24 @@ export const FX: FxEntry[] = [
   { id: "off", label: "None" },
 
   /*
-   * The two lightsword duels hold indices 12 and 13 and are **hidden**.
+   * The two lightsword duels hold indices 12 and 13, and are **listed again**
+   * as of 2026-08-14 (client's call, taken on the graphics).
    *
-   * The decision that withdrew them is unchanged: the renderer was rebuilt
-   * 2026-08-13 to docs/DUEL.md and ships in the hero-ornament slot — the
-   * client's original request — and the background versions return to the
-   * picker only once the client's eye has passed the ornament. `hidden` is now
-   * what enforces that, and lifting the flag is the whole of "re-list them".
+   * They are *present* in the array — and were, even while hidden — because the
+   * array is a wire format and the comment they replace promised them exactly
+   * these two indices. Appending `scan` and `telemetry` to an eleven-entry array
+   * would have taken 12 and 13 and broken that promise, or worse, been "fixed"
+   * later by inserting the duels ahead of them and silently repointing every
+   * share code minted in between.
    *
-   * They are *present* in the array because the array is a wire format and the
-   * comment they replace promised them exactly these two indices. Appending
-   * `scan` and `telemetry` to an eleven-entry array would have taken 12 and 13
-   * and broken that promise — or worse, been "fixed" later by inserting the
-   * duels ahead of them, silently repointing every share code minted in
-   * between.
-   *
-   * A hidden entry still decodes: a code carrying `C` or `D` applies the duel
-   * it always applied. Only the surfaces that offer a choice skip them.
+   * What un-hiding actually exposes is small, and that is why it was safe: every
+   * surface reading `PICKABLE_FX` — the siteconfig panel, the command palette's
+   * appearance block, the shuffle — is operator-gated. No visitor gains an
+   * effect here; the operator gains two entries in their own menu, and a visitor
+   * sees a duel only if the operator publishes one.
    */
-  { id: "duel", label: "Lightswords: light & dark", hidden: true },
-  { id: "duelholy", label: "Lightswords: saint & serpent", hidden: true },
+  { id: "duel", label: "Lightswords: light & dark" },
+  { id: "duelholy", label: "Lightswords: saint & serpent" },
 
   // Appended at 14 and 15 (`…-E-…`, `…-F-…`), never inserted — same rule.
   // Both are built for the HUD archetype; see src/fx/effects.ts.

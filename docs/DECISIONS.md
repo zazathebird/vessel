@@ -13,6 +13,103 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-14 — The four open design calls, decided
+
+The client handed over the four judgement calls the HUD pass and the duel rebuild had left
+open — *"I'll let you make them, do what is graphically the best"*. Each was looked at in a
+browser before it was decided, and one of the four turned out to be resting on a fact nobody
+had measured.
+
+### 1. The contact sheet's duotone in calm — kept, and raised to full strength
+
+Shipped as a halved `0.1` on the grounds that a photograph is not body copy but calm should
+still be quieter. Measured on the real page: **at 10% the tint is indistinguishable from no
+tint at all.** The tile image is itself `opacity: 0.8` over a dark card, so the backdrop the
+`color` blend has to work against is already dark and low-luma; the isolated swatch that made
+22% look strong was a full-opacity image at four times the size. Set the blend to `1` on the
+live page and the teal is unmistakable, so the mechanism is fine — 10% is simply below the
+threshold of visibility.
+
+That made the shipped position the worst of the three: a special case in CSS and a paragraph
+of documentation defending an effect nobody can see. So the `.is-calm` override is **deleted**
+and calm tints at the same 22% as every other mode.
+
+The reasoning that ruled out stripping it is unchanged and is what rules out stripping it now:
+calm exists so body copy holds up on the low-contrast palettes, the caption sits above the
+blend so no text is ever blended, and calm is not a colour mode — it changes no palette value
+anywhere else, so a photograph that changed colour on toggling it would be the one thing that
+did. Checked at 22% against all twenty-five palettes' `--a1`: every one reads as a deliberate
+duotone, including Datamosh's hot pink and Toxic Bloom's acid yellow-green.
+
+### 2. Presets stay operator-only — reaffirmed, and a lying comment removed
+
+Kept as they are, and the reasoning is stronger than the proposal's rather than weaker.
+
+The check that decided it: **what appearance control does a visitor actually have today?**
+Exactly one — the calm toggle. The shuffle is reachable only from the panel and the command
+palette's operator block; every palette, layout, background, type and ornament entry sits
+behind the same gate; `.v-paste` is in the operator-only panel. "Show me something weird" on
+the home page is not a shuffle at all — it navigates to the gallery. So making presets public
+would not be loosening one control among many, it would be the site's **first** public
+appearance control, and the site shows one published look on purpose. A preset switcher does
+not make that look better, only negotiable.
+
+What *was* wrong is now fixed: the comment above the loop claimed the block was "the route a
+visitor has to them, since the siteconfig panel is operator-only and the palette is not" —
+while sitting inside `if (isOperator)`. It was leftover proposal wording, and a comment that
+contradicts its own gate is an invitation to resolve the contradiction by moving the loop out
+of the gate.
+
+### 3. The two duel backgrounds are re-listed
+
+`hidden: true` deleted from `FX` 12 and 13, which was the whole of "re-list them" exactly as
+promised. They render correctly and read as intended — the hooded/blue vs domed-helmet/red
+pairing and the haloed/green vs horned-and-tailed/red pairing are both unmistakable at
+background scale.
+
+The reason this is a small change and not a product risk: **every surface that reads
+`PICKABLE_FX` is operator-gated** — the panel, the palette's appearance block, the shuffle.
+No visitor gains an effect. The operator gains two entries in their own menu, and a visitor
+sees a duel only if the operator publishes one. (An earlier read of this note assumed the home
+page's "something weird" button rolled the dice and would therefore hand visitors a duel; it
+does not, and that was checked rather than assumed.)
+
+One honest observation recorded against the effect rather than acted on: the fighters are
+centred with their feet at 80% height, which on Cinematic at a short viewport puts them
+directly behind the hero's CTA row. Nothing becomes unreadable — `dim: 0.55` holds and the
+button stays crisp — but it is the one thing that reads as placement rather than design.
+Moving it is a composition change to a tuned effect, not part of this decision, so it is
+flagged in `src/fx/effects.ts` for the client's eye.
+
+`PICKABLE_FX` now equals `FX`, and both stay. Collapsing them into one array is the tidy-up
+that would force the next withdrawal to delete an index instead of flagging one.
+
+### 4. `fxlab.html` is kept; the `?site=` override is not
+
+Split, because the two temporary tools were not the same kind of thing.
+
+**`fxlab.html` is committed at the project root.** Three sessions in a row failed to verify the
+canvas by eye, and this session spent a fourth round rebuilding an ad-hoc version of the same
+bench from the browser console before it could judge decision 3. The obstacle is structural and
+correct on both sides: an automated or occluded browser reports `document.hidden`, so
+`requestAnimationFrame` parks, *and* `prefers-reduced-motion: reduce`, which becomes calm, which
+hides the canvas. The bench sidesteps both by advancing the clock from an explicit Step button
+rather than from rAF, so it renders identical frames in a buried tab — verified: all sixteen
+effects, 400 frames each, with `document.hidden === true`.
+
+It is safe to commit because it **cannot ship**: `vite.config.ts` declares no
+`rollupOptions.input`, so the build has exactly one entry, `index.html`. Confirmed by building
+— `dist/` contains no `fxlab.html`. The file's own header says so, and says that anyone adding
+a multi-page input map must leave it out.
+
+**The `?site=<base64>` parameter is not kept.** A URL that overrides the operator's published
+appearance is a public surface and a product decision, it bypasses the published-only
+discipline `loadConfig` exists to enforce, and — unlike the bench — nothing needed it: the same
+verification is reachable by editing `DEFAULT_CONFIG` in dev, which is a local edit rather than
+a permanent route.
+
+---
+
 ## 2026-08-14 — The canvas effects, finally looked at; and the duel gets a skeleton
 
 Two things, both downstream of the same fact: the HUD pass shipped with its canvas work

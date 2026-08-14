@@ -16,17 +16,23 @@ palette bleed. CLAUDE.md *Known deviations* 9 records both.
 engine is `src/fx/duel.ts`, the ornament host is
 `src/components/DuelOrnament.tsx`, and both pairings are pickable in
 siteconfig's Ornament section (`Lightswords: light & dark`,
-`Lightswords: saint & serpent` — ornament share-code indices 5 and 6). The
-**background-effect home is still withheld from the picker**: two background
-versions were rejected and motion cannot be verified from this side. Since
-2026-08-14 the two entries *are* in `FX` at indices 12 and 13 carrying
-`hidden: true` — the HUD pass appended `scan` and `telemetry` and needed those
-indices held concretely rather than by comment — so when the client's eye
-passes the ornament, re-listing is deleting two flags. The `EFFECTS` record
-already points at the new engine. (The old note here about re-listing dating
-the 404's "12 background modes" copy was wrong: no such string exists.) `docs/DECISIONS.md`
-2026-08-13 has the build note; the sections below remain the spec the rebuild
-was built to.
+`Lightswords: saint & serpent` — ornament share-code indices 5 and 6). **The
+background-effect home is live again as of 2026-08-14**, at `FX` indices 12 and
+13 (`0-0-C-…`, `0-0-D-…`), which the entries held throughout — they spent a day
+flagged `hidden: true` because the HUD pass appended `scan` and `telemetry` and
+needed those indices held concretely rather than by comment, so re-listing was
+deleting two flags exactly as promised. So the fight now has both homes the
+client originally asked for. (The old note here about re-listing dating the
+404's "12 background modes" copy was wrong: no such string exists.)
+`docs/DECISIONS.md` 2026-08-13 has the build note and 2026-08-14 the re-listing;
+the sections below remain the spec the rebuild was built to.
+
+**Open against the background home**: the fighters are centred with their feet
+at 80% viewport height, so on Cinematic at a short viewport they sit behind the
+hero's CTA row. `dim: 0.55` keeps everything readable, but it reads as placement
+rather than design and is the first thing to look at if the client wants it
+moved. `fxlab.html` at the project root renders both duels — and the other
+fourteen effects — without needing a visible tab.
 
 ## What the client asked for
 

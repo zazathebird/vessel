@@ -36,21 +36,32 @@ the whole browse: zero CSP reports.
 
 Everything listed under *Unverified by eye* at the bottom.
 
-### 2d. The HUD pass — built 2026-08-14, two things need the client
+### 2d. ~~The HUD pass~~ — built 2026-08-14; its four open calls decided the same day
 
-The layout upgrade and the three presets are in and the build is clean;
-`docs/DECISIONS.md` 2026-08-14 has the full note. Two items were decided *for*
-the client and are one line each to reverse:
+The layout upgrade and the three presets are in and the build is clean.
+The client handed over the four judgement calls ("do what is graphically the
+best"); all four are decided and `docs/DECISIONS.md` 2026-08-14 has the
+reasoning and the measurements. In short:
 
-- **The contact sheet keeps its palette duotone in calm, at 10%.** `calm` does
-  not strip `mix-blend-mode`, so this was a decision either way. Reasoning: calm
-  exists for body-copy legibility and a photograph is not body copy. If the
-  client wants calm to be tint-free, it is `opacity: 0` on
-  `.is-calm.layout-sheet .v-tile.has-img::after` in `layouts.css`.
-- **Presets are operator-only**, because every appearance control in the command
-  palette already is, and `.v-paste` lives in the operator-only panel. The
-  proposal described them as something a visitor could pick; making that true is
-  a product decision about who controls the site's look, so it was not taken.
+- **The contact sheet's duotone stays in calm — at the full 22%**, not the
+  halved 10% it shipped with. Measured: over a tile image that is itself
+  `opacity: 0.8` on a dark card, a 10% colour blend is invisible, so the
+  half-measure was defending an effect nobody could see. The `.is-calm`
+  override in `layouts.css` is deleted rather than retuned.
+- **Presets stay operator-only.** A visitor's only appearance control today is
+  the calm toggle — the shuffle, every picker and `.v-paste` are all gated, and
+  "Show me something weird" navigates to the gallery rather than rolling. Public
+  presets would be the site's first public appearance control.
+- **The two duel backgrounds are re-listed** (see 6b).
+- **`fxlab.html` is kept, `?site=` is not** (see the bench note below).
+
+**The effects bench**: `fxlab.html` at the project root, opened at
+`http://localhost:5173/fxlab.html` with `npm run dev` running. All sixteen
+effects on one page, driven through `FxCanvas`'s exact frame maths from an
+explicit **Step** button rather than rAF — which is why it works in a hidden or
+occluded tab, the thing that blocked three sessions. It cannot reach production:
+Vite's only build entry is `index.html`, verified by building. Do not add it to
+a multi-page `rollupOptions.input`.
 
 ~~**Cannot be verified from this side**: the canvas effects.~~ **Done
 2026-08-14.** All sixteen were rendered and looked at, at two viewport sizes and
@@ -103,13 +114,20 @@ Remaining inside phase 2:
 
 ### 6. ~~Lightsword duel rebuild~~ — ornament home done 2026-08-13
 
-- **6b. Un-hide the background `FX` entries once the client passes the
-  ornament's motion.** Since 2026-08-14 they are *in* `FX` at indices 12 and 13
-  carrying `hidden: true`, so this is now deleting two flags rather than an
-  append — the HUD pass needed those indices reserved concretely, not by
-  comment, before appending `scan` and `telemetry` at 14/15. The 404 copy note
-  that used to travel with this was wrong: no "12 background modes" string
-  exists in `pages.ts`. See `docs/DECISIONS.md` 2026-08-14.
+- **6b. ~~Un-hide the background `FX` entries~~ — done 2026-08-14**, on the
+  client's handover of the four design calls. It was deleting two `hidden: true`
+  flags, exactly as promised; indices 12 and 13 never moved. Both render and
+  read correctly at background scale (checked in `fxlab.html`). Low risk because
+  every surface reading `PICKABLE_FX` is operator-gated: no visitor gains an
+  effect, and one only ever sees a duel if the operator publishes it.
+  `PICKABLE_FX` now equals `FX` — keep both anyway; the flag is the mechanism
+  for withdrawing an effect without moving anyone's share code.
+
+  **Still wants the client's eye**: the fighters are centred with their feet at
+  80% height, which on Cinematic at a short viewport sits them behind the hero's
+  CTA row. Nothing is unreadable, but it reads as placement rather than design.
+  Flagged in `src/fx/effects.ts`; moving it is a composition change to a tuned
+  effect, so it was not taken unilaterally.
 
 ### 7. Sound — asked for twice, not built. A spec change (control, persisted
 toggle, share-code field), not a patch.

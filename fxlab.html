@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>fxlab — every effect, one page (dev only)</title>
+    <!--
+      A development-only bench for the canvas effects. Open it at
+      http://localhost:5173/fxlab.html with `npm run dev` running.
+
+      WHY IT EXISTS. Three sessions in a row failed to verify the canvas by eye,
+      and the reason was never the effects: an automated/occluded browser reports
+      `document.hidden` (so requestAnimationFrame parks, correctly) *and*
+      `prefers-reduced-motion: reduce` (which ConfigContext turns into calm, and
+      calm hides the canvas). Both behaviours are right and neither is worth
+      changing for a test. This page removes both obstacles instead — it has no
+      calm, and it advances the clock from an explicit **Step** button, so it
+      renders exactly the same frames whether the tab is visible, buried or
+      screenshotted by a tool.
+
+      WHY IT IS SAFE TO COMMIT. Vite's config declares no `rollupOptions.input`,
+      so the build has exactly one entry — `index.html`. A second HTML file at
+      the project root is served in dev and is *not* emitted into `dist`, so this
+      page cannot reach production by accident. If anyone ever adds a multi-page
+      `input` map, this file must be left out of it.
+
+      The `?site=<base64>` published-config override that was written alongside
+      this page during the same verification was deliberately NOT kept: a URL
+      parameter that overrides the operator's published appearance is a public
+      surface and a product decision, and this bench does not need it.
+
+      WHAT IT IS NOT. It is not a design reference and it does not render the
+      site's chrome. It reproduces `FxCanvas`'s frame maths and nothing else; if
+      the two ever disagree, `src/fx/FxCanvas.tsx` is right and this is stale.
+    -->
+    <style>
+      :root {
+        color-scheme: dark;
+        --lab-bg: #0b0e12;
+        --lab-panel: #141920;
+        --lab-line: #2a323d;
+        --lab-fg: #d6dee8;
+        --lab-dim: #8794a4;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--lab-bg);
+        color: var(--lab-fg);
+        font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      header {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px;
+        align-items: center;
+        padding: 12px 18px;
+        background: var(--lab-panel);
+        border-bottom: 1px solid var(--lab-line);
+      }
+      header h1 {
+        margin: 0;
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+      label { display: flex; gap: 6px; align-items: center; color: var(--lab-dim); }
+      select, input, button {
+        font: inherit;
+        color: var(--lab-fg);
+        background: #1c232c;
+        border: 1px solid var(--lab-line);
+        border-radius: 6px;
+        padding: 4px 8px;
+      }
+      button { cursor: pointer; }
+      button:hover { border-color: #4a596b; }
+      #status { margin-left: auto; color: var(--lab-dim); }
+      #grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+        gap: 16px;
+        padding: 18px;
+      }
+      figure { margin: 0; }
+      .frame {
+        position: relative;
+        border: 1px solid var(--lab-line);
+        border-radius: 8px;
+        overflow: hidden;
+        background: #000;
+      }
+      canvas { display: block; width: 100%; height: 100%; }
+      figcaption {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        padding-top: 6px;
+        color: var(--lab-dim);
+        letter-spacing: 0.08em;
+      }
+      figcaption b { color: var(--lab-fg); font-weight: 600; }
+      .bad { color: #ff8080; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>fxlab</h1>
+      <label>palette <select id="pal"></select></label>
+      <label>shape
+        <select id="shape">
+          <option value="16:9">16:9 desktop</option>
+          <option value="4:3">4:3 short</option>
+          <option value="9:16">9:16 phone</option>
+          <option value="21:9">21:9 ultrawide</option>
+        </select>
+      </label>
+      <label>dpr <input id="dpr" type="number" min="1" max="3" step="0.5" value="2" style="width:64px" /></label>
+      <label>step <input id="frames" type="number" min="1" max="2000" value="60" style="width:78px" /> frames</label>
+      <button id="step">Step ▸</button>
+      <button id="burst">+600</button>
+      <button id="run">Run (rAF)</button>
+      <button id="reset">Reset</button>
+      <span id="status">idle</span>
+    </header>
+    <div id="grid"></div>
+
+    <script type="module">
+      import { drawFx } from "/src/fx/effects.ts";
+      import { FX } from "/src/data/catalog.ts";
+      import { PALETTES } from "/src/data/palettes.ts";
+
+      // Mirrors FxCanvas: retina is worth paying for, a 3x phone panel is not,
+      // and a long edge past this would ask for a 59M-pixel buffer.
+      const MAX_EDGE = 2600;
+
+      const ASPECTS = { "16:9": 16 / 9, "4:3": 4 / 3, "9:16": 9 / 16, "21:9": 21 / 9 };
+
+      const palSelect = document.getElementById("pal");
+      const shapeSelect = document.getElementById("shape");
+      const dprInput = document.getElementById("dpr");
+      const framesInput = document.getElementById("frames");
+      const status = document.getElementById("status");
+      const grid = document.getElementById("grid");
+
+      PALETTES.forEach((p, i) => {
+        const option = document.createElement("option");
+        option.value = String(i);
+        option.textContent = `${i} · ${p.name}`;
+        palSelect.append(option);
+      });
+
+      /** One cell per entry in FX — hidden entries included; this is a bench. */
+      const cells = FX.map((entry) => {
+        const figure = document.createElement("figure");
+        const frame = document.createElement("div");
+        frame.className = "frame";
+        const canvas = document.createElement("canvas");
+        frame.append(canvas);
+        const caption = document.createElement("figcaption");
+        const name = document.createElement("b");
+        name.textContent = entry.label;
+        const meta = document.createElement("span");
+        caption.append(name, meta);
+        figure.append(frame, caption);
+        grid.append(figure);
+        return { entry, frame, canvas, meta, cache: {}, t: 0 };
+      });
+
+      /** Size every buffer the way FxCanvas does, from the element's own box. */
+      function fit() {
+        const aspect = ASPECTS[shapeSelect.value];
+        const dpr = Math.max(1, Number(dprInput.value) || 1);
+        for (const cell of cells) {
+          const width = cell.frame.clientWidth;
+          const height = Math.round(width / aspect);
+          cell.frame.style.height = `${height}px`;
+          const scale = Math.min(dpr, MAX_EDGE / Math.max(width, height));
+          const bw = Math.max(1, Math.round(width * scale));
+          const bh = Math.max(1, Math.round(height * scale));
+          if (cell.canvas.width !== bw || cell.canvas.height !== bh) {
+            cell.canvas.width = bw;
+            cell.canvas.height = bh;
+          }
+          cell.w = width;
+          cell.h = height;
+          cell.scale = scale;
+        }
+      }
+
+      /**
+       * One frame, byte for byte the arithmetic in FxCanvas's `step` — the base
+       * `setTransform` (so effects receive CSS pixels, which `rain`'s 16px cell
+       * and `plasma`'s 26px grid depend on), then `t += 0.011 * boost`.
+       */
+      function advance(cell, frames, palette) {
+        const ctx = cell.canvas.getContext("2d");
+        if (!ctx) return;
+        for (let i = 0; i < frames; i++) {
+          ctx.setTransform(cell.scale, 0, 0, cell.scale, 0, 0);
+          const boost = 1;
+          cell.t += 0.011 * boost;
+          drawFx(cell.entry.id, {
+            ctx,
+            w: cell.w,
+            h: cell.h,
+            p: palette,
+            t: cell.t,
+            beat: (Math.sin(cell.t * 1.9) + 1) / 2,
+            boost,
+            mx: 0.5,
+            my: 0.5,
+          }, cell.cache);
+        }
+      }
+
+      function render(frames) {
+        const palette = PALETTES[Number(palSelect.value)] ?? PALETTES[0];
+        const started = performance.now();
+        for (const cell of cells) advance(cell, frames, palette);
+        const ms = performance.now() - started;
+        for (const cell of cells) {
+          cell.meta.textContent = `${cell.w}×${cell.h} · t ${cell.t.toFixed(1)}`;
+        }
+        status.textContent =
+          `${frames} frame(s) × ${cells.length} effects in ${ms.toFixed(0)}ms` +
+          ` · ${palette.name} · hidden=${document.hidden}`;
+      }
+
+      function reset() {
+        for (const cell of cells) {
+          cell.cache = {};
+          cell.t = 0;
+          const ctx = cell.canvas.getContext("2d");
+          ctx?.setTransform(1, 0, 0, 1, 0, 0);
+          ctx?.clearRect(0, 0, cell.canvas.width, cell.canvas.height);
+        }
+        render(1);
+      }
+
+      let raf = 0;
+      const runButton = document.getElementById("run");
+      runButton.addEventListener("click", () => {
+        if (raf) {
+          cancelAnimationFrame(raf);
+          raf = 0;
+          runButton.textContent = "Run (rAF)";
+          return;
+        }
+        runButton.textContent = "Pause";
+        const loop = () => {
+          raf = requestAnimationFrame(loop);
+          render(1);
+        };
+        raf = requestAnimationFrame(loop);
+      });
+
+      document.getElementById("step").addEventListener("click", () =>
+        render(Math.max(1, Number(framesInput.value) || 1)),
+      );
+      document.getElementById("burst").addEventListener("click", () => render(600));
+      document.getElementById("reset").addEventListener("click", reset);
+      palSelect.addEventListener("change", () => render(1));
+      shapeSelect.addEventListener("change", () => { fit(); reset(); });
+      dprInput.addEventListener("change", () => { fit(); reset(); });
+      window.addEventListener("resize", () => { fit(); render(1); });
+
+      // Exposed so an automation tool can drive the bench without clicking:
+      //   await window.fxlab.render(600)
+      window.fxlab = { render, reset, fit, cells };
+
+      fit();
+      render(90);
+    </script>
+  </body>
+</html>

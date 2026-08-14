@@ -751,14 +751,21 @@
 }
 
 /*
- * Calm keeps the duotone, at less than half strength.
+ * Calm keeps the duotone, at full strength — there is deliberately no
+ * `.is-calm` override here.
  *
- * `mix-blend-mode` is not one of the things base.css strips, so this is a
- * deliberate decision rather than an oversight: calm exists so that body copy
- * stays readable on the low-contrast palettes, and a photograph is not body
- * copy. Removing the tint outright would make calm the one mode where the
- * images visibly disagree with the palette around them.
+ * `mix-blend-mode` is not one of the things base.css strips, so calm's
+ * behaviour is a decision either way. It shipped at a halved `0.1` on
+ * 2026-08-14 and that was measured in a browser the same day: over a tile
+ * image that is itself `opacity: 0.8` on a dark card, a 10% colour blend is
+ * indistinguishable from no blend at all. The half-measure bought nothing and
+ * cost a special case — so calm now tints exactly as every other mode does.
+ *
+ * The reasoning that kept it is unchanged and is what rules out stripping it:
+ * calm exists so body copy stays readable on the low-contrast palettes, and a
+ * photograph is not body copy. The blend sits under the caption (z-index
+ * above), so no text is ever blended, and calm is not a colour mode — it
+ * changes no palette value anywhere else, so a photograph that changed colour
+ * on toggling it would be the odd one out. Checked at 22% against all
+ * twenty-five palettes' `--a1`; every one reads as a deliberate duotone.
  */
-.is-calm.layout-sheet .v-tile.has-img::after {
-  opacity: 0.1;
-}

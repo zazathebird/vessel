@@ -27,6 +27,15 @@ The only tests are `scripts/auth-e2e.ts`, which drives the real `src/auth` modul
 Worker and local D1 and prints its own check count on completion. There is no test suite for the
 site itself.
 
+**`fxlab.html` (project root) is the canvas bench** — open `http://localhost:5173/fxlab.html` with
+`npm run dev` running. All sixteen effects on one page through `FxCanvas`'s exact frame maths,
+advanced by an explicit **Step** button instead of `requestAnimationFrame`, which is the whole
+point: an automated or occluded browser reports `document.hidden` (so rAF correctly parks) *and*
+`prefers-reduced-motion: reduce` (which becomes calm, which hides the canvas), and that pair
+blocked three sessions from ever seeing an effect. **It is dev-only by construction** — Vite
+declares no `rollupOptions.input`, so the build has one entry, `index.html`, and `dist/` gets no
+`fxlab.html`. If a multi-page input map is ever added, leave this file out of it.
+
 No runtime dependencies beyond React — the routing, state, styling **and authentication** are all
 hand-rolled, deliberately (see *Assets* in the spec: no third-party libraries, no webfonts, no
 images).
@@ -267,12 +276,21 @@ ones most likely to be "fixed" by accident:
   `vessels` rebuilds from a **stored pool of random numbers**, not from `Math.random()` — that is
   what makes a rebuild re-fit *the same* tree instead of rolling a new one on every frame of a
   drag-resize.
-- **`FX` is the wire format; `PICKABLE_FX` is the menu.** Entries carry an optional `hidden`, and
-  the two lightsword duels sit at their reserved indices 12 and 13 flagged hidden — the withdrawal
-  decision is unchanged and lifting the flag is the whole of "re-list them". Anything offering a
-  choice to a human (the panel, the command palette, the shuffle) reads `PICKABLE_FX`; anything
-  *resolving* a stored or shared value reads `FX`, because a hidden effect is unlisted, not invalid.
-  `scan` and `telemetry` are appended at 14 and 15.
+- **`FX` is the wire format; `PICKABLE_FX` is the menu.** Anything offering a choice to a human
+  (the panel, the command palette, the shuffle) reads `PICKABLE_FX`; anything *resolving* a stored
+  or shared value reads `FX`, because a hidden effect is unlisted, not invalid. Entries carry an
+  optional `hidden`; the two lightsword duels spent a day flagged with it at their reserved indices
+  12 and 13 and were **re-listed 2026-08-14**, which was deleting the two flags exactly as promised.
+  `scan` and `telemetry` are appended at 14 and 15. **No entry carries `hidden` today, so
+  `PICKABLE_FX` equals `FX` — keep both lists and the flag anyway.** This is the mechanism for
+  withdrawing an effect without moving anyone's share code; collapsing them into one array is the
+  tidy-up that forces the next withdrawal to delete an index instead of flagging one.
+- **Every surface that reads `PICKABLE_FX` is operator-gated**, which is why re-listing the duels
+  was a small change. A visitor's only appearance control is the calm toggle — the shuffle lives in
+  the panel and the command palette's operator block, `.v-paste` is in the operator-only panel, and
+  the home page's "Show me something weird" **navigates to the gallery, it does not roll the dice**.
+  Presets are operator-only for the same reason (2026-08-14): making them public would be the
+  site's first public appearance control, which is a product decision about who controls the look.
 - **Presets define themselves structurally and derive their share code** (`src/data/presets.ts`). A
   hardcoded `"N-7-5-3-5-3"` stays correct until something is appended to a catalogue and then goes
   silently wrong — and the wrongness is a *working* code pointing at the wrong palette, which is the
@@ -318,8 +336,8 @@ All deliberate. Add to this list rather than silently diverging.
    (`src/components/DuelOrnament.tsx`) — pickable in siteconfig, rollable under a sixth `ornament`
    scope, and carried as a sixth share-code field. All seven sit in one square slot (`.v-ornament`),
    so the layouts that resize it and the ones that hide it need no knowledge of which is showing,
-   and Radial's orbiting nav pills work over any of them. The duels' `FX` background entries remain
-   withdrawn until the client's eye passes the ornament — see `TODO.md` 6b.
+   and Radial's orbiting nav pills work over any of them. The duels' `FX` background entries were
+   re-listed on 2026-08-14, so the fight now has both homes the client asked for.
 
    Two consequences worth knowing: `SCOPES` now has six entries, not the spec's five; and share
    codes are six fields, with five-field codes still decoding and simply leaving the ornament alone.
@@ -373,13 +391,17 @@ All deliberate. Add to this list rather than silently diverging.
    (`.v-tile-img`, `chrome.css`) so the palettes stay in charge. Temporary until the operator's
    own photos exist; the spec's *no images* rule still holds for design assets — these fill
    slots that were always destined for photographs.
-12. **The contact sheet duotones its photographs, and keeps doing so in calm** (2026-08-14). Full
-   greyscale plus an `--a1` field at `mix-blend-mode: color`, capped at 22% — the placeholder
-   photographs were the one element on the site that did not recolour with the palette. `calm` does
-   not strip `mix-blend-mode`, so its behaviour there is a decision: **it stays, at 10%.** Calm
-   exists so body copy holds up on the low-contrast palettes and a photograph is not body copy;
-   removing the tint would make calm the one mode where the images disagree with the palette around
-   them. The one item in the HUD pass the client has not explicitly ruled on.
+12. **The contact sheet duotones its photographs, in every mode including calm** (2026-08-14). Full
+   greyscale plus an `--a1` field at `mix-blend-mode: color` at 22% — the placeholder photographs
+   were the one element on the site that did not recolour with the palette. `calm` does not strip
+   `mix-blend-mode`, so its behaviour there is a decision, and the decision is that **calm tints
+   identically: there is deliberately no `.is-calm` override.** Calm exists so body copy holds up on
+   the low-contrast palettes; a photograph is not body copy, the caption sits above the blend so no
+   text is ever blended, and calm changes no other palette value — so a photograph that changed
+   colour on toggling it would be the odd one out. It shipped at a halved `0.1` for one day; that
+   was measured and deleted, because over a tile image already at `opacity: 0.8` on a dark card a
+   10% blend is indistinguishable from none, which made it a special case defending nothing.
+   Checked at 22% against all twenty-five palettes' `--a1`.
 13. **There are fourteen layouts, twenty-five palettes and sixteen effects** (2026-08-14, from the
    approved HUD proposal). The additions: the `hud` archetype at layout index 13, the Cold Open
    palette at index 24, and `scan` / `telemetry` at effect indices 14 and 15. All appended, never

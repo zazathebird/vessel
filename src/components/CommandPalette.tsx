@@ -180,9 +180,20 @@ export function CommandPalette() {
       for (const layout of LAYOUTS) {
         add(`layout-${layout.id}`, `layout — ${layout.label}`, () => update({ layout: layout.id }));
       }
-      // The three named presets, applied the way a pasted code is — this is
-      // the route a visitor has to them, since the siteconfig panel is
-      // operator-only and the palette is not.
+      // The three named presets, applied the way a pasted code is.
+      //
+      // **Operator-only, and deliberately so** — reaffirmed 2026-08-14 when the
+      // client handed the choice over. The comment that stood here claimed this
+      // block was "the route a visitor has to them", which was never true: it
+      // has always sat inside this `isOperator` branch, and it is a leftover
+      // from the HUD proposal's wording. Left uncorrected it invites someone to
+      // resolve the contradiction by moving the loop out of the gate.
+      //
+      // Making presets public would be the site's *first* public appearance
+      // control — the shuffle, the panel and every other picker here are
+      // operator-gated, and `calm` is the only switch a visitor has. The site
+      // shows one published look on purpose; a preset switcher does not make
+      // that look better, only negotiable.
       for (const preset of PRESETS) {
         add(`preset-${preset.id}`, `preset — ${preset.name}`, () => {
           const shared = decodeShareCode(preset.shareCode);

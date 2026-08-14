@@ -703,16 +703,18 @@ const telemetry: Effect = ({ ctx, w, h, p, t }) => {
  * background — modest scale, no health bars, bodies dimmed so the blades carry
  * it behind body copy.
  *
- * **Withdrawn from `FX` with the old version and not yet re-listed.** The
- * client has rejected two background duels from this side, and motion cannot be
- * verified in this environment, so the rebuilt fight ships in the ornament slot
- * first — the original request — and returns to the effect picker only after
- * the client's eye passes it there.
+ * **Listed again since 2026-08-14** (client's call), at the indices 12 and 13
+ * they have held throughout (`0-0-C-…`, `0-0-D-…`). They spent a day in `FX`
+ * flagged `hidden` rather than absent from it — the array is the share-code wire
+ * format, and leaving a gap invited the next appended effect to take those two
+ * slots. Re-listing was deleting the two flags, as promised.
  *
- * Since 2026-08-14 they hold indices 12 and 13 in `FX` (`0-0-C-…`, `0-0-D-…`)
- * with `hidden: true`, rather than being absent from it — the array is the
- * share-code wire format, and leaving a gap invited the next appended effect to
- * take those two slots. Lifting the flag is the whole of "re-list them".
+ * Composition note, from looking at it on the real site: the fighters land
+ * centred with their feet at 80% height, which on Cinematic at a short viewport
+ * puts them behind the hero's CTA row. They stay legible and so does the button
+ * — `dim: 0.55` is doing its job — but it is the one thing about this effect
+ * that reads as placement rather than design, and it is the first thing to look
+ * at if the client wants it moved.
  *
  * The note that once stood here about the 404's "12 background modes" line was
  * wrong: no such string exists in `pages.ts` or anywhere else. It went with the
