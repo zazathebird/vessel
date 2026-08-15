@@ -225,6 +225,7 @@ export function FxCanvas() {
         beat: (Math.sin(t * 1.9) + 1) / 2,
         boost,
         sleeping,
+        dt,
         quality: quality.current,
         mx: motion.mouse.x,
         my: motion.mouse.y,

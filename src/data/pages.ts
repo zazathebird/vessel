@@ -79,12 +79,31 @@ export const PAGES: Record<PageId, Page> = {
       { label: "Show me something weird", to: "gallery" },
     ],
     blocks: [
-      { kicker: "the pitch", title: "Machines get fixed here", body: "Fifteen years of taking things apart and putting most of them back together. Laptops, desktops, drives that stopped spinning, networks that never worked properly to begin with." },
+      // "Fifteen years" → "Over twenty years" at the client's correction
+      // (2026-08-14). His number, not the spec's.
+      { kicker: "the pitch", title: "Machines get fixed here", body: "Over twenty years of taking things apart and putting most of them back together. Laptops, desktops, drives that stopped spinning, networks that never worked properly to begin with." },
       { kicker: "the catch", title: "There is no catch", body: "No quote form, no ticket system, no chat widget pretending to be a person. You send an email, you get a reply, usually the same day." },
-      // Rewritten at the client's request (2026-08-13): the option-count list
-      // was a spec sheet for switches visitors cannot flip. Jokes instead.
-      { kicker: "the site", title: "Dangerously over-engineered", body: "Built like a flight simulator, used like a business card. It is entirely unnecessary. That is the point.", hasList: true, items: ["No cookies — there is a tin of real ones at the bench", "No AI, just a guy", "The 404 page is load-bearing", "Fixing computers remains the only useful feature"] },
-      { kicker: "the honesty", title: "What this is not", body: "Not an agency. Not a startup. Not looking for funding, partnerships, or your synergy. One person and a bench." },
+      /*
+       * The "the site" block is GONE (client, 2026-08-14) and should not come
+       * back. It had already been rewritten once the day before — the
+       * option-count list was a spec sheet for switches visitors cannot flip —
+       * and the replacement jokes did not save it: "still just seems stupid and
+       * useless". It was the only block on the page about the page rather than
+       * about the work, on a site whose one job is getting someone to send an
+       * email.
+       *
+       * Two of its four list items were also actively wrong to publish. "The
+       * 404 page is load-bearing" was the spec's joke about 404 being genuinely
+       * in the nav — but the 404 pill moved behind sign-in on 2026-08-13, so the
+       * line was stale, and the client reads it as it now reads to a stranger:
+       * a hint that there is something to go looking for. That is the same
+       * objection that removed the "Some of this is hidden" block, and it is
+       * right both times.
+       *
+       * Its best line survives here, because self-deprecation is still the
+       * site's voice and this is the block that already carries it.
+       */
+      { kicker: "the honesty", title: "What this is not", body: "Not an agency. Not a startup. Not looking for funding, partnerships, or your synergy. Built like a flight simulator, used like a business card. One person and a bench." },
       // COPY CHANGE 2026-08-14, twice in one day and the second one is the real
       // policy. First the client killed "Free diagnosis, always" ("i dont do free
       // diag. a mechanic will still charge you to diagnose your cars issues").

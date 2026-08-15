@@ -78,18 +78,30 @@ const START_A = 150;
 const START_B = 520;
 const MAX_HEALTH = 100;
 /** Frames the winner holds the field before the next match. Two seconds. */
-const DEATH_HOLD = 120;
+const DEATH_HOLD = 200;
 
 /**
- * The slash was 15 frames of pure strike. It is now 20, split three ways —
- * anticipation, strike, follow-through — because the missing beat was the
- * wind-up: at 15 the blade jumped 0.95rad in a single frame on the opening
- * frame, which reads as a pop rather than a swing. The kick pays the four
- * frames back so the exchange rate of the fight is unchanged.
+ * Tempo (client, 2026-08-14: "just slow it the fuck down. this is giving me a
+ * headache watching the looping fights", and "no limit in length of fight").
+ *
+ * The slash was 15 frames, then 20 — a quarter and a third of a second for a
+ * full swing, which is faster than a human can follow and much faster than the
+ * films, where a strike is a beat you can see coming. It is now 46, split the
+ * same three ways: anticipation, strike, follow-through. The wind-up is the
+ * part that makes a swing read as a swing, and it is the part that was being
+ * squeezed.
+ *
+ * The pauses matter as much as the moves — a fight reads through the contrast
+ * between stillness and explosion, and this one had no stillness in it at all.
+ * `decide` now spends far longer in neutral between exchanges.
+ *
+ * Note the client was watching this at roughly *double* these numbers: the
+ * duel clock had the canvas `boost` folded into it and the screensaver adds
+ * 0.9 to that. See the note in `duelling` in effects.ts.
  */
-const SLASH_FRAMES = 20;
-const KICK_FRAMES = 16;
-const FORCE_FRAMES = 30;
+const SLASH_FRAMES = 46;
+const KICK_FRAMES = 34;
+const FORCE_FRAMES = 58;
 
 /** Fractions of the slash: wind up, strike, then recover past the guard. */
 const SLASH_WIND = 0.3;
@@ -347,37 +359,53 @@ function decide(f: Fighter, foe: Fighter): void {
   f.struck = true;
 
   if (dist > FAR) {
-    if (r < 0.5) {
-      // Advance.
+    if (r < 0.42) {
+      // Advance — deliberately unhurried. Closing the distance is a beat in
+      // itself, and it was over in a quarter of a second.
       f.action = "neutral";
       f.drive = f.facing;
-      f.timer = 15 + Math.random() * 12;
-    } else if (r < 0.75) {
+      f.timer = 46 + Math.random() * 40;
+    } else if (r < 0.62) {
       f.action = "force";
       f.timer = FORCE_FRAMES;
       f.struck = false;
-    } else {
+    } else if (r < 0.78) {
       // The tactical leap — closes distance through the air.
       f.action = "neutral";
       f.drive = f.facing;
-      f.timer = 24;
+      f.timer = 40;
       if (f.y >= FLOOR_Y) f.vy = -10;
+    } else {
+      // Hold. Nothing at all, for up to a second and a half.
+      //
+      // This is the beat the fight never had, and its absence is most of why it
+      // read as frantic: both fighters were always mid-action, so there was no
+      // baseline of stillness for an attack to be a departure from. A duel is
+      // mostly two people looking at each other.
+      f.action = "neutral";
+      f.drive = 0;
+      f.timer = 40 + Math.random() * 55;
     }
   } else {
-    if (r < 0.5) {
+    if (r < 0.4) {
       f.action = "attacking";
       f.timer = SLASH_FRAMES;
       f.struck = false;
       f.willHit = Math.random() < 0.7;
-    } else if (r < 0.75) {
+    } else if (r < 0.56) {
       f.action = "kicking";
       f.timer = KICK_FRAMES;
       f.struck = false;
-    } else {
+    } else if (r < 0.8) {
       // Retreat — the beat that stops the fight reading as a scrum.
       f.action = "neutral";
       f.drive = -f.facing;
-      f.timer = 10 + Math.random() * 10;
+      f.timer = 28 + Math.random() * 28;
+    } else {
+      // Guard up, in range, doing nothing. The held moment before a blow.
+      f.action = "neutral";
+      f.drive = 0;
+      f.timer = 30 + Math.random() * 40;
     }
   }
 }
@@ -423,7 +451,7 @@ function stepFighter(st: DuelState, f: Fighter, foe: Fighter): void {
         x: Math.max(foe.x - 6, Math.min(foe.x + BODY_W + 6, tip.tx)),
         y: Math.max(foe.y - 10, Math.min(foe.y + BODY_H, tip.ty)),
       };
-      damage(st, foe, (8 + Math.random() * 5) * f.attackPower);
+      damage(st, foe, (6.5 + Math.random() * 4) * f.attackPower);
       foe.vx += f.facing * 2;
       spawnSparks(st, hit.x, hit.y, 15, f.facing * 1.2, 0.6);
     }
@@ -451,8 +479,10 @@ function stepFighter(st: DuelState, f: Fighter, foe: Fighter): void {
   // Sustained movement while neutral. The reference sets vx to ±2.5 under a 0.9
   // decay, which only holds if the intent is re-applied each frame.
   if (f.action === "neutral" && f.drive !== 0) {
-    f.vx += f.drive * 0.9;
-    f.vx = Math.max(-2.5, Math.min(2.5, f.vx));
+    // Halved with the tempo. Slowing the strikes while the fighters still slid
+    // at the old pace would have read as two men skating between poses.
+    f.vx += f.drive * 0.45;
+    f.vx = Math.max(-1.35, Math.min(1.35, f.vx));
   }
 }
 
@@ -471,8 +501,25 @@ function step(st: DuelState): void {
     }
   }
 
-  stepFighter(st, st.a, st.b);
-  stepFighter(st, st.b, st.a);
+  /*
+   * Whose turn resolves first is decided by a coin, every step.
+   *
+   * Stepping `a` then `b` unconditionally is a genuine, silent advantage to the
+   * fighter on the left, and it decides exactly the matches that should be
+   * closest. `damage()` sets `st.over` on a killing blow and `stepFighter`
+   * returns immediately for a fighter whose action is `dead`, so when both are
+   * due to land a lethal strike on the same frame, `a`'s lands and `b`'s never
+   * happens. The client asked for "random winners always, no bias or favorites"
+   * — the powers were already drawn from one distribution for both sides, but
+   * this was not fair, and it biased the photo finishes.
+   */
+  if (Math.random() < 0.5) {
+    stepFighter(st, st.a, st.b);
+    stepFighter(st, st.b, st.a);
+  } else {
+    stepFighter(st, st.b, st.a);
+    stepFighter(st, st.a, st.b);
+  }
   springBlade(st, st.a, st.b);
   springBlade(st, st.b, st.a);
 
@@ -733,90 +780,46 @@ function drawFighter(
     return j;
   };
 
-  // ---- the off hand, behind the body ------------------------------------
+  /*
+   * The body is a stick figure, and that is the client's own call (2026-08-14):
+   * "if it makes it easier, make the character models more simple, but make the
+   * fights better", then "im fine with stick figures as long as the fights are
+   * decent". All the investment goes into the fighting.
+   *
+   * What was here before was worse than a stick figure, not better. A 30px
+   * filled torso quad, a filled head block, and a filled robe or cape or tunic
+   * behind it composited into one pale slab about as wide as the figure was
+   * tall — which the client read, correctly, as "they are holding shields". And
+   * only one arm ever reached the hilt, so it was also, correctly, "a
+   * one-handed sword fight".
+   *
+   * Both hands are on the grip now unless an arm is doing something else. That
+   * single change is most of what makes a silhouette read as a swordsman rather
+   * than as a figure carrying a stick, and it is what the films look like.
+   */
   const forceP = f.action === "force" ? 1 - f.timer / FORCE_FRAMES : 0;
-  const offShX = -SHOULDER_X + lean;
-  const offShY = SHOULDER_Y + breath;
-  let offHandX = -16;
-  let offHandY = 32;
-  if (f.action === "force") {
-    // The push arm reaches forward; it is a solved arm now, so it has an elbow.
-    offHandX = -4 + 30 * Math.min(1, forceP * 2.5);
-    offHandY = 21;
-  }
-  ctx.globalAlpha = bodyAlpha * 0.9;
-  limb(offShX, offShY, offHandX, offHandY, UPPER_ARM, FOREARM, 1, 7);
+  const flick =
+    1 + (Math.sin(st.idle * 0.8 + f.phase) + Math.sin(st.idle * 1.37 + f.phase * 2)) * 0.008;
+  const g = bladeLocal(f, flick);
 
-  // ---- the back layer: capes, robes, wings, tunics -----------------------
-  if (f.style === "caped") {
-    // The cape trails against travel instead of hanging like a board.
-    const drift = Math.max(-12, Math.min(12, -localVx * 2.6));
-    ctx.globalAlpha = 0.4 * v.dim;
-    ctx.beginPath();
-    ctx.moveTo(-4, 2);
-    ctx.lineTo(-30 + drift, BODY_H * 0.55);
-    ctx.lineTo(-24 + drift, BODY_H);
-    ctx.lineTo(-6, BODY_H);
-    ctx.closePath();
-    ctx.fill();
-  } else if (f.style === "haloed") {
-    // The aura breathes rather than sitting at a fixed radius.
-    ctx.globalAlpha = 0.08 * v.dim;
-    ctx.fillStyle = blade;
-    ctx.beginPath();
-    ctx.arc(0, 22, 46 + Math.sin(st.idle * 0.03 + f.phase) * 4, 0, TAU);
-    ctx.fill();
-    ctx.globalAlpha = 0.6 * v.dim;
-    ctx.fillStyle = v.ink;
-    ctx.beginPath();
-    ctx.moveTo(-BODY_W / 2, BODY_H * 0.4);
-    ctx.lineTo(-BODY_W / 2 - 8, BODY_H);
-    ctx.lineTo(BODY_W / 2 + 8, BODY_H);
-    ctx.lineTo(BODY_W / 2, BODY_H * 0.4);
-    ctx.closePath();
-    ctx.fill();
-  } else if (f.style === "horned") {
-    // The wing flares open on a leap and folds while grounded.
-    const flare = airborne ? 1.35 : 1;
-    ctx.globalAlpha = 0.3 * v.dim;
-    ctx.beginPath();
-    ctx.moveTo(-5, 8);
-    ctx.lineTo(-36 * flare, -10 - (flare - 1) * 20);
-    ctx.lineTo(-28 * flare, 10);
-    ctx.lineTo(-38 * flare, 18);
-    ctx.lineTo(-26 * flare, 26);
-    ctx.lineTo(-30 * flare, 36);
-    ctx.lineTo(-6, 24);
-    ctx.closePath();
-    ctx.fill();
-  } else if (f.style === "hooded") {
-    ctx.globalAlpha = 0.35 * v.dim;
-    ctx.beginPath();
-    ctx.moveTo(-BODY_W / 2, BODY_H * 0.55);
-    ctx.lineTo(-BODY_W / 2 - 5, BODY_H);
-    ctx.lineTo(BODY_W / 2 + 5, BODY_H);
-    ctx.lineTo(BODY_W / 2, BODY_H * 0.55);
-    ctx.closePath();
-    ctx.fill();
-  }
+  const hipY = TORSO_H;
+  const shY = SHOULDER_Y + breath;
+  const neckX = lean * 0.9;
 
-  // ---- legs --------------------------------------------------------------
-  // A stance that widens into a swing, a walk cycle keyed to distance covered,
-  // a tuck in the air, and a real support leg under the kick. Previously the
-  // only leg in the file was the kick's single straight stub.
+  // ---- legs, behind everything -------------------------------------------
   const kickP = f.action === "kicking" ? 1 - f.timer / KICK_FRAMES : 0;
   const kickReach = Math.sin(Math.PI * Math.min(1, kickP * 1.4)) * 34;
-  const brace = f.action === "attacking" ? 4 : 0;
+  const brace = f.action === "attacking" ? 5 : 0;
   ctx.globalAlpha = bodyAlpha;
   ctx.strokeStyle = v.ink;
   for (let i = 0; i < 2; i += 1) {
     const front = i === 0;
     const hipX = front ? HIP_X : -HIP_X;
-    let footX = front ? 3 + brace : -3 - brace;
+    let footX = front ? 4 + brace : -4 - brace;
     let footY = BODY_H;
     if (airborne) {
-      footX = front ? 7 : -9;
-      footY = BODY_H - 14;
+      footX = front ? 8 : -10;
+      footY = BODY_H - 15;
     } else if (f.action === "kicking" && front) {
       footX = 8 + kickReach;
       footY = BODY_H - 14 - kickReach * 0.5;
@@ -825,141 +828,104 @@ function drawFighter(
       footX += Math.sin(ph) * 13 * speed;
       footY -= Math.max(0, Math.cos(ph)) * 9 * speed;
     }
-    // The knee breaks forward, and the far leg is drawn a touch thinner so the
-    // pair reads as two legs rather than one thick one.
-    limb(hipX, TORSO_H - 2, footX, footY, THIGH, SHIN, -1, front ? 8 : 7);
+    limb(hipX, hipY, footX, footY, THIGH, SHIN, -1, front ? 5 : 4);
   }
 
-  // The sword arm goes on *before* the torso. Ink over ink at the same alpha
-  // stacks, so an arm crossing the chest painted itself as a bright band; drawn
-  // under, only the forearm and hand clear the body, which is also where an arm
-  // actually is.
-  const flick =
-    1 + (Math.sin(st.idle * 0.8 + f.phase) + Math.sin(st.idle * 1.37 + f.phase * 2)) * 0.008;
-  const g = bladeLocal(f, flick);
-  if (!dead) {
-    ctx.globalAlpha = bodyAlpha;
-    ctx.strokeStyle = v.ink;
-    limb(SHOULDER_X + lean, SHOULDER_Y + breath, g.hx, g.hy, UPPER_ARM, FOREARM, -1, 6);
-  }
-
-  // ---- torso and head ----------------------------------------------------
-  // A quad rather than a rect, so the shoulders can lean over planted hips.
+  // ---- spine and head -----------------------------------------------------
   ctx.globalAlpha = bodyAlpha;
+  ctx.strokeStyle = v.ink;
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  ctx.moveTo(0, hipY);
+  ctx.lineTo(neckX, shY - 2);
+  ctx.stroke();
+
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.moveTo(-SHOULDER_X + lean, shY);
+  ctx.lineTo(SHOULDER_X + lean, shY);
+  ctx.stroke();
+
   ctx.fillStyle = v.ink;
   ctx.beginPath();
-  ctx.moveTo(-BODY_W / 2 + lean, breath);
-  ctx.lineTo(BODY_W / 2 + lean, breath);
-  ctx.lineTo(BODY_W / 2 - 2, TORSO_H);
-  ctx.lineTo(-BODY_W / 2 + 2, TORSO_H);
-  ctx.closePath();
+  ctx.arc(neckX, headY + 6, 8, 0, TAU);
   ctx.fill();
 
+  // ---- the off hand -------------------------------------------------------
+  // On the grip, a little below the sword hand, unless the arm is pushing.
+  let offHandX = g.hx - Math.cos(f.bladeA) * 8;
+  let offHandY = g.hy - Math.sin(f.bladeA) * 8;
+  if (f.action === "force") {
+    offHandX = -4 + 30 * Math.min(1, forceP * 2.5);
+    offHandY = 21;
+  } else if (f.action === "kicking") {
+    // Thrown out for balance, which is what a kick actually needs.
+    offHandX = -22;
+    offHandY = 12;
+  }
+  ctx.globalAlpha = bodyAlpha * 0.85;
+  ctx.strokeStyle = v.ink;
+  limb(-SHOULDER_X + lean, shY, offHandX, offHandY, UPPER_ARM, FOREARM, 1, 4.5);
+
+  // ---- the sword arm ------------------------------------------------------
+  if (!dead) {
+    ctx.globalAlpha = bodyAlpha;
+    limb(SHOULDER_X + lean, shY, g.hx, g.hy, UPPER_ARM, FOREARM, -1, 5);
+  }
+
+  /*
+   * The whole costume is four marks — one per style, drawn on the head.
+   *
+   * Everything else that used to distinguish them (capes, auras, wings, tunics,
+   * chest panels, tails, belts) was filled geometry hung off the torso, and
+   * filled geometry is exactly what made the pair read as armoured shield-
+   * carriers. At the size these actually render, the head is the only place a
+   * silhouette difference survives anyway.
+   */
   ctx.save();
-  ctx.translate(lean, 0);
-  ctx.fillRect(-9, headY, 18, 15);
+  ctx.translate(neckX, 0);
+  ctx.strokeStyle = v.ink;
+  ctx.globalAlpha = bodyAlpha;
+  ctx.lineWidth = 3;
   if (f.style === "hooded") {
+    // A hood: a peak over the skull.
     ctx.beginPath();
-    ctx.moveTo(-14, headY + 15);
-    ctx.lineTo(2, headY - 10);
-    ctx.lineTo(13, headY + 11);
-    ctx.closePath();
-    ctx.fill();
-  } else if (f.style === "caped") {
-    ctx.beginPath();
-    ctx.arc(0, headY + 2, 13, Math.PI, 0);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.moveTo(-12, headY + 9);
-    ctx.lineTo(-17, headY + 17);
-    ctx.lineTo(17, headY + 17);
-    ctx.lineTo(12, headY + 9);
-    ctx.closePath();
-    ctx.fill();
-  } else if (f.style === "haloed") {
-    ctx.fillRect(-14, headY, 5, 23);
-    ctx.fillRect(9, headY, 5, 23);
-    ctx.fillRect(-10, headY - 3, 20, 5);
-    // The halo floats clear of the head, and now bobs independently of it.
-    const halo = headY - 10 + Math.sin(st.idle * 0.04 + f.phase) * 1.6;
-    ctx.strokeStyle = blade;
-    ctx.globalAlpha = 0.35 * v.dim;
-    ctx.lineWidth = 5;
-    ctx.beginPath();
-    ctx.ellipse(0, halo, 14, 5, 0, 0, TAU);
+    ctx.moveTo(-10, headY + 12);
+    ctx.lineTo(1, headY - 9);
+    ctx.lineTo(10, headY + 10);
     ctx.stroke();
-    ctx.globalAlpha = 0.95 * v.dim;
+  } else if (f.style === "horned") {
+    ctx.beginPath();
+    ctx.moveTo(-6, headY + 1);
+    ctx.quadraticCurveTo(-13, headY - 7, -8, headY - 13);
+    ctx.moveTo(6, headY + 1);
+    ctx.quadraticCurveTo(13, headY - 7, 8, headY - 13);
+    ctx.stroke();
+  } else if (f.style === "haloed") {
+    const halo = headY - 6 + Math.sin(st.idle * 0.04 + f.phase) * 1.6;
+    ctx.strokeStyle = blade;
+    ctx.globalAlpha = 0.9 * v.dim;
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.ellipse(0, halo, 14, 5, 0, 0, TAU);
+    ctx.ellipse(0, halo, 12, 4, 0, 0, TAU);
     ctx.stroke();
-    ctx.globalAlpha = bodyAlpha;
-    ctx.fillStyle = v.ink;
   } else {
+    // Caped: a helmet brow, one stroke.
     ctx.beginPath();
-    ctx.moveTo(-8, headY + 2);
-    ctx.quadraticCurveTo(-15, headY - 6, -11, headY - 15);
-    ctx.quadraticCurveTo(-9, headY - 6, -4, headY - 1);
-    ctx.closePath();
-    ctx.moveTo(8, headY + 2);
-    ctx.quadraticCurveTo(15, headY - 6, 11, headY - 15);
-    ctx.quadraticCurveTo(9, headY - 6, 4, headY - 1);
-    ctx.closePath();
-    ctx.fill();
+    ctx.arc(0, headY + 6, 9, Math.PI * 1.05, Math.PI * 1.95);
+    ctx.stroke();
   }
   ctx.restore();
 
-  // ---- chest dressing ----------------------------------------------------
-  if (f.style === "caped") {
-    // The panel's cells blink out of phase, so the costume has a pulse.
-    ctx.fillStyle = v.spark;
-    for (let row = 0; row < 3; row += 1) {
-      for (let col = 0; col < 2; col += 1) {
-        const lit = 0.35 + 0.55 * ((Math.sin(st.idle * 0.09 + row * 1.7 + col * 2.6 + f.phase) + 1) / 2);
-        ctx.globalAlpha = lit * v.dim;
-        ctx.fillRect(-6 + col * 8 + lean * 0.6, 15 + row * 6, 3, 3);
-      }
-    }
-    ctx.globalAlpha = 0.6 * v.dim;
-    ctx.fillRect(-10, 42, 5, 5);
-    ctx.fillRect(5, 42, 5, 5);
-    ctx.fillStyle = v.ink;
-  } else if (f.style === "hooded") {
-    ctx.fillStyle = blade;
-    ctx.globalAlpha = 0.5 * v.dim;
-    ctx.fillRect(-BODY_W / 2, 36, BODY_W, 4);
-    ctx.fillStyle = v.ink;
-  } else if (f.style === "horned") {
-    const sway = Math.sin(st.idle * 0.06 + f.phase) * 5;
-    const tailTipX = -32;
-    const tailTipY = BODY_H - 26 + sway;
-    ctx.strokeStyle = v.ink;
-    ctx.globalAlpha = 0.7 * v.dim;
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(-10, BODY_H - 6);
-    ctx.quadraticCurveTo(-36, BODY_H + 10, tailTipX, tailTipY);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(tailTipX - 5, tailTipY - 2);
-    ctx.lineTo(tailTipX + 5, tailTipY - 2);
-    ctx.lineTo(tailTipX, tailTipY - 11);
-    ctx.closePath();
-    ctx.fill();
-  }
-
-  // Hit feedback: the torso flashes in the spark colour for a few frames.
+  // Hit feedback: the figure flares in the spark colour.
   if (f.flash > 0) {
-    ctx.globalAlpha = f.flash * 0.5 * v.dim;
-    ctx.fillStyle = v.spark;
+    ctx.globalAlpha = f.flash * 0.55 * v.dim;
+    ctx.strokeStyle = v.spark;
+    ctx.lineWidth = 7;
     ctx.beginPath();
-    ctx.moveTo(-BODY_W / 2 + lean, breath);
-    ctx.lineTo(BODY_W / 2 + lean, breath);
-    ctx.lineTo(BODY_W / 2 - 2, TORSO_H);
-    ctx.lineTo(-BODY_W / 2 + 2, TORSO_H);
-    ctx.closePath();
-    ctx.fill();
-    ctx.fillStyle = v.ink;
+    ctx.moveTo(0, hipY);
+    ctx.lineTo(neckX, shY - 2);
+    ctx.stroke();
   }
 
   // ---- the force rings ---------------------------------------------------

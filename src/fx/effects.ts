@@ -43,9 +43,14 @@ export interface Frame {
    *
    * Deliberately its own flag rather than something read back out of `boost`:
    * scroll velocity is folded into that same number, so a hard scroll is
-   * indistinguishable from a sleeping interface there. Only `duelling` uses it
-   * (see its attract mode); every other effect is a field that already fills
-   * the viewport and has nothing to gain from the extra room.
+   * indistinguishable from a sleeping interface there.
+   *
+   * **Nothing reads it at present.** `duelling` was its only consumer, for an
+   * attract mode the client has since asked to be removed — the screensaver
+   * fight and the background fight are now the same scene. It stays on the
+   * contract because "the interface is asleep" is a genuinely different fact
+   * from "the page is being scrolled hard", and the next effect that wants it
+   * should not have to re-derive it.
    */
   sleeping: boolean;
   /**
@@ -58,6 +63,16 @@ export interface Frame {
    * the fix and a second knob would only make the tier visible.
    */
   quality: number;
+  /**
+   * Real elapsed frames since the last render — 1 at a steady 60Hz, 2 on a
+   * dropped frame, 0.5 on a 120Hz display. Clamped to [0.2, 3].
+   *
+   * Deliberately *not* `boost`, which is this multiplied by scroll velocity and
+   * the screensaver's bonus. Anything that should run at a fixed rate in real
+   * time regardless of what the page is doing — the duel, which is a
+   * performance rather than an ambient field — integrates against this.
+   */
+  dt: number;
   /** Pointer position, 0–1 of the viewport. */
   mx: number;
   my: number;
@@ -177,13 +192,6 @@ export interface FxCache {
     cw: number;
     ch: number;
   } | null;
-  /**
-   * The duel's attract-mode blend, 0 (background) to 1 (screensaver). Eased
-   * rather than switched, so nothing about the fight jumps when the interface
-   * goes to sleep. Cached beside the match rather than inside `DuelState`
-   * because the ornament shares that state and has no attract mode.
-   */
-  attract?: number;
 }
 
 const TAU = 6.3;
@@ -1602,48 +1610,111 @@ const scan: Effect = ({ ctx, w, h, p, t, mx, my }, cache) => {
  *
  * Deterministic, like `scan` — nothing to seed, nothing to cache.
  */
-const telemetry: Effect = ({ ctx, w, h, p, t }) => {
+/** Per-lane constants. Hand-set — an `i % 3` pattern is visible as a pattern. */
+const TEL_Y = [0.13, 0.2, 0.29, 0.78, 0.89];
+const TEL_AMP = [0.31, 0.09, 0.22, 0.12, 0.27];
+const TEL_WID = [1.8, 1, 1.6, 1, 1.7];
+/** One traversal of the playhead, in `t` units. */
+const TEL_PERIOD = 1 / 0.13;
+
+const telemetry: Effect = ({ ctx, w, h, p, t, beat }) => {
   const lanes = 5;
-  const gap = h / (lanes + 1);
   const head = ((t * 0.13) % 1) * w;
+  const cols = [p.a1, p.line, p.a2, p.muted, p.a3];
+
+  /*
+   * Instrument furniture: ticks along the bottom of the top bank, one path.
+   * This is what tells the eye these are channels rather than five decorative
+   * squiggles. No numerals — at this alpha behind body copy they would be
+   * unreadable, and unreadable numbers are decoration pretending to be data.
+   */
+  ctx.strokeStyle = p.faint;
+  ctx.globalAlpha = 0.16;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let k = 0; k <= 24; k++) {
+    const x = (k / 24) * w;
+    const tall = k % 4 === 0 ? 10 : 5;
+    ctx.moveTo(x, h * 0.335);
+    ctx.lineTo(x, h * 0.335 + tall);
+  }
+  ctx.stroke();
 
   for (let i = 0; i < lanes; i++) {
-    const y0 = gap * (i + 1);
-    const amp = gap * (0.13 + (i % 3) * 0.07);
+    const y0 = h * TEL_Y[i];
+    // Two quiet channels among three loud ones. Five equally loud channels is
+    // the uniformity tell; hierarchy is what makes the loud ones read as the
+    // ones worth watching. The quiet pair also carries `beat`, so the panel has
+    // one obvious vital sign and several things that are plainly not.
+    const quiet = i === 1 || i === 3;
+    const amp = h * 0.055 * TEL_AMP[i] * 3.1 * (quiet ? 0.7 + beat * 0.5 : 1);
     const f1 = 0.004 + i * 0.0016;
     const f2 = 0.011 + i * 0.0009;
     const speed = 0.8 + i * 0.36;
 
-    // The lane's own baseline, so an idle stretch still reads as a channel.
     ctx.strokeStyle = p.line;
-    ctx.globalAlpha = 0.5;
+    ctx.globalAlpha = 0.4;
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(0, y0);
     ctx.lineTo(w, y0);
     ctx.stroke();
 
-    ctx.strokeStyle = [p.a1, p.a2, p.a3][i % 3];
-    ctx.lineWidth = 1.6;
+    /*
+     * **The playhead writes the trace.** This is the whole difference between
+     * instrumentation and decoration, and it was the one thing missing.
+     *
+     * The trace was `sin(px * f1 + t * speed)` — a wave scrolling continuously
+     * on its own, past a bright line sliding across it at an unrelated rate:
+     * two motions contradicting each other. On a real scope the trace is
+     * stationary in x and the head is the only thing moving, leaving fresh data
+     * behind it and the *previous* sweep still standing ahead of it, with a hard
+     * discontinuity at the head. That discontinuity is the entire visual
+     * signature of an oscilloscope.
+     *
+     * So each sample is evaluated at the time the head last passed that x,
+     * rather than at now. The trace then holds still, changes shape between
+     * sweeps because the underlying signal has moved on, and breaks at the head.
+     * It also inherits the head's period, which disposes of the per-lane
+     * waveform repeats — lane 5's two terms were locked at 1 : 0.6 and recurred
+     * exactly every 21 seconds.
+     */
+    /*
+     * Phosphor decay, as a gradient along the lane rather than as per-run alpha.
+     *
+     * The old version quantised brightness into 180 steps by drawing the lane in
+     * short strokes; one gradient is continuous and takes the whole lane in a
+     * single path — about 900 strokes a frame across five lanes down to five.
+     * The two stops either side of the head are the discontinuity: the writing
+     * edge at full brightness, and immediately ahead of it the previous sweep,
+     * still standing and nearly faded.
+     */
+    const hx = head / w;
+    const at = (u: number) => Math.min(1, Math.max(0, u));
+    const grad = ctx.createLinearGradient(0, 0, w, 0);
+    grad.addColorStop(0, `${cols[i]}1A`);
+    grad.addColorStop(at(hx - 0.5), `${cols[i]}1A`);
+    grad.addColorStop(at(hx - 0.002), `${cols[i]}FF`);
+    grad.addColorStop(at(hx), `${cols[i]}22`);
+    grad.addColorStop(1, `${cols[i]}1A`);
+    ctx.strokeStyle = grad;
+    ctx.lineWidth = TEL_WID[i];
     ctx.lineJoin = "round";
-
-    // Drawn in short runs rather than one path, so alpha can vary along the
-    // lane — brightest just behind the playhead, falling away ahead of it.
-    for (let x = 0; x < w; x += 8) {
-      const near = 1 - Math.min(1, Math.abs(x - head) / (w * 0.34));
-      ctx.globalAlpha = 0.12 + near * 0.5;
-      ctx.beginPath();
-      for (let s = 0; s <= 8; s += 4) {
-        const px = x + s;
-        const py =
-          y0 +
-          Math.sin(px * f1 + t * speed) * amp +
-          Math.sin(px * f2 - t * speed * 0.6) * amp * 0.45;
-        if (s === 0) ctx.moveTo(px, py);
-        else ctx.lineTo(px, py);
-      }
-      ctx.stroke();
+    ctx.globalAlpha = 0.62;
+    ctx.beginPath();
+    for (let x = 0; x <= w; x += 6) {
+      // Standard positive modulo: how far back round the lane the head is from
+      // this sample, 0 at the head and approaching 1 just ahead of it.
+      const behind = ((((head - x) % w) + w) % w) / w;
+      const tt = t - behind * TEL_PERIOD;
+      const py =
+        y0 +
+        Math.sin(x * f1 + tt * speed) * amp +
+        Math.sin(x * f2 - tt * speed * 0.6) * amp * 0.45;
+      if (x === 0) ctx.moveTo(x, py);
+      else ctx.lineTo(x, py);
     }
+    ctx.stroke();
   }
 
   ctx.strokeStyle = p.fg;
@@ -1683,63 +1754,60 @@ const telemetry: Effect = ({ ctx, w, h, p, t }) => {
  * wrong: no such string exists in `pages.ts` or anywhere else. It went with the
  * hero vitals strip. No copy correction is owed.
  */
-/**
- * Per-frame fraction of the remaining distance the attract blend closes.
- *
- * 0.016 puts it ~95% of the way there in about 182 fight frames, which is the
- * 1.6s the chrome takes to fade at the boost the screensaver is running at.
- */
-const ATTRACT_RATE = 0.016;
-
-/**
- * Exponential approach that survives a variable frame count.
- *
- * `frames` is not 1 — it is a delta-corrected, boost-inclusive count that the
- * duel already clamps to 4 — so a naive `x += (target - x) * rate` would move
- * a different distance per unit time on every display. Raising the retained
- * fraction to that power is the same curve sampled at the right places.
- */
-function approach(from: number, to: number, frames: number): number {
-  if (frames <= 0) return from;
-  const next = to + (from - to) * Math.pow(1 - ATTRACT_RATE, frames);
-  return Math.abs(next - to) < 0.0005 ? to : next;
-}
 
 function duelling(left: FighterStyle, right: FighterStyle): Effect {
-  return ({ ctx, w, h, p, t, sleeping }, cache) => {
+  return ({ ctx, w, h, p, t, dt }, cache) => {
     let st = cache.duel;
     if (!st) st = cache.duel = createDuel(left, right);
 
-    // One tick of the effect clock is 0.011 per 60Hz frame, so delta ÷ 0.011 is
-    // a frame count, with boost already folded in. **Clamped**: a scroll surge
-    // or the screensaver would otherwise hand this enough frames to teleport
-    // the match, and a negative delta (clock reset) must never run the fight
-    // backwards. A dropped frame is cheaper than a jump cut.
-    const frames = Math.min(4, Math.max(0, (t - st.prev) / 0.011));
+    /*
+     * The fight runs on real time, not on the boosted effect clock (client,
+     * 2026-08-14: "they speed up at like x50 speed", "it lags hard randomly,
+     * especially when on screensaver").
+     *
+     * It used to derive its frame count from `t`, which has `boost` folded in —
+     * and `boost` carries both scroll velocity and the screensaver's +0.9. So
+     * the duel ran at roughly double speed for the entire time the screensaver
+     * was up, which is exactly when the client was watching it, and a hard
+     * scroll could push it to the 4× clamp.
+     *
+     * That also produced the "random lag", which was never dropped frames.
+     * `advanceDuel` steps in whole frames from a fractional accumulator, so at
+     * a rate of ~1.9 the number of steps per rendered frame alternates 2,2,1,
+     * 2,2,1 — motion that stutters on a fixed cadence. At a rate of ~1.0 it
+     * steps once per frame and the judder has nowhere to come from.
+     *
+     * Every other effect is an ambient field and should surge when the page
+     * does. A duel is a performance: it keeps its own tempo.
+     */
     st.prev = t;
-    advanceDuel(st, frames);
+    advanceDuel(st, dt);
 
-    // Attract mode: the screensaver has faded the chrome out, so there is no
-    // copy left to sit behind and the fight stops being polite about it.
-    //
-    // Eased, never switched. The chrome takes 1.6s to fade (`.v-chrome` in
-    // chrome.css) and a figure that doubled in size on one frame would beat it
-    // there and read as a glitch. The rate is expressed in *fight* frames, which
-    // run boosted while asleep and unboosted awake, so the growth lands with the
-    // fade and the settle back is roughly twice as slow — the right asymmetry:
-    // waking up is the moment you want the page back, not a second animation.
-    const attract = (cache.attract = approach(cache.attract ?? 0, sleeping ? 1 : 0, frames));
-
-    // Sized as a background, not as a subject — the first attempt's figures were
-    // taller than the hero copy. Feet on a line at 80% height, centred. Attract
-    // mode spends the room the chrome vacated: about 1.4× linear, feet a little
-    // lower so the taller pair still sits on a believable floor.
-    const spanW = 0.62 + 0.26 * attract;
-    const spanH = 0.55 + 0.23 * attract;
-    const scale = Math.min((w * spanW) / DUEL_WORLD_W, (h * spanH) / DUEL_WORLD_H);
+    /*
+     * **Attract mode no longer changes how the fight is drawn** (client,
+     * 2026-08-14: "make sure the screensaver battles are the same graphics as
+     * the nonscreensaver ones pls").
+     *
+     * It used to grow the figures about 1.4× linear, drop the feet line, raise
+     * body alpha from 0.55 to 1 and fade health bars in — all eased over 1.6s to
+     * land with the chrome's fade. The reasoning was sound (the screensaver
+     * vacates the copy the fight was being polite about) and the client does not
+     * want it: the same scene, in both states.
+     *
+     * Kept at the *background* presentation rather than the screensaver one,
+     * because that direction is the one with a hard constraint on it. Behind
+     * body copy the figures have to stay quiet enough to read through, and
+     * several palettes already fail AA on body text. Making both ends bright
+     * would have traded a real legibility problem for a cosmetic gain.
+     *
+     * `sleeping` and the `approach` easing helper went with it. The frame
+     * contract still carries `sleeping`; this was its only reader, and a future
+     * attract idea starts by reading this note.
+     */
+    const scale = Math.min((w * 0.62) / DUEL_WORLD_W, (h * 0.55) / DUEL_WORLD_H);
     drawDuel(ctx, st, {
       x: (w - DUEL_WORLD_W * scale) / 2,
-      y: h * (0.8 + 0.04 * attract) - DUEL_FEET_Y * scale,
+      y: h * 0.8 - DUEL_FEET_Y * scale,
       scale,
       ink: p.fg,
       // The blades keep their alignment colours in every palette — the one
@@ -1749,12 +1817,10 @@ function duelling(left: FighterStyle, right: FighterStyle): Effect {
       core: p.fg,
       spark: p.a2,
       line: p.line,
-      // Health bars are wrong behind body copy and right once the copy has gone
-      // — the same judgement that made them ornament-only. `barAlpha` is what
-      // keeps them from popping in: `bars` is a boolean and cannot be eased.
-      bars: attract > 0.01,
-      barAlpha: attract,
-      dim: 0.55 + 0.45 * attract,
+      // Health bars are wrong behind body copy, and the copy is only sometimes
+      // gone. They stay in the ornament, where they were always right.
+      bars: false,
+      dim: 0.55,
     });
   };
 }
