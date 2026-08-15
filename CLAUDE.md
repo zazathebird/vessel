@@ -757,8 +757,34 @@ photographs are still going in.
 bit 8 all keep the old name — renaming them breaks stored preferences and codes in circulation for
 zero visible gain, exactly as the de-branding decided for `.vessel` and the storage keys.
 
-Every line of copy outside the replaced home blocks, the `setup` page and that one word is
-verbatim-only.
+**The verbatim-only rule is retired (2026-08-15).** The client's instruction: *"make this whole
+site's text content understandable by the non tech-savvy… my mum said what the fuck does this all
+mean, and my grandma would know even less."* Home, About, Work, Gallery, Contact, Now, Guestbook,
+the 404 and the greeting dialog were rewritten for comprehension. `scams` and `setup` are still
+pending that pass.
+
+**What the rewrite was and was not.** It was not a reading-level problem — measured across all 86
+body blocks the mean Flesch–Kincaid grade was **5.0** and there was not one dictionary jargon word.
+The copy was *allusive*: it said things sideways and left the reader to land them. "Built like a
+flight simulator, used like a business card", "assembled in your browser so the scrapers don't get
+it", "Two cold joints", "array resilvering", "/var/www/whatever_you_wanted → exists = false". Every
+one of those is short, plain-worded and meaningless to the person the site is for. So the fix is
+never "use simpler words" — it is **name the thing, then make the joke about it**.
+
+**The voice is not the problem and must survive.** *The self-deprecating copy is still the point*
+— "This website is far more elaborate than the job actually needs, which should tell you where the
+spare time goes" is the rewritten version of the flight-simulator line, and it is doing the same
+work in the same register. Rewriting toward "professional" would be the actual failure. Every
+product rule above still holds: no city named, no form anywhere, the email still assembled at
+runtime, nothing advertising the site.
+
+**The pricing block states which way the $150 goes, and that is the load-bearing part.** "$150
+before anything starts, then $120 an hour from there" is truthful and can be read as either a
+deposit against the hourly or a charge on top of it — and the wrong reading becomes an argument
+when the invoice arrives. It now says *"it is not a deposit and it does not come off the hourly
+rate"* in as many words. The two numbers are the client's own and must not be changed here; the
+plumber/electrician comparison is theirs too and does the explaining a paragraph would otherwise
+have to.
 
 ## Accounts — the invariants
 

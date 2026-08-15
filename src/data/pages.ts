@@ -106,8 +106,8 @@ export const PAGES: Record<PageId, Page> = {
     blocks: [
       // "Fifteen years" → "Over twenty years" at the client's correction
       // (2026-08-14). His number, not the spec's.
-      { kicker: "the pitch", title: "Machines get fixed here", body: "Over twenty years of taking things apart and putting most of them back together. Laptops, desktops, drives that stopped spinning, networks that never worked properly to begin with." },
-      { kicker: "the catch", title: "There is no catch", body: "No quote form, no ticket system, no chat widget pretending to be a person. You send an email, you get a reply, usually the same day." },
+      { kicker: "the pitch", title: "Machines get fixed here", body: "Over twenty years of taking things apart and putting most of them back together. Laptops, desktops, hard drives that have stopped working, and home internet that never worked properly to begin with." },
+      { kicker: "the catch", title: "There is no catch", body: "There is no form to fill in, no queue to wait in, and no chat box pretending to be a person. You send an email, I read it myself, and you usually hear back the same day." },
       // The one block on this page pointing somewhere other than the work.
       { kicker: "read this first", title: "Nobody legitimate calls you first", body: "The single most expensive thing that happens to the people who ring me is a phone call from someone claiming to be Microsoft. There is a whole page here on exactly how that scam runs, what they say, what they ask you to install and what to do if it has already happened. Send it to whoever in your family answers the phone." },
       /*
@@ -130,7 +130,7 @@ export const PAGES: Record<PageId, Page> = {
        * Its best line survives here, because self-deprecation is still the
        * site's voice and this is the block that already carries it.
        */
-      { kicker: "the honesty", title: "What this is not", body: "Not an agency. Not a startup. Not looking for funding, partnerships, or your synergy. Built like a flight simulator, used like a business card. One person and a bench." },
+      { kicker: "the honesty", title: "What this is not", body: "Not a company, not a chain, and not after investors or partnerships. It is one person with a workbench. This website is far more elaborate than the job actually needs, which should tell you where the spare time goes." },
       // COPY CHANGE 2026-08-14, twice in one day and the second one is the real
       // policy. First the client killed "Free diagnosis, always" ("i dont do free
       // diag. a mechanic will still charge you to diagnose your cars issues").
@@ -150,7 +150,13 @@ export const PAGES: Record<PageId, Page> = {
       // machine is collected or dropped off, which "to show up" would not be.
       // The electrician comparison is the client's own and does the explaining
       // that a paragraph would otherwise have to.
-      { kicker: "the rate", title: "Paid before I start", body: "$150 before anything starts, then $120 an hour from there. Nothing happens before that first payment lands — an electrician works the same way, for the same reason. Finding out what's wrong is the job, not a free sample." },
+      // REWORDED 2026-08-15 at the client's request. The previous version was
+      // accurate and still left the one question a customer actually has
+      // unanswered: is the $150 a deposit that comes off the hourly, or a
+      // separate charge on top of it? "$150 before anything starts, then $120 an
+      // hour from there" can be read either way, and the wrong reading turns
+      // into an argument at invoice time. It says which now, in as many words.
+      { kicker: "the rate", title: "What it costs", body: "$150 to take the job on, then $120 for every hour after that. The $150 is a separate charge — it is not a deposit and it does not come off the hourly rate — and I do not start until it has been paid. Plumbers and electricians charge for coming out, for the same reason: working out what is wrong with a machine is the job, not something I do for free first." },
       // The "Some of this is hidden" block was REMOVED 2026-08-14 at the client's
       // request: "useless and just invites people to try and hack the site."
       // Correct on both counts. It advertised that hidden unlock routes exist and
@@ -169,10 +175,10 @@ export const PAGES: Record<PageId, Page> = {
       { label: "Contact", to: "contact" },
     ],
     blocks: [
-      { kicker: "origin", title: "Started with a broken 486", body: "It was already broken when it arrived. It was more broken afterwards. Something clicked anyway." },
-      { kicker: "now", title: "Benches, not offices", body: "A room, good light, an anti-static mat, and more spare screws than any person needs." },
-      { kicker: "stance", title: "Repair over replace", body: "Most things called dead are one component and forty minutes away from fine. The rest get stripped, and the parts get used." },
-      { kicker: "tools", title: "What's on the bench", body: "", hasList: true, items: ["Hot air station and a steady hand", "Drive imagers, write blockers", "A drawer of donor boards", "More USB sticks than sense"] },
+      { kicker: "origin", title: "It started with a broken old PC", body: "A 486 — a desktop computer from the early nineties, ancient even then. It was already broken when it arrived, and it was considerably more broken after I had a go at it. Something clicked anyway." },
+      { kicker: "now", title: "A workshop, not an office", body: "A room with good light, a mat that stops static electricity from killing the parts, and more spare screws than any one person needs." },
+      { kicker: "stance", title: "Repair before replace", body: "Most machines people have been told are dead need one part changed and about forty minutes. The ones that really are finished get stripped, and their parts go into somebody else's repair." },
+      { kicker: "tools", title: "What's on the bench", body: "", hasList: true, items: ["A hot air tool for melting solder, and a steady hand", "Equipment for copying a failing hard drive without finishing it off", "A drawer of dead machines kept for spare parts", "More USB sticks than sense"] },
     ],
   },
   work: {
@@ -181,26 +187,26 @@ export const PAGES: Record<PageId, Page> = {
     lede: "No client names, no photos of anyone's living room. What came in, what was wrong, what happened next.",
     ctas: [{ label: "Bring me yours", to: "contact", primary: true }],
     blocks: [
-      { kicker: "recovery", title: "4TB out of a flooded drive", body: "Dried, cleaned, imaged in a single pass. 94% recovered, including the only copy of eleven years of photos.", hasTile: true, tile: "drive teardown · photo slot", img: "/photos/drive-teardown.jpg", imgAlt: "An opened hard disk drive on a white background, platter and read arm exposed" },
-      { kicker: "board", title: "Reflowed a GPU everyone wrote off", body: "Two cold joints. Still running two years later — two years longer than the shop that quoted a new machine predicted." },
-      { kicker: "network", title: "A house with three routers fighting", body: "Removed two. The third works perfectly and always did.", hasTile: true, tile: "cabinet before/after · photo slot", img: "/photos/network-cabinet.jpg", imgAlt: "A wiring rack buried under a chaotic curtain of blue patch cables" },
-      { kicker: "forensics", title: "Ransomware, no ransom", body: "An offline backup existed. Nobody knew. Restored in an afternoon." },
-      { kicker: "absurd", title: "A laptop full of sand", body: "Beach holiday. Every key. It lives.", hasTile: true, tile: "keyboard, disassembled · photo slot", img: "/photos/keyboard-disassembled.jpg", imgAlt: "A beige mechanical keyboard with most keycaps pulled, bare switch stems showing" },
-      { kicker: "ongoing", title: "Twelve machines kept alive past 2019", body: "Small office, no budget. SSDs and RAM instead of a purchase order." },
+      { kicker: "recovery", title: "Photos rescued from a flooded hard drive", body: "Dried it out, cleaned it up, and copied everything off it in one go before it could fail again. Ninety-four per cent came back, including the only copy of eleven years of family photographs.", hasTile: true, tile: "drive teardown · photo slot", img: "/photos/drive-teardown.jpg", imgAlt: "An opened hard disk drive on a white background, platter and read arm exposed" },
+      { kicker: "board", title: "A graphics chip everyone else gave up on", body: "Two of the tiny solder joints holding it down had cracked, so the machine kept dying. I melted them and set them again. It has been running for two years since — two years longer than the shop that wanted to sell them a whole new computer expected." },
+      { kicker: "network", title: "A house with three routers fighting each other", body: "Took two of them out. The third works perfectly, and always did.", hasTile: true, tile: "cabinet before/after · photo slot", img: "/photos/network-cabinet.jpg", imgAlt: "A wiring rack buried under a chaotic curtain of blue patch cables" },
+      { kicker: "forensics", title: "Held to ransom, and nothing paid", body: "Criminals had scrambled every file on the machine and wanted money to unscramble them. It turned out there was a backup nobody remembered making, on a drive that had been left unplugged — which is exactly why the attack could not reach it. Everything was back by the afternoon." },
+      { kicker: "absurd", title: "A laptop full of sand", body: "One beach holiday, sand under every single key. It still works.", hasTile: true, tile: "keyboard, disassembled · photo slot", img: "/photos/keyboard-disassembled.jpg", imgAlt: "A beige mechanical keyboard with most keycaps pulled, bare switch stems showing" },
+      { kicker: "ongoing", title: "Twelve office computers kept going for years", body: "A small office with nothing in the budget for replacements. Faster storage and more memory in the machines they already had, for a fraction of the price of new ones." },
     ],
   },
   gallery: {
     eyebrow: "dumping ground",
     title: "Random shit, catalogued.",
-    lede: "Dead hardware, screenshots of things that should not compile, and photographs of cable drawers. Lazy-loaded, EXIF stripped, no lightbox library.",
+    lede: "Broken hardware, odd photographs, and the inside of a cable drawer. The pictures only load as you reach them, and anything the camera recorded about where they were taken has been stripped out.",
     ctas: [{ label: "Contact instead", to: "contact" }],
     blocks: [
-      { kicker: "img_01", title: "Exploded ThinkPad", body: "Every screw laid out in order. It went back together.", hasTile: true, tile: "4:5 · photo slot", img: "/photos/thinkpad-exploded.jpg", imgAlt: "A laptop opened on a wooden bench, battery and mainboard exposed, screwdrivers alongside" },
-      { kicker: "img_02", title: "Burnt capacitor, close", body: "Macro. You can see where it gave up.", hasTile: true, tile: "16:9 · photo slot", img: "/photos/burnt-capacitor.jpg", imgAlt: "Bulged and vented electrolytic capacitors on a dusty motherboard, one shedding its sleeve" },
-      { kicker: "clip_01", title: "Fan bearing screaming", body: "Eight seconds. Muted by default, obviously.", hasTile: true, tile: "video · muted loop" },
-      { kicker: "img_03", title: "Forty drives, one works", body: "A shelf of maybes.", hasTile: true, tile: "3:4 · photo slot", img: "/photos/drive-shelf.jpg", imgAlt: "Five PATA hard drives stacked on a scuffed wooden desk, connectors facing out" },
-      { kicker: "img_04", title: "CRT still alive", body: "Refuses to die. Respect.", hasTile: true, tile: "1:1 · photo slot", img: "/photos/crt-alive.jpg", imgAlt: "A CRT monitor glowing amber in a dark room, text faintly burned into the phosphor" },
-      { kicker: "img_05", title: "Cable drawer, unsolved", body: "An ongoing situation.", hasTile: true, tile: "4:5 · photo slot", img: "/photos/cable-drawer.jpg", imgAlt: "A dense tangle of power and data cables jammed beneath a desk shelf" },
+      { kicker: "photo", title: "A laptop taken completely apart", body: "Every screw laid out in the order it came out. It all went back together.", hasTile: true, tile: "4:5 · photo slot", img: "/photos/thinkpad-exploded.jpg", imgAlt: "A laptop opened on a wooden bench, battery and mainboard exposed, screwdrivers alongside" },
+      { kicker: "photo", title: "A burnt-out part, close up", body: "One of the small barrel-shaped components that smooth out the power inside a computer. You can see the exact spot where it gave up.", hasTile: true, tile: "16:9 · photo slot", img: "/photos/burnt-capacitor.jpg", imgAlt: "Bulged and vented electrolytic capacitors on a dusty motherboard, one shedding its sleeve" },
+      { kicker: "video", title: "A cooling fan on its way out", body: "Eight seconds of the noise it makes. Silent unless you turn your sound on.", hasTile: true, tile: "video · muted loop" },
+      { kicker: "photo", title: "Forty hard drives, one of them working", body: "A shelf of drives that might still have something on them. One does.", hasTile: true, tile: "3:4 · photo slot", img: "/photos/drive-shelf.jpg", imgAlt: "Five PATA hard drives stacked on a scuffed wooden desk, connectors facing out" },
+      { kicker: "photo", title: "An ancient tube monitor, still going", body: "The heavy kind, from before flat screens. It refuses to die. Respect.", hasTile: true, tile: "1:1 · photo slot", img: "/photos/crt-alive.jpg", imgAlt: "A CRT monitor glowing amber in a dark room, text faintly burned into the phosphor" },
+      { kicker: "photo", title: "The cable drawer, still unsolved", body: "An ongoing situation.", hasTile: true, tile: "4:5 · photo slot", img: "/photos/cable-drawer.jpg", imgAlt: "A dense tangle of power and data cables jammed beneath a desk shelf" },
     ],
   },
   // The form itself is a component, not data — `App` renders `SignUp` in place
@@ -250,13 +256,13 @@ export const PAGES: Record<PageId, Page> = {
   contact: {
     eyebrow: "the useful page",
     title: "Computer repair.",
-    lede: "Independent, one person, no shopfront. Dead, slow, infected, or you need the photos off a drive that stopped spinning. Email is below, reply usually within a day.",
+    lede: "One person, working independently, with no shop to walk into. Whether it is dead, slow, riddled with viruses, or you need the photographs off a hard drive that has stopped working — the email address is below, and you will usually hear back within a day.",
     ctas: [{ label: "Copy the address", to: "contact", primary: true, action: "reveal-mail" }],
     blocks: [
-      { kicker: "email", title: "The only way in", body: "Plain email, assembled in your browser so the scrapers don't get it. No form, no ticket system, nothing that stores your details on someone else's server.", hasMail: true },
-      { kicker: "what i fix", title: "Most of it", body: "", hasList: true, items: ["Laptops and desktops — Windows, macOS, Linux", "Won't boot, blue screens, random shutdowns", "SSD and RAM upgrades for slow machines", "Malware removal and clean reinstalls", "Data recovery from failing drives", "Screens, keyboards, batteries, fans", "Home wifi, routers, printers (reluctantly)", "Backups, so it doesn't happen twice"] },
-      { kicker: "what i don't", title: "A short list", body: "", hasList: true, items: ["Phone and tablet glass", "Getting into an account that isn't yours", "Crypto wallet recovery", "3am emergencies, unless genuinely on fire"] },
-      { kicker: "area", title: "Local, plus about thirty minutes around it", body: "Drop-off or collection by arrangement. Remote fixes over the phone where they'll actually work. Ask and I'll tell you if you're in range." },
+      { kicker: "email", title: "Email, and nothing else", body: "The address below is put together by your own browser the moment you click it, so the machines that trawl websites collecting addresses for spam never see it. There is no form to fill in, and nothing about you is stored anywhere.", hasMail: true },
+      { kicker: "what i fix", title: "Most of it", body: "", hasList: true, items: ["Laptops and desktops — Windows, Mac and Linux", "Won't turn on, freezes, crashes, or shuts itself off", "Making slow machines quick again with better parts", "Removing viruses, or wiping it and setting it up fresh", "Getting files back off a drive that is failing", "Screens, keyboards, batteries and fans", "Home wifi, routers and printers (reluctantly)", "Setting up backups, so it does not happen twice"] },
+      { kicker: "what i don't", title: "A short list", body: "", hasList: true, items: ["Cracked phone and tablet screens", "Getting into an account that is not yours", "Recovering lost cryptocurrency", "3am emergencies, unless something is genuinely on fire"] },
+      { kicker: "area", title: "Local, plus about thirty minutes around it", body: "You can drop the machine off, or I can come and collect it — whichever suits. Some problems I can sort out remotely while you are on the phone, when that will genuinely work. Ask, and I will tell you honestly whether you are near enough." },
       // COPY CHANGE 2026-08-14, following the home page's "the rate" block.
       // Step three was "Fixed, or you pay nothing" — the same no-fix-no-fee
       // promise the client has now contradicted, so it could not stay. It is
@@ -265,8 +271,8 @@ export const PAGES: Record<PageId, Page> = {
       // "Rough quote back, free" is untouched and still true — a rough estimate
       // from an emailed description is not a diagnosis, and it is the one thing
       // in this flow that genuinely costs nothing.
-      { kicker: "how it works", title: "Three steps", body: "", hasList: true, items: ["Email what's wrong", "Rough quote back, free", "$150 lands, and I start"] },
-      { kicker: "include", title: "To save a round trip", body: "Make and model, what it does, and when it started doing it. One sentence is fine." },
+      { kicker: "how it works", title: "Three steps", body: "", hasList: true, items: ["You email me what is wrong", "I reply with a rough price — that part costs nothing", "You pay the $150, and I get started"] },
+      { kicker: "include", title: "What to put in the email", body: "The make and model if you know it, what the machine is doing wrong, and roughly when it started. One sentence is genuinely enough — it just saves us a round of questions." },
     ],
   },
   now: {
@@ -275,11 +281,11 @@ export const PAGES: Record<PageId, Page> = {
     lede: "Updated when it changes, which is not often enough to justify a feed. If your machine is on this list it is being worked on and you do not need to email me twice.",
     ctas: [{ label: "Add yours to it", to: "contact", primary: true }],
     blocks: [
-      { kicker: "in progress", title: "Three ThinkPads, one keyboard between them", body: "Two are donors. The third is going home." },
-      { kicker: "waiting on parts", title: "A screen coming slowly from very far away", body: "Ordered, shipped, tracking last seen in a warehouse. Six to ten days." },
-      { kicker: "in progress", title: "A NAS rebuild that should not have taken this long", body: "Two disks replaced, array resilvering. Slow by design." },
-      { kicker: "diagnosing", title: "An intermittent shutdown", body: "The worst kind. It behaves perfectly on the bench and dies at home. Currently running a week of logging." },
-      { kicker: "done this week", title: "Two clean reinstalls and a battery", body: "All collected. All working." },
+      { kicker: "in progress", title: "Three old laptops, one working keyboard between them", body: "Two are being stripped for parts. The third is going home." },
+      { kicker: "waiting on parts", title: "A screen coming slowly from very far away", body: "Ordered, shipped, and last seen sitting in a warehouse. Six to ten days." },
+      { kicker: "in progress", title: "A home file store that should not have taken this long", body: "It is the box that holds a household's files and photographs. Two of its disks were failing and have been replaced, and it is now steadily copying everything back onto them. It is meant to be slow." },
+      { kicker: "diagnosing", title: "A computer that keeps switching itself off", body: "The worst kind of fault: it behaves perfectly here on the bench and only misbehaves at the owner's house. It is spending a week quietly writing down everything it does, so the next time it happens there is a record of why." },
+      { kicker: "done this week", title: "Two machines wiped and set up fresh, and a new battery", body: "All collected. All working." },
       { kicker: "personal", title: "Something old, being restored badly", body: "Not for a client. Not going well. Continuing anyway." },
     ],
   },
@@ -381,7 +387,7 @@ export const PAGES: Record<PageId, Page> = {
   guestbook: {
     eyebrow: "1999 revival",
     title: "Sign nothing.",
-    lede: "A guestbook with no form, because a form is a database and a database is a liability. Transcribed from emails, with permission, minus everything identifying.",
+    lede: "A guestbook with nothing to sign, because anything you typed would have to be stored somewhere, and I would rather not hold onto it. These are copied out of emails, with permission, with anything that could identify anyone taken out.",
     ctas: [{ label: "Email instead", to: "contact", primary: true }],
     blocks: [
       { kicker: "entry 001", title: "“Got my photos back. All of them.”", body: "— someone who had not backed up since 2011" },
@@ -617,18 +623,21 @@ export const PAGES: Record<PageId, Page> = {
   notfound: {
     eyebrow: "pressure lost · http 404",
     title: "Nothing here. Never was.",
-    lede: "You typed it wrong, a link rotted, something was deleted on purpose, or you are a crawler doing reconnaissance. Three of those are forgivable.",
+    lede: "Either the address was typed slightly wrong, a link somewhere is out of date, the page was taken down deliberately, or you are an automated bot having a poke around. Three of those are forgivable.",
     ctas: [
       { label: "Go home", to: "home", primary: true },
       { label: "Contact", to: "contact" },
     ],
     blocks: [
-      { kicker: "trace", title: "resource not found", body: "/var/www/whatever_you_wanted → exists = false" },
+      // Was `/var/www/whatever_you_wanted → exists = false`, which is a joke in
+      // a language only a developer reads. The joke is the same — there is
+      // nothing there and there never was — told so that anybody gets it.
+      { kicker: "trace", title: "There is nothing at that address", body: "Not hidden, not moved, and not broken. There has simply never been a page there." },
       // "eight" → "nine" (2026-08-14): the Setup page made the count wrong. The
       // client kept this line *because* it was correct — the counts on the 404
       // are jokes that depend on being true — so keeping the word would have
       // been the change, not correcting it. One word; nothing else here moved.
-      { kicker: "suggestion", title: "Try the parts that exist", body: "There are ten other pages and all of them are more interesting than this one.", hasList: true, items: ["Landing — the joke", "Contact — the useful one", "Now — what's on the bench", "Gallery — the dumping ground"] },
+      { kicker: "suggestion", title: "Try the parts that exist", body: "There are ten other pages and all of them are more interesting than this one.", hasList: true, items: ["Home — the front page", "Contact — the useful one", "Now — what is on the bench today", "Gallery — the dumping ground"] },
     ],
   },
 };

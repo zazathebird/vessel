@@ -61,20 +61,28 @@ export function Greeting() {
     say("suit yourself", { silent: true });
   };
 
+  /*
+   * Rewritten 2026-08-15 at the client's request — "make it stupid easy to
+   * understand". The old version opened with "Yes, it moves.", which answers a
+   * question the reader has not asked yet, then told them "plain in the corner
+   * switches the whole lot off" without saying what plain is, where the corner
+   * is, or what the whole lot means. Every sentence here now names the thing it
+   * is talking about and says where to find it.
+   */
   return (
-    <Dialog open={open} title="Yes, it moves." onClose={dismiss}>
+    <Dialog open={open} title="The background moves" onClose={dismiss}>
       <div className="v-dialog-body">
         <p>
-          There is an animated background back there doing nothing useful whatsoever.
-          That is on purpose. If it irritates you, <strong>plain</strong> in the corner
-          switches the whole lot off, and <strong>sound</strong> is already off in case
-          you were worried about that too.
+          The pattern behind this page drifts around on its own. It is decoration and
+          nothing more — you can ignore it completely. If you would rather it held
+          still, press the button marked <strong>plain</strong> at the top of the page
+          and everything stops moving. Sound is already switched off.
         </p>
-        <p>Nothing is stored, nothing is measured, and you will not see this again.</p>
+        <p>Nothing about you is saved or counted, and this message will not come back.</p>
       </div>
       <div className="v-dialog-actions">
         <button type="button" className="v-btn v-btn-primary" onClick={dismiss} autoFocus>
-          Fine
+          OK
         </button>
       </div>
     </Dialog>
