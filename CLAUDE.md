@@ -287,6 +287,25 @@ ones most likely to be "fixed" by accident:
   D1 is unreachable and `worker/site-config.ts` correctly injects nothing, i.e. the accessibility
   escape hatch switching itself off in exactly the degraded case. Production hid it because a config
   *is* published. Fixed 2026-08-14; do not "simplify" that branch back to `{ ...DEFAULT_CONFIG }`
+- **The first visit gets one dialog, and it is not a cookie banner** (`Greeting.tsx`, client
+  request). The site is full of motion and the controls that stop it are two small chips nobody
+  reads, so a first-time visitor gets one sentence and one button. It waits 1.2s so it lands *after*
+  the headline scramble rather than on top of the one moment the site introduces itself, and it
+  stores a single "seen it" flag — no choice is extracted and the site works identically either way.
+  Returning visitors get the two chips flashing three times instead (`is-nudge`), and only while
+  neither has been touched: a control advertising the off switch for motion must not become the most
+  restless thing on the page.
+- **That button is also the capability probe, and says nothing about it** (`src/fx/perf.ts`, client:
+  "just have it linked to clicking ok", "dont say the site is going to do it"). `FxCanvas` adapts
+  continuously but cannot know anything on the first frame, so a slow machine spent its opening
+  seconds at full resolution discovering it could not afford full resolution. The probe times a short
+  burst of the work the effects actually do, at the real pixel ratio — **not** `hardwareConcurrency`,
+  which counts cores, says nothing about the GPU, and is wrong in both directions. Two details are
+  load-bearing: an **untimed warm-up round**, because the first touch of a fresh context pays an
+  allocation the real effects pay once at mount, and a **pixel read-back**, because without it the
+  timer measures how fast commands were *enqueued* — the one number that looks healthy on a slow GPU.
+  **It can only ever start things two tiers down**: demotion now takes ~0.33s, so guessing too high
+  is cheap and guessing too low strands a fast machine soft for seconds.
 - **The site's sound is synthesised and cannot play uninvited** (`src/audio/engine.ts`). No files, so
   `SPEC.md`'s *Assets* rule holds; the pitch is derived from the palette exactly as every colour is,
   so no voice contains a literal frequency. **There is no ambient bed, no loop and no timer** — every
@@ -468,26 +487,60 @@ All deliberate. Add to this list rather than silently diverging.
    curved horns/bat wing/spade tail, hood/belt/tunic, dome helmet/chest panel/floor cape — with
    every non-blade colour still palette-supplied.
 
-   **The figures gained a skeleton on 2026-08-14** (client request: "make the characters look
-   better and the fight sequences more realistic"). Until then a fighter was literally two
-   rectangles and a line — no arms, no legs, and a sword hand welded to the torso by two
-   constants, so a swing could only pivot. `drawFighter` now works in **body-local units** with
-   `scale(facing, 1)` (which is what makes limbs affordable: the old version inlined `cx` and
-   `facing` into every coordinate), limbs are two-bone chains from one `joint()` helper, and the
-   blade is sprung toward a target rather than set directly, so no action snaps in or out. Three
-   rules here are load-bearing and easy to undo:
+   **The figures are stick figures, and the fight has a choreographer**
+   (2026-08-14, after the client saw the skeleton version: "looks like a
+   one-handed sword fight… this is pathetic", "they are holding shields. you
+   ever see a jedi with a shield?", and then the decisive one — "im fine with
+   stick figures as long as the fights are decent").
 
-   - **Bone lengths stay only slightly longer than the reach they cover.** A chain much longer
-     than its target distance puts the slack in a joint sticking out sideways.
-   - **The sword arm draws *before* the torso.** Ink over ink at the same alpha stacks, so an arm
-     crossing the chest paints itself as a bright band.
-   - **`dist` remains the sole authority on whether a blow lands.** Sparks now come off the blade's
-     real tip, but gating *damage* on the tip reaching would make misses routine, stop health
-     draining, and hang the match-reset loop, which has no timeout.
+   **The shields were the costumes.** A 30px filled torso quad, a filled head
+   block and a filled robe/cape/tunic/aura behind it composited into one pale
+   slab about as wide as the figure was tall, and every style added *more*
+   filled geometry to the same place. The body is a stroked stick figure now
+   and the whole costume is one mark on the head — at the size these render,
+   the head is the only place a silhouette difference survives. **Both hands
+   are on the grip** unless an arm is pushing or balancing a kick; that single
+   change is most of what makes a silhouette read as a swordsman rather than as
+   a figure carrying a stick.
 
-   A reactive block/parry state was proposed at the same time and **declined**: it is the only
-   change that can alter match outcomes, and a mutual block lock would leave the match never
-   ending. That is a decision, not an omission.
+   **Fighters decide nothing.** `decide()` used to run once per fighter,
+   independently — and two independent randomisers cannot produce action and
+   reaction, which is what a fight *is*. Nothing was ever blocked and nothing
+   ever bounced off anything. A director now picks a `Sequence` (a script of
+   beats), assigns the two roles by a coin flip, and hands each fighter a move
+   on a scripted frame; blade motion comes from keyframe tables rather than
+   hand-written easing per action. Three rules here are load-bearing:
+
+   - **No sequence names a side.** Every beat is `ATT` or `DEF`, and the role
+     coin consults nothing — not health, not position, not who won last. That
+     is the fairness guarantee, and it is why an early lucky roll cannot
+     compound. Step order is also a coin: `st.a` always stepping first meant
+     that when both were due to land a lethal blow on the same frame, the left
+     fighter always won, because `damage()` sets `st.over` and a dead fighter's
+     step returns immediately.
+   - **Nothing waits on a condition.** Sequences have fixed lengths and the
+     director advances unconditionally; the blade lock's duration is rolled
+     when it *starts*. The match-reset loop has no timeout, so a beat that
+     could block would hang the effect — the same hazard that got a reactive
+     block declined here originally.
+   - **`dist` is still the sole authority on whether a blow lands.** Sparks
+     come off the true blade-to-blade crossing, but gating *damage* on blade
+     geometry would make misses routine, stop health draining, and hang that
+     same loop.
+
+   Tempo is the opposite of what "slow it down" sounds like: strikes got
+   *faster* (4–6 frames for a whole arc) and moves got *longer*, with a dead
+   hold at the top of every wind-up and 20–40 frames of stillness between
+   exchanges. A fight reads through the contrast between stillness and
+   explosion, and the old one had no frame in which nothing happened.
+
+   **Attract mode is gone** (client: "make sure the screensaver battles are the
+   same graphics as the nonscreensaver ones"), kept at the *background*
+   presentation because that is the direction with a hard constraint — body
+   copy has to read through it. **Health bars are ornament-only**: in the
+   ornament the fight is the subject and a HUD frame belongs; full-bleed behind
+   copy they are a readout the reader must look past.
+
 10. **All visible "vessel" branding is gone** (client request, 2026-08-13). The wordmark, page
    titles, termbar, TOTP issuer and passkey rp name now read `mcclevarty.ca`; the "Vessels"
    effect *label* is "Branches"; the favicon is an inline SVG data: URI (the finger, offered to
@@ -593,6 +646,23 @@ untouched and still true: a rough estimate from an emailed description is not a 
 the one thing in the flow that genuinely costs nothing. **A diagnostic fee is still unnamed on the
 site by choice** — the copy is written to stay true at any price, so setting one is a client
 decision and not a copy change (`TODO.md` sign-off 9).
+
+**Nothing on the site advertises the site** (2026-08-14, client: "get rid of anything to do with
+color palettes, features about my site like different layouts, or hidden sections, or ANYTHING that
+isnt relevant to everyone but me… i want people to find it out by being ON the site", clarified as
+"panels that say about palettes, and about features, and about pages they cant see"). Gone with
+that: home's whole `kicker: "the site"` block (its best line folded into "the honesty"), the 404's
+"Have a palette instead" consolation, the changelog's palette inventory, and its shuffle,
+calm-mode and screensaver entries. **The two palette gags are no longer protected** — the earlier
+note here defended them as jokes rather than spec sheets, which was defensible and is not the
+client's reading: a joke that works by reciting an inventory is still reciting the inventory. The
+404's page list stays, because those are page *names* — navigation, not a spec sheet.
+
+**Tile slot captions are off by default** and behind an operator toggle (`Config.slots`, bit 32).
+"4:5 · photo slot" and "video · muted loop" are production notes: an aspect ratio and a slot type,
+printed for a visitor who did not commission the layout and cannot change it. Kept as a setting
+rather than deleted because they say what each slot is *for*, which is useful while the real
+photographs are still going in.
 
 **"Calm" is labelled "Plain" in the interface, and only in the interface** (2026-08-14, client:
 "people won't know what that means"). `config.calm`, `.is-calm`, `vessel.calm.v1` and share-code

@@ -13,6 +13,65 @@ file records what happened to the codebase.
 
 ---
 
+
+## 2026-08-14 — the animation audit, the duel's director, and the phone scroll bug
+
+**Every canvas effect was stepped through 1s / 6s / 15s / 30s and judged on what
+it looks like *after* thirty seconds**, which is a different question from what
+it looks like on arrival and the one nobody had asked. `fxlab.html` gained a
+contact-sheet mode to make it possible at all — a backgrounded automation tab
+parks `requestAnimationFrame` (measured: zero frames in 700ms), so no amount of
+waiting shows you frame 1800.
+
+**Measuring it properly changed the conclusions twice, and both mistakes were
+mine.** Averaging a whole run makes every effect look like it gets more
+expensive with time, because the longer panel absorbs more garbage collection —
+that artefact reads exactly like an unbounded buffer, and I went looking for
+growth in effects that hold no state at all. And a quarter-width panel measures
+a fraction of the work a real viewport asks for. The bench now reports the
+*minimum* of three short windows at full width: frame cost has a hard floor and
+everything above it is interference.
+
+On honest numbers the lag was **`rain`** at 3.0ms a frame, three to six times
+any other effect — not `scan`, which was what got reported and had already been
+fixed that morning. That exposed the more valuable finding: **the adaptive
+resolution tier cannot reach a draw-call-bound effect.** It shrinks the buffer,
+and `rain`'s cell and `plasma`'s grid are measured in CSS pixels, so the half
+tier quartered their fill and left every draw call in place. The tier is now
+handed to effects as `quality`.
+
+**The duel's problem was never the artwork.** `decide()` ran once per fighter,
+independently, and two independent randomisers cannot produce action and
+reaction. Nothing was ever blocked; nothing ever bounced off anything. A
+director now owns the exchange. The roles are also the fairness proof — no
+sequence names a side — and one real bias was found and removed: `st.a` always
+stepped first, so when both fighters were due to land a lethal blow on the same
+frame, the left one always won.
+
+Three bugs here were only findable by measurement. The x50 speed and the
+"random lag" were one cause: the duel derived its frame count from the effect
+clock, which has `boost` folded in, so it ran at ~2× for exactly as long as the
+screensaver was up — and stepping in whole frames from a fractional accumulator
+at a rate of 1.9 alternates 2,2,1 steps per frame, which is judder on a fixed
+cadence. And starting 370 units apart with travel halved meant nothing ever
+closed: 34 exchanges drawn from five sequences, all long-range, with the entire
+swordplay half of the pool unreachable.
+
+**The phone scroll bug was `scroll-snap-type: y mandatory`.** Reported as "as
+soon as you let go it jumps back to the top… only way to scroll is to keep a
+finger on the screen to save your place" — and that last detail is what
+identified it, because holding a finger down suppresses snapping. Measured at a
+real 417×857 viewport: the scrollport is 654px and `.v-hero`, the first snap
+area, is 684px. Mandatory snap must come to rest *on* a snap point, and every
+position inside an oversized area has that area's own start as its nearest one.
+`proximity` was not enough on this band either, so phones get `none`.
+
+A process note worth keeping, because the client made it explicitly: **I called
+this fixed after testing the home page only.** It needed all nine content pages
+at four scroll positions each. Verifying the case you happened to look at is not
+verifying the bug.
+
+
 ## 2026-08-14 — The visual audit begins, finds a real bug, and the fix breaks Terminal
 
 The client asked for "a complete audit of all graphic things … then a gameplan". The blanket version

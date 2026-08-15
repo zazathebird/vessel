@@ -4,13 +4,84 @@ The single ordered backlog. `CLAUDE.md` explains *why* things are the way they
 are, and `docs/DECISIONS.md` records what was decided when; this file is only
 what is left to do.
 
-Last updated 2026-08-14: **SPEC-ACCOUNTS phase 2 is built and harness-proven**
+Last updated 2026-08-14 (later): **the animation audit, the duel rebuild, the
+phone scroll fix and the low-end performance work are all shipped.** New open
+items are in *This session's leftovers* immediately below. Previously:
+**SPEC-ACCOUNTS phase 2 is built and harness-proven**
 — machines, drives, the per-machine signalling Durable Object, the connect
 ceremony, the file protocol, and the `/share` + `/machines` pages. The spec
 grew §13 and §12 K–S; the harness is at **301**. Done items below are kept as
 one-liners because their numbers are cross-referenced from `docs/DECISIONS.md`.
 
 ---
+
+## This session's leftovers (2026-08-14)
+
+Everything here is *additive*. The site is shipped and working; none of these
+are known breakage.
+
+### A. See the duel run on a real machine — **needs the client**
+
+The one thing that genuinely cannot be checked from here. An occluded or
+automated browser reports `document.hidden`, so `requestAnimationFrame` parks
+and the canvas never paints — measured this session at **zero frames in 700ms**.
+`fxlab.html` exists precisely to work around that (explicit Step button), and
+the fight was tuned through it plus a 1,440-simulated-second statistical run:
+34 matches, 14–20, all 23 sequences firing, 77% of frames within sword reach.
+What no harness can judge is whether it *looks* like a duel. Watch it and say.
+
+### B. Duel choreography — the moves designed but not yet built
+
+The director and its 23 sequences are in. Still on the design sheet and worth
+having, roughly in payoff order:
+
+- **The blade lock's visuals.** The sequence exists and holds for 92 frames,
+  but the press is currently just two blades near each other. It wants the
+  sustained shower (2–3 sparks a frame at the contact point), the trembling
+  blade angles, and the contact point drifting toward whoever wins the press —
+  so the outcome is visible a second before it happens. This is the most
+  iconic image the genre has and it is the biggest single gap.
+- **`duck` and `overrun`.** A crouch under a horizontal sweep, and a charge
+  that carries both fighters past each other and swaps the sides. `overrun` is
+  the only move that changes the arena's geometry, which is why a long fight
+  currently reads as more static than it is.
+- **Riposte with the wind-up skipped.** Scheduled, not a new move: an attack
+  beginning within 8 frames of a parry, entered from the parry's own blade
+  angle. The missing wind-up is exactly what makes a riposte *feel* fast.
+- **`blade_throw`.** The thrown blade leaves the hand for ~40 frames. The
+  silhouette losing its brightest element is an enormous read and nothing else
+  in the set does it. Needs renderer support for a detached blade.
+- **`spin_attack`'s body flatten.** Currently the blade spins but the figure
+  does not; `scale(facing * cos(spin), 1)` would flatten it to a vertical line
+  and back, which reads at any size.
+- **Converging rings on `force_pull`.** It reuses the push's expanding rings,
+  so the two force moves look the same.
+
+### C. Severing / dismemberment — **deferred by the client**
+
+Asked for ("cutting in half, dismembering"), then deprioritised ("if the
+severing is a pain and causes lag, dont do it" / "but yes, make the fights good
+pls"). The fights got the time instead. If it comes back: draw the figure twice
+under two clip rectangles split at the cut height, each with its own falling
+transform, plus a bright cauterised edge. It is not expensive — it is fiddly,
+and at a body ~100px tall behind copy at `dim: 0.55` it may not read at all.
+Judge it on screen before building it.
+
+### D. Prove the low-end path on actual low-end hardware
+
+The tier system is measured and self-correcting (six tiers, demote in ~0.33s,
+promote slowly, plus the probe on the greeting's OK). What has *not* happened
+is running it on a genuinely old machine. If stutter survives even the 0.28
+tier, the next lever is halving the canvas's update rate — 30fps for an ambient
+background is barely perceptible and exactly halves its cost — but that should
+be added only if measurement says it is needed.
+
+### E. Docs that are now behind the code
+
+- `docs/DUEL.md` still describes the pre-director engine and the filled-block
+  figures. Both are gone: fighters are stick figures and decide nothing.
+- `CLAUDE.md`'s duel deviation (9) describes the skeleton work and the
+  `drawFighter` rules that the stick-figure rewrite replaced.
 
 ## Do this first
 

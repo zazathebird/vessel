@@ -1,4 +1,24 @@
-# The lightsword duel — specification and state
+# The lightsword duel
+
+> **Superseded in part, 2026-08-14.** This document describes the *reference*
+> implementation and the porting rules, both of which still stand. It no longer
+> describes how the fight is built. Two things changed and the code is now the
+> authority on both:
+>
+> - **Fighters are stick figures.** The blocky filled-block bodies this document
+>   argues for composited into one pale slab that the client read, correctly, as
+>   a shield. The client's call: "im fine with stick figures as long as the
+>   fights are decent." All the investment went into the fighting.
+> - **Fighters decide nothing.** The per-fighter `decide()` this document
+>   describes is gone. A director picks a scripted `Sequence`, assigns roles by a
+>   coin flip, and hands out moves on scripted frames — because two independent
+>   randomisers cannot produce action and reaction. See the long note above
+>   `MOVES` in `src/fx/duel.ts`, and deviation 9 in `CLAUDE.md`.
+>
+> What is still true and still worth reading here: the four porting rules (no
+> literal colours, no fixed pixel geometry, state on the caller's cache, the
+> caller clamps the delta), the health-bar split between ornament and
+> background, and the naming/likeness constraint.
 
 **Update 2026-08-13, later the same day:** two client requests landed on top of
 the rebuild. (1) The four silhouettes were upgraded so each pairing reads
