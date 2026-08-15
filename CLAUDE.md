@@ -534,6 +534,42 @@ All deliberate. Add to this list rather than silently diverging.
    exchanges. A fight reads through the contrast between stillness and
    explosion, and the old one had no frame in which nothing happened.
 
+   **Four things in the fight are load-bearing and were each a shipped bug
+   until 2026-08-14 (later)** — the session that watched it frame by frame.
+   `docs/DECISIONS.md` has the measurements.
+
+   - **`st.dir.pressure` resets on match reset, and that is what makes the
+     anti-stall rail per-match.** It counts sequences; above 22 `chooseSequence`
+     strips the pool to sequences containing a `hit`. Nothing cleared it, so it
+     was monotonic for the life of the page and **98.6% of all sequence picks
+     were made under the rail** — the emergency mode was the normal mode about
+     forty seconds after load. Four sequences fired twice an hour, `standoff`
+     never fired again after the opening match, and `disengage` took 30% of
+     every exchange because `any` range puts it in all three shrunken pools.
+     The rail's own comment says "a normal match never reaches it"; that is only
+     true with the reset.
+   - **`bladeGap`'s second solve uses `vw`, not `uw`.** Re-solving segment `b`
+     against a clamped `s` is `((w + s·u)·v)/(v·v)`. With `uw` it reported
+     segments that provably cross as 16 units apart and returned `r = 0` for
+     every configuration. It is the routine behind the blade-on-blade shower,
+     which tests `near.d < 9` — so crossing blades often threw no sparks at all.
+     A geometry bug that presents as an art problem.
+   - **The body separation is grounded-only, and the exemption is `flip_over`.**
+     Two 30-unit bodies overlapped on 3.9% of frames with no constraint but the
+     arena walls. The resolve is soft and positional (a third of the overlap per
+     frame, velocity untouched, because velocity is the choreography's) and it
+     must never apply in the air: the somersault's whole job is to pass over the
+     opponent and swap the sides.
+   - **`the-lock` closes the pair to `LOCK_SEP` itself.** `close` range is under
+     132 units, which is nowhere near close enough for two 58-unit blades to
+     meet — measured over 51 locks they averaged 30.8 apart. The ease is
+     *signed*, because arriving from a parry can land them inside the distance,
+     which crosses the blades at the hilts. The press's winner is `beatPower`
+     from the beat (1 drives, 0 gives ground), so the outcome is fixed by the
+     same role coin as everything else and the renderer never reads `dir`.
+     Nothing in `stepLock` consults a condition or can extend the move, which is
+     what keeps the timeout-free match-reset loop safe.
+
    **Attract mode is gone** (client: "make sure the screensaver battles are the
    same graphics as the nonscreensaver ones"), kept at the *background*
    presentation because that is the direction with a hard constraint — body

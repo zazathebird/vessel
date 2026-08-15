@@ -124,6 +124,18 @@ const BLADE_LEN = 58;
 /** How far the sword hand orbits its shoulder. */
 const HAND_REACH = 20;
 /** Samples in the blade's motion smear, and where along the blade it starts. */
+/**
+ * Centre-to-centre separation the blade lock closes to, in world units.
+ *
+ * Not a taste value: a hand sits about 28 units forward of a fighter's centre
+ * and the blade reaches roughly 48 further at the lock's angle, so at this
+ * distance the two blades cross near their middles — the bind lands between the
+ * pair instead of on somebody's fist. Measured against the real geometry rather
+ * than derived, because the press rotates the two blades apart as it runs and
+ * the closed form stops describing it after the first few frames.
+ */
+const LOCK_SEP = 92;
+
 const TRAIL = 6;
 const TRAIL_INNER = 0.5;
 
@@ -365,7 +377,21 @@ function bladeGap(
 
   let s = Math.abs(den) < 1e-6 ? 0 : (uv * vw - vv * uw) / den;
   s = Math.max(0, Math.min(1, s));
-  let r = vv < 1e-6 ? 0 : (uw + uv * s) / vv;
+  /*
+   * `vw`, not `uw`. Re-solving the second segment against a clamped `s` asks
+   * where on `v` is nearest to `a.h + s·u`, which is `((w + s·u)·v) / (v·v)` —
+   * and `w·v` is `vw`. With `uw` here the routine reported two segments that
+   * provably cross as **16 units apart** and pinned the nearest point to `b`'s
+   * hilt, which is the `r = 0` every configuration came back with.
+   *
+   * It is worth knowing what that cost, because none of it looked like a maths
+   * bug: the blade-on-blade shower tests `near.d < 9`, so overstated distances
+   * meant crossed blades frequently threw no sparks at all, and the bursts that
+   * did fire were placed toward a fist rather than at the crossing. That is the
+   * "sparks when swords meet" the client asked for, half working, for a reason
+   * no amount of looking at the spark code would have found.
+   */
+  let r = vv < 1e-6 ? 0 : (vw + uv * s) / vv;
   r = Math.max(0, Math.min(1, r));
   // One more pass for `s` against the clamped `r`, for the same reason.
   s = uu < 1e-6 ? 0 : Math.max(0, Math.min(1, (uv * r - uw) / uu));
@@ -390,6 +416,7 @@ function spawnSparks(
   n: number,
   bx = 0,
   by = 0,
+  life = 1,
 ): void {
   for (let i = 0; i < n; i += 1) {
     const ang = Math.random() * TAU;
@@ -399,7 +426,11 @@ function spawnSparks(
       y,
       vx: Math.cos(ang) * speed + bx * (1 + Math.random() * 2),
       vy: Math.sin(ang) * speed - 2 + by * (1 + Math.random() * 2),
-      life: 1,
+      // The renderer sizes and fades a spark by its own life, so a burst spawned
+      // short is *smaller and dimmer for its whole flight*, not merely briefer.
+      // That is what lets the lock emit two or three every frame for a second
+      // and a half without the shower reading as one accumulating cloud.
+      life,
     });
   }
 }
@@ -989,10 +1020,21 @@ const SEQUENCES: Sequence[] = [
     beats: [
       { who: "ATT", move: "strike_overhead", at: 0, outcome: "blocked" },
       { who: "DEF", move: "parry_high", at: 11 },
-      // The only sustained moment where both blades touch and nothing moves.
-      // Everything else in the fight is motion; this one's value is stillness.
-      { who: "ATT", move: "lock", at: 22 },
-      { who: "DEF", move: "lock", at: 22 },
+      /*
+       * The only sustained moment where both blades touch. Everything else in
+       * the fight is motion; this one's value is pressure.
+       *
+       * `power` is the press: 1 drives, 0 gives ground. It is not a damage
+       * multiplier here — `lock` has no contact frame — it is how the script
+       * tells the press who wins it, through the channel `setMove` already
+       * carries. That matters because the outcome is then fixed at frame 22
+       * and *nothing* consults a condition to find it: the winner is whoever
+       * the role coin made ATT, and ATT is who breaks through at 116 below.
+       * So the grind can lean the right way for a second and a half before the
+       * blow lands, which is the whole point of the image.
+       */
+      { who: "ATT", move: "lock", at: 22, power: 1 },
+      { who: "DEF", move: "lock", at: 22, power: 0 },
       // The press breaks: the winner drives through and the loser is thrown off.
       { who: "ATT", move: "strike_diagonal", at: 116, outcome: "hit", power: 0.8 },
       { who: "DEF", move: "stagger", at: 134 },
@@ -1321,6 +1363,85 @@ function stepFighter(st: DuelState, f: Fighter, foe: Fighter): void {
   if (f.mf >= m.frames) setMove(f, "guard");
 }
 
+/**
+ * The press's two physical consequences, for the frames both blades are held
+ * against each other.
+ *
+ * Separate from `stepFighter` because it is the one thing in the fight that is
+ * a property of the *pair* rather than of either fighter — there is a single
+ * contact point and a single shower coming off it, and computing them once from
+ * both blades is the only way they agree.
+ *
+ * It reads nothing and decides nothing: `beatPower` already carries the outcome
+ * the script fixed when the beat fired, and the length was rolled at the same
+ * time. Nothing here can extend the lock, so the match-reset loop — which has
+ * no timeout — is as safe as it was before.
+ */
+function stepLock(st: DuelState): void {
+  const { a, b } = st;
+  if (a.move !== "lock" || b.move !== "lock") return;
+  const total = MOVES.lock.frames;
+  const mf = Math.max(a.mf, b.mf);
+  const q = Math.min(1, mf / total);
+
+  /*
+   * Close to the bind, first — because they were never in it.
+   *
+   * `the-lock` is a `close`-range sequence, and `close` is anything under 132
+   * units. That is nowhere near close enough for two 58-unit blades held a
+   * forearm out from the shoulder to touch: measured over 51 locks the blades
+   * averaged **30.8 units apart**, and the worst spent the entire press 61
+   * apart — half a blade of clear air between them. Nothing in the sequence
+   * brought the pair together, so the shower, the contact point and the press
+   * were all being computed from a crossing that did not exist.
+   *
+   * `LOCK_SEP` is where the two blades actually meet near their middles, so the
+   * bind sits between the fighters rather than at one of their hands. The ease
+   * is exponential and unconditional: it cannot fail to arrive and it cannot
+   * extend the move, because the move's length was rolled when it started and
+   * nothing here is allowed to consult the result.
+   */
+  const spread = centre(b) - centre(a);
+  // Signed, so it holds the bind from both directions. Pulling only when too
+  // far let the pair arrive from a parry already inside the distance and stay
+  // there — blades crossed past each other at the hilts for the whole press,
+  // which looks like a mistake rather than like strength.
+  const err = Math.abs(spread) - LOCK_SEP;
+  const step = Math.max(-1.4, Math.min(1.4, err * 0.1)) * (spread < 0 ? -1 : 1);
+  a.x += step * 0.5;
+  b.x -= step * 0.5;
+
+  const near = bladeGap(bladeWorld(a), bladeWorld(b));
+
+  /*
+   * The shower: two or three every frame, thickening as the press builds, spawned
+   * short so they stay small and fall away instead of accumulating into a cloud.
+   * A single burst says two blades touched once; a sustained one says they are
+   * still touching, which is the only thing distinguishing a press from a pose.
+   */
+  // A positive bias against `spawnSparks`'s own upward kick, so the shower
+  // spreads and falls away from the bind instead of firing as one tall plume —
+  // grinding blades throw sparks outward, and a plume reads as a flare.
+  spawnSparks(st, near.x, near.y, Math.random() < 0.35 + q * 0.5 ? 3 : 2, 0, 0.55, 0.34 + Math.random() * 0.26);
+
+  /*
+   * The grind. Both fighters travel the same way — the winner forward, the loser
+   * back — so the separation is unchanged and the *lock itself* walks across the
+   * arena. That is the difference between two people leaning on each other and
+   * one of them losing ground, and it costs one line because `DECAY` turns a
+   * constant nudge into a steady creep on its own.
+   */
+  for (const f of [a, b]) {
+    f.vx += f.facing * (f.beatPower * 2 - 1) * 0.05 * q;
+  }
+
+  // The break, on the last frame the move exists: the press fails all at once.
+  if (mf >= total - 1) {
+    spawnSparks(st, near.x, near.y, 22, 0, -1.4);
+    st.hitStop = 2;
+  }
+}
+
 /** One fixed 60Hz step. */
 function step(st: DuelState): void {
   st.idle += 1;
@@ -1333,6 +1454,20 @@ function step(st: DuelState): void {
       st.matches += 1;
       st.a = makeFighter(START_A, 1, a.style);
       st.b = makeFighter(START_B, -1, b.style);
+      /*
+       * The anti-stall rail is **per match**, and resetting it here is what
+       * makes that true. `pressure` counts sequences and nothing else cleared
+       * it, so it was monotonic for the life of the page: about forty seconds
+       * in it passed 22 and `chooseSequence` filtered the pool down to
+       * sequences containing a `hit` for ever after. Measured over 55 simulated
+       * minutes, 1,504 of 1,526 picks were made under the rail — the emergency
+       * mode was the normal mode, four sequences fired twice an hour between
+       * them, `standoff` never fired again after the first match, and
+       * `disengage` (the only `any`-range entry, so the only one in all three
+       * shrunken pools) took 30% of every exchange. The declared weights
+       * described a fight nobody had seen since the opening match.
+       */
+      st.dir.pressure = 0;
     }
   }
 
@@ -1371,6 +1506,7 @@ function step(st: DuelState): void {
     stepFighter(st, st.b, st.a);
     stepFighter(st, st.a, st.b);
   }
+  stepLock(st);
   springBlade(st, st.a, st.b);
   springBlade(st, st.b, st.a);
 
@@ -1402,6 +1538,46 @@ function step(st: DuelState): void {
     } else {
       f.trail.push(bladeWorld(f));
       if (f.trail.length > TRAIL) f.trail.shift();
+    }
+  }
+
+  /*
+   * Two fighters do not stand in the same place.
+   *
+   * There was no body-to-body constraint at all — only the arena walls — and
+   * measured over 31 simulated minutes the two 30-unit bodies overlapped on
+   * **3.9% of live frames**, closing to a minimum separation of 0.1 units: one
+   * frame in twenty-six had two figures drawn inside each other. It reads as a
+   * rendering fault rather than as a fight, and it is worst exactly where the
+   * fight is closest and most looked at — the parry into `the-lock` opened at
+   * 16 units of separation, so the press began with the pair interpenetrating.
+   *
+   * A soft positional resolve rather than a bounce: velocity is the
+   * choreography's, and a fighter who was scripted to close should still be
+   * closing on the next frame. Only the overlap is taken out, a third of it per
+   * frame, so contact settles over a few frames instead of snapping.
+   *
+   * **Grounded pairs only**, and that exclusion is the whole reason `flip_over`
+   * still works: the somersault's entire job is to pass over the opponent and
+   * swap the sides, and a separation force that applied in the air would shove
+   * the jumper back the way they came at the top of the arc. Anything airborne
+   * is exempt, which costs nothing — an overlap is only visible when both
+   * silhouettes are standing on the same line.
+   */
+  if (st.a.action !== "dead" && st.b.action !== "dead") {
+    const grounded = st.a.y >= FLOOR_Y - 0.5 && st.b.y >= FLOOR_Y - 0.5;
+    const gap = centre(st.b) - centre(st.a);
+    // Narrower than BODY_W: the drawn figure is shoulders and hips, not the
+    // full 30-unit box, so clearing the box would hold them apart visibly
+    // further than they look, and a lock needs them shoulder to shoulder.
+    const over = 26 - Math.abs(gap);
+    if (grounded && over > 0) {
+      const push = (over / 2) * 0.34 * (gap < 0 ? -1 : 1);
+      st.a.x -= push;
+      st.b.x += push;
+      for (const f of [st.a, st.b]) {
+        f.x = Math.max(20, Math.min(WORLD_W - 20 - BODY_W, f.x));
+      }
     }
   }
 
@@ -1551,11 +1727,43 @@ function bladeTarget(f: Fighter, foe: Fighter, idle: number): number {
   const m = MOVES[f.move];
   const a = bladeCurve(m, f.mf);
   /*
-   * The blade lock trembles rather than sitting still. It is 92 frames of two
-   * blades held against each other, and a perfectly steady line for a second
-   * and a half reads as a freeze rather than as a strain.
+   * The press.
+   *
+   * Two blades held against each other for 92 frames, and the failure mode is
+   * that it reads as a freeze rather than as a strain — which is exactly what
+   * it did: a single 0.045 sine through a soft spring came out as about a
+   * degree of wobble, so the most iconic image in the genre was two figures
+   * standing near each other holding sticks.
+   *
+   * Three things carry it now, and they are all the *same* fact seen three
+   * ways: one of them is winning.
+   *
+   * `beatPower` is the script's verdict, set at the beat and never revisited
+   * (see `the-lock`). Positive angles are down-and-forward, so the winner's
+   * blade travels *down through* the crossing while the loser's is levered up.
+   * That rotates the whole X, and rotating the X walks the contact point
+   * toward the loser — which is the tell, visible a second before the break.
+   * It is squared so the lean starts as a suggestion and ends as a rout.
    */
-  if (f.move === "lock") return a + Math.sin(idle * 0.72 + f.phase) * 0.045;
+  if (f.move === "lock") {
+    const q = Math.min(1, f.mf / m.frames);
+    /** +1 drives the press, −1 gives ground. */
+    const drive = f.beatPower * 2 - 1;
+    const press = drive * 0.34 * q * q;
+    /*
+     * Two incommensurate frequencies, because a single sine is a wobble on a
+     * fixed cadence and a strained blade judders. The one losing shakes
+     * harder — a blade holding weight it cannot hold is the other half of the
+     * same read.
+     */
+    const strain = (0.055 + 0.05 * q) * (1 - drive * 0.35);
+    return (
+      a +
+      press +
+      Math.sin(idle * 0.72 + f.phase) * strain +
+      Math.sin(idle * 1.63 + f.phase * 2.1) * strain * 0.55
+    );
+  }
   // Only the resting moves breathe; a strike must not have a wobble added to it.
   return m.contact < 0 && m.chan === "neutral" ? a + bob : a;
 }
@@ -1572,8 +1780,16 @@ function springBlade(st: DuelState, f: Fighter, foe: Fighter): void {
   // A parry is stiffer than a strike: it has perhaps five frames to arrive, and
   // a block that drifts into place is not a reaction to anything.
   const parrying = f.move === "parry_high" || f.move === "parry_cross" || f.move === "parry_low";
-  const k = parrying ? 0.85 : f.action === "attacking" ? 0.6 : 0.24;
-  const d = parrying ? 0.42 : f.action === "attacking" ? 0.5 : 0.7;
+  /*
+   * The lock is stiff for a different reason than the parry: it has to *pass a
+   * tremble through*. The neutral spring is a low-pass, and at the judder's
+   * frequency it attenuated the strain to roughly a degree — the blade tracked
+   * the press's slow lean perfectly and dropped the shake that made it read as
+   * effort. Stiff and lightly damped keeps both.
+   */
+  const locking = f.move === "lock";
+  const k = locking ? 0.55 : parrying ? 0.85 : f.action === "attacking" ? 0.6 : 0.24;
+  const d = locking ? 0.5 : parrying ? 0.42 : f.action === "attacking" ? 0.5 : 0.7;
   f.bladeV = (f.bladeV + (target - f.bladeA) * k) * d;
   f.bladeA += f.bladeV;
 }
@@ -1926,6 +2142,29 @@ export function drawDuel(ctx: CanvasRenderingContext2D, st: DuelState, v: DuelVi
 
   drawFighter(ctx, st, st.a, v.bladeA, v);
   drawFighter(ctx, st, st.b, v.bladeB, v);
+
+  /*
+   * The press's contact point, drawn over both blades because it is the one
+   * place they are genuinely touching rather than merely crossing. Without it
+   * the shower appears to come from a spot with nothing at it. Two flat discs
+   * in `core` — the palette's brightest — rather than a gradient: this is drawn
+   * every frame of the lock, and a radial gradient allocated per frame is the
+   * kind of thing that turns up later as a mystery cost on a slow machine.
+   */
+  if (st.a.move === "lock" && st.b.move === "lock") {
+    const near = bladeGap(bladeWorld(st.a), bladeWorld(st.b));
+    const q = Math.min(1, Math.max(st.a.mf, st.b.mf) / MOVES.lock.frames);
+    const r = 3 + q * 2.4;
+    ctx.fillStyle = v.core;
+    ctx.globalAlpha = (0.14 + q * 0.12) * v.dim;
+    ctx.beginPath();
+    ctx.arc(near.x, near.y, r * 2.6, 0, TAU);
+    ctx.fill();
+    ctx.globalAlpha = (0.5 + q * 0.35) * v.dim;
+    ctx.beginPath();
+    ctx.arc(near.x, near.y, r, 0, TAU);
+    ctx.fill();
+  }
 
   // Sparks as short streaks along their own travel, not discs: a disc has no
   // direction, and the whole point of biasing the burst was to show one.

@@ -14,6 +14,95 @@ file records what happened to the codebase.
 ---
 
 
+## 2026-08-14 (later) — the duel, watched at last: four bugs, and the press
+
+**The fight had never been looked at**, and `TODO.md` A said so honestly: it was
+tuned through the step-through bench and a statistical run, and what no harness
+had judged was whether it *looks* like a duel. Looking at it found four defects,
+three of which no amount of reading the choreography would have surfaced,
+because in each case the code says what it means and does something else.
+
+**Verification method, since the environment still cannot show animation.** The
+tab reports `document.hidden`, `requestAnimationFrame` parks (zero frames in
+700ms) — and, measured this session, **timers are throttled to ~1Hz as well**
+(two `setInterval(…, 16)` ticks in 1,064ms), so *no* form of live playback is
+available here, not just rAF. What works is stepping: a harness driving the real
+`src/fx/duel.ts` through the dev server renders N consecutive frames into a grid
+of cells, each captioned with the frame number, the live sequence and both
+fighters' moves. A filmstrip is not a substitute for watching it, but it answers
+"what is the geometry doing on frame 47" exactly, which is what these bugs were.
+
+**1. The anti-stall rail had become the normal mode.** `dir.pressure` counts
+sequences and `chooseSequence` strips the pool down to sequences containing a
+`hit` above 22 of them. Nothing ever reset it — `createDuel` set it to 0 and the
+match reset rebuilt both fighters without touching it — so it was monotonic for
+the life of the page. Measured over 55 simulated minutes: **1,504 of 1,526
+sequence picks (98.6%) were made under the rail.** The comment above it read "a
+normal match never reaches it". About forty seconds after page load, every match
+did, permanently. The visible cost: four sequences fired twice an hour between
+them, `standoff` never fired again after the opening match, `disengage` — the
+only `any`-range entry, so the only one in all three shrunken pools — took
+**30.5%** of every exchange, and matches ran ~28s instead of ~50s because
+all-hit sequences drain health faster. The declared weights described a fight
+nobody had seen since the first match. One line: reset it on match reset. After:
+all 23 sequences fire, the rail is 13.6% of picks, the distribution tracks the
+weights.
+
+**2. `bladeGap` was solving the wrong equation.** The re-solve of the second
+segment against a clamped `s` used `uw` where it needs `vw` — `((w + s·u)·v)/v·v`
+is `(vw + uv·s)/vv`. Two segments that provably cross at (42.5, 193.2), checked
+against an independent parametric intersection, came back **16 units apart with
+the nearest point pinned to a hilt**; every configuration tested returned `r = 0`,
+which is the tell. This is the routine behind "the sparks when swords meet"
+(client, earlier the same day): the shower tests `near.d < 9`, so overstated
+distances meant crossed blades often threw **no sparks at all**, and the bursts
+that did fire were placed toward a fist rather than at the crossing. A geometry
+bug that presents as an art problem, and unfindable by reading the spark code.
+
+**3. There was no body-to-body constraint** — only the arena walls. The two
+30-unit bodies overlapped on **3.9% of live frames**, closing to a minimum
+separation of 0.1 units: one frame in twenty-six drew two figures inside each
+other. Now a soft positional resolve, a third of the overlap per frame, applied
+to **grounded pairs only** — the exemption is what keeps `flip_over` working,
+since the somersault's whole job is to pass over the opponent and swap the
+sides. Grounded overlap 3.48% → 0.72%, minimum separation 0.1 → 4.8.
+
+**4. The blade lock had no blade contact.** `the-lock` is a `close` sequence and
+`close` is anything under 132 units — nowhere near close enough for two 58-unit
+blades held a forearm out from the shoulder to meet. Measured over 51 locks the
+blades averaged **30.8 units apart** and the worst spent the whole press 61
+apart. So the most iconic image in the genre was two people standing a metre
+apart holding sticks, and the `TODO.md` B description of it — "just two blades
+near each other" — was generous. `stepLock` now closes the pair to `LOCK_SEP`
+with a signed exponential ease (signed because arriving from a parry could land
+them *inside* the distance, which crosses the blades at the hilts). Settled
+blade gap is now **0** in every lock, binding at about the middle of the loser's
+blade.
+
+**The press itself** (TODO B's first bullet) is built on top of those: a
+sustained 2–3 sparks a frame at the true crossing, spawned with a short life so
+they stay small and fall instead of accumulating; the whole X rotating as the
+winner drives down and the loser is levered up, which walks the contact point
+into the loser and makes the outcome readable about a second before the break;
+a two-frequency judder that the loser shakes harder; a grind that moves both
+fighters the same way so the lock travels without the separation changing; and
+a burst plus two frames of hit-stop as it fails.
+
+**Who wins the press is `beatPower`, set by the beat.** `the-lock`'s two `lock`
+beats carry `power: 1` and `power: 0`, so the outcome is fixed at frame 22 by
+the same role coin that assigns every other sequence, and the renderer never
+reaches into the director to find it. Nothing added here consults a condition or
+can extend the move, so the match-reset loop — which has no timeout — is exactly
+as safe as before. Cost measured after: **0.02–0.05 ms/frame, not growing with
+time**; the shower is free.
+
+**Still open and reported to the client, not fixed:** the duel ornament maps the
+whole 700-unit world into a square slot, so at the phone band's 190px the
+fighters are ~20px tall and the fight uses a few percent of the box. The world
+is a 2.8:1 stage in a 1:1 hole. A tracking camera is the fix and it is a design
+change, so it is the client's call.
+
+
 ## 2026-08-14 — the animation audit, the duel's director, and the phone scroll bug
 
 **Every canvas effect was stepped through 1s / 6s / 15s / 30s and judged on what

@@ -20,27 +20,41 @@ one-liners because their numbers are cross-referenced from `docs/DECISIONS.md`.
 Everything here is *additive*. The site is shipped and working; none of these
 are known breakage.
 
-### A. See the duel run on a real machine — **needs the client**
+### A. See the duel run on a real machine — **still wants the client's eye**
 
-The one thing that genuinely cannot be checked from here. An occluded or
-automated browser reports `document.hidden`, so `requestAnimationFrame` parks
-and the canvas never paints — measured this session at **zero frames in 700ms**.
-`fxlab.html` exists precisely to work around that (explicit Step button), and
-the fight was tuned through it plus a 1,440-simulated-second statistical run:
-34 matches, 14–20, all 23 sequences firing, 77% of frames within sword reach.
-What no harness can judge is whether it *looks* like a duel. Watch it and say.
+**Reviewed frame by frame 2026-08-14 (later), and it was worth doing: four
+defects, all shipping.** `docs/DECISIONS.md` has the full write-up. In short —
+the anti-stall rail never reset, so 98.6% of sequence picks were made under it
+and four sequences fired twice an hour; `bladeGap` solved the wrong equation and
+reported crossing blades as 16 units apart, which is why blade-on-blade sparks
+often did not fire; nothing stopped the two bodies overlapping, and they did on
+3.9% of frames; and the blade lock's blades were never within 30 units of each
+other. All four are fixed.
+
+The environment limit is worse than recorded and worth knowing: the tab reports
+`document.hidden`, rAF parks (zero frames in 700ms) **and timers throttle to
+~1Hz** (two `setInterval(…,16)` ticks in 1,064ms). There is no live playback
+here in any form. What does work is a filmstrip — step the real module N frames
+into a grid of captioned cells — which is how the four above were found.
+
+What a filmstrip still cannot judge is *tempo*: whether the stillness between
+exchanges reads as poise or as a hang, and whether ~50s per match is right. That
+needs eyes on a real screen. Watch it and say.
 
 ### B. Duel choreography — the moves designed but not yet built
 
 The director and its 23 sequences are in. Still on the design sheet and worth
 having, roughly in payoff order:
 
-- **The blade lock's visuals.** The sequence exists and holds for 92 frames,
-  but the press is currently just two blades near each other. It wants the
-  sustained shower (2–3 sparks a frame at the contact point), the trembling
-  blade angles, and the contact point drifting toward whoever wins the press —
-  so the outcome is visible a second before it happens. This is the most
-  iconic image the genre has and it is the biggest single gap.
+- ~~**The blade lock's visuals.**~~ **Built 2026-08-14 (later).** The press has
+  the sustained shower at the true crossing, the two-frequency judder that the
+  loser shakes harder, the whole X rotating so the contact point walks into the
+  loser a second before the break, a grind that carries the lock downfield, and
+  a burst plus hit-stop as it fails. Who wins is `beatPower` on the beat, so it
+  is fixed by the same role coin as everything else and the renderer never reads
+  the director. Two prerequisites had to be fixed first and are the reason it
+  looked like nothing: the blades were never touching, and `bladeGap` could not
+  have told you where they touched if they were.
 - **`duck` and `overrun`.** A crouch under a horizontal sweep, and a charge
   that carries both fighters past each other and swaps the sides. `overrun` is
   the only move that changes the arena's geometry, which is why a long fight
@@ -76,7 +90,55 @@ tier, the next lever is halving the canvas's update rate — 30fps for an ambien
 background is barely perceptible and exactly halves its cost — but that should
 be added only if measurement says it is needed.
 
-### E. Docs that are now behind the code
+### E. The duel ornament wastes its slot — **needs a client decision**
+
+Found while reviewing A, not fixed, because it is a design change rather than a
+bug. `DuelOrnament` draws the world at `scale = w / WORLD_W`, so the **whole**
+700-unit arena is mapped across the square slot. The fighters are 30 units wide
+and ~87 tall inside that, and the slot is 340px on desk, 240 tablet, **190 on a
+phone**, 180 in Magazine. So a fighter renders about 42px tall on desk and
+**~20px on a phone**, and the fight occupies a few percent of a box that is
+mostly empty air — the arena is a 2.8:1 stage in a 1:1 hole, and the pair do use
+its full width (5th–95th percentile of centres is 110–571 of 700), so a fixed
+crop would cut them off at the walls.
+
+The fix is a camera: track the midpoint of the two fighters, scale to their
+separation plus a margin, clamp and ease it. That is the ornament's original
+brief — the client asked for the fight *as the ornament* first — and at 190px it
+is the difference between a fight and a smudge. It changes nothing about the
+background home, which is correctly sized already (figures ~90px at 1536×730).
+
+Two things to decide: whether a moving camera is wanted at all (it is the only
+place on the site where the frame moves on its own), and whether the health bars
+still belong once the figures are three times bigger.
+
+### F. Go over the whole site, page by page, desktop and mobile — **client request**
+
+Client, 2026-08-14: *"go over the entire website, page by page, point by point,
+feature by feature. review it, log bugs, errors, improvements, etc. then we fix
+it all… fix both versions — desktop and mobile site. if possible, make
+everything run faster."*
+
+Standing permissions given with it: open and drive the live site in both bands,
+test, change. **Removals and tone-downs for performance need sign-off first, and
+the reason has to come with them** — the client's words: "if you must remove
+stuff, or tone it down for faster performance, thats fine, just run that by me
+first and why."
+
+Scope, so it is not re-litigated later: all fifteen routes including the four
+unlinked account pages and the footer pages, both bands, every layout archetype
+(fourteen) rather than only the default, calm on and off, and the operator
+surfaces. The two environment traps that have already cost sessions apply
+throughout — `resize_window` silently fails, so the phone band is tested via a
+same-origin iframe at 420×860; and strings are verified in the live DOM, not in
+a green build, because a find-and-replace has already no-opped silently while
+everything still built and rendered.
+
+Worth deciding before starting: whether the output is one findings document the
+client reads and prioritises, or a fix-as-found pass. The audit is large enough
+that fixing as found makes it impossible to review what changed and why.
+
+### G. Docs that are now behind the code
 
 - `docs/DUEL.md` still describes the pre-director engine and the filled-block
   figures. Both are gone: fighters are stick figures and decide nothing.
