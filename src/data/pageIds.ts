@@ -1,25 +1,34 @@
 /**
- * The fifteen pages and their real URLs — the spec's nine, plus setup, plus signup,
- * signin and admin (phase 1), and machines and share (phase 2,
+ * The sixteen pages and their real URLs — the spec's nine, plus setup and scams,
+ * plus signup, signin and admin (phase 1), and machines and share (phase 2,
  * SPEC-ACCOUNTS.md §13).
  *
  * The prototype swaps pages in place with no URL change; the spec is explicit
  * that this is a prototype limitation, not a design decision, so the real build
- * gets fifteen addressable routes.
+ * gets sixteen addressable routes.
  */
 
 export type PageId =
   | "home" | "about" | "work" | "gallery" | "contact"
-  | "guestbook" | "now" | "changelog" | "setup" | "notfound" | "signup" | "signin" | "admin"
+  | "guestbook" | "now" | "changelog" | "setup" | "scams" | "notfound" | "signup" | "signin" | "admin"
   | "machines" | "share";
 
 /**
- * Header nav — six public pills, in order.
+ * Header nav — **seven** public pills, in order.
  *
  * "404" was genuinely in the nav — that was the joke — until the client pulled
  * it behind sign-in on 2026-08-13 (`OPERATOR_NAV` below). The page itself is
  * still what every visitor gets at an unknown URL; only the *advertisement*
  * became operator-only.
+ *
+ * **Scams is the seventh, and the six-pill design is deliberately broken for
+ * it** (client, 2026-08-14). Setup was kept out of the nav a few hours earlier
+ * on exactly that reasoning, and this page is judged differently on purpose:
+ * the client's argument was that it is the one page that might stop a
+ * grandparent losing their savings, and a page like that is worth more than the
+ * symmetry of six. Note the knock-on the Setup comment predicted — `NAV` is
+ * what `useOperatorRoutes` cycles with the arrow keys and what Radial's orbit
+ * renders, so both now carry seven.
  */
 export const NAV: { id: PageId; label: string }[] = [
   { id: "home", label: "Home" },
@@ -28,6 +37,7 @@ export const NAV: { id: PageId; label: string }[] = [
   { id: "gallery", label: "Gallery" },
   { id: "contact", label: "Contact" },
   { id: "guestbook", label: "Guestbook" },
+  { id: "scams", label: "Scams" },
 ];
 
 /**
@@ -81,6 +91,7 @@ export const PATHS: Record<PageId, string> = {
   now: "/now",
   changelog: "/changelog",
   setup: "/setup",
+  scams: "/scams",
   notfound: "/404",
   signup: "/signup",
   signin: "/signin",

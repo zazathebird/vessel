@@ -19,7 +19,10 @@ export function ContentBlock({
 }) {
   const { config } = useConfig();
   return (
-    <article className="v-block" style={{ animationDelay: `${(index * staggerMs) / 1000}s` }}>
+    <article
+      className={`v-block${block.loud ? " is-loud" : ""}`}
+      style={{ animationDelay: `${(index * staggerMs) / 1000}s` }}
+    >
       <div className="v-block-head">
         <span className="v-kicker">
           <span className="v-kicker-dot" aria-hidden="true" />

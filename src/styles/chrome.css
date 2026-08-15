@@ -2379,3 +2379,46 @@
 .band-phone .v-col-row {
   padding-block: 11px;
 }
+
+/*
+ * The loud block — a callout, used about once per page.
+ *
+ * Added for the scams page (2026-08-14), where one block is genuinely more
+ * important than the ones either side of it and the client asked for it "in
+ * bold, large font". It leans on the palette rather than introducing a colour:
+ * `--a1` for the rule and the heading, and a wash of the same at low alpha, so
+ * it stays loud in all twenty-five palettes and in calm.
+ *
+ * Type scale only — no change to padding, span or grid behaviour — so a loud
+ * block still sits in whatever cell its layout gave it. Making it *wider* would
+ * mean touching every layout's grid rules, which is a lot of blast radius for
+ * a callout.
+ */
+.vessel .v-block.is-loud {
+  border-left: 3px solid var(--a1);
+  background: linear-gradient(
+    100deg,
+    color-mix(in oklab, var(--a1) 12%, transparent),
+    transparent 62%
+  );
+}
+
+.vessel .v-block.is-loud h3 {
+  font-size: clamp(23px, 2.5vw, 34px);
+  color: var(--a1);
+}
+
+.vessel .v-block.is-loud p {
+  font-size: clamp(16px, 1.35vw, 19px);
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--fg);
+  /* Overrides the 68ch measure: a callout that rewraps to the same width as the
+     body copy beside it stops reading as a callout. */
+  max-width: 56ch;
+}
+
+.vessel .v-block.is-loud .v-list li {
+  font-size: clamp(14px, 1.15vw, 16px);
+  font-weight: 500;
+}
