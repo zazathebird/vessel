@@ -8,8 +8,8 @@
  * 1. home's kicker:"the site" block was corrected from v1's stale counts on
  *    2026-08-13, then REPLACED the same day at the client's request — the
  *    option-count list told visitors about switches they cannot flip. It is
- *    jokes now, written for this build; the two palette *gags* (changelog
- *    v2.4, 404's "consolation") stay.
+ *    jokes now, written for this build. The whole block was then cut outright
+ *    on 2026-08-14 and its best line folded into "the honesty".
  * 2. `setup` is a whole new page, written for this build on 2026-08-14 (TODO 9).
  *    Scope agreed with the client: remote access *before a callout*.
  * 3. The 404's "eight other pages" became "nine", because `setup` made the old
@@ -22,7 +22,16 @@
  * 5. home's "Some of this is hidden" block was removed the same day: it
  *    advertised that hidden unlock routes exist, which is an invitation and not
  *    a feature.
- * 6. Every other line in this file, including every other stale-looking
+ * 6. **Nothing on this site advertises the site** (client, 2026-08-14: "get rid
+ *    of anything to do with color palettes, features about my site like
+ *    different layouts, or hidden sections, or ANYTHING that isnt relevant to
+ *    everyone but me… i want people to find it out by being ON the site").
+ *    Gone with that: the 404's "Have a palette instead" consolation block, the
+ *    changelog's palette inventory and its shuffle, calm-mode and screensaver
+ *    entries. A visitor came here to get a machine fixed; the machinery is
+ *    there to be discovered, not announced. The 404's page list stays — those
+ *    are page names, which is navigation, not a spec sheet.
+ * 7. Every other line in this file, including every other stale-looking
  *    count, is verbatim from the prototype.
  */
 
@@ -343,10 +352,10 @@ export const PAGES: Record<PageId, Page> = {
     lede: "A log of edits to a website nobody asked for, kept for the same reason people keep receipts.",
     ctas: [{ label: "Back to the front", to: "home" }],
     blocks: [
-      { kicker: "v2.4", title: "Added six palettes nobody will pick", body: "Oxide, Signal Flare, Peat, Xerox, Anodised, Sodium. Peat is deliberately hard to read." },
-      { kicker: "v2.3", title: "The site now shuffles itself", body: "Five behaviours, including one that reshuffles on every click. Regret is a feature." },
-      { kicker: "v2.2", title: "Calm mode stopped being a half measure", body: "It is now its own aesthetic rather than the same site with the fun turned down." },
-      { kicker: "v2.1", title: "Screensaver", body: "Sixty seconds of no clicking and the interface gets out of the way. Mouse drift no longer counts as being alive." },
+      { kicker: "v2.4", title: "Repainted the whole thing", body: "Twice. The second one stuck." },
+      { kicker: "v2.3", title: "Stopped explaining the website on the website", body: "Nobody came here to read the spec sheet." },
+      { kicker: "v2.2", title: "Made it behave on a phone", body: "Most people are holding one. It took embarrassingly long to admit that." },
+      { kicker: "v2.1", title: "Rewrote what it says about money", body: "The old version promised something I do not actually offer." },
       { kicker: "v2.0", title: "Threw out the terminal", body: "Green text on black was a decision made at 2am in 2009 and defended for far too long." },
       { kicker: "v1.9", title: "Email hidden from scrapers", body: "Assembled in the browser. The bots get a placeholder, you get an address." },
     ],
@@ -379,7 +388,6 @@ export const PAGES: Record<PageId, Page> = {
       // are jokes that depend on being true — so keeping the word would have
       // been the change, not correcting it. One word; nothing else here moved.
       { kicker: "suggestion", title: "Try the parts that exist", body: "There are nine other pages and all of them are more interesting than this one.", hasList: true, items: ["Landing — the joke", "Contact — the useful one", "Now — what's on the bench", "Gallery — the dumping ground"] },
-      { kicker: "consolation", title: "Have a palette instead", body: "Twenty-four of them. None will find your page." },
     ],
   },
 };

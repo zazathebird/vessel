@@ -50,7 +50,8 @@ declares no `rollupOptions.input`, so the build has one entry, `index.html`, and
 
 No runtime dependencies beyond React — the routing, state, styling **and authentication** are all
 hand-rolled, deliberately (see *Assets* in the spec: no third-party libraries, no webfonts, no
-images).
+images). **The webfont half of that rule was lifted by the client on 2026-08-14** — see deviation
+14 below; the no-third-party-libraries rule is untouched and still absolute.
 
 ## The spec is authoritative
 
@@ -217,6 +218,20 @@ Five CSS gotchas that have already bitten once each, all worth knowing before ed
   internally at all. **`.vessel` and `.v-chrome` must use the same viewport unit** (`dvh`); `vh`
   resolves against the large viewport and reintroduces the nested scroll on any mobile browser
   showing its URL bar
+- **`scroll-snap-type: mandatory` is unsafe the moment a snap area outgrows the
+  scrollport, and on the phone the hero does.** Stack's snap sections were
+  `y mandatory`; measured at a real 417×857 viewport the scrollport is 654px and
+  `.v-hero` is 684px. Mandatory snap must come to rest *on* a snap point, and
+  every position inside that oversized hero has the hero's own start as its
+  nearest one — so releasing anywhere in the first screenful went back to the
+  top, and holding a finger down (which suppresses snapping) appeared to "save
+  your place". That symptom is the tell. `proximity` was not enough on this band
+  either — 120px still snapped to 0 and 1400px was pulled back 198px — so
+  **phones get `scroll-snap-type: none`** and larger bands keep `proximity`.
+  Snap sections are a reading aid while a block is comfortably sub-viewport;
+  on a phone the hero is larger than the whole scrollport. The rule is
+  `.band-phone.layout-stack .v-stage` — same-element classes, per the first
+  bullet in this list.
 - **`.v-stage` scrolls vertically, so its `overflow-x` computes to `auto`, not `visible`** — one
   axis cannot be visible while the other is not. Anything hanging off the side of a child, a
   pseudo-element included, gives the whole stage a horizontal scrollbar. The hero's stage wash did
@@ -341,6 +356,30 @@ ones most likely to be "fixed" by accident:
   `vessels` rebuilds from a **stored pool of random numbers**, not from `Math.random()` — that is
   what makes a rebuild re-fit *the same* tree instead of rolling a new one on every frame of a
   drag-resize.
+- **The adaptive resolution tier cannot reach a draw-call-bound effect, so
+  effects also receive it as `quality`.** `FxCanvas` samples its own frame time
+  and steps the render buffer through 1 / 0.75 / 0.5 — it measures the machine
+  it is on rather than reading `hardwareConcurrency`, which is wrong in both
+  directions and says nothing about the GPU. That fixes fill rate and does
+  nothing for `rain` (~1,900 blits a frame) or `plasma` (a grid measured in CSS
+  pixels): the half tier quartered their fill and left every draw call in place.
+  Those two coarsen their own grid by `quality`; every other effect ignores it,
+  because for a particle field the buffer really is the whole fix.
+- **The duel integrates against `dt` (real elapsed frames), never `boost`.**
+  Every other effect is an ambient field and should surge when the page is
+  scrolled or asleep. A duel is a performance and keeps its own tempo. It used
+  to derive its frame count from the effect clock, which has `boost` folded in,
+  so it ran at ~2× for exactly as long as the screensaver was up. That also
+  caused the reported "random lag", which was never dropped frames: the
+  simulation steps in whole frames from a fractional accumulator, so a rate of
+  1.9 alternates 2,2,1 steps per rendered frame — judder on a fixed cadence.
+- **Particle counts scale with area, and the reseed guard is the box, not the
+  count** (`field()` in `src/fx/effects.ts`). Fixed counts meant a phone got
+  ~4× the density of a desktop at ~4× the cost on weaker hardware — 90
+  constellation nodes over 390×844 is a solid accent-coloured blanket behind the
+  copy. Scaling the count breaks a `length !== n` guard (the target now changes
+  with the box, so it would re-roll the field every frame of a drag), hence the
+  stored box and the 35%-area threshold.
 - **`FX` is the wire format; `PICKABLE_FX` is the menu.** Anything offering a choice to a human
   (the panel, the command palette, the shuffle) reads `PICKABLE_FX`; anything *resolving* a stored
   or shared value reads `FX`, because a hidden effect is unlisted, not invalid. Entries carry an
@@ -489,6 +528,31 @@ All deliberate. Add to this list rather than silently diverging.
    Cold Open is the first palette not from the prototype, and the only one designed against a
    *role*: `a3` is already the site's danger token (`.v-btn-danger`, the account error border), so
    there it is the alarm colour and the only warm thing on screen.
+
+14. **Six self-hosted webfonts, at the client's request** (2026-08-14: "pls have the fanciest,
+   coolest, futuristic, yet all readable fonts you can. download them if needed. permission granted
+   for that"). This is a deliberate exception to `SPEC.md` § *Assets*, granted explicitly.
+
+   The problem was real and measurable: the five typesets were the prototype's macOS-first stacks,
+   and on Windows `grotesk`, `mixed`'s body and `condensed` all fell through to **Arial** — three of
+   five typesets rendering identically, which is exactly what the client reported ("a lot of the
+   fonts are the same. the typical, basic font").
+
+   `public/fonts/` holds six latin-subset **variable** woff2 files (Space Grotesk, Playfair Display,
+   Literata, Sora, JetBrains Mono, Oswald), declared in `src/styles/fonts.css`, **178KB total**.
+   Self-hosted, not from a CDN: the live CSP is `default-src 'self'` with no `font-src`, so a
+   gstatic URL would simply be refused in production. Weight axes are clipped to the ranges actually
+   used, which saved 37KB — `docs/FONTS.md` records the ledger so a re-download does not silently
+   re-fatten them. All six are SIL OFL 1.1.
+
+   Each typeset pairs the webfont with a **platform-picked** system fallback (Segoe UI Variable /
+   SF Pro / Cantarell, and so on) rather than one macOS-first list, because that tail is what renders
+   during `swap` and permanently if a file ever 404s — fixing the Windows collapse in the fallback
+   too, not just papering over it with downloads. `TypeSet` also gained `displayWeight`, `bodyWeight`
+   and `tracking`: there were **two** `font-weight` declarations in the entire stylesheet set before
+   this, so every heading was the user-agent's `bold` in all five typesets, which was a large part of
+   why they read as one. Verified live 2026-08-14: all six serve 200 and `document.fonts` reports the
+   used faces loaded.
 
 ## Copy changes, approved by the client
 
