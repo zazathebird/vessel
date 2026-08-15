@@ -83,6 +83,18 @@ const LAYOUT_PANEL: Partial<Record<LayoutId, number>> = {
 
 const DEFAULT_ELEV = 1;
 
+/**
+ * Typography, for the typesets that do not override it (`TypeSet` in
+ * `src/data/catalog.ts`).
+ *
+ * `700` is the user-agent's own `bold`, so a typeset that says nothing about its
+ * display weight renders exactly as it did before these tokens existed — which
+ * is what makes them safe to add to a catalogue entry one at a time.
+ */
+const DEFAULT_DISPLAY_WEIGHT = 700;
+const DEFAULT_BODY_WEIGHT = 400;
+const DEFAULT_TRACKING = "normal";
+
 const LAYOUT_ELEV: Partial<Record<LayoutId, number>> = {
   deck: 1.25,
   sidescroll: 1.1,
@@ -123,6 +135,17 @@ export function themeVars(config: Config, layout: LayoutId, band: Band): CSSProp
     "--font-body": type.body,
     "--font-display": type.display,
     "--font-mono": type.mono,
+
+    // The non-family half of a typeset. Consumed only by `src/styles/fonts.css`,
+    // which is the one stylesheet that can carry them: the hero h1's weight has
+    // to beat the user-agent's `h1 { font-weight: bold }`, and body tracking has
+    // to inherit from the wrapper, so neither can be expressed as a family name.
+    //
+    // Defaulted here rather than in the CSS `var()` fallback, so the value a
+    // typeset omits is written down once, next to the values it sets.
+    "--type-display-weight": String(type.displayWeight ?? DEFAULT_DISPLAY_WEIGHT),
+    "--type-body-weight": String(type.bodyWeight ?? DEFAULT_BODY_WEIGHT),
+    "--type-tracking": type.tracking ?? DEFAULT_TRACKING,
 
     "--radius": radiusFor(layout, band, calm),
     "--panel": `${

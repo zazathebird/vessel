@@ -48,6 +48,16 @@ export interface Frame {
    * the viewport and has nothing to gain from the extra room.
    */
   sleeping: boolean;
+  /**
+   * The adaptive-resolution tier, 1 / 0.75 / 0.5 — see `FxCanvas`.
+   *
+   * Only the two effects whose cost is bound by *draw calls* rather than by
+   * pixels read it, to coarsen their grid: the buffer shrinking beneath them
+   * does nothing for a fixed count of blits or fills. Everything else ignores
+   * it deliberately, because for a particle field the buffer change already is
+   * the fix and a second knob would only make the tier visible.
+   */
+  quality: number;
   /** Pointer position, 0–1 of the viewport. */
   mx: number;
   my: number;
@@ -84,8 +94,25 @@ interface RainColumn {
   head: number;
   speed: number;
   length: number;
-  /** One glyph per row, mutated in place while on screen. */
-  glyphs: string[];
+  /**
+   * This column belongs to the far plane: slower, dimmer, drawn in `faint`
+   * rather than `a1`, and with no bloom on its head.
+   *
+   * Before this the field was one plane. Speed varied threefold and *nothing
+   * else did* — every glyph the same 16px, the same body colour, the same head
+   * treatment, on an exact 16px lattice with no gaps. Speed variation with
+   * nothing correlated to it reads as "some are fast", never as "some are far
+   * away", so the effect was a well-built wall of one material.
+   */
+  deep: boolean;
+  /** Left empty. Negative space is what makes the drawn columns read as chosen. */
+  dead: boolean;
+  /**
+   * One glyph *index* per row, mutated in place while on screen. Indices rather
+   * than the characters themselves, because the glyphs are now blitted out of a
+   * pre-rendered atlas keyed by index — see `rainAtlas`.
+   */
+  glyphs: number[];
 }
 
 /**
@@ -96,13 +123,15 @@ interface RainColumn {
 export interface FxCache {
   rain?: { columns: number; rows: number; streams: RainColumn[] } | null;
   parts?: Particle[] | null;
+  /** The box `parts` was seeded for — see `field()`. */
+  partsBox?: { w: number; h: number } | null;
   /**
    * The grown tree, with the box it was grown for and the pool of random
    * numbers it was grown from. Both are part of the cache because `vessels` is
    * the one effect whose geometry is neither recomputed per frame nor able to
    * wrap back into a new box — see the note on `buildTree`.
    */
-  tree?: { w: number; h: number; pool: number[]; branches: Branch[] } | null;
+  tree?: { w: number; h: number; pool: number[]; t0: number; branches: Branch[] } | null;
   flow?: Channel[] | null;
   /** The duel's match state — fighters, health, sparks, the match counter. */
   duel?: DuelState | null;
@@ -115,6 +144,30 @@ export interface FxCache {
    * offscreen canvas and blitted, it costs a single `drawImage`.
    */
   scanSphere?: { w: number; h: number; key: string; canvas: HTMLCanvasElement } | null;
+  /**
+   * `plasma`'s colour ramp and its reusable draw buckets, keyed on the three
+   * accents. The buckets live here rather than being allocated per frame: they
+   * are reset with `length = 0` and refilled, so a 60Hz effect does not hand the
+   * collector twenty-two arrays a frame.
+   */
+  plasma?: { key: string; fill: string[]; alpha: number[]; buckets: number[][] } | null;
+  /**
+   * `rain`'s pre-rendered glyph atlas and head bloom.
+   *
+   * Every glyph in the set drawn once per colour into one strip, at device
+   * resolution, plus one radial-gradient sprite for the leading glyph's glow.
+   * Keyed on the two palette roles, the cell size *and* the device scale — the
+   * scale belongs in the key because `FxCanvas`'s quality tier changes it
+   * without changing `w`/`h`, and an atlas rendered for the old scale would be
+   * magnified into a blur.
+   */
+  rainAtlas?: {
+    key: string;
+    canvas: HTMLCanvasElement;
+    bloom: HTMLCanvasElement;
+    cw: number;
+    ch: number;
+  } | null;
   /**
    * The duel's attract-mode blend, 0 (background) to 1 (screensaver). Eased
    * rather than switched, so nothing about the fight jumps when the interface
@@ -135,6 +188,41 @@ function seed(w: number, h: number, n: number): Particle[] {
     vy: (Math.random() - 0.5) * 0.5,
     r: Math.random() * 2.4 + 0.5,
   }));
+}
+
+/**
+ * The shared particle field, seeded for a box rather than for a fixed count.
+ *
+ * Counts used to be constants — 260 stars, 90 nodes, 46 discs — with
+ * `parts.length !== n` as the reseed guard. A constant count means density
+ * swings with the viewport: 90 constellation nodes over a 390×844 phone is one
+ * per 3,700px², against one per 14,400px² on a 1440×900 desktop, so the phone
+ * got a mesh roughly four times denser *and* four times more expensive, on the
+ * weaker hardware, behind the same body copy.
+ *
+ * Scaling the count with area fixes that and breaks the old guard: the target
+ * count now changes with the box, so `length !== n` would reseed on every frame
+ * of a drag-resize and re-roll the whole field sixty times a second. The box is
+ * therefore stored alongside the field and a rebuild happens only when the area
+ * moves by more than a third — which a drag crosses once, not continuously.
+ * This is the same resize discipline `vessels` and `rain` already follow.
+ */
+function field(
+  cache: FxCache,
+  w: number,
+  h: number,
+  n: number,
+  tune?: (s: Particle) => Particle,
+): Particle[] {
+  const box = cache.partsBox;
+  const stale =
+    !cache.parts || !box || Math.abs(w * h - box.w * box.h) / (box.w * box.h) > 0.35;
+  if (stale) {
+    const parts = seed(w, h, n);
+    cache.parts = tune ? parts.map(tune) : parts;
+    cache.partsBox = { w, h };
+  }
+  return cache.parts as Particle[];
 }
 
 /**
@@ -185,20 +273,61 @@ const vessels: Effect = ({ ctx, w, h, p, t, beat, mx, my }, cache) => {
   // `rain` rebuilds its columns. The tree does neither, so it has to say so.
   if (!cache.tree || cache.tree.w !== w || cache.tree.h !== h) {
     const pool = cache.tree?.pool ?? [];
-    cache.tree = { w, h, pool, branches: buildTree(w, h, pool) };
+    // `t0` survives the rebuild along with the pool. It is the origin of the
+    // growth reveal below, and a resize must not replay it — during a
+    // drag-resize the tree would retract and regrow on every frame.
+    const t0 = cache.tree?.t0 ?? t;
+    cache.tree = { w, h, pool, t0, branches: buildTree(w, h, pool) };
   }
+  /*
+   * The tree grows in, depth by depth (2026-08-14 animation audit).
+   *
+   * It was built complete on the first frame and thereafter only shimmered:
+   * stepping the default effect through 1s, 6s, 15s and 30s produced four
+   * near-identical images. For the effect that every first-time visitor sees,
+   * that is the whole entrance thrown away — the shape is its most interesting
+   * property and it was over before anyone could look at it.
+   *
+   * `age` is in `t` units, which advance 0.011 a frame, so 0.66 to the second.
+   * A depth waits 0.24 (~0.36s) longer than its parent and takes 0.4 (~0.6s) to
+   * extend, putting the last tips down at about 2.8s. The per-branch `phase`
+   * jitter is what stops siblings arriving in lockstep, which is the tell that
+   * separates a plant from a progress bar.
+   */
+  const age = t - cache.tree.t0;
   for (const b of cache.tree.branches) {
+    const due = b.depth * 0.24 + (b.phase / TAU) * 0.12;
+    const grow = Math.min(1, Math.max(0, (age - due) / 0.4));
+    if (grow <= 0) continue;
     const near = 1 - Math.min(1, Math.hypot(b.x2 - mx * w, b.y2 - my * h) / 420);
     const wave = (Math.sin(t * 2.2 - b.depth * 0.9 + b.phase) + 1) / 2;
     ctx.strokeStyle = b.depth < 2 ? p.a1 : b.depth < 4 ? p.a2 : p.a3;
-    ctx.globalAlpha = 0.1 + wave * 0.2 + near * 0.28;
+    ctx.globalAlpha = (0.1 + wave * 0.2 + near * 0.28) * grow;
     ctx.lineWidth = Math.max(1, (7 - b.depth) * (1 + near * 0.5));
     ctx.lineCap = "round";
+
+    // Sway scales with depth: a trunk barely moves and a tip whips. One
+    // amplitude for every branch — which is what this was — reads as the whole
+    // tree sliding rather than bending. The per-branch rate keeps the canopy
+    // from breathing as a single object.
+    const swayAmp = 1.5 + b.depth * 2.4;
+    const cx = (b.x + b.x2) / 2 + Math.sin(t * (0.8 + b.depth * 0.16) + b.phase) * swayAmp;
+    const cy = (b.y + b.y2) / 2;
+
+    // De Casteljau: the sub-curve from 0 to `grow` starts at the same point,
+    // with control `lerp(P0, C, grow)` and endpoint the curve's own value there.
+    const ax = b.x + (cx - b.x) * grow;
+    const ay = b.y + (cy - b.y) * grow;
+    const bx = cx + (b.x2 - cx) * grow;
+    const by = cy + (b.y2 - cy) * grow;
+    const ex = ax + (bx - ax) * grow;
+    const ey = ay + (by - ay) * grow;
+
     ctx.beginPath();
     ctx.moveTo(b.x, b.y);
-    ctx.quadraticCurveTo((b.x + b.x2) / 2 + Math.sin(t + b.phase) * 7, (b.y + b.y2) / 2, b.x2, b.y2);
+    ctx.quadraticCurveTo(ax, ay, ex, ey);
     ctx.stroke();
-    if (b.depth > 3 && wave > 0.82) {
+    if (grow >= 1 && b.depth > 3 && wave > 0.82) {
       ctx.globalAlpha = 0.5;
       ctx.fillStyle = p.fg;
       ctx.beginPath();
@@ -298,15 +427,20 @@ const RAIN_TRAIL_RANGE = 26;
 /** Chance per visible glyph per frame of mutating in place, as they do on screen. */
 const RAIN_MUTATE = 0.02;
 
-const randomGlyph = () => RAIN_GLYPHS[(Math.random() * RAIN_GLYPHS.length) | 0];
+const randomGlyph = () => (Math.random() * RAIN_GLYPHS.length) | 0;
+/** Vertical room per atlas cell, in multiples of the cell — descender space. */
+const RAIN_CELL_H = 1.25;
 
 function newRainColumn(rows: number, above: boolean): RainColumn {
+  const deep = Math.random() < 0.3;
   return {
+    deep,
+    dead: Math.random() < 0.08,
     // A fresh column starts above the top edge, which is what staggers the
     // streams; the very first fill spreads them over the height instead, so the
     // effect does not begin with an empty screen.
     head: above ? -Math.random() * rows * 0.8 : Math.random() * rows,
-    speed: RAIN_SPEED_MIN + Math.random() * RAIN_SPEED_RANGE,
+    speed: (RAIN_SPEED_MIN + Math.random() * RAIN_SPEED_RANGE) * (deep ? 0.55 : 1),
     length: RAIN_TRAIL_MIN + Math.floor(Math.random() * RAIN_TRAIL_RANGE),
     glyphs: Array.from({ length: rows + 2 }, randomGlyph),
   };
@@ -327,8 +461,11 @@ function newRainColumn(rows: number, above: boolean): RainColumn {
  * body. Under the Phosphor palette that lands on the film's green; under the
  * rest it recolours with everything else, which is the site's rule.
  */
-const rain: Effect = ({ ctx, w, h, p, boost }, cache) => {
-  const size = RAIN_CELL;
+const rain: Effect = ({ ctx, w, h, p, boost, quality }, cache) => {
+  // A coarser cell at a lower tier is the only lever that helps here: the cost
+  // is ~1,900 blits a frame and every one of them survives a smaller buffer.
+  // Rounded, so the two tiers below 1 give whole-pixel cells (20px, 32px).
+  const size = Math.round(RAIN_CELL / quality);
   const columns = Math.max(1, Math.ceil(w / size));
   const rows = Math.ceil(h / size);
 
@@ -341,7 +478,80 @@ const rain: Effect = ({ ctx, w, h, p, boost }, cache) => {
   }
   const { streams } = cache.rain;
 
-  ctx.font = `${size}px ui-monospace, "MS Gothic", monospace`;
+  /*
+   * The glyphs are blitted from an atlas, not typeset per frame.
+   *
+   * Measured at 1530×860 this effect cost 3.0ms a frame — three to six times
+   * every other background in the file, and comfortably the site's real lag.
+   * Two things accounted for it. Roughly 2,100 `fillText` calls a frame, each
+   * one re-running text shaping for a single character; and 96 more `fillText`
+   * calls with `shadowBlur = 14`, which forces an offscreen Gaussian pass per
+   * call and is among the most expensive operations in the 2D API.
+   *
+   * Both are now pre-rendered once: every glyph in the set drawn twice (body in
+   * `a1`, head in `fg`) into one strip, and the head's glow baked into a single
+   * radial-gradient sprite. A trail glyph becomes one `drawImage` from a source
+   * rect, which skips shaping entirely, and the bloom becomes one more.
+   *
+   * Rendered at the device scale rather than at CSS pixels: the base transform
+   * would otherwise magnify a CSS-resolution atlas and every glyph would be
+   * soft on a retina display — the same trap `scanSphere` sets. Read before the
+   * mirror flip below, since that negates the matrix's `a`.
+   */
+  const dScale = Math.abs(ctx.getTransform().a) || 1;
+  const font = `${size}px ui-monospace, "MS Gothic", monospace`;
+  const key = `${p.a1}|${p.fg}|${p.faint}|${p.muted}|${size}|${dScale}`;
+  let atlas = cache.rainAtlas;
+  if (!atlas || atlas.key !== key) {
+    const cw = Math.ceil(size * dScale);
+    const ch = Math.ceil(size * RAIN_CELL_H * dScale);
+    const sheet = document.createElement("canvas");
+    sheet.width = cw * RAIN_GLYPHS.length;
+    sheet.height = ch * 4;
+    const o = sheet.getContext("2d");
+    if (o) {
+      o.setTransform(dScale, 0, 0, dScale, 0, 0);
+      o.font = font;
+      o.textBaseline = "top";
+      // Four rows: near body, near head, far body, far head. The far plane is
+      // the palette's structural greys rather than its accent, which is what
+      // makes it read as distance instead of as "the same rain, dimmer".
+      const rows4 = [p.a1, p.fg, p.faint, p.muted];
+      for (let r = 0; r < 4; r++) {
+        o.fillStyle = rows4[r];
+        for (let g = 0; g < RAIN_GLYPHS.length; g++) {
+          o.fillText(RAIN_GLYPHS[g], g * size, size * RAIN_CELL_H * r);
+        }
+      }
+    }
+
+    /*
+     * The head's glow, once.
+     *
+     * Sized tightly on purpose. The first version was a 64px sprite, which is
+     * generous cover for a `shadowBlur: 14` — and both wrong and expensive: 96
+     * of them a frame is nearly 400k pixels of alpha-blended gradient, so it
+     * simply moved the cost from the blur to the fill rate, and at that radius
+     * the glyph reads as a glowing ball rather than as a lit character. 28px is
+     * about twice the cell, which is what a phosphor bloom actually looks like.
+     */
+    const BLOOM = 28;
+    const bloom = document.createElement("canvas");
+    bloom.width = bloom.height = Math.ceil(BLOOM * dScale);
+    const bctx = bloom.getContext("2d");
+    if (bctx) {
+      bctx.setTransform(dScale, 0, 0, dScale, 0, 0);
+      const g = bctx.createRadialGradient(BLOOM / 2, BLOOM / 2, 0, BLOOM / 2, BLOOM / 2, BLOOM / 2);
+      g.addColorStop(0, p.a1);
+      g.addColorStop(0.4, `${p.a1}59`);
+      g.addColorStop(1, `${p.a1}00`);
+      bctx.fillStyle = g;
+      bctx.fillRect(0, 0, BLOOM, BLOOM);
+    }
+    atlas = cache.rainAtlas = { key, canvas: sheet, bloom, cw, ch };
+  }
+  const glyphH = size * RAIN_CELL_H;
+
   ctx.textBaseline = "top";
   ctx.shadowBlur = 0;
 
@@ -358,31 +568,64 @@ const rain: Effect = ({ ctx, w, h, p, boost }, cache) => {
       streams[i] = newRainColumn(rows, true);
       continue;
     }
+    if (stream.dead) continue;
 
     const x = -(i * size + size);
+    const bodyRow = stream.deep ? atlas.ch * 2 : 0;
+    const headRow = stream.deep ? atlas.ch * 3 : atlas.ch;
+    const dim = stream.deep ? 0.45 : 1;
     const head = Math.floor(stream.head);
 
-    // Tail first, head last, so the bright glyph is never overdrawn.
-    for (let k = stream.length - 1; k >= 1; k--) {
+    /*
+     * Tail first, head last, so the bright glyph is never overdrawn — and the
+     * dead end of the tail is not drawn at all. Alpha is `fade²` with
+     * `fade = 1 - k/length`, so beyond 78% of the trail it is under 0.05, which
+     * through a 0.9-opacity canvas under the vignette is not on the screen.
+     * Roughly a fifth of this effect's draw calls, for no visible change.
+     */
+    const tail = Math.min(stream.length - 1, Math.floor(stream.length * 0.78));
+    for (let k = tail; k >= 1; k--) {
       const row = head - k;
       if (row < 0 || row >= rows) continue;
-      if (Math.random() < RAIN_MUTATE) stream.glyphs[row] = randomGlyph();
-      // Squared falloff: the body stays legible and the last few cells fade out
-      // rather than the whole trail dimming evenly.
+      // Mutation is weighted toward the head rather than uniform across the
+      // trail: flicker belongs where the eye already is, and a twinkling dead
+      // tail is noise. The total mutation count barely moves.
       const fade = 1 - k / stream.length;
-      ctx.globalAlpha = fade * fade;
-      ctx.fillStyle = p.a1;
-      ctx.fillText(stream.glyphs[row], x, row * size);
+      if (Math.random() < RAIN_MUTATE * (1 + 3 * fade)) stream.glyphs[row] = randomGlyph();
+      ctx.globalAlpha = fade * fade * dim;
+      ctx.drawImage(
+        atlas.canvas,
+        stream.glyphs[row] * atlas.cw,
+        bodyRow,
+        atlas.cw,
+        atlas.ch,
+        x,
+        row * size,
+        size,
+        glyphH,
+      );
     }
 
     if (head >= 0 && head <= rows) {
       if (Math.random() < RAIN_MUTATE * 4) stream.glyphs[head] = randomGlyph();
-      ctx.globalAlpha = 1;
-      ctx.fillStyle = p.fg;
-      ctx.shadowColor = p.a1;
-      ctx.shadowBlur = 14;
-      ctx.fillText(stream.glyphs[head], x, head * size);
-      ctx.shadowBlur = 0;
+      // No bloom on the far plane — a distant light does not flare.
+      if (!stream.deep) {
+        const bw = atlas.bloom.width / dScale;
+        ctx.globalAlpha = 0.42;
+        ctx.drawImage(atlas.bloom, x + size / 2 - bw / 2, head * size + size / 2 - bw / 2, bw, bw);
+      }
+      ctx.globalAlpha = dim;
+      ctx.drawImage(
+        atlas.canvas,
+        stream.glyphs[head] * atlas.cw,
+        headRow,
+        atlas.cw,
+        atlas.ch,
+        x,
+        head * size,
+        size,
+        glyphH,
+      );
     }
   }
 
@@ -390,37 +633,115 @@ const rain: Effect = ({ ctx, w, h, p, boost }, cache) => {
   ctx.globalAlpha = 1;
 };
 
-/** 5. Warp stars — 260 particles accelerating radially outward. */
-const stars: Effect = ({ ctx, w, h, p, boost }, cache) => {
-  if (!cache.parts || cache.parts.length !== 260) cache.parts = seed(w, h, 260);
-  for (const s of cache.parts) {
-    const dx = s.x - w / 2;
-    const dy = s.y - h / 2;
-    s.x += dx * 0.012 * s.z * boost;
-    s.y += dy * 0.012 * s.z * boost;
+/**
+ * 5. Warp stars — a radial field streaming out past the viewer.
+ *
+ * **The speed has a constant floor** (2026-08-14 animation audit). Motion was
+ * purely `distance * 0.012 * z`, i.e. proportional to radius, so a star's speed
+ * fell to nothing as it approached the centre. That is right for perspective
+ * and wrong as a picture: the steady state of a `1/r` drift is a crowd, and
+ * roughly 60% of the field ended up loitering within 200px of the middle,
+ * moving fractions of a pixel a frame. Thirty seconds in, "warp stars" was a
+ * smudge in the centre with streaks in the corners the vignette had already
+ * erased — it hid its best part and displayed its worst. The floor keeps
+ * everything moving; the radial term still does the perspective.
+ *
+ * Respawn is on a ring rather than in a box around the centre. The box included
+ * the exact centre, and a star born there had a near-infinite crawl ahead of it.
+ */
+const stars: Effect = ({ ctx, w, h, p, boost, mx, my }, cache) => {
+  const n = Math.round(Math.min(300, Math.max(90, (w * h) / 5200)));
+  const parts = field(cache, w, h, n);
+  // Up into the vignette's clear band, and drifting with the shared pointer
+  // light rather than pinned — the same shallow 5% `scan` uses.
+  const cx = w * 0.5 + (mx - 0.5) * w * 0.06;
+  const cy = h * 0.4 + (my - 0.5) * h * 0.05;
+  for (const s of parts) {
+    const dx = s.x - cx;
+    const dy = s.y - cy;
+    const d = Math.hypot(dx, dy) || 1;
+    const sp = (0.35 + d * 0.012) * s.z * boost;
+    s.x += (dx / d) * sp;
+    s.y += (dy / d) * sp;
+
+    // A depth-proportional roll about the centre, to first order — near stars
+    // sweep visibly faster than far ones, which is parallax delivered rather
+    // than asserted. No trig: over a thousand frames the radius inflates by
+    // about 0.05%, and the respawn ring resets it long before that matters.
+    const rot = 0.0009 * s.z * boost;
+    s.x -= dy * rot;
+    s.y += dx * rot;
+
     if (s.x < 0 || s.x > w || s.y < 0 || s.y > h) {
-      s.x = w / 2 + (Math.random() - 0.5) * 80;
-      s.y = h / 2 + (Math.random() - 0.5) * 80;
+      const a = Math.random() * TAU;
+      const rr = 48 + Math.random() * 34;
+      s.x = cx + Math.cos(a) * rr;
+      s.y = cy + Math.sin(a) * rr;
       s.z = Math.random() + 0.2;
     }
-    ctx.strokeStyle = s.z > 0.8 ? p.a1 : p.a2;
-    ctx.globalAlpha = 0.28 + s.z * 0.5;
-    ctx.lineWidth = s.z * 1.5;
+
+    // Three bands rather than a binary split at z > 0.8, so the far plane gets
+    // `faint` — the role that exists for it — and the palette shows three
+    // colours instead of two.
+    ctx.strokeStyle = s.z > 0.86 ? p.a1 : s.z > 0.5 ? p.a2 : p.faint;
+    ctx.globalAlpha = 0.16 + s.z * 0.56;
+    // Off the sub-pixel floor: `z * 1.5` bottomed out at 0.3px, which
+    // antialiases to grey regardless of the colour set above it.
+    ctx.lineWidth = 0.55 + s.z * 1.35;
+    // The trail has a floor too, for the same reason the speed does — it was
+    // `dx * 0.05`, so the centre of the field drew dots, not streaks.
+    const tl = 3 + sp * 4.2;
     ctx.beginPath();
     ctx.moveTo(s.x, s.y);
-    ctx.lineTo(s.x - dx * 0.05 * s.z, s.y - dy * 0.05 * s.z);
+    ctx.lineTo(s.x - (dx / d) * tl, s.y - (dy / d) * tl);
     ctx.stroke();
   }
   ctx.globalAlpha = 1;
 };
 
 /** 6. Constellation — 90 drifting nodes, joined when closer than 150px. */
-const constellation: Effect = ({ ctx, w, h, p, boost }, cache) => {
-  if (!cache.parts || cache.parts.length !== 90) cache.parts = seed(w, h, 90);
-  const parts = cache.parts;
-  for (const s of parts) {
-    s.x += s.vx * boost;
-    s.y += s.vy * boost;
+const constellation: Effect = ({ ctx, w, h, p, t, boost, mx, my }, cache) => {
+  const n = Math.round(Math.min(120, Math.max(34, (w * h) / 15000)));
+  const range = Math.min(190, Math.max(88, Math.sqrt(w * h) * 0.132));
+  /*
+   * Velocity is sampled as an angle and a speed, not as two independent
+   * components (2026-08-14 audit).
+   *
+   * `seed()` draws `vx` and `vy` uniformly from ±0.25, which is a *square* of
+   * velocities: a few nodes come out with both components near zero and sit
+   * visibly parked for the whole visit, and a few more come out with one
+   * component near zero and run along a perfect horizontal or vertical rail.
+   * Parked dots and axis-aligned rails are the two most legible "screensaver"
+   * tells there are. Sampling the angle uniformly and the speed away from zero
+   * makes both impossible.
+   */
+  const parts = field(cache, w, h, n, (s) => {
+    const a = Math.random() * TAU;
+    const sp = 0.09 + Math.random() * 0.24;
+    return { ...s, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp };
+  });
+  for (let i = 0; i < parts.length; i++) {
+    const s = parts[i];
+    /*
+     * A slow curl, so paths are long arcs rather than straight lines for ever.
+     * This is a rotation, so it preserves speed exactly and cannot pump energy
+     * into the field. The phase comes from the golden angle on the index rather
+     * than from a stored field — deterministic, free, and no two nodes turn
+     * together. The 0.21 rate gives a ~30s steer cycle, deliberately longer
+     * than anyone looks, so it never resolves into a loop.
+     */
+    const rot = Math.sin(t * 0.21 + i * 2.399) * 0.011 * boost;
+    const rc = Math.cos(rot);
+    const rs = Math.sin(rot);
+    const nvx = s.vx * rc - s.vy * rs;
+    s.vy = s.vx * rs + s.vy * rc;
+    s.vx = nvx;
+
+    // Depth drives the drift rate, so the mesh has a front and a back instead
+    // of travelling as one sheet.
+    const drift = (0.45 + s.z) * boost;
+    s.x += s.vx * drift;
+    s.y += s.vy * drift;
     // Bounce *and* clamp back inside. Flipping the velocity alone is correct at
     // the edge, where the node is one frame outside and comes straight back —
     // and a trap once a node is far outside, which a **window shrink** does to
@@ -440,21 +761,47 @@ const constellation: Effect = ({ ctx, w, h, p, boost }, cache) => {
       s.vy *= -1;
       s.y = Math.min(Math.max(s.y, 0), h);
     }
-    ctx.fillStyle = p.a1;
-    ctx.globalAlpha = 0.55;
+    /*
+     * `z` is read at last. It was seeded on every particle and this effect
+     * never looked at it, drawing all ninety nodes in `a1` at alpha 0.55 and
+     * radius `s.r`. Depth sitting populated and unused in the data structure is
+     * the definition of depth asserted and not delivered — and `s.r` bottomed
+     * out at 0.5px, a 1px-diameter arc, which is a smudge rather than a shape.
+     */
+    const near = 1 - Math.min(1, Math.hypot(s.x - mx * w, s.y - my * h) / 420);
+    ctx.fillStyle = near > 0.7 ? p.a3 : s.z > 0.85 ? p.fg : s.z > 0.5 ? p.a1 : p.a2;
+    ctx.globalAlpha = 0.2 + s.z * 0.44 + near * 0.26;
     ctx.beginPath();
-    ctx.arc(s.x, s.y, s.r, 0, TAU);
+    ctx.arc(s.x, s.y, 0.9 + s.z * 1.8, 0, TAU);
     ctx.fill();
   }
+  /*
+   * Reject on the squared distance before taking a square root.
+   *
+   * This loop is O(n²) and was calling `Math.hypot` on every pair — 4,005 pairs
+   * a frame at the old fixed count, of which about 95% are out of range and
+   * discarded. `Math.hypot` is variadic and does overflow-safe scaling, so it is
+   * several times the cost of the naive form, and it was being paid in full for
+   * every rejected pair. Comparing squares rejects at the price of two
+   * multiplies and an add, and the root is then taken only for pairs that
+   * actually draw. No visual change whatsoever.
+   */
+  const range2 = range * range;
   for (let i = 0; i < parts.length; i++) {
+    const a = parts[i];
     for (let j = i + 1; j < parts.length; j++) {
-      const a = parts[i];
       const b = parts[j];
-      const d = Math.hypot(a.x - b.x, a.y - b.y);
-      if (d >= 150) continue;
-      ctx.globalAlpha = (1 - d / 150) * 0.28;
+      const dx = a.x - b.x;
+      const dy = a.y - b.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 >= range2) continue;
+      const d = Math.sqrt(d2);
+      // Links carry depth too, so the near plane is structure and the far plane
+      // is atmosphere — which is what makes the mesh read as a volume.
+      const zz = (a.z + b.z) * 0.5;
+      ctx.globalAlpha = (1 - d / range) * 0.3 * (0.35 + zz * 0.75);
       ctx.strokeStyle = p.a2;
-      ctx.lineWidth = 1;
+      ctx.lineWidth = 0.5 + zz * 0.9;
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
       ctx.lineTo(b.x, b.y);
@@ -486,20 +833,154 @@ const aurora: Effect = ({ ctx, w, h, p, t }) => {
   ctx.globalAlpha = 1;
 };
 
-/** 8. Plasma — a 26px grid of dots sized by a three-term sine field. */
-const plasma: Effect = ({ ctx, w, h, p, t }) => {
-  const cell = 26;
-  for (let x = 0; x < w; x += cell) {
-    for (let y = 0; y < h; y += cell) {
-      const v =
-        Math.sin(x * 0.008 + t) + Math.sin(y * 0.009 - t * 1.3) + Math.sin((x + y) * 0.006 + t * 0.7);
-      const a = (v + 3) / 6;
-      ctx.fillStyle = a > 0.62 ? p.a1 : a > 0.42 ? p.a2 : p.a3;
-      ctx.globalAlpha = Math.max(0, (a - 0.35) * 0.32);
-      ctx.beginPath();
-      ctx.arc(x + cell / 2, y + cell / 2, cell * 0.42 * a + 1, 0, TAU);
-      ctx.fill();
+/** How many quantised brightness bands `plasma` sorts its cells into. */
+const PLASMA_BANDS = 22;
+
+/** `#rrggbb` → [r, g, b]. Returns null for anything else, so callers can bail. */
+function hexRgb(hex: string): [number, number, number] | null {
+  const m = /^#([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+/**
+ * `plasma`'s colour ramp: `a3` → `a2` → `a1` across `PLASMA_BANDS` stops.
+ *
+ * This replaces a three-way threshold (`a > 0.62 ? a1 : a > 0.42 ? a2 : a3`),
+ * which had two problems. It drew two hard contour lines across a field that is
+ * otherwise continuous — mach bands, the most obvious artefact a smooth field
+ * can have — and the `a3` branch, while it did fire on about a tenth of cells,
+ * only ever fired where the alpha ramp was near zero, so the site's third accent
+ * was mathematically present and never visible. A ramp fixes both, and it is
+ * what makes the bucketed drawing below possible: quantising to a band picks the
+ * colour *and* the alpha, so every cell in a band shares one canvas state.
+ */
+function plasmaRamp(p: Palette): { fill: string[]; alpha: number[] } {
+  const lo = hexRgb(p.a3);
+  const mid = hexRgb(p.a2);
+  const hi = hexRgb(p.a1);
+  const fill: string[] = [];
+  const alpha: number[] = [];
+  for (let i = 0; i < PLASMA_BANDS; i++) {
+    const a = (i + 0.5) / PLASMA_BANDS;
+    alpha[i] = Math.max(0, (a - 0.35) * 0.32);
+    if (!lo || !mid || !hi) {
+      // A palette role that is not plain 6-digit hex: fall back to the old
+      // discrete choice rather than guessing at the format.
+      fill[i] = a > 0.62 ? p.a1 : a > 0.42 ? p.a2 : p.a3;
+      continue;
     }
+    const [from, to, f] = a < 0.5 ? [lo, mid, a * 2] : [mid, hi, (a - 0.5) * 2];
+    const c = (k: number) => Math.round(from[k] + (to[k] - from[k]) * f);
+    fill[i] = `rgb(${c(0)},${c(1)},${c(2)})`;
+  }
+  return { fill, alpha };
+}
+
+/**
+ * 8. Plasma — a lattice of dots sized and lit by a four-term sine field.
+ *
+ * **Drawn in bands, not per cell** (2026-08-14 animation audit). This effect
+ * issued one `fillStyle`, one `globalAlpha`, one `beginPath`, one `arc` and one
+ * `fill` for every cell — about 3,100 of each per frame at 1920×1080, and 190k
+ * `fill()` calls a second. It was far and away the most draw-call-bound effect
+ * in the file.
+ *
+ * That matters more than the raw number, because it is the one effect the
+ * site's performance lever cannot reach: `FxCanvas`'s adaptive resolution
+ * shrinks the *buffer*, and `cell` is measured in CSS pixels, so dropping to the
+ * half-resolution tier quarters the fill area and leaves every one of those
+ * 3,100 draw calls exactly where it was. Sorting cells into `PLASMA_BANDS`
+ * brightness buckets and filling one path per bucket takes it to 22 `fill()`
+ * calls and 22 state changes per frame, whatever the viewport. The arcs never
+ * overlap, so unioning them into one path is safe under nonzero winding.
+ */
+const plasma: Effect = ({ ctx, w, h, p, t, beat, quality }, cache) => {
+  /*
+   * The cell is sized from the viewport, then coarsened by the quality tier.
+   *
+   * A flat 26px is right on a desktop (about sixty columns) and wrong on a
+   * phone, where 390px gives fifteen — dots so large relative to the screen
+   * that the lattice stops being a texture and becomes the subject. Tying it to
+   * the short edge keeps the *number* of cells roughly constant instead, which
+   * is what actually governs how the field reads.
+   *
+   * Dividing by `quality` rather than multiplying: a lower tier means a coarser
+   * grid and fewer cells. As with `rain`, this effect's cost is one arc per cell
+   * and the cell is measured in CSS pixels, so the buffer shrinking underneath
+   * it changes nothing on its own.
+   */
+  const cell = Math.round(Math.max(17, Math.min(30, Math.min(w, h) / 26)) / quality);
+  const key = `${p.a1}|${p.a2}|${p.a3}`;
+  let ramp = cache.plasma;
+  if (!ramp || ramp.key !== key) {
+    // Keyed on the accents, like `scan`'s sphere: the palette changes under a
+    // running effect — that is what the 0.9s bleed *is* — and a ramp built once
+    // would simply never follow it.
+    ramp = cache.plasma = { key, ...plasmaRamp(p), buckets: [] };
+  }
+  const buckets = ramp.buckets;
+  for (let i = 0; i < PLASMA_BANDS; i++) {
+    if (!buckets[i]) buckets[i] = [];
+    else buckets[i].length = 0;
+  }
+
+  /*
+   * Four terms, none of them axis-aligned.
+   *
+   * The old three were `(0.008, 0)`, `(0, 0.009)` and `(0.006, 0.006)` — two
+   * exactly on the axes and one at exactly 45°, over a square sampling lattice.
+   * Iso-contours of that are squares and diamonds, so the field read as woven
+   * plaid rather than plasma. Their wavelengths also all sat between 700 and
+   * 800px, giving the whole thing exactly one spatial scale, and their speeds
+   * were commensurate (10 : 13 : 7), which made the entire canvas swell and dim
+   * in unison on a ~15s beat and repeat outright every 95s.
+   *
+   * These four are off-axis, the fourth is a shorter 370px wavelength whose
+   * *direction* rotates on a ~136s period, and the four speeds 83/119/61/170 are
+   * coprime over 100 — a common period of about 950 seconds, which is not a
+   * period anyone will sit through.
+   */
+  const rc = Math.cos(t * 0.07);
+  const rs = Math.sin(t * 0.07);
+  for (let x = 0; x < w + cell; x += cell) {
+    // Alternate columns are offset half a cell, which turns the square lattice
+    // into a hexagonal one. A perfect square grid is legible as a grid at any
+    // density; a staggered one reads as a field.
+    const oy = (x / cell) & 1 ? cell * 0.5 : 0;
+    for (let y = 0; y < h + cell; y += cell) {
+      const v =
+        Math.sin(x * 0.0071 + y * 0.0026 + t * 0.83) +
+        Math.sin(x * -0.0034 + y * 0.0081 - t * 1.19) +
+        Math.sin(x * 0.0049 + y * -0.0057 + t * 0.61) +
+        0.7 * Math.sin((x * rc + y * rs) * 0.017 + t * 1.7);
+      const a = (v + 3.7) / 7.4;
+      if (a <= 0.35) continue; // below the alpha floor: nothing would be drawn
+      // Radius rides a second, much slower field so size and brightness are no
+      // longer the same variable twice — that is what allows big-and-dim and
+      // small-and-bright to coexist, which is what gives the field depth.
+      const g = Math.sin(x * 0.0019 - y * 0.0023 + t * 0.31) * 0.5 + 0.5;
+      const r = cell * (0.22 + 0.38 * a) * (0.7 + 0.5 * g) + 0.8;
+      const q = Math.min(PLASMA_BANDS - 1, (a * PLASMA_BANDS) | 0);
+      buckets[q].push(x + cell / 2, y + cell / 2 + oy, r);
+    }
+  }
+
+  // `beat` at last — plasma is the effect most suited to the site's heartbeat
+  // and took neither it nor `boost`. One multiply per band, not per cell.
+  const pulse = 0.86 + beat * 0.24;
+  for (let i = 0; i < PLASMA_BANDS; i++) {
+    const b = buckets[i];
+    if (!b.length) continue;
+    ctx.fillStyle = ramp.fill[i];
+    ctx.globalAlpha = ramp.alpha[i] * pulse;
+    ctx.beginPath();
+    for (let k = 0; k < b.length; k += 3) {
+      ctx.moveTo(b[k] + b[k + 2], b[k + 1]);
+      ctx.arc(b[k], b[k + 1], b[k + 2], 0, TAU);
+    }
+    ctx.fill();
   }
   ctx.globalAlpha = 1;
 };
@@ -673,8 +1154,25 @@ const scan: Effect = ({ ctx, w, h, p, t, mx, my }, cache) => {
   const ang = (t / 6.4) * TAU;
   const TAIL = 0.9; // radians of trailing wedge
   if (typeof ctx.createConicGradient === "function") {
+    /*
+     * The stops are placed at `TAIL / TAU`, not at 1.
+     *
+     * A conic gradient's 0..1 runs the **whole circle** from its start angle,
+     * but the wedge below only fills `TAIL` of it — 0.9 of 6.28 radians. With
+     * the bright stop at 1 the fill therefore only ever reached 14% of the way
+     * to `a1` before the arc ended, and at `globalAlpha` 0.3 that is invisible:
+     * the sweep rendered as the bare leading line with no trail behind it,
+     * which is precisely how it looked on the site. Anchoring the stop at the
+     * fraction the wedge actually occupies makes the falloff span the wedge.
+     *
+     * This was introduced with the performance rewrite earlier today, which
+     * replaced 26 alpha-stepped strokes with one fill. The rewrite was right —
+     * the effect went from 0.12 to 0.02ms/frame — but it silently deleted the
+     * trail it was meant to preserve.
+     */
     const g = ctx.createConicGradient(ang - TAIL, cx, cy);
     g.addColorStop(0, "transparent");
+    g.addColorStop(TAIL / TAU, p.a1);
     g.addColorStop(1, p.a1);
     ctx.save();
     ctx.globalAlpha = 0.3;

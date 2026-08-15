@@ -218,6 +218,9 @@
             beat: (Math.sin(cell.t * 1.9) + 1) / 2,
             boost,
             sleeping: sleepingInput.checked,
+            // The bench always measures the top tier — the point is the true
+            // cost, not what a throttled machine would fall back to.
+            quality: 1,
             mx: 0.5,
             my: 0.5,
           }, cell.cache);
@@ -273,14 +276,143 @@
       palSelect.addEventListener("change", () => render(1));
       shapeSelect.addEventListener("change", () => { fit(); reset(); });
       dprInput.addEventListener("change", () => { fit(); reset(); });
-      window.addEventListener("resize", () => { fit(); render(1); });
+      // Sheet mode owns the grid: its four panels are built by `sheet()` and the
+      // module-level `cells` still exist behind them, so letting the grid
+      // renderer run on a resize repaints sixteen stale cells over the sheet and
+      // overwrites its timings with a meaningless one-frame figure.
+      window.addEventListener("resize", () => {
+        if (new URLSearchParams(location.search).get("sheet")) return;
+        fit();
+        render(1);
+      });
+
+      /**
+       * Contact-sheet mode — `?sheet=<effect id>`.
+       *
+       * The audit question is not "what does this effect look like" but "what
+       * does it look like after thirty seconds", and those are different
+       * questions for anything that accumulates: a trail that never clears, a
+       * particle field that drifts off one edge, a wireframe that precesses
+       * into a worse angle than the one it started at. A single live canvas
+       * cannot answer it — the reviewer has to sit and wait, and a backgrounded
+       * automation tab parks rAF so the wait never ends.
+       *
+       * So: one effect, four panels, rendered from a clean cache at 1s, 6s,
+       * 15s and 30s of frames. `t += 0.011` per frame at 60fps, so those are
+       * 60 / 360 / 900 / 1800 frames. Every panel is stepped from zero rather
+       * than sampled out of one continuous run, because an effect that holds
+       * state must be shown the state it would actually be in, and because a
+       * shared run would let one panel's `save()` leak into the next.
+       */
+      const SHEET_STOPS = [
+        { label: "1s", frames: 60 },
+        { label: "6s", frames: 360 },
+        { label: "15s", frames: 900 },
+        { label: "30s", frames: 1800 },
+      ];
+
+      function sheet(id) {
+        const entry = FX.find((f) => f.id === id) ?? FX[0];
+        const palette = PALETTES[Number(palSelect.value)] ?? PALETTES[0];
+        grid.textContent = "";
+        // One row of four: the whole thirty seconds has to be legible in a
+        // single glance, because the audit question is what *changes* between
+        // the stops, and a comparison you have to scroll between is not one.
+        // `?cols=1` renders the four stops stacked at full width instead of in a
+        // row. The row is right for judging how an effect *evolves*; it is wrong
+        // for judging cost, because several effects scale their content with the
+        // box — `vessels` grows deeper before its `len < 14` floor bites, the
+        // particle fields scale their counts with area, `plasma` grids at a fixed
+        // 26px cell. A quarter-width panel therefore measures a fraction of the
+        // work a real viewport asks for, and reading those numbers as the site's
+        // cost understates the expensive effects badly.
+        const cols = new URLSearchParams(location.search).get("cols") || "4";
+        grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+        document.title = `fx · ${entry.label} · 30s`;
+        const timings = [];
+        for (const stop of SHEET_STOPS) {
+          const figure = document.createElement("figure");
+          const frame = document.createElement("div");
+          frame.className = "frame";
+          const canvas = document.createElement("canvas");
+          frame.append(canvas);
+          const caption = document.createElement("figcaption");
+          const name = document.createElement("b");
+          name.textContent = `${entry.label} — ${stop.label}`;
+          caption.append(name);
+          figure.append(frame, caption);
+          grid.append(figure);
+
+          const aspect = ASPECTS[shapeSelect.value];
+          const width = frame.clientWidth;
+          const height = Math.round(width / aspect);
+          frame.style.height = `${height}px`;
+          const scale = Math.min(Math.max(1, Number(dprInput.value) || 1), MAX_EDGE / Math.max(width, height));
+          canvas.width = Math.max(1, Math.round(width * scale));
+          canvas.height = Math.max(1, Math.round(height * scale));
+
+          /*
+           * Time the *last* 30 frames, not the whole run.
+           *
+           * Averaging the full run is the obvious thing and it is wrong: the
+           * 30s panel runs 1800 synchronous iterations and absorbs more GC and
+           * more scheduler interference than the 60-frame panel, so every
+           * effect appears to get steadily more expensive with time whether or
+           * not it does. That artefact reads exactly like an unbounded buffer,
+           * and chasing it means "fixing" effects that hold no state at all.
+           * The warm-up frames also carry first-call JIT, which drags the 1s
+           * figure the other way.
+           *
+           * The last 30 frames are the steady-state cost, which is the number
+           * that matters, and comparing it across the four stops is then a real
+           * answer to "does this effect get more expensive as it runs".
+           */
+          /*
+           * Report the *minimum* of three short windows, not one long average.
+           *
+           * A single window is still wrong even after moving it to the end of
+           * the run: the 30s panel renders last and absorbs the garbage from the
+           * three panels before it, so one collection inside a thirty-frame
+           * window multiplies the reported cost several times over. That showed
+           * up as `vessels` at 5.7ms/f and `telemetry` at 7ms/f — both of which
+           * vanished on a re-run, and neither of which holds any state that
+           * grows.
+           *
+           * The minimum of several windows is the right statistic here. Frame
+           * cost has a hard floor — the work the effect actually does — and
+           * everything above it is interference from the collector and the
+           * scheduler. Taking the minimum reports the floor. Chasing the mean
+           * means chasing the interference, and "fixing" effects that are fine.
+           */
+          const cell = { entry, canvas, w: width, h: height, scale, cache: {}, t: 0 };
+          const WINDOW = 20;
+          advance(cell, Math.max(0, stop.frames - WINDOW * 3), palette);
+          let best = Infinity;
+          for (let pass = 0; pass < 3; pass++) {
+            const n = Math.min(WINDOW, stop.frames);
+            const started = performance.now();
+            advance(cell, n, palette);
+            best = Math.min(best, (performance.now() - started) / n);
+          }
+          timings.push(`${stop.label} ${best.toFixed(2)}`);
+        }
+        status.textContent = `${entry.label} · ${palette.name} · steady ms/f — ${timings.join(" · ")}`;
+        return status.textContent;
+      }
 
       // Exposed so an automation tool can drive the bench without clicking:
       //   await window.fxlab.render(600)
-      window.fxlab = { render, reset, fit, cells };
+      window.fxlab = { render, reset, fit, cells, sheet };
 
-      fit();
-      render(90);
+      const sheetId = new URLSearchParams(location.search).get("sheet");
+      if (sheetId) {
+        const pal = new URLSearchParams(location.search).get("pal");
+        if (pal) palSelect.value = pal;
+        sheet(sheetId);
+      } else {
+        fit();
+        render(90);
+      }
     </script>
   </body>
 </html>

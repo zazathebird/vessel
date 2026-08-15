@@ -58,13 +58,26 @@ export function FxCanvas() {
    * hard", plus "if there needs to be a detection of your system to run the
    * appropriate level of vfx, thats fine by me").
    *
-   * **Resolution is the lever, not effect detail.** Cost here is dominated by
-   * pixels, not by draw calls: a full-bleed canvas at `devicePixelRatio` 2 is
-   * four times the fill of dpr 1, and every effect pays it equally. So rather
-   * than sixteen effects each needing their own quality knob, the buffer
-   * shrinks and CSS scales it back up — one mechanism, all effects, and the
-   * per-frame `setTransform` means effects keep receiving CSS pixels and never
-   * learn that anything changed.
+   * **Resolution is the main lever, and for most effects the only one needed.**
+   * A full-bleed canvas at `devicePixelRatio` 2 is four times the fill of dpr 1
+   * and every effect pays that equally, so the buffer shrinks and CSS scales it
+   * back up: one mechanism, all effects, and the per-frame `setTransform` means
+   * effects keep receiving CSS pixels and never learn anything changed.
+   *
+   * **But resolution cannot reach a draw-call-bound effect, and two of the
+   * sixteen are.** This originally claimed cost was dominated by pixels rather
+   * than by draw calls; measuring the effects individually at 1530×860 showed
+   * that is false where it matters most. `rain` issues ~1,900 blits a frame and
+   * `plasma` grids at a fixed 26px *CSS* cell — both derive their work from `w`
+   * and `h`, which the tier deliberately does not change, so dropping to the
+   * half tier quartered their fill and left every draw call exactly where it
+   * was. `rain` measured 3.0ms a frame, three to six times any other effect and
+   * the largest single cost on the site.
+   *
+   * So the tier is also handed to the effects as `quality`. Almost all of them
+   * ignore it — a particle field really is fill-bound and the buffer change is
+   * the whole fix. The two that are bound by call count use it to coarsen their
+   * grid, which is the only thing that actually helps them.
    *
    * Measured over a window rather than per frame, because one long frame is
    * usually a garbage collection or a tab regaining focus, not a slow machine.
@@ -212,6 +225,7 @@ export function FxCanvas() {
         beat: (Math.sin(t * 1.9) + 1) / 2,
         boost,
         sleeping,
+        quality: quality.current,
         mx: motion.mouse.x,
         my: motion.mouse.y,
       }, cache);

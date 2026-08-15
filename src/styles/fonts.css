@@ -1,0 +1,163 @@
+/*
+ * The typeface layer. Imported FIRST in src/main.tsx so every face is declared
+ * before any other stylesheet asks for it.
+ *
+ * WHY THIS FILE EXISTS AT ALL
+ *
+ * `design/SPEC.md` § Assets says "no webfonts". The client lifted that on
+ * 2026-08-14, in the same shape as the earlier no-images override that produced
+ * `public/photos/` and `docs/PHOTOS.md`: verbatim, "pls have the fanciest,
+ * coolest, futuristic, yet all readable fonts you can. download them if needed."
+ * The ledger for these files is `docs/FONTS.md` — keep it in sync.
+ *
+ * The override is on *webfonts*, not on third parties. Three separate things
+ * would break if these were loaded from fonts.googleapis.com instead of being
+ * self-hosted, and only the first is cosmetic:
+ *
+ *  1. The CSP in `worker/index.ts` is `default-src 'self'` with no `font-src`,
+ *     so `font-src` inherits `'self'`. A gstatic URL is refused in production
+ *     and the text renders in the fallback stack — or, mid-swap, not at all.
+ *     Report-only today; the whole point of report-only is that flipping it to
+ *     enforcing must be a one-header change, and a remote font makes it not one.
+ *  2. "No cookies, nothing measuring you" is a claim the site makes in its own
+ *     copy. Every visitor pinging Google for a font makes it false.
+ *  3. CLAUDE.md still forbids third-party *runtime* dependencies. A woff2 sitting
+ *     in `public/` is an asset, like the photographs. A CDN is a dependency.
+ *
+ * So: latin-subset variable woff2 files, served from our own origin, declared
+ * here. If any of them fails to load, every stack in `TYPESETS` continues into
+ * real system fonts chosen per platform — see the note there.
+ *
+ * WHY VARIABLE, AND WHY THE WEIGHT RANGES ARE NARROW
+ *
+ * One variable file covers a whole weight range, which is what lets a typeset
+ * set a display weight and a body weight without a second download. The ranges
+ * requested from the Google Fonts API are deliberately clipped to what
+ * `TYPESETS` actually asks for (roughly 400-700) rather than each family's full
+ * axis: the API subsets the file to the requested range, and that clipping is
+ * ~37KB of the 174KB total. Widening a range here silently re-fattens the file
+ * the next time someone re-downloads it, so the ranges are recorded in
+ * `docs/FONTS.md` alongside the source URL.
+ *
+ * `font-display: swap` on every face, deliberately: the fallback stacks are real
+ * typefaces rather than placeholders, so showing them for a moment is better
+ * than showing nothing. Nothing here is preloaded — a preload has to go in
+ * `index.html`, and preloading one face would only help whichever typeset the
+ * operator happens to have published.
+ *
+ * The `unicode-range` is the Google Fonts "latin" subset verbatim. It matters:
+ * the site's Unicode furniture (▸ ✕ ◈ ↻) sits outside it, so those glyphs fall
+ * through to the system font per-character instead of being synthesised.
+ */
+
+/* Space Grotesk — SIL OFL 1.1. grotesk, display + body. */
+@font-face {
+  font-family: "Space Grotesk";
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: swap;
+  src: url("/fonts/space-grotesk-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* Playfair Display — SIL OFL 1.1. editorial, display only: it is a display face
+   and its hairlines close up below about 24px. Never used for body. */
+@font-face {
+  font-family: "Playfair Display";
+  font-style: normal;
+  font-weight: 400 900;
+  font-display: swap;
+  src: url("/fonts/playfair-display-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* Literata — SIL OFL 1.1. editorial body, and mixed's display at 600. */
+@font-face {
+  font-family: "Literata";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/fonts/literata-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* Sora — SIL OFL 1.1. mixed body: geometric and near-monolinear, so it reads as
+   a different voice from Space Grotesk rather than a second opinion on it. */
+@font-face {
+  font-family: "Sora";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/fonts/sora-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* JetBrains Mono — SIL OFL 1.1. The `--font-mono` of all five typesets, and the
+   whole of allmono. `--font-mono` is the most-used token in the codebase (the
+   chips, the CTAs, the eyebrows, every account form label), so this is the face
+   a visitor sees most regardless of which typeset is published. */
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/fonts/jetbrains-mono-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* Oswald — SIL OFL 1.1. condensed, display + body. */
+@font-face {
+  font-family: "Oswald";
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url("/fonts/oswald-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/*
+ * The three typographic tokens that are not a family name.
+ *
+ * A variable font is wasted if every typeset renders at one weight, and until
+ * this block the site had no way to say otherwise: grep the stylesheets and
+ * there are two `font-weight` declarations in the whole codebase. Headings were
+ * whatever the user-agent's `h1 { font-weight: bold }` decided, identically in
+ * all five typesets — which is a large part of why five typesets read as one.
+ *
+ * These are the only two selectors that can carry it, and both are chosen to
+ * avoid a fight rather than win one:
+ *
+ *  - `.vessel` — `base.css` sets no `font-weight` and no `letter-spacing` on the
+ *    wrapper, so both simply inherit down into body copy. Anything with its own
+ *    declaration (`.chip`, `.v-cta`, every `.mono` eyebrow) is untouched, which
+ *    is the intent: the tracking here is body tracking, and the uppercase
+ *    letter-spacing those rules set is a different decision.
+ *  - `.vessel .v-title` — 0-2-0 against `chrome.css`'s 0-1-0, the same
+ *    specificity trick `interaction.css` documents, so this holds regardless of
+ *    import order. `.v-title` sets no `font-weight` of its own; the rule exists
+ *    to beat the user-agent's `bold`, not `chrome.css`.
+ *
+ * `letter-spacing` deliberately does NOT reach `.v-title`, which declares its
+ * own -0.035em. Display tracking stays chrome.css's business — restating that
+ * value here would be a second home for it, and the two would drift.
+ */
+.vessel {
+  font-weight: var(--type-body-weight);
+  letter-spacing: var(--type-tracking);
+}
+
+.vessel .v-title {
+  font-weight: var(--type-display-weight);
+}

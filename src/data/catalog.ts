@@ -122,14 +122,140 @@ export interface TypeSet {
   body: string;
   display: string;
   mono: string;
+  /**
+   * The three tokens that are not a family name. All optional; `theme.ts`
+   * supplies the defaults, so a typeset that wants the ordinary treatment says
+   * nothing. They exist because a variable font with one weight is a static
+   * font that costs more, and because five typesets differing only in family
+   * still read as one typeset — see `src/styles/fonts.css`, which is the only
+   * place they land.
+   */
+  /** `font-weight` on the hero h1. Beats the user-agent's `bold`. */
+  displayWeight?: number;
+  /** `font-weight` inherited into body copy. */
+  bodyWeight?: number;
+  /** `letter-spacing` inherited into body copy. Never reaches the h1. */
+  tracking?: string;
 }
 
+/**
+ * The five typesets.
+ *
+ * ## The defect this shape exists to fix
+ *
+ * These were the prototype's stacks until 2026-08-14, and they were written
+ * macOS-first. On Windows — where the client is — three of the five collapsed
+ * onto **Arial**:
+ *
+ *  - `grotesk`: `ui-sans-serif` is weak on Windows and `Helvetica Neue`/
+ *    `Helvetica` are not installed, so the stack fell to `Arial`.
+ *  - `mixed` body: the same stack, so also `Arial`.
+ *  - `condensed`: `Avenir Next Condensed` is macOS-only and `Helvetica Neue`
+ *    absent, so it fell to `Impact` — or past it, to `Arial`.
+ *
+ * The client's report was "a lot of the fonts are the same, the typical, basic
+ * font", and that is exactly what the catalogue was doing.
+ *
+ * ## What replaced them
+ *
+ * Six self-hosted latin-subset variable woff2 files (`public/fonts/`, declared
+ * in `src/styles/fonts.css`, ledgered in `docs/FONTS.md`), after the client
+ * lifted SPEC.md's no-webfonts rule. Each stack is **webfont first, then a
+ * platform-picked system fallback** — the fallback is not decoration. It is what
+ * renders during `font-display: swap`, and what renders permanently if a woff2
+ * ever 404s, so it has to be distinct across the five on its own merits. Those
+ * fallbacks are Windows-first for the same reason the original stacks were
+ * wrong, and every family named in them ships with the OS it is there for:
+ * Segoe UI / Sitka / Constantia / Cambria / Candara / Consolas / Bahnschrift on
+ * Windows, the `ui-*` generics plus Iowan Old Style / Optima / Avenir Next
+ * Condensed on macOS, Cantarell / Noto / DejaVu / Liberation on Linux.
+ *
+ * `Impact` survives in `condensed`'s **display** stack only, as the last resort
+ * before the generic. It is deliberately absent from the body stack: it is a
+ * poster face and is unreadable at 15px, and the old catalogue had it in both.
+ *
+ * The array's order and length are a share-code wire format — `shareCode.ts`
+ * encodes the typeset as this array's index. Fields may be added to an entry;
+ * entries may not be reordered, inserted or removed.
+ */
 export const TYPESETS: TypeSet[] = [
-  { id: "grotesk", label: "Grotesk", body: "ui-sans-serif,'Helvetica Neue',Helvetica,Arial,sans-serif", display: "ui-sans-serif,'Helvetica Neue',Helvetica,Arial,sans-serif", mono: "ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" },
-  { id: "editorial", label: "Editorial", body: "Georgia,'Iowan Old Style','Times New Roman',serif", display: "Georgia,'Iowan Old Style','Times New Roman',serif", mono: "ui-monospace,SFMono-Regular,Menlo,monospace" },
-  { id: "mixed", label: "Serif + mono", body: "ui-sans-serif,'Helvetica Neue',Arial,sans-serif", display: "Georgia,'Iowan Old Style',serif", mono: "ui-monospace,SFMono-Regular,Menlo,monospace" },
-  { id: "allmono", label: "All mono", body: "ui-monospace,SFMono-Regular,Menlo,Consolas,monospace", display: "ui-monospace,SFMono-Regular,Menlo,Consolas,monospace", mono: "ui-monospace,SFMono-Regular,Menlo,monospace" },
-  { id: "condensed", label: "Condensed", body: "'Avenir Next Condensed','Helvetica Neue',Impact,sans-serif", display: "'Avenir Next Condensed',Impact,'Helvetica Neue',sans-serif", mono: "ui-monospace,Menlo,monospace" },
+  // Index 0, and so `DEFAULT_CONFIG.type` — what a stranger gets on a first
+  // visit. Space Grotesk throughout: the same family at 700 over 400, which is
+  // what "Grotesk" should mean, and its angled terminals and single-storey `a`
+  // keep it from reading as another neutral UI sans.
+  {
+    id: "grotesk",
+    label: "Grotesk",
+    display:
+      "'Space Grotesk','Segoe UI Variable Display','Segoe UI',ui-sans-serif,system-ui,Cantarell,'Noto Sans','Liberation Sans',sans-serif",
+    body:
+      "'Space Grotesk','Segoe UI Variable Text','Segoe UI',ui-sans-serif,system-ui,Cantarell,'Noto Sans','Liberation Sans',sans-serif",
+    mono:
+      "'JetBrains Mono',Consolas,ui-monospace,SFMono-Regular,Menlo,'Liberation Mono',monospace",
+    displayWeight: 700,
+  },
+
+  // High-contrast display serif over a screen-reading text serif. Playfair is
+  // the fanciest thing on the site and is display-only on purpose — its
+  // hairlines disappear at body sizes, which is what Literata is for.
+  {
+    id: "editorial",
+    label: "Editorial",
+    display:
+      "'Playfair Display','Sitka Banner','Sitka Display',ui-serif,'New York',Didot,Constantia,'Noto Serif',Georgia,serif",
+    body:
+      "Literata,Constantia,'Iowan Old Style',Charter,'Noto Serif','Liberation Serif',Georgia,serif",
+    mono:
+      "'JetBrains Mono','Lucida Console','PT Mono',Monaco,'Nimbus Mono PS','Liberation Mono',monospace",
+    // 500, not 700. Bold Playfair fills its own counters at 90px.
+    displayWeight: 500,
+  },
+
+  // Serif head over a geometric sans body. Literata does the display duty here
+  // that it does not do in `editorial`, so the two serif typesets never show
+  // the same face in the same role.
+  {
+    id: "mixed",
+    label: "Serif + mono",
+    display:
+      "Literata,Cambria,'Palatino Linotype',Palatino,'Iowan Old Style','URW Palladio L','DejaVu Serif',Georgia,serif",
+    body: "Sora,Candara,Optima,'Avenir Next','DejaVu Sans','Noto Sans',sans-serif",
+    mono: "'JetBrains Mono',Consolas,'Andale Mono',Monaco,'DejaVu Sans Mono',monospace",
+    displayWeight: 600,
+    // Sora sets tight. A hair of tracking stops body copy closing up at 15px.
+    tracking: "0.005em",
+  },
+
+  {
+    id: "allmono",
+    label: "All mono",
+    display:
+      "'JetBrains Mono','Cascadia Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono','Liberation Mono',monospace",
+    body:
+      "'JetBrains Mono','Cascadia Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono','Liberation Mono',monospace",
+    mono:
+      "'JetBrains Mono','Cascadia Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono','Liberation Mono',monospace",
+    displayWeight: 700,
+    // Monospaced advance widths already put air between glyphs; at paragraph
+    // length that reads as loose, so this pulls back rather than adds.
+    tracking: "-0.012em",
+  },
+
+  {
+    id: "condensed",
+    label: "Condensed",
+    display:
+      "Oswald,Bahnschrift,'Avenir Next Condensed','Liberation Sans Narrow','DejaVu Sans Condensed','Noto Sans Display',Impact,sans-serif",
+    body:
+      "Oswald,Bahnschrift,'Avenir Next Condensed','Liberation Sans Narrow','DejaVu Sans Condensed',sans-serif",
+    mono: "'JetBrains Mono',Consolas,ui-monospace,Menlo,'Liberation Mono',monospace",
+    displayWeight: 600,
+    // The two corrections a condensed face needs as body copy: narrow stems go
+    // thin against a dark background, and narrow glyphs need the space back
+    // between them that they lost inside them.
+    bodyWeight: 500,
+    tracking: "0.02em",
+  },
 ];
 
 export const MODES: { id: ModeId; label: string }[] = [
