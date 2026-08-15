@@ -12,6 +12,7 @@
  */
 
 import type { FxId, LayoutId, TypeSetId } from "./catalog";
+import type { OrnamentId } from "./ornaments";
 import type { PaletteId } from "./palettes";
 
 export interface Guardrail {
@@ -25,6 +26,16 @@ export interface Guardrail {
   type?: TypeSetId[];
   /** Rule matches when the palette is one of these. */
   pal?: PaletteId[];
+  /**
+   * Rule matches when the hero ornament is one of these.
+   *
+   * Added 2026-08-15. The randomiser has always *rolled* the ornament and never
+   * submitted it to the guardrails — `roll` built a candidate with an ornament
+   * in it and then called `isAllowed` with five of its six fields. So no
+   * guardrail could constrain an ornament no matter how it was written, and the
+   * one combination that genuinely does not work shipped.
+   */
+  ornament?: OrnamentId[];
 }
 
 export const GUARDRAILS: Guardrail[] = [
@@ -74,6 +85,30 @@ export const GUARDRAILS: Guardrail[] = [
    * blurred.
    */
   { layout: "hud", fxNot: ["scan", "telemetry", "tunnel", "constellation", "off"] },
+
+  /*
+   * One fight at a time (client, 2026-08-15: "when in landscape mode on mobile,
+   * there are two fights going at the same time").
+   *
+   * The duel has two homes and both are wanted — the hero ornament, which was
+   * the original request, and the full-bleed background. What was never
+   * intended is *both at once*, which runs two independent matches with
+   * different fighters, different health and different winners a few inches
+   * apart. The live site publishes `mode: "visit"`, so every visit re-rolls;
+   * two of sixteen effects are duels and two of seven ornaments are, giving
+   * 2/16 × 2/7 ≈ **3.6% of visits** — about one in twenty-eight.
+   *
+   * It shows up in landscape because that is where the two collide rather than
+   * where it starts. Measured at 844×420 the stage is 269px tall, the ornament
+   * is a 240px slot beginning 55px down, and the background fight's feet land
+   * at 215px — the two occupy the same band of the screen at comparable size.
+   * At 400×700 the ornament ends at 197px, the background fight's feet are at
+   * 398px and its figures are half the size, so it reads as texture and nobody
+   * looks twice. Same bug, both orientations.
+   *
+   * Cross-pairings count: `duel` behind `duelholy` is still two fights.
+   */
+  { fx: ["duel", "duelholy"], ornament: ["duel", "duelholy"] },
 ];
 
 export interface Combination {
@@ -82,6 +117,15 @@ export interface Combination {
   fx: FxId;
   type: TypeSetId;
   grain: boolean;
+  /**
+   * Required, not optional, and that is the point. Every field here is a thing
+   * a roll can change, and the ornament was rolled for months without being
+   * checked because it was simply absent from this type — nothing failed to
+   * compile, so nothing said so. Making it required means a future dimension
+   * added to `RollResult` and forgotten here is a type error at the call site
+   * rather than a rule that silently never matches.
+   */
+  ornament: OrnamentId;
 }
 
 /** True when every clause the rule specifies matches the combination. */
@@ -91,6 +135,7 @@ function ruleMatches(rule: Guardrail, c: Combination): boolean {
   if (rule.fxNot !== undefined && rule.fxNot.includes(c.fx)) return false;
   if (rule.type !== undefined && !rule.type.includes(c.type)) return false;
   if (rule.pal !== undefined && !rule.pal.includes(c.palette)) return false;
+  if (rule.ornament !== undefined && !rule.ornament.includes(c.ornament)) return false;
   return true;
 }
 

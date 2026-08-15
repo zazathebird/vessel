@@ -4,6 +4,7 @@ import type { MouseEvent } from "react";
 import { useConfig } from "../config/ConfigContext";
 import { NAV } from "../data/pageIds";
 import type { LayoutId } from "../data/catalog";
+import { DEFAULT_ORNAMENT } from "../data/ornaments";
 import { DuelOrnament } from "./DuelOrnament";
 
 /**
@@ -58,24 +59,49 @@ export function Ornament({ layout }: { layout: LayoutId }) {
     [signinShown, revealSignin, say],
   );
 
+  /*
+   * One fight at a time (client, 2026-08-15: "when in landscape mode on mobile,
+   * there are two fights going at the same time").
+   *
+   * `guardrails.ts` stops the randomiser *choosing* this pair, and that is what
+   * fixed the live site, which publishes `mode: "visit"`. It is not the whole
+   * fix, because a roll is only one of four ways config arrives: it can also be
+   * published from siteconfig, pasted as a share code (which encodes the effect
+   * and the ornament as independent fields), or restored from storage. This is
+   * the one place all four converge, so the rule is enforced here as well.
+   *
+   * **The substitution is the default ornament, never `null`.** Emptying the
+   * slot looks like the tidier answer and quietly breaks something else: the
+   * five taps that reveal the footer's sign-in link live on this element, and
+   * on the phone band that is the only findable route to an account. A visitor
+   * would lose it for a reason they could not see and did not cause.
+   *
+   * The ornament yields rather than the background because a missing ornament
+   * is already ordinary here — five layouts hide the slot outright — whereas a
+   * missing background effect is not.
+   */
+  const duelFx = config.fx === "duel" || config.fx === "duelholy";
+  const duelOrnament = config.ornament === "duel" || config.ornament === "duelholy";
+  const ornament = duelFx && duelOrnament ? DEFAULT_ORNAMENT : config.ornament;
+
   // The phone band renders the ornament too (mobile parity, client request
   // 2026-08-13) — it is the findable sign-in affordance and the duels' home,
   // and hiding it left phones with neither. The layouts with no room for the
   // slot still hide it, on every band.
-  if (config.ornament === "none" || HIDES_ORNAMENT.includes(layout)) {
+  if (ornament === "none" || HIDES_ORNAMENT.includes(layout)) {
     return null;
   }
 
   return (
-    <div className={`v-ornament is-${config.ornament}`} onClick={onTap}>
-      {config.ornament === "valve" && <Valve />}
-      {config.ornament === "lens" && <Lens />}
-      {config.ornament === "aperture" && <Aperture />}
-      {config.ornament === "orrery" && <Orrery />}
-      {(config.ornament === "duel" || config.ornament === "duelholy") && (
+    <div className={`v-ornament is-${ornament}`} onClick={onTap}>
+      {ornament === "valve" && <Valve />}
+      {ornament === "lens" && <Lens />}
+      {ornament === "aperture" && <Aperture />}
+      {ornament === "orrery" && <Orrery />}
+      {(ornament === "duel" || ornament === "duelholy") && (
         // The one ornament that is a canvas rather than CSS — an endless run of
         // little lightsword matches. See docs/DUEL.md and DuelOrnament.tsx.
-        <DuelOrnament pairing={config.ornament} />
+        <DuelOrnament pairing={ornament} />
       )}
 
       {layout === "radial" && (

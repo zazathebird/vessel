@@ -46,6 +46,11 @@ export function roll(config: Config): RollResult | null {
       palette: PALETTES[candidate.pal].id,
       layout: candidate.layout,
       fx: candidate.fx,
+      // Rolled since the ornament scope existed, and passed to the guardrails
+      // only since 2026-08-15 — which is why "one fight at a time" could not be
+      // expressed as a rule until now. Every field of `RollResult` that a
+      // guardrail could ever care about belongs in this object.
+      ornament: candidate.ornament,
       type: TYPESETS[candidate.type].id,
       grain: candidate.grain,
     });

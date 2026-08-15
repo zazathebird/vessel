@@ -443,6 +443,14 @@ All deliberate. Add to this list rather than silently diverging.
    rather than only the Editorial+Datamosh pairing — Editorial can never be rolled. The spec says
    "Editorial type may not pair with the Datamosh palette", so a rule here matches only when all its
    clauses match. Every other rule behaves identically under both readings.
+
+   **`Combination` must carry every dimension a roll can change, and each field is deliberately
+   required.** The ornament was rolled by `randomiser.ts` for months and never passed to
+   `isAllowed`, so no guardrail could constrain it *however it was written* — the one pairing that
+   genuinely does not work (two duels, below) shipped and reached ~3.6% of visits. Nothing failed to
+   compile, because the field was simply absent from the type. Required fields mean the next
+   dimension added to `RollResult` and forgotten here is a type error at the call site rather than a
+   rule that silently never matches. If you add a knob to the roll, add it to `Combination`.
 2. **Focus-visible styles** exist in `base.css`. The spec lists their absence as a gap to close, not
    a design decision.
 3. **Magazine's h1 minimum is `46px`**, the spec's value, not the prototype's `40px`. The spec is
@@ -569,6 +577,21 @@ All deliberate. Add to this list rather than silently diverging.
      same role coin as everything else and the renderer never reads `dir`.
      Nothing in `stepLock` consults a condition or can extend the move, which is
      what keeps the timeout-free match-reset loop safe.
+
+   **One fight at a time, enforced in two places on purpose** (2026-08-15, client: "when in
+   landscape mode on mobile, there are two fights going at the same time"). The duel has two homes
+   and both are wanted; both *at once* runs two independent matches with different fighters and
+   different winners a few inches apart. A guardrail stops the randomiser choosing the pair — which
+   is what fixed the live site, since it publishes `mode: "visit"` and re-rolls every visit — and
+   `Ornament.tsx` refuses to render the second one, because a roll is only one of four ways config
+   arrives (publish, share code and storage are the others, and a share code carries the effect and
+   the ornament as independent fields). **The ornament yields, and it yields to `DEFAULT_ORNAMENT`
+   rather than to `null`**: five taps on this element reveal the footer's sign-in link, which on the
+   phone band is the only findable route to an account, so emptying the slot would remove it for a
+   reason the visitor could not see. Landscape is where it was noticed, not where it started —
+   measured at 844×420 the stage is 269px tall, the ornament a 240px slot 55px down, and the
+   background fight's feet land at 215px, so the two collide; at 400×700 they are 200px apart and
+   the background one is half the size.
 
    **The ornament has a camera; the background does not** (2026-08-14, later,
    client-approved). `DuelOrnament` used to draw at `scale = w / WORLD_W`, so

@@ -14,6 +14,64 @@ file records what happened to the codebase.
 ---
 
 
+## 2026-08-15 — two fights at once, and the guardrail that could not have caught it
+
+Client: *"when in landscape mode on mobile, there are two fights going at the
+same time."* Correct, reproducible, and the cause is one missing argument.
+
+**`randomiser.ts` rolled the ornament and never submitted it to the
+guardrails.** `roll()` builds a candidate with six dimensions in it and then
+called `isAllowed` with five — `palette, layout, fx, type, grain`. The ornament
+was absent from the `Combination` type too, so nothing failed to compile and
+nothing said so. The consequence is not that a rule was wrong; it is that **no
+guardrail constraining an ornament could work however it was written**, so the
+one pairing that genuinely does not work had nothing standing in front of it.
+
+The live site publishes `mode: "visit"` with `fx` and `ornament` both in scope,
+so every visit re-rolls both. Two of sixteen effects are duels and two of seven
+ornaments are, giving 2/16 × 2/7 ≈ **3.6% of visits** — about one in
+twenty-eight — showing two independent matches, with different fighters,
+different health and different winners, a few inches apart.
+
+**Landscape is where it collides, not where it starts.** Measured in a
+same-origin iframe (`resize_window` silently fails here): at 844×420 the phone
+is in the *tablet* band — `PHONE_MAX` is 560 — the stage is 269px tall, the
+ornament is a 240px slot beginning 55px down, and the background fight's feet
+land at 215px, so both occupy the same band of the screen at comparable size.
+At 400×700 the ornament ends at 197px, the background fight's feet are at 398px
+and its figures are 31px against the ornament's 57px, so it reads as texture and
+nobody looks twice. The DOM probe confirms two live canvases in *both*
+orientations: same bug, one visible.
+
+**Fixed in two places, deliberately.** `Combination` gains a *required*
+`ornament`, `roll` passes it, and a rule blocks any duel effect against any duel
+ornament (cross-pairings included — `duel` behind `duelholy` is still two
+fights). Verified over 200,000 rolls: **zero two-fight results**, down from
+~4,900 expected, with **zero roll failures**, so no visit falls back to leaving
+the config alone; duel effects still appear in 9.4% of rolls and duel ornaments
+in 25.9%, so both homes remain fully available.
+
+That fixes the roll, which is one of four ways config arrives — publish, share
+code and storage are the others, and a share code encodes the effect and the
+ornament as independent fields. So `Ornament.tsx` also refuses to render the
+second fight, verified in the live DOM in both orientations (two canvases → one)
+and confirmed not to touch the ordinary case (a duel ornament over a non-duel
+effect still renders).
+
+**The substitution is `DEFAULT_ORNAMENT`, never `null`.** Emptying the slot is
+the tidier-looking answer and quietly breaks something else: the five taps that
+reveal the footer's sign-in link live on this element, and on the phone band
+that is the only findable route to an account. The ornament yields rather than
+the background because a missing ornament is already ordinary — five layouts
+hide the slot outright — while a missing background effect is not.
+
+**Not changed, and worth knowing:** guardrails still constrain only the
+randomiser, so an operator can publish other blocked combinations (Magazine +
+rain, say) by hand. That predates this and is what "randomiser guardrails"
+means; the duel pair is now the one combination also enforced at render time,
+because two fights is incoherent rather than merely ugly.
+
+
 ## 2026-08-14 (later) — the duel, watched at last: four bugs, and the press
 
 **The fight had never been looked at**, and `TODO.md` A said so honestly: it was
