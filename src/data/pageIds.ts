@@ -32,12 +32,17 @@ export type PageId =
  */
 export const NAV: { id: PageId; label: string }[] = [
   { id: "home", label: "Home" },
+  // Second, not last (client, 2026-08-14). On the phone the nav is a horizontal
+  // scroller, so anything past about the fifth pill is behind a swipe nobody
+  // makes — the position is the difference between a page that gets found and
+  // one that does not. It also appears in `FOOTER_NAV`, so it is reachable at
+  // the top and the bottom of every page on the site.
+  { id: "scams", label: "Scams" },
   { id: "about", label: "About" },
   { id: "work", label: "Work" },
   { id: "gallery", label: "Gallery" },
   { id: "contact", label: "Contact" },
   { id: "guestbook", label: "Guestbook" },
-  { id: "scams", label: "Scams" },
 ];
 
 /**
@@ -79,6 +84,11 @@ export const FOOTER_NAV: { id: PageId; label: string }[] = [
   // settled design; adding a seventh would also change what the operator door's
   // arrow-key cycling walks, since `useOperatorRoutes` cycles `NAV`.
   { id: "setup", label: "Setup" },
+  // Deliberately in *both* navs. Duplicating a link is normally a smell, and
+  // this is the exception: somebody who has just been talked into something is
+  // not going to scroll back up, and somebody who reads to the bottom of any
+  // page on this site should be one click from it.
+  { id: "scams", label: "Scams" },
 ];
 
 export const PATHS: Record<PageId, string> = {
