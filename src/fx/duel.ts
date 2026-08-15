@@ -72,10 +72,19 @@ const BODY_H = 70;
 export const FEET_Y = FLOOR_Y + BODY_H;
 const GRAVITY = 0.6;
 const DECAY = 0.9;
-/** Centre-to-centre distance that separates "far" tactics from "close" ones. */
-const FAR = 120;
-const START_A = 150;
-const START_B = 520;
+/*
+ * Starting positions, and the band thresholds below, were retuned once the
+ * director existed and the fighters could be *watched* over ninety seconds.
+ *
+ * They began at 150 and 520 — 370 units apart — and with travel halved to suit
+ * the slower strikes, nothing ever closed that gap. Instrumenting a 90-second
+ * run showed 34 exchanges drawn from just five sequences, every one of them
+ * from the `far` band: the entire close-quarters half of the pool was
+ * unreachable, and the fight was two figures shoving each other from across the
+ * room. They now start inside the `mid` band and the bands are wider.
+ */
+const START_A = 250;
+const START_B = 420;
 const MAX_HEALTH = 100;
 /** Frames the winner holds the field before the next match. Two seconds. */
 const DEATH_HOLD = 200;
@@ -84,28 +93,18 @@ const DEATH_HOLD = 200;
  * Tempo (client, 2026-08-14: "just slow it the fuck down. this is giving me a
  * headache watching the looping fights", and "no limit in length of fight").
  *
- * The slash was 15 frames, then 20 — a quarter and a third of a second for a
- * full swing, which is faster than a human can follow and much faster than the
- * films, where a strike is a beat you can see coming. It is now 46, split the
- * same three ways: anticipation, strike, follow-through. The wind-up is the
- * part that makes a swing read as a swing, and it is the part that was being
- * squeezed.
+ * The per-move frame counts now live in `MOVES`, and the shape of the fix is
+ * the opposite of what it sounds like: the *strikes got faster* while the
+ * *moves got longer*. A slash used to be 20 frames of continuous travel — slow
+ * where it should be fast and fast where it should be slow. Each strike is now
+ * 4–6 frames for its whole arc, wrapped in a long anticipation with a dead hold
+ * at the top and a long recovery, and the sequences put 20–40 frames of
+ * stillness between exchanges.
  *
- * The pauses matter as much as the moves — a fight reads through the contrast
- * between stillness and explosion, and this one had no stillness in it at all.
- * `decide` now spends far longer in neutral between exchanges.
- *
- * Note the client was watching this at roughly *double* these numbers: the
- * duel clock had the canvas `boost` folded into it and the screensaver adds
+ * Note the client was watching the old version at roughly *double* its numbers:
+ * the duel clock had the canvas `boost` folded into it and the screensaver adds
  * 0.9 to that. See the note in `duelling` in effects.ts.
  */
-const SLASH_FRAMES = 46;
-const KICK_FRAMES = 34;
-const FORCE_FRAMES = 58;
-
-/** Fractions of the slash: wind up, strike, then recover past the guard. */
-const SLASH_WIND = 0.3;
-const SLASH_HIT = 0.55;
 
 /** Body proportions. The torso stops at the hips so the legs have somewhere to be. */
 const TORSO_H = 42;
@@ -138,13 +137,21 @@ interface Fighter {
   vx: number;
   vy: number;
   health: number;
+  /**
+   * The animation channel the renderer branches on, derived from the current
+   * move rather than decided. Kept as its own field so `drawFighter` needs no
+   * knowledge of the move table.
+   */
   action: Action;
-  /** Frames remaining in the current action. */
-  timer: number;
+  /** The move being performed, and how many frames into it. */
+  move: MoveId;
+  mf: number;
+  /** The scripted result of this move, written by the director's beat. */
+  outcome?: "hit" | "miss" | "blocked";
+  /** Per-beat damage multiplier, so both roles draw from one distribution. */
+  beatPower: number;
   /** Sustained movement intent while neutral: -1, 0 or 1, in world x. */
   drive: number;
-  /** Rolled at decision time — the reference's 70% slash hit chance. */
-  willHit: boolean;
   /** Whether the current action has already dealt its damage. */
   struck: boolean;
   /** Per-match damage multipliers, re-rolled every reset so rounds differ. */
@@ -185,6 +192,23 @@ export interface DuelState {
   a: Fighter;
   b: Fighter;
   sparks: Spark[];
+  /** Frames until the blades may throw sparks again — see the clash test. */
+  clash: number;
+  /**
+   * Frames of hit-stop still owed. Both fighters' move clocks freeze while this
+   * is above zero; the sparks and `idle` deliberately do not, because sparks
+   * flying past two locked bodies *is* the effect.
+   */
+  hitStop: number;
+  /** The choreographer's state — see the note above `MOVES`. */
+  dir: {
+    seq: Sequence | null;
+    f: number;
+    next: number;
+    att: "a" | "b";
+    /** Sequences elapsed this match; drives the anti-stall rail. */
+    pressure: number;
+  };
   matches: number;
   /** Frames left in the end-of-match hold; 0 while the fight is live. */
   over: number;
@@ -204,9 +228,10 @@ function makeFighter(x: number, facing: 1 | -1, style: FighterStyle): Fighter {
     vy: 0,
     health: MAX_HEALTH,
     action: "neutral",
-    timer: 10 + Math.random() * 20,
+    move: "guard",
+    mf: 0,
+    beatPower: 1,
     drive: 0,
-    willHit: false,
     struck: true,
     // The reference re-randomises these per match, so rounds differ: one round
     // a glass cannon wins fast, the next two evenly-matched fighters grind.
@@ -229,6 +254,9 @@ export function createDuel(left: FighterStyle, right: FighterStyle): DuelState {
     a: makeFighter(START_A, 1, left),
     b: makeFighter(START_B, -1, right),
     sparks: [],
+    clash: 0,
+    hitStop: 0,
+    dir: { seq: null, f: 0, next: 0, att: "a", pressure: 0 },
     matches: 0,
     over: 0,
     acc: 0,
@@ -309,6 +337,47 @@ function bladeWorld(f: Fighter): { hx: number; hy: number; tx: number; ty: numbe
 }
 
 /**
+ * Closest approach between the two blades, as a distance and the midpoint
+ * between the nearest pair of points.
+ *
+ * Standard segment-to-segment: solve for the parameters that minimise the
+ * distance between the two infinite lines, clamp both into [0, 1], and re-solve
+ * the second against the clamped first so a clamped result is still the nearest
+ * point on that segment rather than an endpoint guess. The parallel case falls
+ * out as `den` near zero and is handled by taking `s = 0`.
+ */
+function bladeGap(
+  a: { hx: number; hy: number; tx: number; ty: number },
+  b: { hx: number; hy: number; tx: number; ty: number },
+): { d: number; x: number; y: number } {
+  const ux = a.tx - a.hx;
+  const uy = a.ty - a.hy;
+  const vx = b.tx - b.hx;
+  const vy = b.ty - b.hy;
+  const wx = a.hx - b.hx;
+  const wy = a.hy - b.hy;
+  const uu = ux * ux + uy * uy;
+  const uv = ux * vx + uy * vy;
+  const vv = vx * vx + vy * vy;
+  const uw = ux * wx + uy * wy;
+  const vw = vx * wx + vy * wy;
+  const den = uu * vv - uv * uv;
+
+  let s = Math.abs(den) < 1e-6 ? 0 : (uv * vw - vv * uw) / den;
+  s = Math.max(0, Math.min(1, s));
+  let r = vv < 1e-6 ? 0 : (uw + uv * s) / vv;
+  r = Math.max(0, Math.min(1, r));
+  // One more pass for `s` against the clamped `r`, for the same reason.
+  s = uu < 1e-6 ? 0 : Math.max(0, Math.min(1, (uv * r - uw) / uu));
+
+  const px = a.hx + ux * s;
+  const py = a.hy + uy * s;
+  const qx = b.hx + vx * r;
+  const qy = b.hy + vy * r;
+  return { d: Math.hypot(px - qx, py - qy), x: (px + qx) / 2, y: (py + qy) / 2 };
+}
+
+/**
  * The reference's burst at the point of contact, with an optional bias along
  * the direction the blow was travelling. A uniform burst reads as a firework;
  * biasing it along the swing is what makes the sparks look *struck off*
@@ -347,66 +416,861 @@ function damage(st: DuelState, foe: Fighter, amount: number): void {
   }
 }
 
-/**
- * The reference's decision function, verbatim in shape: re-rolled whenever the
- * timer runs out, branching on distance. Far fighters advance, force-push or
- * leap; close fighters slash, kick or retreat.
+/*
+ * The choreographer.
+ *
+ * The old engine ran `decide()` once per fighter, independently, and that is
+ * the whole reason the fight read as "pathetic" and "a one-handed sword fight"
+ * — not the artwork. Two independent randomisers cannot produce action and
+ * reaction, and action-and-reaction is what a fight *is*. Nothing was ever
+ * blocked, nothing ever bounced off anything, and every exchange was two people
+ * swinging near each other and occasionally overlapping.
+ *
+ * So the fighters no longer decide anything. A director owns the exchange: it
+ * picks a `Sequence` — a short script of beats — assigns the two roles by a coin
+ * flip, and hands each fighter a move at a scripted frame. Outcomes are written
+ * into the script rather than rolled per swing, which is what lets a parry be a
+ * *reaction* to a specific strike instead of a coincidence.
+ *
+ * **The roles are also the fairness proof** (client: "random winners always, no
+ * bias or favorites for winner"). No sequence names a side; every beat belongs
+ * to `ATT` or `DEF`, and which fighter holds which role is one coin flip per
+ * sequence that consults nothing — not health, not position, not who won the
+ * last exchange. Damage multipliers live on the beats, so both sides draw from
+ * one distribution by construction.
+ *
+ * **Nothing here waits on a condition.** Every sequence has a fixed length and
+ * the director advances unconditionally; a blade lock's duration is rolled when
+ * it starts, never "until someone wins the press". The match-reset loop has no
+ * timeout, so a beat that could block would hang the whole effect — this is the
+ * same hazard that got a reactive block declined in `docs/DUEL.md`, and a
+ * scripted lock is safe for exactly the reason a reactive one is not: it does
+ * not consult anything.
  */
-function decide(f: Fighter, foe: Fighter): void {
-  const dist = Math.abs(centre(f) - centre(foe));
-  const r = Math.random();
-  f.drive = 0;
-  f.struck = true;
 
-  if (dist > FAR) {
-    if (r < 0.42) {
-      // Advance — deliberately unhurried. Closing the distance is a beat in
-      // itself, and it was over in a quarter of a second.
-      f.action = "neutral";
-      f.drive = f.facing;
-      f.timer = 46 + Math.random() * 40;
-    } else if (r < 0.62) {
-      f.action = "force";
-      f.timer = FORCE_FRAMES;
-      f.struck = false;
-    } else if (r < 0.78) {
-      // The tactical leap — closes distance through the air.
-      f.action = "neutral";
-      f.drive = f.facing;
-      f.timer = 40;
-      if (f.y >= FLOOR_Y) f.vy = -10;
-    } else {
-      // Hold. Nothing at all, for up to a second and a half.
-      //
-      // This is the beat the fight never had, and its absence is most of why it
-      // read as frantic: both fighters were always mid-action, so there was no
-      // baseline of stillness for an attack to be a departure from. A duel is
-      // mostly two people looking at each other.
-      f.action = "neutral";
-      f.drive = 0;
-      f.timer = 40 + Math.random() * 55;
+type Ease = "in" | "out" | "inout" | "hold";
+/** `[t (0–1 of the move), angle, how to arrive]`. */
+type Key = [number, number, Ease];
+
+type MoveId =
+  | "guard"
+  | "advance"
+  | "retreat"
+  | "circle"
+  | "strike_overhead"
+  | "strike_diagonal"
+  | "strike_rising"
+  | "thrust"
+  | "kick"
+  | "leap_strike"
+  | "spin_attack"
+  | "parry_high"
+  | "parry_cross"
+  | "parry_low"
+  | "recoil"
+  | "stagger"
+  | "knockdown"
+  | "backstep"
+  | "force_push"
+  | "lock"
+  | "flip_over"
+  | "force_pull"
+  | "force_hold"
+  | "stumble_in"
+  | "held"
+  | "flourish"
+  | "dead";
+
+interface Move {
+  frames: number;
+  blade: Key[];
+  /** Frame the outcome resolves on, or -1 for a move that cannot connect. */
+  contact: number;
+  power: number;
+  /** Which animation channel `drawFighter` should use. */
+  chan: Action;
+  impulse?: { at: number; vx: number; vy?: number };
+}
+
+/** Named blade angles. 0 is level and forward; negative is up. */
+const GUARD_MID = -0.55;
+const GUARD_HIGH = -1.15;
+const GUARD_LOW = 0.15;
+
+/*
+ * Timing, and why the strikes got *faster* while the moves got longer.
+ *
+ * The old slash was 20 frames of continuous travel — slow where it should be
+ * fast and fast where it should be slow. Every strike here is 4–6 frames for
+ * its whole arc, roughly double the old angular speed, wrapped in a long
+ * anticipation with a **dead hold** at the top and a long recovery. The hold is
+ * the move: it is what gives the blow somewhere to come from.
+ *
+ * A fight reads through the contrast between stillness and explosion, and the
+ * old one had no frame in which nothing was happening.
+ */
+const MOVES: Record<MoveId, Move> = {
+  guard: {
+    frames: 26,
+    blade: [[0, GUARD_MID, "out"], [1, GUARD_MID, "hold"]],
+    contact: -1,
+    power: 0,
+    chan: "neutral",
+  },
+  advance: {
+    frames: 54,
+    blade: [[0, GUARD_MID, "out"], [1, GUARD_MID, "hold"]],
+    contact: -1,
+    power: 0,
+    chan: "neutral",
+  },
+  retreat: {
+    frames: 34,
+    blade: [[0, GUARD_MID, "out"], [1, GUARD_MID, "hold"]],
+    contact: -1,
+    power: 0,
+    chan: "neutral",
+  },
+  circle: {
+    frames: 46,
+    blade: [[0, GUARD_MID, "out"], [0.5, GUARD_HIGH, "inout"], [1, GUARD_MID, "inout"]],
+    contact: -1,
+    power: 0,
+    chan: "neutral",
+  },
+  // The blade travels the figure's whole vertical extent — the longest
+  // silhouette move available, and the most readable at this size.
+  strike_overhead: {
+    frames: 36,
+    blade: [
+      [0, GUARD_MID, "out"],
+      [0.33, -2.15, "out"],
+      [0.46, -2.15, "hold"],
+      [0.6, 0.95, "in"],
+      [0.7, 1.15, "out"],
+      [1, GUARD_MID, "out"],
+    ],
+    contact: 21,
+    power: 1,
+    chan: "attacking",
+  },
+  // Off-axis, so its smear is a diagonal band rather than a vertical one. It
+  // exists to be distinguishable from the overhead.
+  strike_diagonal: {
+    frames: 32,
+    blade: [
+      [0, GUARD_MID, "out"],
+      [0.31, -2.45, "out"],
+      [0.43, -2.45, "hold"],
+      [0.58, 0.55, "in"],
+      [1, GUARD_MID, "out"],
+    ],
+    contact: 18,
+    power: 1,
+    chan: "attacking",
+  },
+  // The only attack whose smear travels upward, so it reads by direction alone.
+  // Recovers to the high guard rather than the middle — free asymmetry.
+  strike_rising: {
+    frames: 30,
+    blade: [
+      [0, GUARD_MID, "out"],
+      [0.3, 1.2, "out"],
+      [0.4, 1.2, "hold"],
+      [0.55, -1.35, "in"],
+      [1, GUARD_HIGH, "out"],
+    ],
+    contact: 16,
+    power: 1,
+    chan: "attacking",
+  },
+  // A thrust reads through the *body*, not the blade — the blade barely
+  // rotates, so there is almost no smear. It is the essential contrast against
+  // a set of arcs; without it every attack looks like the same attack.
+  thrust: {
+    frames: 28,
+    blade: [
+      [0, GUARD_MID, "out"],
+      [0.36, -0.35, "out"],
+      [0.5, -0.05, "in"],
+      [0.62, -0.05, "hold"],
+      [1, GUARD_MID, "out"],
+    ],
+    contact: 14,
+    power: 1.05,
+    chan: "attacking",
+    impulse: { at: 12, vx: 2.4 },
+  },
+  kick: {
+    frames: 20,
+    blade: [[0, -0.4, "out"], [1, GUARD_MID, "out"]],
+    contact: 9,
+    power: 0.55,
+    chan: "kicking",
+  },
+  // The blade is held motionless overhead for the whole flight — a loaded
+  // spring. A blade swinging in mid-air is visual mush.
+  leap_strike: {
+    frames: 48,
+    blade: [
+      [0, GUARD_MID, "out"],
+      [0.17, -2.2, "out"],
+      [0.62, -2.2, "hold"],
+      [0.75, 1.1, "in"],
+      [1, GUARD_MID, "out"],
+    ],
+    contact: 34,
+    power: 1.3,
+    chan: "attacking",
+    impulse: { at: 8, vx: 4.2, vy: -11.5 },
+  },
+  spin_attack: {
+    frames: 40,
+    blade: [
+      [0, GUARD_MID, "out"],
+      [0.25, -1.6, "out"],
+      [0.7, -1.6, "hold"],
+      [0.8, 0.7, "in"],
+      [1, GUARD_MID, "out"],
+    ],
+    contact: 23,
+    power: 1.25,
+    chan: "attacking",
+  },
+  /*
+   * The three parries are chosen for where the bright bar lands on the body,
+   * not for their angles: above the head, across the chest, at the knee. At the
+   * size these render nobody reads a blade angle — they read the height of the
+   * line. Each is roughly perpendicular to the strike it answers, which is what
+   * makes a block read as a block rather than as two blades happening to be
+   * near each other.
+   */
+  parry_high: {
+    frames: 24,
+    blade: [[0, GUARD_MID, "out"], [0.21, -0.1, "out"], [0.58, -0.1, "hold"], [1, GUARD_MID, "out"]],
+    contact: -1,
+    power: 0,
+    chan: "neutral",
+  },
+  parry_cross: {
+    frames: 26,
+    blade: [[0, GUARD_MID, "out"], [0.23, -0.85, "out"], [0.6, -0.85, "hold"], [1, GUARD_MID, "out"]],
+    contact: -1,
+    power: 0,
+    chan: "neutral",
+  },
+  parry_low: {
+    frames: 24,
+    blade: [[0, GUARD_LOW, "out"], [0.21, 0.55, "out"], [0.58, 0.55, "hold"], [1, GUARD_MID, "out"]],
+    contact: -1,
+    power: 0,
+    chan: "neutral",
+  },
+  // The half everyone forgets. Without it a blocked blade carries on through
+  // its arc and the parry never happened.
+  recoil: {
+    frames: 18,
+    blade: [[0, -1.5, "out"], [0.3, -1.9, "out"], [1, GUARD_MID, "out"]],
+    contact: -1,
+    power: 0,
+    chan: "neutral",
+    impulse: { at: 0, vx: -1.6 },
+  },
+  // A hit that produces no reaction did not happen. The blade goes off-guard,
+  // which is the visual definition of vulnerability.
+  stagger: {
+    frames: 32,
+    blade: [[0, -0.1, "out"], [0.35, 0.25, "out"], [1, GUARD_MID, "out"]],
+    contact: -1,
+    power: 0,
+    chan: "neutral",
+    impulse: { at: 0, vx: -2.5 },
+  },
+  knockdown: {
+    frames: 56,
+    blade: [[0, 0.4, "out"], [0.4, 1.1, "hold"], [1, GUARD_MID, "out"]],
+    contact: -1,
+    power: 0,
+    chan: "neutral",
+    impulse: { at: 0, vx: -4.2, vy: -6 },
+  },
+  backstep: {
+    frames: 26,
+    blade: [[0, GUARD_MID, "out"], [1, GUARD_MID, "hold"]],
+    contact: -1,
+    power: 0,
+    chan: "neutral",
+    impulse: { at: 2, vx: -3.4 },
+  },
+  // The six-frame hold at full extension is what makes an invisible force
+  // visible; without it the push reads as a gesture rather than an act.
+  force_push: {
+    frames: 44,
+    blade: [[0, GUARD_MID, "out"], [0.3, -2.3, "out"], [1, GUARD_MID, "out"]],
+    contact: 18,
+    power: 1,
+    chan: "force",
+    impulse: { at: 20, vx: -2.2 },
+  },
+  // Length is rolled when it starts. It must never be condition-terminated.
+  lock: {
+    frames: 92,
+    blade: [[0, -0.7, "out"], [1, GUARD_MID, "out"]],
+    contact: -1,
+    power: 0,
+    chan: "neutral",
+  },
+  /*
+   * The somersault over the opponent's head. The most recognisable move in the
+   * genre and the only one that changes the arena's geometry — the fighters end
+   * on opposite sides, and `stepFighter` re-derives facing from the new
+   * positions, so the turn costs nothing to bookkeep.
+   *
+   * The blade is held tucked and still for the whole flight, for the same
+   * reason `leap_strike` holds its overhead: a blade swinging in mid-air is
+   * mush, and a still blade under a tumbling body reads as control.
+   */
+  flip_over: {
+    frames: 54,
+    blade: [
+      [0, GUARD_MID, "out"],
+      [0.15, 1.35, "out"],
+      [0.72, 1.35, "hold"],
+      [1, GUARD_MID, "out"],
+    ],
+    contact: -1,
+    power: 0,
+    chan: "neutral",
+    impulse: { at: 7, vx: 10.5, vy: -13.2 },
+  },
+  // The only move where the target closes distance involuntarily. Rings that
+  // converge inward plus a body travelling the wrong way is a clear read even
+  // with nothing else to go on.
+  force_pull: {
+    frames: 42,
+    blade: [[0, GUARD_MID, "out"], [0.3, -2.1, "out"], [1, GUARD_MID, "out"]],
+    contact: 15,
+    power: 0.35,
+    chan: "force",
+  },
+  // A fighter hanging in the air with a slack blade. It deals nothing — its
+  // whole job is to set up the blow that follows.
+  force_hold: {
+    frames: 56,
+    blade: [[0, GUARD_MID, "out"], [0.22, -1.9, "out"], [0.7, -1.9, "hold"], [1, GUARD_MID, "out"]],
+    contact: 13,
+    power: 0,
+    chan: "force",
+  },
+  // Dragged off balance toward the puller: the reaction that makes `force_pull`
+  // legible as a pull rather than a shove that went the wrong way.
+  stumble_in: {
+    frames: 30,
+    blade: [[0, 0.9, "out"], [1, GUARD_MID, "out"]],
+    contact: -1,
+    power: 0,
+    chan: "neutral",
+  },
+  // Lifted. Gravity is suspended for the duration (see the physics step) and
+  // the blade droops — a limp blade is the whole tell.
+  held: {
+    frames: 44,
+    blade: [[0, 0.4, "out"], [0.25, 1.25, "out"], [0.8, 1.25, "hold"], [1, GUARD_MID, "out"]],
+    contact: -1,
+    power: 0,
+    chan: "neutral",
+  },
+  flourish: {
+    frames: 30,
+    blade: [[0, GUARD_MID, "out"], [0.5, 2.6, "in"], [1, GUARD_MID, "out"]],
+    contact: -1,
+    power: 0,
+    chan: "neutral",
+  },
+  dead: { frames: 1, blade: [[0, 0, "hold"]], contact: -1, power: 0, chan: "dead" },
+};
+
+type Role = "ATT" | "DEF";
+
+interface Beat {
+  who: Role;
+  move: MoveId;
+  /** Frames from the start of the sequence. */
+  at: number;
+  outcome?: "hit" | "miss" | "blocked";
+  power?: number;
+}
+
+interface Sequence {
+  id: string;
+  weight: number;
+  range: "close" | "mid" | "far" | "any";
+  /** Total frames including the trailing rest. Fixed — never conditional. */
+  length: number;
+  beats: Beat[];
+}
+
+/** Centre-to-centre bands the sequence pool is filtered by. */
+const CLOSE = 132;
+const MID = 245;
+
+/*
+ * The pool. Beats name roles, never sides — see the fairness note above.
+ *
+ * The mix matters as much as the contents. Roughly a fifth of the weight is
+ * sequences that deal no damage at all (`probe`, `standoff`, `disengage`), and
+ * that is deliberate: without silence the strikes have nothing to be loud
+ * against. It is also kept under a third, because zero-damage sequences are the
+ * one thing that can stretch a match indefinitely.
+ */
+const SEQUENCES: Sequence[] = [
+  {
+    // Pure closing. Both roles advance, and because `facing` always points at
+    // the opponent, "advance" closes for whoever performs it — so this cannot
+    // favour a side or drift the pair off toward one wall.
+    id: "close-in",
+    weight: 22,
+    range: "far",
+    length: 108,
+    beats: [
+      { who: "ATT", move: "advance", at: 0 },
+      { who: "DEF", move: "advance", at: 0 },
+      { who: "ATT", move: "advance", at: 56 },
+      { who: "DEF", move: "circle", at: 56 },
+    ],
+  },
+  {
+    id: "step-in",
+    weight: 13,
+    range: "mid",
+    length: 84,
+    beats: [
+      { who: "ATT", move: "advance", at: 0 },
+      { who: "DEF", move: "guard", at: 0 },
+      { who: "ATT", move: "guard", at: 58 },
+      { who: "DEF", move: "advance", at: 58 },
+    ],
+  },
+  {
+    id: "probe",
+    weight: 10,
+    range: "mid",
+    length: 96,
+    beats: [
+      { who: "ATT", move: "advance", at: 0 },
+      { who: "DEF", move: "circle", at: 0 },
+      { who: "ATT", move: "thrust", at: 18, outcome: "miss" },
+      { who: "DEF", move: "backstep", at: 24 },
+      { who: "ATT", move: "guard", at: 52 },
+      { who: "DEF", move: "guard", at: 52 },
+    ],
+  },
+  {
+    id: "cut-and-catch",
+    weight: 12,
+    range: "close",
+    length: 104,
+    beats: [
+      { who: "ATT", move: "strike_diagonal", at: 0, outcome: "blocked" },
+      { who: "DEF", move: "parry_cross", at: 8 },
+      { who: "DEF", move: "strike_rising", at: 34, outcome: "hit", power: 0.85 },
+      { who: "ATT", move: "stagger", at: 50 },
+      { who: "DEF", move: "guard", at: 68 },
+    ],
+  },
+  {
+    id: "overhead-denied",
+    weight: 12,
+    range: "close",
+    length: 118,
+    beats: [
+      { who: "ATT", move: "strike_overhead", at: 0, outcome: "blocked" },
+      { who: "DEF", move: "parry_high", at: 11 },
+      { who: "DEF", move: "thrust", at: 26, outcome: "miss" },
+      { who: "ATT", move: "backstep", at: 40 },
+      { who: "ATT", move: "guard", at: 70 },
+      { who: "DEF", move: "guard", at: 70 },
+    ],
+  },
+  {
+    id: "close-the-gap",
+    weight: 10,
+    range: "far",
+    length: 110,
+    beats: [
+      { who: "ATT", move: "leap_strike", at: 0, outcome: "hit" },
+      { who: "DEF", move: "stagger", at: 34 },
+      { who: "ATT", move: "guard", at: 64 },
+    ],
+  },
+  {
+    id: "leap-evaded",
+    weight: 7,
+    range: "far",
+    length: 116,
+    beats: [
+      { who: "ATT", move: "leap_strike", at: 0, outcome: "miss" },
+      { who: "DEF", move: "backstep", at: 20 },
+      { who: "DEF", move: "strike_rising", at: 48, outcome: "hit", power: 0.9 },
+      { who: "ATT", move: "stagger", at: 64 },
+      { who: "DEF", move: "guard", at: 90 },
+    ],
+  },
+  {
+    id: "pushed",
+    weight: 9,
+    range: "far",
+    length: 122,
+    beats: [
+      { who: "ATT", move: "force_push", at: 0, outcome: "hit" },
+      { who: "DEF", move: "knockdown", at: 19 },
+      { who: "ATT", move: "advance", at: 78 },
+      { who: "DEF", move: "guard", at: 78 },
+    ],
+  },
+  {
+    id: "trade",
+    weight: 8,
+    range: "close",
+    length: 92,
+    beats: [
+      // Both land, six frames apart. Two impacts that close together read as
+      // one event with a stutter in it, which is the point.
+      { who: "ATT", move: "strike_rising", at: 0, outcome: "hit", power: 0.7 },
+      { who: "DEF", move: "strike_diagonal", at: 4, outcome: "hit", power: 0.7 },
+      { who: "ATT", move: "backstep", at: 40 },
+      { who: "DEF", move: "backstep", at: 40 },
+    ],
+  },
+  {
+    id: "standoff",
+    weight: 8,
+    range: "mid",
+    length: 150,
+    beats: [
+      { who: "ATT", move: "circle", at: 0 },
+      { who: "DEF", move: "circle", at: 0 },
+      { who: "ATT", move: "flourish", at: 60 },
+      { who: "DEF", move: "guard", at: 60 },
+      { who: "ATT", move: "guard", at: 96 },
+      { who: "DEF", move: "guard", at: 96 },
+    ],
+  },
+  {
+    id: "two-blades-one-breath",
+    weight: 7,
+    range: "close",
+    length: 84,
+    beats: [
+      { who: "ATT", move: "thrust", at: 0, outcome: "blocked" },
+      { who: "DEF", move: "parry_low", at: 6 },
+      { who: "ATT", move: "strike_rising", at: 22, outcome: "hit", power: 0.8 },
+      { who: "DEF", move: "stagger", at: 38 },
+    ],
+  },
+  {
+    id: "disengage",
+    weight: 9,
+    range: "any",
+    length: 88,
+    beats: [
+      { who: "ATT", move: "strike_diagonal", at: 0, outcome: "miss" },
+      { who: "DEF", move: "backstep", at: 4 },
+      { who: "DEF", move: "force_push", at: 22, outcome: "hit", power: 0.6 },
+      { who: "ATT", move: "stagger", at: 40 },
+      { who: "ATT", move: "circle", at: 56 },
+    ],
+  },
+  {
+    id: "the-lock",
+    weight: 5,
+    range: "close",
+    length: 176,
+    beats: [
+      { who: "ATT", move: "strike_overhead", at: 0, outcome: "blocked" },
+      { who: "DEF", move: "parry_high", at: 11 },
+      // The only sustained moment where both blades touch and nothing moves.
+      // Everything else in the fight is motion; this one's value is stillness.
+      { who: "ATT", move: "lock", at: 22 },
+      { who: "DEF", move: "lock", at: 22 },
+      // The press breaks: the winner drives through and the loser is thrown off.
+      { who: "ATT", move: "strike_diagonal", at: 116, outcome: "hit", power: 0.8 },
+      { who: "DEF", move: "stagger", at: 134 },
+      { who: "ATT", move: "guard", at: 158 },
+    ],
+  },
+  {
+    id: "riposte-chain",
+    weight: 6,
+    range: "close",
+    length: 140,
+    beats: [
+      { who: "ATT", move: "strike_diagonal", at: 0, outcome: "blocked" },
+      { who: "DEF", move: "parry_cross", at: 8 },
+      { who: "DEF", move: "strike_rising", at: 22, outcome: "blocked" },
+      { who: "ATT", move: "parry_low", at: 30 },
+      { who: "ATT", move: "thrust", at: 44, outcome: "hit", power: 0.9 },
+      { who: "DEF", move: "stagger", at: 60 },
+      { who: "ATT", move: "guard", at: 96 },
+    ],
+  },
+  {
+    id: "ground-and-rise",
+    weight: 4,
+    range: "close",
+    length: 148,
+    beats: [
+      { who: "ATT", move: "kick", at: 0, outcome: "hit" },
+      { who: "DEF", move: "knockdown", at: 10 },
+      { who: "ATT", move: "strike_overhead", at: 32, outcome: "miss" },
+      { who: "DEF", move: "parry_high", at: 70 },
+      { who: "ATT", move: "guard", at: 96 },
+      { who: "DEF", move: "guard", at: 96 },
+    ],
+  },
+  {
+    id: "the-long-wind",
+    weight: 5,
+    range: "mid",
+    length: 176,
+    beats: [
+      // 1.7 seconds of nothing, then the biggest single blow in the pool. The
+      // contrast *is* the sequence — it should not get tightened in tuning.
+      { who: "ATT", move: "guard", at: 0 },
+      { who: "DEF", move: "guard", at: 0 },
+      { who: "ATT", move: "advance", at: 44 },
+      { who: "DEF", move: "guard", at: 58 },
+      { who: "ATT", move: "strike_overhead", at: 104, outcome: "hit", power: 1.5 },
+      { who: "DEF", move: "knockdown", at: 126 },
+    ],
+  },
+  {
+    id: "wall-of-parries",
+    weight: 5,
+    range: "close",
+    length: 138,
+    beats: [
+      // A regular 22-frame beat, established three times and then broken. The
+      // eye hears that as a rhythm even though there is no sound.
+      { who: "ATT", move: "strike_overhead", at: 0, outcome: "blocked" },
+      { who: "DEF", move: "parry_high", at: 9 },
+      { who: "ATT", move: "strike_diagonal", at: 24, outcome: "blocked" },
+      { who: "DEF", move: "parry_cross", at: 32 },
+      { who: "ATT", move: "strike_rising", at: 48, outcome: "blocked" },
+      { who: "DEF", move: "parry_low", at: 56 },
+      { who: "ATT", move: "strike_overhead", at: 72, outcome: "hit" },
+      { who: "DEF", move: "stagger", at: 94 },
+    ],
+  },
+  {
+    id: "spin-through",
+    weight: 3,
+    range: "close",
+    length: 122,
+    beats: [
+      { who: "ATT", move: "spin_attack", at: 0, outcome: "miss" },
+      { who: "DEF", move: "backstep", at: 20 },
+      { who: "DEF", move: "strike_rising", at: 42, outcome: "hit", power: 1.2 },
+      { who: "ATT", move: "stagger", at: 58 },
+      { who: "DEF", move: "guard", at: 94 },
+    ],
+  },
+  {
+    id: "over-the-top",
+    weight: 7,
+    range: "close",
+    length: 134,
+    beats: [
+      { who: "ATT", move: "strike_diagonal", at: 0, outcome: "miss" },
+      // Somersaults the strike and lands behind. The sides swap.
+      { who: "DEF", move: "flip_over", at: 6 },
+      { who: "DEF", move: "strike_rising", at: 62, outcome: "hit", power: 0.95 },
+      { who: "ATT", move: "stagger", at: 78 },
+      { who: "DEF", move: "guard", at: 108 },
+    ],
+  },
+  {
+    id: "flip-and-press",
+    weight: 5,
+    range: "mid",
+    length: 150,
+    beats: [
+      { who: "ATT", move: "flip_over", at: 0 },
+      { who: "DEF", move: "guard", at: 0 },
+      { who: "ATT", move: "strike_overhead", at: 58, outcome: "blocked" },
+      { who: "DEF", move: "parry_high", at: 68 },
+      { who: "ATT", move: "kick", at: 86, outcome: "hit" },
+      { who: "DEF", move: "stagger", at: 98 },
+      { who: "ATT", move: "guard", at: 126 },
+    ],
+  },
+  {
+    id: "pull-and-punish",
+    weight: 5,
+    range: "far",
+    length: 138,
+    beats: [
+      { who: "ATT", move: "force_pull", at: 0, outcome: "hit", power: 0.35 },
+      { who: "DEF", move: "stumble_in", at: 16 },
+      // The payoff for the setup: the biggest thrust in the pool.
+      { who: "ATT", move: "thrust", at: 34, outcome: "hit", power: 1.15 },
+      { who: "DEF", move: "stagger", at: 50 },
+      { who: "DEF", move: "backstep", at: 84 },
+      { who: "ATT", move: "guard", at: 110 },
+    ],
+  },
+  {
+    id: "held-and-struck",
+    weight: 3,
+    range: "mid",
+    length: 164,
+    beats: [
+      { who: "ATT", move: "force_hold", at: 0 },
+      { who: "DEF", move: "held", at: 14 },
+      { who: "ATT", move: "advance", at: 44 },
+      { who: "ATT", move: "strike_overhead", at: 74, outcome: "hit", power: 1.3 },
+      { who: "DEF", move: "knockdown", at: 96 },
+      { who: "ATT", move: "flourish", at: 120 },
+    ],
+  },
+  {
+    id: "spin-connects",
+    weight: 3,
+    range: "close",
+    length: 118,
+    beats: [
+      { who: "ATT", move: "spin_attack", at: 0, outcome: "hit", power: 1.25 },
+      { who: "DEF", move: "knockdown", at: 25 },
+      { who: "ATT", move: "flourish", at: 60 },
+      { who: "DEF", move: "guard", at: 92 },
+    ],
+  },
+];
+
+const TOTAL_WEIGHT = SEQUENCES.reduce((n, s) => n + s.weight, 0);
+
+/** Sample the move's blade curve at frame `mf`. */
+function bladeCurve(m: Move, mf: number): number {
+  const t = m.frames <= 0 ? 1 : Math.min(1, mf / m.frames);
+  const k = m.blade;
+  if (k.length === 1) return k[0][1];
+  let i = 0;
+  while (i < k.length - 2 && t > k[i + 1][0]) i += 1;
+  const [t0, a0] = k[i];
+  const [t1, a1, ease] = k[i + 1];
+  const span = t1 - t0;
+  const q = span <= 0 ? 1 : Math.min(1, Math.max(0, (t - t0) / span));
+  if (ease === "hold") return a0;
+  const e =
+    ease === "in" ? q * q : ease === "out" ? q * (2 - q) : q < 0.5 ? 2 * q * q : 1 - 2 * (1 - q) * (1 - q);
+  return a0 + (a1 - a0) * e;
+}
+
+/** Give a fighter a move, from frame zero. */
+function setMove(f: Fighter, id: MoveId, outcome?: Beat["outcome"], power = 1): void {
+  if (f.action === "dead") return;
+  f.move = id;
+  f.mf = 0;
+  f.outcome = outcome;
+  f.beatPower = power;
+  f.action = MOVES[id].chan;
+  f.struck = outcome === undefined;
+}
+
+/**
+ * Pick the next sequence for the current spacing, and roll the roles.
+ *
+ * The role coin consults nothing at all — not health, not who won the last
+ * exchange, not position. That is the whole guarantee: an early lucky roll can
+ * never compound into a decided match, because nothing carries forward.
+ */
+function chooseSequence(st: DuelState): void {
+  const dist = Math.abs(centre(st.a) - centre(st.b));
+  const band = dist <= CLOSE ? "close" : dist <= MID ? "mid" : "far";
+  let pool = SEQUENCES.filter((s) => s.range === band || s.range === "any");
+  /*
+   * Under pressure the pool loses its quiet sequences and the blows get
+   * heavier. This is the hard rail against a match that will not end: it is
+   * deterministic, symmetric, and applies to whoever happens to be attacking,
+   * so it cannot favour a side. A normal match never reaches it.
+   */
+  const hard = st.dir.pressure > 22;
+  if (hard) pool = pool.filter((s) => s.beats.some((b) => b.outcome === "hit"));
+  if (pool.length === 0) pool = SEQUENCES.filter((s) => s.range === "any");
+  if (pool.length === 0) pool = SEQUENCES;
+
+  const total = pool.reduce((n, s) => n + s.weight, 0) || TOTAL_WEIGHT;
+  let roll = Math.random() * total;
+  let pick = pool[0];
+  for (const s of pool) {
+    roll -= s.weight;
+    if (roll <= 0) {
+      pick = s;
+      break;
     }
-  } else {
-    if (r < 0.4) {
-      f.action = "attacking";
-      f.timer = SLASH_FRAMES;
-      f.struck = false;
-      f.willHit = Math.random() < 0.7;
-    } else if (r < 0.56) {
-      f.action = "kicking";
-      f.timer = KICK_FRAMES;
-      f.struck = false;
-    } else if (r < 0.8) {
-      // Retreat — the beat that stops the fight reading as a scrum.
-      f.action = "neutral";
-      f.drive = -f.facing;
-      f.timer = 28 + Math.random() * 28;
-    } else {
-      // Guard up, in range, doing nothing. The held moment before a blow.
-      f.action = "neutral";
-      f.drive = 0;
-      f.timer = 30 + Math.random() * 40;
-    }
+  }
+  st.dir.seq = pick;
+  st.dir.f = 0;
+  st.dir.next = 0;
+  st.dir.att = Math.random() < 0.5 ? "a" : "b";
+  st.dir.pressure += 1;
+}
+
+/** Advance the exchange and hand out this frame's beats. */
+function runDirector(st: DuelState): void {
+  if (st.over > 0) {
+    st.dir.seq = null;
+    return;
+  }
+  if (!st.dir.seq) {
+    chooseSequence(st);
+    return;
+  }
+  const seq = st.dir.seq;
+  st.dir.f += 1;
+  while (st.dir.next < seq.beats.length && seq.beats[st.dir.next].at <= st.dir.f) {
+    const b = seq.beats[st.dir.next];
+    st.dir.next += 1;
+    const att = st.dir.att === "a" ? st.a : st.b;
+    const def = st.dir.att === "a" ? st.b : st.a;
+    setMove(b.who === "ATT" ? att : def, b.move, b.outcome, b.power ?? 1);
+  }
+  if (st.dir.f >= seq.length) st.dir.seq = null;
+}
+
+
+/**
+ * Resolve a beat's scripted outcome on the frame its move says it connects.
+ *
+ * Outcomes come from the script rather than from a coin per swing, which is the
+ * only way a parry can be a *reaction* to a specific strike rather than a
+ * coincidence. Geometry is still what the sparks are placed by — but it is not
+ * what decides whether a blow lands. Gating damage on the blade tip actually
+ * reaching would make misses routine, stop health draining, and hang the
+ * match-reset loop, which has no timeout.
+ */
+function resolveContact(st: DuelState, f: Fighter, foe: Fighter, m: Move): void {
+  if (f.outcome === undefined || foe.action === "dead") return;
+  const tip = bladeWorld(f);
+  if (f.outcome === "hit") {
+    const hx = Math.max(foe.x - 6, Math.min(foe.x + BODY_W + 6, tip.tx));
+    const hy = Math.max(foe.y - 10, Math.min(foe.y + BODY_H, tip.ty));
+    damage(st, foe, (8 + Math.random() * 5) * m.power * f.beatPower * f.attackPower);
+    foe.vx += f.facing * (m.chan === "force" ? 5.2 : 1.8);
+    spawnSparks(st, hx, hy, 14, f.facing * 1.2, 0.6);
+    // Hit-stop: both fighters' move clocks freeze for two frames while the
+    // sparks keep flying. Two frames is nothing to describe and a great deal to
+    // watch — it is the cheapest weight cue available.
+    st.hitStop = 2;
+  } else if (f.outcome === "blocked") {
+    // Sparks at the true crossing of the two blades, and the attacker bounces.
+    const near = bladeGap(tip, bladeWorld(foe));
+    spawnSparks(st, near.x, near.y, 18, 0, -1.1);
+    setMove(f, "recoil");
+    st.hitStop = 3;
+  } else if (f.outcome === "miss" && tip.ty > FLOOR_Y + BODY_H - 6) {
+    // A swing that finishes in the floor throws sparks off it.
+    spawnSparks(st, tip.tx, FLOOR_Y + BODY_H, 16, 0, -2.2);
   }
 }
 
@@ -414,76 +1278,47 @@ function stepFighter(st: DuelState, f: Fighter, foe: Fighter): void {
   f.flash = Math.max(0, f.flash - 1 / 12);
   if (f.action === "dead") return;
 
-  // Always square up — a fighter leapt over turns to face the other way.
+  // Always square up — a fighter who somersaults over the other turns to face
+  // them again for free, which is why `flip_over` needs no bookkeeping.
   f.facing = centre(foe) >= centre(f) ? 1 : -1;
 
   if (foe.action === "dead") {
-    // Victory: hold the field, blade raised, until the reset. No decisions.
-    f.action = "neutral";
+    // Victory: hold the field. One flourish, then the guard.
+    if (f.move !== "flourish" && f.move !== "guard") setMove(f, "flourish");
     f.drive = 0;
-    return;
   }
 
-  f.timer -= 1;
+  const m = MOVES[f.move];
+  f.mf += 1;
 
-  const dist = Math.abs(centre(f) - centre(foe));
-  const elapsed =
-    f.action === "attacking"
-      ? SLASH_FRAMES - f.timer
-      : f.action === "kicking"
-        ? KICK_FRAMES - f.timer
-        : FORCE_FRAMES - f.timer;
-
-  // Each attack lands at a specific frame of its animation, so the damage, the
-  // sparks and the visible strike are the same instant — the first attempt's
-  // clashes were incidental geometry, which is why nothing felt caused.
-  if (f.action === "attacking" && !f.struck && elapsed >= SLASH_FRAMES * SLASH_HIT) {
-    f.struck = true;
-    if (f.willHit && dist <= FAR + 20) {
-      // The sparks come off the blade's actual tip, clamped into the body it
-      // struck, rather than the midpoint between the two fighters. The midpoint
-      // had nothing to do with where the visible blade was, which is why a
-      // clash never looked like contact. `dist` remains the sole authority on
-      // whether damage happens — gate that on the tip reaching and misses
-      // become routine, health stops draining and the match never ends.
-      const tip = bladeWorld(f);
-      const hit = {
-        x: Math.max(foe.x - 6, Math.min(foe.x + BODY_W + 6, tip.tx)),
-        y: Math.max(foe.y - 10, Math.min(foe.y + BODY_H, tip.ty)),
-      };
-      damage(st, foe, (6.5 + Math.random() * 4) * f.attackPower);
-      foe.vx += f.facing * 2;
-      spawnSparks(st, hit.x, hit.y, 15, f.facing * 1.2, 0.6);
-    }
-  } else if (f.action === "kicking" && !f.struck && elapsed >= KICK_FRAMES * 0.45) {
-    f.struck = true;
-    if (dist <= 100) {
-      // The kick's job is the knockback more than the damage.
-      damage(st, foe, 6);
-      foe.vx += f.facing * 7;
-      spawnSparks(st, centre(foe), foe.y + BODY_H * 0.55, 6, f.facing * 1.6, -0.3);
-    }
-  } else if (f.action === "force" && !f.struck && elapsed >= 15) {
-    f.struck = true;
-    if (dist <= 320) {
-      damage(st, foe, (12 + Math.random() * 7) * f.forcePower);
-      foe.vx += f.facing * 9;
-      spawnSparks(st, centre(foe), foe.y + BODY_H * 0.35, 10, f.facing * 2.2, 0);
-    }
-    // The reference's self-pushback: the push costs the caster ground too.
-    f.vx -= f.facing * 4;
+  if (m.impulse && f.mf === m.impulse.at) {
+    f.vx += f.facing * m.impulse.vx;
+    if (m.impulse.vy) f.vy = m.impulse.vy;
   }
 
-  if (f.timer <= 0) decide(f, foe);
-
-  // Sustained movement while neutral. The reference sets vx to ±2.5 under a 0.9
-  // decay, which only holds if the intent is re-applied each frame.
-  if (f.action === "neutral" && f.drive !== 0) {
-    // Halved with the tempo. Slowing the strikes while the fighters still slid
-    // at the old pace would have read as two men skating between poses.
-    f.vx += f.drive * 0.45;
-    f.vx = Math.max(-1.35, Math.min(1.35, f.vx));
+  if (m.contact >= 0 && !f.struck && f.mf >= m.contact) {
+    f.struck = true;
+    resolveContact(st, f, foe, m);
   }
+
+  // Sustained travel, by move rather than by a separate intent flag. `circle`
+  // drifts on its own slow sine so the pair orbit instead of closing.
+  f.drive =
+    f.move === "advance"
+      ? f.facing
+      : f.move === "retreat"
+        ? -f.facing
+        : f.move === "circle"
+          ? Math.sin(st.idle * 0.021 + f.phase) * 0.8
+          : 0;
+  if (f.drive !== 0) {
+    // Advancing is a committed stride; retreating and circling are not.
+    const top = f.move === "advance" ? 1.9 : 1.35;
+    f.vx += f.drive * 0.5;
+    f.vx = Math.max(-top, Math.min(top, f.vx));
+  }
+
+  if (f.mf >= m.frames) setMove(f, "guard");
 }
 
 /** One fixed 60Hz step. */
@@ -499,6 +1334,22 @@ function step(st: DuelState): void {
       st.a = makeFighter(START_A, 1, a.style);
       st.b = makeFighter(START_B, -1, b.style);
     }
+  }
+
+  runDirector(st);
+
+  /*
+   * Hit-stop. Both move clocks hold for a frame or two on contact while the
+   * sparks keep going — two frames is nothing to write down and a great deal to
+   * watch. `st.idle` is deliberately outside it, so breathing, the blade
+   * flicker and the spark field all carry on.
+   */
+  if (st.hitStop > 0) {
+    st.hitStop -= 1;
+    springBlade(st, st.a, st.b);
+    springBlade(st, st.b, st.a);
+    stepSparks(st);
+    return;
   }
 
   /*
@@ -528,7 +1379,12 @@ function step(st: DuelState): void {
     f.y += f.vy;
     f.vx *= DECAY;
     f.land = Math.max(0, f.land - 1 / 8);
-    if (f.y < FLOOR_Y) {
+    if (f.move === "held") {
+      // Suspended. Eased rather than snapped, and the drop when the move ends
+      // is an ordinary fall, so the landing squash comes for free.
+      f.y += (FLOOR_Y - 26 - f.y) * 0.16;
+      f.vy = 0;
+    } else if (f.y < FLOOR_Y) {
       f.vy += GRAVITY;
     } else {
       // A fall arrested is worth a squash; a foot resting on the floor is not.
@@ -549,6 +1405,64 @@ function step(st: DuelState): void {
     }
   }
 
+  /*
+   * Blade on blade (client, 2026-08-14: "the sparks when swords meet").
+   *
+   * Sparks used to come only off a landed *hit* — blade into body. Two blades
+   * crossing produced nothing at all, which is the one contact a sword fight is
+   * actually made of, and it is why the exchanges read as two figures waving
+   * past each other rather than fighting.
+   *
+   * `bladeGap` is the real segment-to-segment distance, so this fires on the
+   * frame the blades genuinely cross and at the point they cross, not on a
+   * proximity guess between the two bodies. Deliberately independent of damage:
+   * `dist` remains the sole authority on whether a blow lands (gating damage on
+   * blade geometry would make misses routine, stop health draining, and hang
+   * the match-reset loop, which has no timeout). This is presentation only.
+   *
+   * `clash` is a cooldown, not a flag — without it a slow cross showers sparks
+   * on sixty consecutive frames and looks like a welding torch. With it, one
+   * burst on contact and a smaller one if the blades stay locked.
+   */
+  if (st.a.action !== "dead" && st.b.action !== "dead") {
+    const ga = bladeWorld(st.a);
+    const gb = bladeWorld(st.b);
+    const near = bladeGap(ga, gb);
+    st.clash = Math.max(0, st.clash - 1);
+    if (near.d < 9 && st.clash === 0) {
+      // How hard they met: the sum of both blades' angular speeds. A parry that
+      // catches a full swing throws far more than two blades drifting together.
+      const force = Math.min(1, (Math.abs(st.a.bladeV) + Math.abs(st.b.bladeV)) * 3.4);
+      spawnSparks(st, near.x, near.y, 6 + Math.round(force * 16), 0, -0.5 - force);
+      st.clash = force > 0.45 ? 16 : 30;
+      // A hard clash shoves both fighters apart, which is what sells it as
+      // contact between two things with weight behind them.
+      const dir = centre(st.a) < centre(st.b) ? 1 : -1;
+      st.a.vx -= dir * force * 1.7;
+      st.b.vx += dir * force * 1.7;
+    }
+  }
+
+  /*
+   * A soft leash, so the pair cannot drift to opposite ends of a 700-unit
+   * arena and stay there. Pushes, knockdowns and backsteps all separate, and
+   * nothing but a slow advance closes, so without this the fight settles into
+   * the long-range half of the pool and the swordplay never happens — measured
+   * at 54% of all frames beyond sword reach.
+   *
+   * **Both fighters move, and they move toward the midpoint of their own two
+   * centres — never toward a fixed world x.** Closing on `WORLD_W / 2` would
+   * pull whichever fighter happened to be further from the middle harder,
+   * which feeds the two sides different sequence pools and is the subtlest way
+   * a bias could get in here.
+   */
+  const sep = Math.abs(centre(st.b) - centre(st.a));
+  if (sep > 290) {
+    const dir = centre(st.a) < centre(st.b) ? 1 : -1;
+    st.a.vx += dir * 0.12;
+    st.b.vx -= dir * 0.12;
+  }
+
   // Two grounded fighters must not stand inside each other; a gentle mutual
   // push reads as bodies, a hard clamp reads as a wall.
   const gap = centre(st.b) - centre(st.a);
@@ -558,6 +1472,10 @@ function step(st: DuelState): void {
     st.b.x += push;
   }
 
+  stepSparks(st);
+}
+
+function stepSparks(st: DuelState): void {
   const alive: Spark[] = [];
   for (const sp of st.sparks) {
     sp.x += sp.vx;
@@ -567,7 +1485,9 @@ function step(st: DuelState): void {
     if (sp.life > 0) alive.push(sp);
   }
   st.sparks = alive;
-  if (st.sparks.length > 120) st.sparks.splice(0, st.sparks.length - 120);
+  // Raised from 120: the blade lock alone holds a large share alive and would
+  // otherwise starve every other emitter on screen.
+  if (st.sparks.length > 200) st.sparks.splice(0, st.sparks.length - 200);
 }
 
 /**
@@ -617,43 +1537,27 @@ export interface DuelView {
 }
 
 /**
- * The angle the current action *asks* for. 0 is level, negative up.
+ * The angle the current move asks for at this frame, from its keyframe table.
  *
- * Note it is a target, not the blade's position — `springBlade` is what the
- * blade actually does. Previously this function was the position, which meant
- * every action began and ended on a discontinuity: entering `attacking` moved
- * the blade 0.95rad between two consecutive frames, and `force`, `kicking` and
- * the victory pose were bare constants that snapped in and out.
+ * This replaces a switch of hand-written easing per action. It is a *target*,
+ * not the blade's position — `springBlade` is what the blade actually does, so
+ * even a keyframe that steps still arrives with weight behind it.
  */
 function bladeTarget(f: Fighter, foe: Fighter, idle: number): number {
   const bob = Math.sin(idle * 0.05 + f.phase) * 0.06;
+  // The winner's salute. Reading the *foe*, so both the victory pose and the
+  // loser's collapse are settled in one place.
   if (foe.action === "dead") return -1.3 + bob;
-  switch (f.action) {
-    case "attacking": {
-      const p = 1 - f.timer / SLASH_FRAMES;
-      if (p < SLASH_WIND) {
-        // Anticipation: travel *away* from the strike and hold, so the blow has
-        // somewhere to come from. Eased out, so it arrives and waits.
-        const q = p / SLASH_WIND;
-        return -0.55 + (-1.95 - -0.55) * (q * (2 - q));
-      }
-      if (p < SLASH_HIT) {
-        // The strike, eased in — the fast half of the old two-part curve.
-        const q = (p - SLASH_WIND) / (SLASH_HIT - SLASH_WIND);
-        return -1.95 + (0.62 - -1.95) * (q * q);
-      }
-      // Follow-through: the blade carries past the guard and settles back onto
-      // it, rather than stopping dead on the terminal frame.
-      const q = (p - SLASH_HIT) / (1 - SLASH_HIT);
-      return 0.62 + (-0.55 - 0.62) * (q * (2 - q)) - Math.sin(q * Math.PI) * 0.22;
-    }
-    case "force":
-      return -2.3 + bob;
-    case "kicking":
-      return -0.4 + bob;
-    default:
-      return -0.55 + bob;
-  }
+  const m = MOVES[f.move];
+  const a = bladeCurve(m, f.mf);
+  /*
+   * The blade lock trembles rather than sitting still. It is 92 frames of two
+   * blades held against each other, and a perfectly steady line for a second
+   * and a half reads as a freeze rather than as a strain.
+   */
+  if (f.move === "lock") return a + Math.sin(idle * 0.72 + f.phase) * 0.045;
+  // Only the resting moves breathe; a strike must not have a wobble added to it.
+  return m.contact < 0 && m.chan === "neutral" ? a + bob : a;
 }
 
 /**
@@ -665,8 +1569,11 @@ function bladeTarget(f: Fighter, foe: Fighter, idle: number): number {
 function springBlade(st: DuelState, f: Fighter, foe: Fighter): void {
   if (f.action === "dead") return;
   const target = bladeTarget(f, foe, st.idle);
-  const k = f.action === "attacking" ? 0.6 : 0.22;
-  const d = f.action === "attacking" ? 0.5 : 0.72;
+  // A parry is stiffer than a strike: it has perhaps five frames to arrive, and
+  // a block that drifts into place is not a reaction to anything.
+  const parrying = f.move === "parry_high" || f.move === "parry_cross" || f.move === "parry_low";
+  const k = parrying ? 0.85 : f.action === "attacking" ? 0.6 : 0.24;
+  const d = parrying ? 0.42 : f.action === "attacking" ? 0.5 : 0.7;
   f.bladeV = (f.bladeV + (target - f.bladeA) * k) * d;
   f.bladeA += f.bladeV;
 }
@@ -797,7 +1704,7 @@ function drawFighter(
    * single change is most of what makes a silhouette read as a swordsman rather
    * than as a figure carrying a stick, and it is what the films look like.
    */
-  const forceP = f.action === "force" ? 1 - f.timer / FORCE_FRAMES : 0;
+  const forceP = f.action === "force" ? Math.min(1, f.mf / MOVES[f.move].frames) : 0;
   const flick =
     1 + (Math.sin(st.idle * 0.8 + f.phase) + Math.sin(st.idle * 1.37 + f.phase * 2)) * 0.008;
   const g = bladeLocal(f, flick);
@@ -807,7 +1714,7 @@ function drawFighter(
   const neckX = lean * 0.9;
 
   // ---- legs, behind everything -------------------------------------------
-  const kickP = f.action === "kicking" ? 1 - f.timer / KICK_FRAMES : 0;
+  const kickP = f.action === "kicking" ? Math.min(1, f.mf / MOVES[f.move].frames) : 0;
   const kickReach = Math.sin(Math.PI * Math.min(1, kickP * 1.4)) * 34;
   const brace = f.action === "attacking" ? 5 : 0;
   ctx.globalAlpha = bodyAlpha;

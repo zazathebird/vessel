@@ -492,9 +492,59 @@
    literals above are not a palette violation. Calm keeps it: it is not motion
    and not a contrast reduction on anything but the track's own edges. */
 
+/*
+ * Stack's snap sections — `proximity`, never `mandatory`.
+ *
+ * **This was the phone's "scrolling doesn't hold its place" bug** (client,
+ * 2026-08-14: "as soon as you let go it jumps back to the top of the page. only
+ * way to scroll is to keep a finger on the screen to save your place").
+ *
+ * Measured at a real 417×857 phone viewport: the scrollport is 654px and
+ * `.v-hero` — the first snap area — is **684px**. `mandatory` obliges the
+ * browser to come to rest on a snap point, and every position inside that
+ * oversized hero has the hero's own start as its nearest one, so releasing
+ * anywhere in the first screenful snapped straight back to zero. Holding a
+ * finger down suppresses snapping, which is exactly why that appeared to
+ * "save your place" — the clue that identified it.
+ *
+ * `proximity` keeps the design — a block still settles to its own top when you
+ * come to rest near one — and gives up the one behaviour that made the page
+ * unusable: it will not drag you across a whole viewport you did not ask to
+ * leave. Phones collapse almost everything to Stack, so this was the main
+ * phone path.
+ *
+ * Do not "restore" `mandatory`. It is only safe while every snap area is
+ * shorter than the scrollport, and the hero is not — it is sized from
+ * `h1Size` and the ornament, both of which are free to grow.
+ */
 .layout-stack .v-stage {
   overflow-y: auto;
-  scroll-snap-type: y mandatory;
+  scroll-snap-type: y proximity;
+}
+
+/*
+ * And no snapping at all on the phone.
+ *
+ * `proximity` fixed the worst of it — a release at 400px stopped being thrown
+ * to 665 — but measurement showed it was not enough on this band: a release at
+ * 120px still went to 0, and one at 1400px was pulled back 198px. Chrome's
+ * proximity threshold is UA-defined and generous, and the phone is where the
+ * areas are largest relative to the scrollport, so it keeps finding a snap
+ * point worth dragging the reader to.
+ *
+ * Snap sections are a reading aid on a wide screen, where a block is a
+ * comfortably-sub-viewport slab. On a phone every block is most of the screen
+ * and the hero is more than all of it, so the same rule stops being an aid and
+ * becomes the thing fighting the scroll. This is a content page, not a
+ * slideshow: on the band where those two readings conflict, scrolling wins.
+ *
+ * **`.band-phone.layout-stack`, not `.band-phone .layout-stack`** — the band
+ * and layout classes are on the *same* element. The descendant form matches
+ * nothing, which is the trap CLAUDE.md records as having silently killed every
+ * phone override once already.
+ */
+.band-phone.layout-stack .v-stage {
+  scroll-snap-type: none;
 }
 
 /* Hero ---------------------------------------------------------------------- */

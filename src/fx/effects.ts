@@ -1817,8 +1817,22 @@ function duelling(left: FighterStyle, right: FighterStyle): Effect {
       core: p.fg,
       spark: p.a2,
       line: p.line,
-      // Health bars are wrong behind body copy, and the copy is only sometimes
-      // gone. They stay in the ornament, where they were always right.
+      /*
+       * Health bars stay off *here*, and on in the ornament (client, 2026-08-14:
+       * "i love the idea of the health bar. genius. pls keep that", then "is
+       * health bars a bad idea? ill leave it up to you actually… it is just a
+       * random animation, not a focal point of the site").
+       *
+       * The split is by *slot*, not by taste. In `DuelOrnament` the fight is the
+       * subject, contained in its own square, and a HUD frame around a subject
+       * is exactly where a readout belongs. Here it is a full-bleed background
+       * with body copy over it, and two bars pinned above two heads are a
+       * readout the reader has to look past — the same objection that removed
+       * the hero vitals strip. The client's own framing settles it: something
+       * that is not a focal point should not be carrying instrumentation.
+       *
+       * So the feature is kept, in the one place it reads.
+       */
       bars: false,
       dim: 0.55,
     });
