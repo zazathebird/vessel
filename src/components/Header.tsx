@@ -55,14 +55,36 @@ export function Header() {
       </div>
 
       <div className="v-header-row">
-        <button type="button" className="v-logo" onClick={onLogoTap} aria-label="mcclevarty.ca — tap for operator access">
-          <span className="v-logo-mark">
+        {/*
+          The wordmark, and the door's five-tap route — a pointer easter egg,
+          not a control.
+
+          It was a `<button aria-label="mcclevarty.ca — tap for operator
+          access">`, which is the same fault the footer dot had and in a worse
+          place: the label named a hidden route to every screen reader on every
+          page of the site, and "nothing on the site advertises the site — no
+          hints that hidden routes exist" is the client's own instruction. It
+          was also a dead control, because tapping the logo does nothing at all
+          unless you are the operator and tap it five times, so a keyboard user
+          reached it, activated it, and got silence.
+
+          It stays deliberately inert rather than becoming a link home, and that
+          is the reason the five taps live here in the first place: the route
+          works *because* the logo has no other click action. Give it
+          navigation and taps one through five each navigate as well.
+
+          The accessible name is now simply the wordmark text inside it, which
+          is what it always should have been. Keyboard users lose nothing — the
+          door has five other routes and typing `sudo` is the tellable one.
+        */}
+        <span className="v-logo" onClick={onLogoTap}>
+          <span className="v-logo-mark" aria-hidden="true">
             <span className="v-logo-ring a" />
             <span className="v-logo-ring b" />
             <span className="v-logo-dot" />
           </span>
           <span className="v-wordmark">mcclevarty.ca</span>
-        </button>
+        </span>
 
         <nav className="v-nav" aria-label="Primary">
           {NAV.map((item) => (
