@@ -2113,6 +2113,41 @@ function drawFighter(
   ctx.globalAlpha = 1;
 }
 
+/**
+ * What a camera has to keep in frame this instant, in world units.
+ *
+ * Exported rather than derived by the caller because it is the one part of
+ * framing that is *geometry* — how wide a body is, how much clearance a head
+ * needs — and those are constants of this module. Where to put the resulting
+ * box, how fast to chase it and how far to zoom are presentation, and belong to
+ * whoever is drawing.
+ *
+ * `top` is where the higher fighter is **going**, not where they are. A rising
+ * fighter is a projectile under a constant gravity, so the apex is known in
+ * closed form on the frame the impulse fires — `v²/2g` above the current
+ * height — and reporting it means the camera starts pulling back at the bottom
+ * of the jump instead of chasing it up. Reporting the current height instead
+ * looks like it should work and does not: the somersault rises ~145 units in
+ * about 22 frames, an eased zoom cannot cover that from a standing start, and
+ * the jumper leaves through the top of the slot for a fifth of a second every
+ * time. A camera that anticipates is also simply what a camera operator is.
+ *
+ * Blade tips are deliberately *not* included: an overhead wind-up throws the
+ * tip a long way in two frames, and a camera chasing it would pump on every
+ * swing. A blade leaving the frame for a moment reads as framing; the figure
+ * leaving it reads as a bug.
+ */
+export function duelFocus(st: DuelState): { cx: number; width: number; top: number } {
+  const ca = centre(st.a);
+  const cb = centre(st.b);
+  const apex = (f: Fighter) => f.y - (f.vy < 0 ? (f.vy * f.vy) / (2 * GRAVITY) : 0);
+  return {
+    cx: (ca + cb) / 2,
+    width: Math.abs(cb - ca) + BODY_W,
+    top: Math.min(apex(st.a), apex(st.b)) - 26,
+  };
+}
+
 /** Draw one frame of the fight into `v`'s box. Pure rendering, no simulation. */
 export function drawDuel(ctx: CanvasRenderingContext2D, st: DuelState, v: DuelView): void {
   ctx.save();

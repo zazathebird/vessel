@@ -96,11 +96,47 @@ can extend the move, so the match-reset loop — which has no timeout — is exa
 as safe as before. Cost measured after: **0.02–0.05 ms/frame, not growing with
 time**; the shower is free.
 
-**Still open and reported to the client, not fixed:** the duel ornament maps the
-whole 700-unit world into a square slot, so at the phone band's 190px the
-fighters are ~20px tall and the fight uses a few percent of the box. The world
-is a 2.8:1 stage in a 1:1 hole. A tracking camera is the fix and it is a design
-change, so it is the client's call.
+**And the ornament got a camera**, approved by the client immediately after the
+report above. It drew at `scale = w / WORLD_W` — the whole 700-unit arena across
+a square slot that is 340px on desk, 240 tablet, **190 on a phone**, 180 in
+Magazine — so a fighter rendered about 42px tall on desk and **~20px on a
+phone**, in a box that was overwhelmingly empty air. A fixed crop was not
+available: the pair genuinely use the arena's full width (5th–95th percentile of
+their centres is 110–571 of 700), so any crop tight enough to help cuts them off
+at the walls.
+
+`duelCamera` tracks the midpoint and fits the pair, clamped to 1.45–2.9 and
+eased. Median figure height is now **61px at 190px and 109px at 340px**, against
+~20px and ~42px before. Three things were needed beyond "track and zoom", and
+each was found by measuring rather than by reasoning:
+
+- **Zoom to where a jumper is going.** Fitting the current height looks right
+  and fails: the somersault rises ~145 units in ~22 frames and an eased zoom
+  cannot cover that from a standing start, so the jumper left through the top of
+  the slot on 0.48% of frames — visible as a headless figure hanging from the
+  frame edge for 14 frames, 50 times an hour. A jump is a projectile under
+  constant gravity, so the apex is `v²/2g` above the current height and known on
+  the frame the impulse fires. With that, measured clipping is **zero**.
+- **Asymmetric zoom** — out at 0.13, in at 0.03. Pulling back is a correction and
+  has to arrive before the thing it corrects for; pushing in is a choice and a
+  fast choice reads as a mistake. This is what makes the high cap safe.
+- **A match reset is a cut.** Both fighters teleport back to their marks, and
+  eased that whipped the camera 43px in a single frame and then coasted for most
+  of a second. Nulling the camera on `st.matches` changing makes the next frame
+  snap — a scene change gets a cut. In-fight pan now peaks at 44px/frame once,
+  during a knockback, and normally sits far below that.
+
+`duelCamera` is exported and pure specifically so the bench drives *it* rather
+than a copy of it. That is not tidiness: animation cannot be observed in this
+environment at all, so a camera can only be checked by stepping it over
+thousands of frames, and a re-implementation in the bench would only ever
+confirm the bench.
+
+**Noticed and deliberately not fixed:** `flip_over` does not rotate the figure.
+The move's own comment describes "a still blade under a tumbling body", and the
+body does not tumble — it floats over upright with its legs tucked. The only
+`ctx.rotate` in the renderer is the death tip-over. It reads acceptably and
+changing it is animation work rather than a bug fix, so it goes on the backlog.
 
 
 ## 2026-08-14 — the animation audit, the duel's director, and the phone scroll bug

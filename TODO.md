@@ -90,27 +90,25 @@ tier, the next lever is halving the canvas's update rate — 30fps for an ambien
 background is barely perceptible and exactly halves its cost — but that should
 be added only if measurement says it is needed.
 
-### E. The duel ornament wastes its slot — **needs a client decision**
+### E. ~~The duel ornament wastes its slot~~ — **camera built 2026-08-14 (later)**
 
-Found while reviewing A, not fixed, because it is a design change rather than a
-bug. `DuelOrnament` draws the world at `scale = w / WORLD_W`, so the **whole**
-700-unit arena is mapped across the square slot. The fighters are 30 units wide
-and ~87 tall inside that, and the slot is 340px on desk, 240 tablet, **190 on a
-phone**, 180 in Magazine. So a fighter renders about 42px tall on desk and
-**~20px on a phone**, and the fight occupies a few percent of a box that is
-mostly empty air — the arena is a 2.8:1 stage in a 1:1 hole, and the pair do use
-its full width (5th–95th percentile of centres is 110–571 of 700), so a fixed
-crop would cut them off at the walls.
+The ornament drew the whole 700-unit arena across a square slot, so a fighter
+was ~20px tall on a phone in a mostly-empty box. `duelCamera` now tracks the
+pair: median figure **61px at 190px, 109px at 340px**. It anticipates a jumper's
+apex (so nothing clips), zooms out fast and in slow, and cuts rather than pans
+at a match reset. `docs/DECISIONS.md` has the measurements; the background home
+is untouched. Left for the client's eye: whether the health bars still feel
+right now the figures are three times bigger.
 
-The fix is a camera: track the midpoint of the two fighters, scale to their
-separation plus a margin, clamp and ease it. That is the ornament's original
-brief — the client asked for the fight *as the ornament* first — and at 190px it
-is the difference between a fight and a smudge. It changes nothing about the
-background home, which is correctly sized already (figures ~90px at 1536×730).
+Two follow-ons it surfaced, neither urgent:
 
-Two things to decide: whether a moving camera is wanted at all (it is the only
-place on the site where the frame moves on its own), and whether the health bars
-still belong once the figures are three times bigger.
+- **`flip_over` does not flip.** Its own comment describes "a still blade under
+  a tumbling body"; the body floats over upright with its legs tucked, and the
+  only `ctx.rotate` in the renderer is the death tip-over. Now that the camera
+  keeps the whole jump in frame, this is the most visible thing missing from it.
+- The camera is the only place on the site where the frame moves on its own. If
+  that ever reads as too much, `CAM_PAN` / `CAM_ZOOM_*` are the dials, and
+  clamping `CAM_MIN` and `CAM_MAX` together makes it a static crop again.
 
 ### F. Go over the whole site, page by page, desktop and mobile — **client request**
 

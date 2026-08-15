@@ -5,13 +5,13 @@ import { PALETTES } from "../data/palettes";
 import {
   BLADE_COLORS,
   FEET_Y,
-  WORLD_H,
   WORLD_W,
   advanceDuel,
   createDuel,
   drawDuel,
+  duelFocus,
 } from "../fx/duel";
-import type { FighterStyle } from "../fx/duel";
+import type { DuelState, FighterStyle } from "../fx/duel";
 
 /**
  * The lightsword duel in the hero-ornament slot — the client's original
@@ -41,6 +41,113 @@ const PAIRINGS: Record<"duel" | "duelholy", [FighterStyle, FighterStyle]> = {
   duelholy: ["haloed", "horned"],
 };
 
+/*
+ * The camera, and why the slot needed one.
+ *
+ * This used to draw at `scale = w / WORLD_W` — the **whole** 700-unit arena
+ * mapped across the square. The fighters are 30 units wide and ~87 tall inside
+ * that, and the slot is 340px on desk, 240 on tablet, **190 on a phone** and
+ * 180 in Magazine. So a fighter rendered about 42px tall on desk and ~20px on a
+ * phone, in a box that was overwhelmingly empty air. The arena is a 2.8:1 stage
+ * and the slot is a 1:1 hole; something has to give, and at 190px what was
+ * giving was the fight.
+ *
+ * A fixed crop cannot fix it — the pair genuinely use the full width (5th to
+ * 95th percentile of their centres is 110 to 571 of 700), so any crop tight
+ * enough to help would cut them off at the walls. So: track them.
+ *
+ * The zoom range is deliberately narrow. A true fit-to-content camera ranges
+ * about 1.5× to 4.8× here, and a picture that rescales by three is a camera
+ * being a character. Clamped to this range it mostly sits near the top of it,
+ * pulls back when they separate, and pulls back again when one of them leaves
+ * the ground — which is the one time the vertical fit binds rather than the
+ * horizontal one.
+ */
+/** World units of clear air kept either side of the pair. */
+const CAM_MARGIN = 46;
+/** Where the feet line sits in the square, as a fraction of its height. */
+const CAM_FEET = 0.82;
+const CAM_MIN = 1.45;
+const CAM_MAX = 2.9;
+/** Per-60Hz-frame approach rates. Zoom is slower than pan, because a zoom that
+ *  keeps up with a lunge reads as the picture breathing. */
+const CAM_PAN = 0.075;
+/**
+ * Zoom is asymmetric, and the asymmetry is the whole reason the cap can sit as
+ * high as it does.
+ *
+ * Pulling back is a correction — something has left the frame or is about to —
+ * and it has to arrive before the thing does. Pushing in is a choice, and a
+ * choice made quickly looks like a mistake. Symmetric at the slow rate, a
+ * somersault out-ran the zoom and clipped a head on ~1 frame in 230; symmetric
+ * at the fast rate, the picture surged in and out on every exchange.
+ */
+const CAM_ZOOM_IN = 0.03;
+const CAM_ZOOM_OUT = 0.13;
+
+/** Frame-rate independent approach: `k` per 60Hz frame over `frames` of them. */
+function approach(from: number, to: number, k: number, frames: number): number {
+  return from + (to - from) * (1 - Math.pow(1 - k, frames));
+}
+
+/** Where the camera is. Carried between frames by whoever is running the loop. */
+export interface DuelCam {
+  x: number;
+  scale: number;
+}
+
+/**
+ * Advance the camera one frame and place the world inside a `w × h` box.
+ *
+ * Pure, and exported rather than inlined into the render loop for one specific
+ * reason: this environment cannot show animation — the tab reports
+ * `document.hidden`, so `requestAnimationFrame` parks and timers throttle to
+ * ~1Hz — so the only way to see what a camera does is to step it. Exported, a
+ * bench can drive *this* function over thousands of frames at every slot size
+ * the site uses. Re-implemented in the bench instead, the bench would only ever
+ * confirm the bench.
+ *
+ * Pass `cam: null` on the first frame to snap rather than ease in.
+ */
+export function duelCamera(
+  st: DuelState,
+  w: number,
+  h: number,
+  cam: DuelCam | null,
+  frames: number,
+): { cam: DuelCam; x: number; y: number; scale: number } {
+  const focus = duelFocus(st);
+  const feet = h * CAM_FEET;
+  // Fit the pair across, and whatever is highest down. The tighter wins, so a
+  // somersault pulls back rather than leaving through the top of the slot.
+  const want = Math.max(
+    CAM_MIN,
+    Math.min(CAM_MAX, Math.min(w / (focus.width + CAM_MARGIN * 2), feet / (FEET_Y - focus.top))),
+  );
+  const next: DuelCam = cam
+    ? {
+        x: approach(cam.x, focus.cx, CAM_PAN, frames),
+        scale: approach(
+          cam.scale,
+          want,
+          want < cam.scale ? CAM_ZOOM_OUT : CAM_ZOOM_IN,
+          frames,
+        ),
+      }
+    : { x: focus.cx, scale: want };
+
+  /*
+   * Keep the view on the stage. The ground line runs from 50 to WORLD_W−50 and
+   * there is nothing beyond it, so a camera that panned past a wall would show
+   * void on one side while the fight was pressed against the other. When the
+   * view is wider than the arena the clamp would invert; that case centres.
+   */
+  const half = w / (2 * next.scale);
+  const x = half * 2 >= WORLD_W ? WORLD_W / 2 : Math.max(half, Math.min(WORLD_W - half, next.x));
+
+  return { cam: next, x: w / 2 - x * next.scale, y: feet - FEET_Y * next.scale, scale: next.scale };
+}
+
 export function DuelOrnament({ pairing }: { pairing: "duel" | "duelholy" }) {
   const { config, saver } = useConfig();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -54,6 +161,18 @@ export function DuelOrnament({ pairing }: { pairing: "duel" | "duelholy" }) {
     const st = createDuel(...PAIRINGS[pairing]);
     let raf = 0;
     let last = performance.now();
+    // Null until the first drawn frame, which snaps rather than eases — a
+    // camera easing in from a default on mount is an entrance the ornament
+    // has not earned.
+    let cam: DuelCam | null = null;
+    /*
+     * A new match teleports both fighters back to their marks, which is a jump
+     * of a couple of hundred world units — eased, the camera whipped 43px in a
+     * single frame and then coasted for most of a second. A match boundary is a
+     * scene change, so it gets a cut: null the camera and let the next frame
+     * snap, exactly as the first frame after mount does.
+     */
+    let seenMatches = st.matches;
 
     const step = () => {
       raf = requestAnimationFrame(step);
@@ -76,12 +195,16 @@ export function DuelOrnament({ pairing }: { pairing: "duel" | "duelholy" }) {
       const h = canvas.height;
       ctx.clearRect(0, 0, w, h);
 
-      // The world is 2:1 in a square slot: full width, centred vertically.
-      const scale = w / WORLD_W;
+      if (st.matches !== seenMatches) {
+        seenMatches = st.matches;
+        cam = null;
+      }
+      const shot = duelCamera(st, w, h, cam, frames);
+      cam = shot.cam;
       drawDuel(ctx, st, {
-        x: 0,
-        y: (h - WORLD_H * scale) / 2 + (WORLD_H - FEET_Y) * scale * 0.3,
-        scale,
+        x: shot.x,
+        y: shot.y,
+        scale: shot.scale,
         ink: p.fg,
         // Blades are the site's one literal-colour carve-out (see BLADE_COLORS):
         // good is blue/green, evil is red, whatever the palette says.

@@ -570,6 +570,35 @@ All deliberate. Add to this list rather than silently diverging.
      Nothing in `stepLock` consults a condition or can extend the move, which is
      what keeps the timeout-free match-reset loop safe.
 
+   **The ornament has a camera; the background does not** (2026-08-14, later,
+   client-approved). `DuelOrnament` used to draw at `scale = w / WORLD_W`, so
+   the whole 700-unit arena was mapped across a square slot that is 340px on
+   desk and **190 on a phone** — a fighter rendered ~20px tall in a box that was
+   mostly empty air. A fixed crop cannot fix it, because the pair genuinely use
+   the arena's full width. `duelCamera` tracks the midpoint and fits the pair,
+   clamped to 1.45–2.9 and eased; the median figure is now ~61px at 190px and
+   ~109px at 340px. Three parts of it are load-bearing:
+
+   - **`duelFocus` reports where a rising fighter is *going*, not where it is.**
+     A jump is a projectile under constant gravity, so the apex is `v²/2g` above
+     the current height and known on the frame the impulse fires. Reporting the
+     current height instead looks correct and is not: the somersault rises ~145
+     units in ~22 frames, no eased zoom covers that from a standing start, and
+     the jumper left through the top of the slot on ~1 frame in 200. With the
+     prediction, measured clipping is **zero**.
+   - **The zoom is asymmetric** — out fast (0.13), in slow (0.03). Pulling back
+     is a correction that must arrive before the thing it is correcting for;
+     pushing in is a choice, and a fast choice reads as a mistake. The high
+     `CAM_MAX` is only safe because of it.
+   - **A match reset is a cut, not a pan.** The fighters teleport back to their
+     marks, and eased that whipped the camera 43px in one frame. The component
+     nulls `cam` on `st.matches` changing, which makes the next frame snap.
+
+   `duelCamera` is **exported and pure** for a reason that is about this
+   environment rather than about design: animation cannot be observed here, so
+   the only way to check a camera is to step it over thousands of frames in a
+   bench. Re-implemented in the bench, the bench would only confirm the bench.
+
    **Attract mode is gone** (client: "make sure the screensaver battles are the
    same graphics as the nonscreensaver ones"), kept at the *background*
    presentation because that is the direction with a hard constraint — body
