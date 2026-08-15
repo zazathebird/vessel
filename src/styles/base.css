@@ -337,3 +337,42 @@ body {
     transform: perspective(1200px) rotateX(0) scale(1);
   }
 }
+
+/* Selection, placeholders, scrollbars — the three surfaces that were still
+   wearing the browser's colours rather than the palette's (2026-08-14 design
+   audit). All three are additive: none of them can move a box, which matters
+   because a layout regression shipped earlier the same day. */
+
+.vessel ::selection {
+  background: color-mix(in oklab, var(--a1) 32%, transparent);
+  color: var(--fg);
+}
+
+/* `opacity: 1` is required, not decorative — Firefox defaults ::placeholder to
+   0.54 and would otherwise fade --faint twice. */
+.vessel ::placeholder {
+  color: var(--faint);
+  opacity: 1;
+}
+
+/*
+ * The nudge (client request, 2026-08-14): a returning visitor who dismissed the
+ * greeting without reading it gets the two switches flashing a few times.
+ *
+ * `animation-iteration-count: 3` and then it stops for good — a control that
+ * pulses forever is a control that gets ignored, and this one is advertising
+ * the off switch for motion, so it would be absurd for it to become the most
+ * restless thing on the page. Calm strips `animation` globally with
+ * `!important`, and the reduced-motion block is scoped to `:not(.is-alive)`, so
+ * this is silent in both — which is correct: a visitor already in calm has
+ * exactly what the flash is advertising.
+ */
+@keyframes v-nudge {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  50% { box-shadow: 0 0 0 3px color-mix(in oklab, var(--a1) 45%, transparent); }
+}
+
+.vessel .chip.is-nudge {
+  animation: v-nudge 1.15s ease-in-out 3;
+  animation-delay: 1.4s;
+}

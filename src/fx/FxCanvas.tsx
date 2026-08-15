@@ -53,6 +53,28 @@ export function FxCanvas() {
   /** CSS-pixel size and the base scale, written by the observer, read per frame. */
   const size = useRef({ w: 1, h: 1, scale: 1 });
 
+  /**
+   * Adaptive resolution (client report, 2026-08-14: "the radar/sonar is lagging
+   * hard", plus "if there needs to be a detection of your system to run the
+   * appropriate level of vfx, thats fine by me").
+   *
+   * **Resolution is the lever, not effect detail.** Cost here is dominated by
+   * pixels, not by draw calls: a full-bleed canvas at `devicePixelRatio` 2 is
+   * four times the fill of dpr 1, and every effect pays it equally. So rather
+   * than sixteen effects each needing their own quality knob, the buffer
+   * shrinks and CSS scales it back up — one mechanism, all effects, and the
+   * per-frame `setTransform` means effects keep receiving CSS pixels and never
+   * learn that anything changed.
+   *
+   * Measured over a window rather than per frame, because one long frame is
+   * usually a garbage collection or a tab regaining focus, not a slow machine.
+   * Hysteresis is deliberately wide — stepping down at 21ms and back up only
+   * below 12ms — so a machine sitting near the boundary settles instead of
+   * oscillating, which would be far more visible than the lower resolution.
+   */
+  const quality = useRef(1);
+  const refit = useRef<(() => void) | null>(null);
+
   const live = useRef({ fx: config.fx, pal: config.pal, calm: config.calm, saver });
   useEffect(() => {
     live.current = { fx: config.fx, pal: config.pal, calm: config.calm, saver };
@@ -68,7 +90,9 @@ export function FxCanvas() {
       const rect = canvas.getBoundingClientRect();
       const w = Math.max(1, Math.round(rect.width));
       const h = Math.max(1, Math.round(rect.height));
-      const scale = Math.min(window.devicePixelRatio || 1, MAX_DPR, MAX_EDGE / Math.max(w, h));
+      const scale =
+        Math.min(window.devicePixelRatio || 1, MAX_DPR, MAX_EDGE / Math.max(w, h)) *
+        quality.current;
 
       const bw = Math.max(1, Math.round(w * scale));
       const bh = Math.max(1, Math.round(h * scale));
@@ -83,6 +107,8 @@ export function FxCanvas() {
     };
 
     fit();
+    // Held so the render loop can re-run it when it lowers the quality tier.
+    refit.current = fit;
     if (typeof ResizeObserver === "undefined") {
       window.addEventListener("resize", fit);
       return () => window.removeEventListener("resize", fit);
@@ -99,6 +125,12 @@ export function FxCanvas() {
     let raf = 0;
     let lastFrameAt = performance.now();
 
+    // Rolling frame-cost window for the adaptive resolution above.
+    let sampled = 0;
+    let sampleMs = 0;
+    let sinceChange = 0;
+    const TIERS = [1, 0.75, 0.5];
+
     const step = () => {
       raf = requestAnimationFrame(step);
 
@@ -109,8 +141,36 @@ export function FxCanvas() {
       // long stall (a backgrounded tab, a slow first paint) cannot jump the
       // world forward, and pinned to 1 at 60fps so nothing changes there.
       const now = performance.now();
-      const dt = Math.min(3, Math.max(0.2, (now - lastFrameAt) / (1000 / 60)));
+      const frameMs = now - lastFrameAt;
+      const dt = Math.min(3, Math.max(0.2, frameMs / (1000 / 60)));
       lastFrameAt = now;
+
+      // Sample only plausible frames. A backgrounded tab and the first paint
+      // both produce enormous deltas that say nothing about the GPU, and
+      // treating them as evidence would drop a fast machine to half resolution
+      // the moment someone switched tabs and came back.
+      if (frameMs > 4 && frameMs < 200) {
+        sampleMs += frameMs;
+        sampled += 1;
+      }
+      sinceChange += 1;
+      if (sampled >= 90 && sinceChange >= 180) {
+        const avg = sampleMs / sampled;
+        const tier = TIERS.indexOf(quality.current);
+        // 21ms is a hair under 48fps — comfortably past "smooth" without
+        // reacting to a machine that is merely not a gaming rig.
+        if (avg > 21 && tier < TIERS.length - 1) {
+          quality.current = TIERS[tier + 1];
+          refit.current?.();
+          sinceChange = 0;
+        } else if (avg < 12 && tier > 0) {
+          quality.current = TIERS[tier - 1];
+          refit.current?.();
+          sinceChange = 0;
+        }
+        sampled = 0;
+        sampleMs = 0;
+      }
 
       const canvas = canvasRef.current;
       if (!canvas || !canvas.isConnected || document.hidden) return;

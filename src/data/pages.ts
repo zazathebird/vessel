@@ -16,7 +16,13 @@
  *    number false. The counts on that page are jokes that depend on being true,
  *    which is why the client kept them; leaving it wrong would have been the
  *    change. One word — nothing else on the 404 moved.
- * 4. Every other line in this file, including every other stale-looking
+ * 4. home's "the rate" block carries the client's actual terms as of
+ *    2026-08-14 ($150 up front, $120/hour after), and Contact's third step
+ *    matches it. This is a term of business, not a joke — keep them in step.
+ * 5. home's "Some of this is hidden" block was removed the same day: it
+ *    advertised that hidden unlock routes exist, which is an invitation and not
+ *    a feature.
+ * 6. Every other line in this file, including every other stale-looking
  *    count, is verbatim from the prototype.
  */
 
@@ -79,28 +85,33 @@ export const PAGES: Record<PageId, Page> = {
       // was a spec sheet for switches visitors cannot flip. Jokes instead.
       { kicker: "the site", title: "Dangerously over-engineered", body: "Built like a flight simulator, used like a business card. It is entirely unnecessary. That is the point.", hasList: true, items: ["No cookies — there is a tin of real ones at the bench", "No AI, just a guy", "The 404 page is load-bearing", "Fixing computers remains the only useful feature"] },
       { kicker: "the honesty", title: "What this is not", body: "Not an agency. Not a startup. Not looking for funding, partnerships, or your synergy. One person and a bench." },
-      // COPY CHANGE 2026-08-14, client: "i dont do free diag. a mechanic will
-      // still charge you to diagnose your cars issues." The old line promised
-      // "Free diagnosis, always", which was not true of the business, and a
-      // false promise on the block whose job is sending people to Contact is
-      // the worst place on the site to have one.
+      // COPY CHANGE 2026-08-14, twice in one day and the second one is the real
+      // policy. First the client killed "Free diagnosis, always" ("i dont do free
+      // diag. a mechanic will still charge you to diagnose your cars issues").
+      // Then they gave the actual terms and the reason behind them: "150 to show
+      // up, then 120/hour, starting immediately after receiving the 150. no work
+      // is done until i receive the 150 … not doing everything and then having
+      // someone say ooh i cant pay. burned out of thousands in the past."
       //
-      // **No figure, deliberately** — the client offered either an invented
-      // number or "discussed on contact" and left the choice here. No number,
-      // for three reasons that all point the same way: the site already refuses
-      // to be a quote machine ("no quote form, no ticket system"), Contact's
-      // own three steps already put a price in step two, and one flat
-      // diagnostic fee cannot honestly cover both a laptop that will not boot
-      // and a drive that has stopped spinning. So the copy describes the flow
-      // that already exists rather than inventing a commitment, and stays true
-      // whatever the client eventually charges.
+      // So this block is no longer a philosophical position about diagnosis, it
+      // is a **term of business**, and it is the copy on the site most likely to
+      // save the client money. Written to be understood by someone who is not
+      // technical — their note on the previous draft was that the second half
+      // did not make sense even to them. Two numbers, one order of events, no
+      // hedging.
       //
-      // No credentials named either, though the client has them. `about` is
-      // built on "No name, no face, no city … the work speaks", and a list of
-      // MSP vendor certs would contradict that page and mean nothing to someone
-      // with a slow laptop.
-      { kicker: "the rate", title: "Diagnosis isn't free", body: "Finding out what's wrong is the work — a mechanic doesn't look at your car for nothing either. The cost comes back with the quote, before you agree to anything, and the machine returns in the same number of pieces it arrived in." },
-      { kicker: "the door", title: "Some of this is hidden", body: "There are six ways into a panel you will never need. Cosmetic to you, load-bearing to me." },
+      // "$150 before anything starts" rather than "to come out": true whether the
+      // machine is collected or dropped off, which "to show up" would not be.
+      // The electrician comparison is the client's own and does the explaining
+      // that a paragraph would otherwise have to.
+      { kicker: "the rate", title: "Paid before I start", body: "$150 before anything starts, then $120 an hour from there. Nothing happens before that first payment lands — an electrician works the same way, for the same reason. Finding out what's wrong is the job, not a free sample." },
+      // The "Some of this is hidden" block was REMOVED 2026-08-14 at the client's
+      // request: "useless and just invites people to try and hack the site."
+      // Correct on both counts. It advertised that hidden unlock routes exist and
+      // gave a customer nothing, and the door it pointed at is theatre guarding a
+      // settings drawer — so the line's only real effect was to invite poking at
+      // it. The 404's "six ways into a panel" line is a different page, is behind
+      // sign-in, and stays.
     ],
   },
   about: {
@@ -208,7 +219,7 @@ export const PAGES: Record<PageId, Page> = {
       // "Rough quote back, free" is untouched and still true — a rough estimate
       // from an emailed description is not a diagnosis, and it is the one thing
       // in this flow that genuinely costs nothing.
-      { kicker: "how it works", title: "Three steps", body: "", hasList: true, items: ["Email what's wrong", "Rough quote back, free", "You say go, and I get on with it"] },
+      { kicker: "how it works", title: "Three steps", body: "", hasList: true, items: ["Email what's wrong", "Rough quote back, free", "$150 lands, and I start"] },
       { kicker: "include", title: "To save a round trip", body: "Make and model, what it does, and when it started doing it. One sentence is fine." },
     ],
   },

@@ -126,6 +126,57 @@ export function saveCalmPreference(calm: boolean): void {
 }
 
 /**
+ * The first-visit greeting's own flag (client request, 2026-08-14).
+ *
+ * Its own key, like calm's and sound's, and for the same reason: `saveConfig`
+ * echoes the whole config, so anything read back from there would be pinned to
+ * whatever was published on the first visit. Written only when the greeting is
+ * *dismissed* — a visitor who closes the tab during the 1.2s wait has not been
+ * greeted and should be next time.
+ *
+ * Nothing about the visitor is recorded here beyond "has seen it once". §9's
+ * inventory is unaffected: this never leaves the browser.
+ */
+const GREETED_KEY = "vessel.greeted.v1";
+
+export function hasBeenGreeted(): boolean {
+  try {
+    return localStorage.getItem(GREETED_KEY) === "1";
+  } catch {
+    // Storage unavailable — treat as greeted rather than showing a dialog on
+    // every single page load, which is the worse failure of the two.
+    return true;
+  }
+}
+
+export function markGreeted(): void {
+  try {
+    localStorage.setItem(GREETED_KEY, "1");
+  } catch {
+    /* The greeting simply reappears next visit. Harmless. */
+  }
+}
+
+/**
+ * True when the visitor has never expressed a preference about either of the
+ * two chrome switches.
+ *
+ * Drives the first-visit highlight on the header chips: the controls that
+ * govern motion and sound should be findable *before* someone needs them, not
+ * after. It goes quiet permanently the moment either is touched, in either
+ * direction — expressing a preference is the whole condition, not choosing a
+ * particular one.
+ */
+export function chromeUntouched(): boolean {
+  return calmPreference() === null && soundPreference() === null;
+}
+
+/** The stored sound preference, or `null` when never expressed. */
+export function soundPreference(): boolean | null {
+  return storedSound();
+}
+
+/**
  * The stored calm preference, or `null` when the visitor has never expressed
  * one. Exported because `ConfigContext` needs to tell those apart: OS
  * reduced-motion should set the *default*, and an explicit press of the chip

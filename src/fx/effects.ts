@@ -107,6 +107,15 @@ export interface FxCache {
   /** The duel's match state — fighters, health, sparks, the match counter. */
   duel?: DuelState | null;
   /**
+   * `scan`'s static sphere, pre-rendered once per box and palette.
+   *
+   * The wireframe — 7 longitudes, 5 latitudes, 8 rim ticks — does not change
+   * between frames, but it was being stroked from scratch on every one: twenty
+   * antialiased ellipse paths at up to a 2600px buffer. Drawn once into an
+   * offscreen canvas and blitted, it costs a single `drawImage`.
+   */
+  scanSphere?: { w: number; h: number; key: string; canvas: HTMLCanvasElement } | null;
+  /**
    * The duel's attract-mode blend, 0 (background) to 1 (screensaver). Eased
    * rather than switched, so nothing about the fight jumps when the interface
    * goes to sleep. Cached beside the match rather than inside `DuelState`
@@ -580,60 +589,117 @@ const orbits: Effect = ({ ctx, w, h, p, t }) => {
  * from their index, so the effect looks the same on every load and there is
  * nothing to drop when the palette changes.
  */
-const scan: Effect = ({ ctx, w, h, p, t, mx, my }) => {
+const scan: Effect = ({ ctx, w, h, p, t, mx, my }, cache) => {
   // A shallow pointer drift, not a follow: the instrument is mounted, and a
   // sphere that chases the cursor reads as a toy.
   const cx = w / 2 + (mx - 0.5) * w * 0.05;
   const cy = h / 2 + (my - 0.5) * h * 0.05;
   const r = Math.min(w, h) * 0.4;
 
-  ctx.lineWidth = 1;
-  ctx.strokeStyle = p.line;
-  ctx.globalAlpha = 0.85;
-
-  // Longitudes: ellipses whose width is the cosine of their own angle, which is
-  // what a set of great circles looks like seen edge-on.
-  for (let i = 0; i < 7; i++) {
-    const k = (i / 6) * Math.PI - Math.PI / 2;
-    ctx.beginPath();
-    ctx.ellipse(cx, cy, Math.abs(Math.cos(k)) * r, r, 0, 0, TAU);
-    ctx.stroke();
+  /*
+   * The wireframe is pre-rendered (2026-08-14, client: "the radar/sonar is
+   * lagging hard").
+   *
+   * It is twenty antialiased ellipse strokes plus eight ticks, none of which
+   * changes between frames — only its *position* does, by a few pixels of
+   * pointer drift. Stroking it per frame at a retina buffer was the bulk of
+   * this effect's cost. Now it is drawn once into an offscreen canvas sized to
+   * the sphere's own bounding box and blitted with one `drawImage`.
+   *
+   * Keyed on the box *and* the two palette colours it uses: the palette can
+   * change under a running effect (that is the whole point of the 0.9s bleed),
+   * and a sphere cached in the old colours would simply never update. Keyed on
+   * the box because `FxCanvas` drops the effect cache only when the effect id
+   * changes — a resize is each effect's own problem, which is exactly what
+   * stranded `vessels` earlier today.
+   */
+  const key = `${p.line}|${p.faint}`;
+  const pad = Math.ceil(r * 1.16) + 2;
+  const box = pad * 2;
+  let sphere = cache.scanSphere;
+  if (!sphere || sphere.w !== w || sphere.h !== h || sphere.key !== key) {
+    const off = document.createElement("canvas");
+    off.width = box;
+    off.height = box;
+    const o = off.getContext("2d");
+    if (o) {
+      o.lineWidth = 1;
+      o.strokeStyle = p.line;
+      o.globalAlpha = 0.85;
+      // Longitudes: ellipses whose width is the cosine of their own angle,
+      // which is what a set of great circles looks like seen edge-on.
+      for (let i = 0; i < 7; i++) {
+        const k = (i / 6) * Math.PI - Math.PI / 2;
+        o.beginPath();
+        o.ellipse(pad, pad, Math.abs(Math.cos(k)) * r, r, 0, 0, TAU);
+        o.stroke();
+      }
+      // Latitudes: flattened ellipses stepped down the sphere.
+      for (let j = 1; j < 6; j++) {
+        const f = j / 6;
+        const rr = Math.sin(f * Math.PI) * r;
+        o.beginPath();
+        o.ellipse(pad, pad - r + f * 2 * r, rr, rr * 0.16, 0, 0, TAU);
+        o.stroke();
+      }
+      // Eight ticks outside the rim, the furniture that makes it an instrument.
+      o.strokeStyle = p.faint;
+      for (let a = 0; a < 8; a++) {
+        const ang0 = (a / 8) * TAU;
+        const c = Math.cos(ang0);
+        const sn = Math.sin(ang0);
+        o.beginPath();
+        o.moveTo(pad + c * r * 1.06, pad + sn * r * 1.06);
+        o.lineTo(pad + c * r * 1.13, pad + sn * r * 1.13);
+        o.stroke();
+      }
+    }
+    sphere = cache.scanSphere = { w, h, key, canvas: off };
   }
+  ctx.globalAlpha = 1;
+  ctx.drawImage(sphere.canvas, cx - pad, cy - pad);
 
-  // Latitudes: flattened ellipses stepped down the sphere.
-  for (let j = 1; j < 6; j++) {
-    const f = j / 6;
-    const rr = Math.sin(f * Math.PI) * r;
-    ctx.beginPath();
-    ctx.ellipse(cx, cy - r + f * 2 * r, rr, rr * 0.16, 0, 0, TAU);
-    ctx.stroke();
-  }
-
-  // Eight ticks outside the rim, the furniture that makes it an instrument.
-  ctx.strokeStyle = p.faint;
-  for (let a = 0; a < 8; a++) {
-    const ang = (a / 8) * TAU;
-    const c = Math.cos(ang);
-    const s = Math.sin(ang);
-    ctx.beginPath();
-    ctx.moveTo(cx + c * r * 1.06, cy + s * r * 1.06);
-    ctx.lineTo(cx + c * r * 1.13, cy + s * r * 1.13);
-    ctx.stroke();
-  }
-
-  // The sweep: one revolution per 6.4s of effect time, trailing a wedge that
-  // decays behind the leading edge rather than a hard sector.
+  /*
+   * The sweep, as one filled wedge instead of twenty-six strokes.
+   *
+   * It was 26 `beginPath`/`moveTo`/`lineTo`/`stroke` pairs per frame, each with
+   * its own `globalAlpha` so they could not be batched — twenty-six separate
+   * rasterizer runs to fake one gradient. A conic gradient does it in a single
+   * fill, and looks better because the falloff is continuous rather than
+   * banded in 26 steps. Guarded, because `createConicGradient` is recent enough
+   * to be absent on an older browser; the fallback is the same idea at a
+   * quarter of the original step count.
+   */
   const ang = (t / 6.4) * TAU;
-  ctx.strokeStyle = p.a1;
-  ctx.lineWidth = 2;
-  for (let s = 0; s < 26; s++) {
-    const back = ang - s * 0.035;
-    ctx.globalAlpha = 0.3 * (1 - s / 26);
+  const TAIL = 0.9; // radians of trailing wedge
+  if (typeof ctx.createConicGradient === "function") {
+    const g = ctx.createConicGradient(ang - TAIL, cx, cy);
+    g.addColorStop(0, "transparent");
+    g.addColorStop(1, p.a1);
+    ctx.save();
+    ctx.globalAlpha = 0.3;
+    ctx.fillStyle = g;
     ctx.beginPath();
     ctx.moveTo(cx, cy);
-    ctx.lineTo(cx + Math.cos(back) * r, cy + Math.sin(back) * r);
-    ctx.stroke();
+    ctx.arc(cx, cy, r, ang - TAIL, ang);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  } else {
+    ctx.strokeStyle = p.a1;
+    ctx.lineWidth = 3;
+    for (let sIdx = 0; sIdx < 7; sIdx++) {
+      const back = ang - sIdx * 0.13;
+      ctx.globalAlpha = 0.3 * (1 - sIdx / 7);
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx + Math.cos(back) * r, cy + Math.sin(back) * r);
+      ctx.stroke();
+    }
   }
+  // The leading edge stays a crisp line — it is what reads as "now".
+  ctx.strokeStyle = p.a1;
+  ctx.lineWidth = 2;
   ctx.globalAlpha = 0.95;
   ctx.beginPath();
   ctx.moveTo(cx, cy);

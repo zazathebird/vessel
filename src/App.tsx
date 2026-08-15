@@ -18,6 +18,7 @@ import { MachinesPage } from "./components/MachinesPage";
 import { SharePage } from "./components/SharePage";
 import { SiteConfigPanel } from "./components/SiteConfigPanel";
 import { OperatorDoor } from "./components/OperatorDoor";
+import { Greeting } from "./components/Greeting";
 import { Screensaver } from "./components/Screensaver";
 import { OverlayHostContext } from "./components/Dialog";
 import { CommandPalette } from "./components/CommandPalette";
@@ -153,6 +154,7 @@ export default function App() {
       </div>
 
       <Screensaver />
+      <Greeting />
       <SiteConfigPanel />
       <OperatorDoor />
       <CommandPalette />

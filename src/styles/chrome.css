@@ -363,6 +363,10 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+  /* The last element still wearing the browser's colours instead of the
+     palette's. `scrollbar-color` only — `scrollbar-width: thin` would change
+     the gutter and move the content. */
+  scrollbar-color: color-mix(in oklab, var(--line) 80%, transparent) transparent;
   -webkit-overflow-scrolling: touch;
 }
 
@@ -646,6 +650,7 @@
 }
 
 .v-title {
+  text-wrap: balance;
   margin: 0;
   font-family: var(--font-display);
   font-size: var(--h1-size);
@@ -1414,7 +1419,11 @@
   color: var(--faint);
 }
 
+/* Headings balance their line breaks (2026-08-14 audit). Titles like
+   "Nobody, deliberately." were dropping a single word to line two constantly.
+   Pure line-breaking — no box changes. The lede already had `pretty`. */
 .v-block h3 {
+  text-wrap: balance;
   margin: 0;
   font-size: clamp(19px, 1.6vw, 24px);
   line-height: 1.25;
@@ -1422,7 +1431,12 @@
   color: var(--fg);
 }
 
+/* A measure, at last (2026-08-14 design audit). `.v-block p` had no max-width,
+   so the full-width layouts ran to ~130 characters a line on Stack, ~114 on
+   Terminal — against an ideal of 45-75. `68ch` is already the project's prose
+   token. A max-width on a paragraph reflows nothing outside it. */
 .v-block p {
+  max-width: 68ch;
   margin: 0;
   font-size: 15px;
   line-height: 1.62;

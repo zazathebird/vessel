@@ -1,7 +1,7 @@
 import { useCallback, useRef } from "react";
 
 import { useConfig } from "../config/ConfigContext";
-import { saveCalmPreference, saveSoundPreference } from "../config/persistence";
+import { chromeUntouched, hasBeenGreeted, saveCalmPreference, saveSoundPreference } from "../config/persistence";
 import { useSession } from "../auth/SessionContext";
 import { NAV, OPERATOR_NAV, PATHS } from "../data/pageIds";
 import { openCommandPalette } from "./CommandPalette";
@@ -16,6 +16,17 @@ export function Header() {
   // probe answers operator. Like everything session-gated they start hidden and
   // arrive — never flash and vanish (SessionContext's rule).
   const { isOperator } = useSession();
+
+  /**
+   * The returning-visitor nudge (client request, 2026-08-14).
+   *
+   * First visit gets the `Greeting` dialog. After that it never returns — but
+   * someone who dismissed it without reading has no second prompt, so the two
+   * chips flash a few times instead. Read once at mount, not per render: it
+   * must not restart the flash on every state change, and it must stop the
+   * moment either switch is touched.
+   */
+  const nudge = useRef(hasBeenGreeted() && chromeUntouched()).current;
 
   const taps = useRef(0);
   const tapTimer = useRef<number | undefined>(undefined);
@@ -110,7 +121,7 @@ export function Header() {
           )}
           <button
             type="button"
-            className="chip"
+            className={`chip${nudge ? " is-nudge" : ""}`}
             aria-pressed={config.calm}
             /*
              * Labelled "plain", not "calm" (2026-08-14, client: "people won't
@@ -148,7 +159,7 @@ export function Header() {
             // switch. It returns, holding its value, when calm goes off.
             <button
               type="button"
-              className="chip"
+              className={`chip${nudge ? " is-nudge" : ""}`}
               aria-pressed={config.sound}
               onClick={() => {
                 const sound = !config.sound;
