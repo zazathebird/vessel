@@ -408,6 +408,10 @@
       if (sheetId) {
         const pal = new URLSearchParams(location.search).get("pal");
         if (pal) palSelect.value = pal;
+        // `?shape=9:16 phone` — the density rules are viewport-relative now, so
+        // the phone band is a different picture, not the same one scaled.
+        const shape = new URLSearchParams(location.search).get("shape");
+        if (shape && ASPECTS[shape]) shapeSelect.value = shape;
         sheet(sheetId);
       } else {
         fit();

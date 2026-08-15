@@ -84,8 +84,15 @@ interface Branch {
 interface Channel {
   u: number;
   lane: number;
+  /** Depth, 0–1. Size, speed, brightness and bloom are all derived from it. */
+  z: number;
   s: number;
   r: number;
+  /** Its own tempo and phase, so the field does not surge as one organism. */
+  ph: number;
+  rate: number;
+  /** Offset across the channel, −1 to 1. */
+  o: number;
 }
 
 /** One falling stream: its own speed, trail length and glyphs. */
@@ -125,6 +132,8 @@ export interface FxCache {
   parts?: Particle[] | null;
   /** The box `parts` was seeded for — see `field()`. */
   partsBox?: { w: number; h: number } | null;
+  /** The `partsBox` identity `bokeh` last depth-sorted its field for. */
+  bokehSorted?: { w: number; h: number } | null;
   /**
    * The grown tree, with the box it was grown for and the pool of random
    * numbers it was grown from. Both are part of the cache because `vessels` is
@@ -344,19 +353,62 @@ const vessels: Effect = ({ ctx, w, h, p, t, beat, mx, my }, cache) => {
   ctx.globalAlpha = 1;
 };
 
-/** 2. Flow — five sine channels with 160 particles travelling along them. */
-const flow: Effect = ({ ctx, w, h, p, t, beat, boost }, cache) => {
+/**
+ * The five channels, each with its own everything.
+ *
+ * They used to be derived from the lane index: `0.22 + l * 0.14` for y (so lane
+ * 2 ran exactly through `h * 0.5`, a bright 10px band with a train of glowing
+ * dots straight through the vertical centre of the page), one shared amplitude,
+ * one width, one alpha, one direction. Five lanes sliding in lockstep is one
+ * moving wallpaper, not five channels.
+ *
+ * `LANE_S` is signed: two lanes travel against the other three, which is what
+ * makes the combined period effectively irrational and kills the wallpaper read
+ * outright. `LANE_CYC` counts waves *across the viewport* rather than using an
+ * absolute frequency — the old `x * 0.0032` drew 1.75 waves on an ultrawide and
+ * 0.19 of one on a phone, i.e. on a phone the lanes were five straight parallel
+ * lines. `LANE_A` deliberately rises toward the bottom, compensating for the
+ * vignette rather than fighting it.
+ */
+const LANE_Y = [0.14, 0.27, 0.41, 0.58, 0.74];
+const LANE_AMP = [0.055, 0.09, 0.038, 0.075, 0.11];
+const LANE_CYC = [1.35, 2.1, 0.85, 1.7, 0.6];
+const LANE_S = [0.42, -0.31, 0.58, -0.24, 0.37];
+const LANE_W = [6, 11, 4, 9, 13];
+const LANE_A = [0.34, 0.52, 0.24, 0.46, 0.6];
+
+/** 2. Flow — five channels with particles travelling along them. */
+const flow: Effect = ({ ctx, w, h, p, t, boost }, cache) => {
   if (!cache.flow) {
-    cache.flow = Array.from({ length: 160 }, () => ({
-      u: Math.random(),
-      lane: (Math.random() * 5) | 0,
-      s: 0.0012 + Math.random() * 0.0022,
-      r: Math.random() * 2.6 + 1,
-    }));
+    cache.flow = Array.from({ length: 78 }, () => {
+      const z = Math.random();
+      return {
+        u: Math.random(),
+        lane: (Math.random() * 5) | 0,
+        z,
+        // Seeded from one depth, so near means large *and* fast *and* bright.
+        // `r` and `s` used to be drawn independently, which let a big particle
+        // crawl and a tiny one race: size varied, and nothing that would make
+        // size mean anything varied with it.
+        s: 0.0011 + z * 0.0026,
+        r: 0.9 + z * 2.1,
+        // Its own tempo and phase. One shared `beat` multiplier accelerated and
+        // decelerated all 160 particles in perfect unison, which is the
+        // strongest "cheap" signal an effect like this can send.
+        ph: Math.random() * TAU,
+        rate: 1.4 + Math.random() * 1.1,
+        // Off the centreline of its channel — every dot sat exactly on it,
+        // which read as beads on a wire rather than as traffic in a lane.
+        o: Math.random() * 2 - 1,
+      };
+    });
   }
   const laneY = (x: number, l: number) =>
-    h * (0.22 + l * 0.14) + Math.sin(x * 0.0032 + l * 1.4 + t * 0.5) * h * 0.07;
+    h * LANE_Y[l] +
+    Math.sin((x / w) * TAU * LANE_CYC[l] + l * 2.3 + t * LANE_S[l]) * h * LANE_AMP[l];
 
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
   for (let l = 0; l < 5; l++) {
     ctx.beginPath();
     for (let x = 0; x <= w; x += 12) {
@@ -364,49 +416,99 @@ const flow: Effect = ({ ctx, w, h, p, t, beat, boost }, cache) => {
       if (x === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     }
-    ctx.strokeStyle = p.line;
-    ctx.globalAlpha = 0.55;
-    ctx.lineWidth = 10;
-    ctx.lineCap = "round";
+    ctx.strokeStyle = l === 0 || l === 2 ? p.faint : p.line;
+    ctx.globalAlpha = LANE_A[l];
+    ctx.lineWidth = LANE_W[l];
     ctx.stroke();
   }
+
   for (const c of cache.flow) {
-    c.u += c.s * (1 + beat * 1.4) * boost;
+    c.u += c.s * (0.75 + 0.9 * ((Math.sin(t * c.rate + c.ph) + 1) / 2)) * boost;
     if (c.u > 1) c.u = 0;
     const x = c.u * w;
-    const y = laneY(x, c.lane);
-    ctx.globalAlpha = 0.85;
-    ctx.fillStyle = [p.a1, p.a2, p.a3][c.lane % 3];
+    const y = laneY(x, c.lane) + c.o * LANE_W[c.lane] * 0.45;
+    // Fade in and out at the edges. A hard `u > 1` teleport at full alpha meant
+    // a dot popping into existence roughly every 90ms, which was the most
+    // visible artefact in the effect.
+    const edge = Math.min(1, Math.min(c.u, 1 - c.u) / 0.06);
+    // Colour carries depth now, not lane. Keyed to the lane it made each
+    // channel monochrome and, with five lanes over three accents, put `a3` in
+    // exactly one of them.
+    ctx.fillStyle = c.z > 0.66 ? p.a1 : c.z > 0.33 ? p.a2 : p.a3;
+    ctx.globalAlpha = (0.35 + c.z * 0.5) * edge;
     ctx.beginPath();
     ctx.arc(x, y, c.r, 0, TAU);
     ctx.fill();
-    ctx.globalAlpha = 0.2;
-    ctx.beginPath();
-    ctx.arc(x, y, c.r * 4, 0, TAU);
-    ctx.fill();
+    // Only near particles bloom — which is both what depth of field does and
+    // about seventy fewer arcs a frame.
+    // Only the nearest quarter blooms, and modestly. At `r * (2.6 + z * 2.4)`
+    // the halo reached nineteen pixels on a three-pixel dot: with the whole
+    // field funnelled into five lanes those overlapped into one mass and the
+    // channels stopped being readable at all.
+    if (c.z > 0.72) {
+      ctx.globalAlpha = (0.05 + c.z * 0.1) * edge;
+      ctx.beginPath();
+      ctx.arc(x, y, c.r * (1.7 + c.z * 1.2), 0, TAU);
+      ctx.fill();
+    }
   }
   ctx.globalAlpha = 1;
 };
 
-/** 3. Pressure — 16 rings expanding from a centre, modulated by the heartbeat. */
-const pressure: Effect = ({ ctx, w, h, p, t, beat }) => {
-  const cx = w * 0.5;
-  const cy = h * 0.55;
+/**
+ * 3. Pressure — a wave field expanding from a source.
+ *
+ * The ring march itself was well built and is untouched: `(t * 0.06) % (1/16)`
+ * makes the ring set invariant under its own spacing, so the reset is genuinely
+ * invisible. Everything hung around it was not. Sixteen perfect circles at
+ * identical spacing, and *every* other quantity — ring alpha, disc alpha, disc
+ * radius — driven by the single global `beat`, so the whole field inhaled and
+ * exhaled as one object on a five-second clock. Thirty seconds was that loop
+ * six times over, and the effect held no state at all.
+ *
+ * Phasing the pulse by ring *index* turns a synchronised blink into a wave
+ * travelling outward through a standing structure, which is what the name
+ * promises and what a pressure wave actually looks like. By index rather than
+ * by radius, deliberately: `i` is fixed per ring, so there is no flicker when
+ * the march wraps.
+ */
+const pressure: Effect = ({ ctx, w, h, p, t, beat, mx, my }) => {
+  const cx = w * 0.5 + (mx - 0.5) * w * 0.05;
+  // Up out of the body copy. At 0.55h the bright focal disc — the loudest
+  // single object in the effect — sat directly behind the text, at up to 0.32
+  // alpha with a hard edge, on palettes already documented as failing AA.
+  const cy = h * 0.34 + (my - 0.5) * h * 0.05;
+  // One slow term with no common factor with either existing cycle, so the
+  // composite never resolves inside a visit.
+  const swell = 0.8 + 0.2 * Math.sin(t * 0.137);
+
   for (let i = 0; i < 16; i++) {
     const k = (i / 16 + ((t * 0.06) % (1 / 16))) % 1;
-    const r = k * Math.max(w, h) * 0.72;
-    ctx.strokeStyle = [p.a1, p.a2, p.a3][i % 3];
-    ctx.globalAlpha = (1 - k) * 0.3 * (0.6 + beat * 0.7);
-    ctx.lineWidth = 1 + (1 - k) * 3;
+    // A power curve, as `tunnel` uses twelve lines away: evenly spaced
+    // concentric circles are the "evenly-spaced anything" tell in its purest
+    // form. Applied after `k`, so the wrap invariance survives.
+    const r = Math.pow(k, 1.7) * Math.max(w, h) * 0.86;
+    const bp = (Math.sin(t * 0.9 - i * 0.55) + 1) / 2;
+    // Colour and weight key off `i`, never off `k` — off `k` they would flip
+    // as a ring crossed a threshold, every 1.6 seconds.
+    ctx.strokeStyle = i < 2 ? p.a1 : i < 5 ? p.a2 : i < 9 ? p.a3 : p.line;
+    ctx.globalAlpha = (1 - k) * 0.3 * (0.55 + bp * 0.8) * swell;
+    // Every third ring heavy, the rest hairlines: a ring field reads as a
+    // series of events rather than as a grid.
+    ctx.lineWidth = (i % 3 === 0 ? 2.2 : 0.9) * (1 + (1 - k));
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, TAU);
     ctx.stroke();
   }
-  ctx.globalAlpha = 0.18 + beat * 0.14;
-  ctx.fillStyle = p.a1;
-  ctx.beginPath();
-  ctx.arc(cx, cy, 40 + beat * 26, 0, TAU);
-  ctx.fill();
+
+  // The source, as a falloff rather than a hard-edged disc.
+  const rr = 44 + beat * 30;
+  const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, rr * 2.4);
+  g.addColorStop(0, p.a1);
+  g.addColorStop(1, `${p.bg}00`);
+  ctx.globalAlpha = 0.09 + beat * 0.07;
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
   ctx.globalAlpha = 1;
 };
 
@@ -811,25 +913,105 @@ const constellation: Effect = ({ ctx, w, h, p, t, boost, mx, my }, cache) => {
   ctx.globalAlpha = 1;
 };
 
-/** 7. Aurora — five stacked wide sine ribbons. */
-const aurora: Effect = ({ ctx, w, h, p, t }) => {
-  for (let b = 0; b < 5; b++) {
+/**
+ * Aurora's five curtains, each with its own everything.
+ *
+ * The five used to share amplitude, width, alpha, spacing and their entire
+ * second wave term — `sin(x * 0.0012 + t * 0.6)` had no per-ribbon component at
+ * all, so the large slow undulation was a rigid motion of the whole stack and
+ * the ribbons were five phase-shifted copies of one curve. Stacked 26px apart
+ * at 46px wide they overlapped into a single fuzzy slab lying across the middle
+ * of the frame, which is where the headline sits. It was a sky phenomenon drawn
+ * as a horizon phenomenon.
+ *
+ * The five speeds are coprime over 100, so the ensemble's common period is
+ * about 950 seconds. The old pairs were commensurate — ribbon 0's two terms sat
+ * at exactly 5:3 and repeated every 48s, well inside the time someone spends
+ * looking at it.
+ */
+const AURORA_RIBBONS = [
+  { y: 0.22, amp: 0.15, wide: 118, a: 0.075, k1: 0.0019, k2: 0.00061, sp: 0.29, c: 0 },
+  { y: 0.28, amp: 0.1, wide: 74, a: 0.11, k1: 0.0031, k2: 0.00088, sp: 0.37, c: 2 },
+  { y: 0.33, amp: 0.19, wide: 44, a: 0.17, k1: 0.0047, k2: 0.0012, sp: 0.53, c: 1 },
+  { y: 0.26, amp: 0.07, wide: 26, a: 0.24, k1: 0.0069, k2: 0.0017, sp: 0.71, c: 2 },
+  { y: 0.4, amp: 0.24, wide: 156, a: 0.055, k1: 0.0013, k2: 0.00044, sp: 0.97, c: 0 },
+];
+
+/** 7. Aurora — five curtains of light hung in the upper frame. */
+const aurora: Effect = ({ ctx, w, h, p, t, mx }) => {
+  const roles = [p.a1, p.a2, p.a3];
+  ctx.save();
+  // Crossings bloom instead of muddying toward whichever ribbon drew last,
+  // which is what light actually does. Every palette on the site has a
+  // background at or below #1C1826, so additive blending is safe on all of them.
+  ctx.globalCompositeOperation = "lighter";
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+
+  for (let i = 0; i < AURORA_RIBBONS.length; i++) {
+    const r = AURORA_RIBBONS[i];
+    // Near and far curtains shear against each other under the pointer.
+    const lean = (mx - 0.5) * (i - 2) * 34;
     ctx.beginPath();
-    for (let x = 0; x <= w; x += 14) {
+    // 26px steps, not 14: the wavelengths here are thousands of pixels wide, so
+    // the old step was oversampling a nearly straight line. That pays for the
+    // three-pass feather below outright.
+    for (let x = 0; x <= w; x += 26) {
       const y =
-        h * 0.5 +
-        Math.sin(x * 0.004 + t * (1 + b * 0.22) + b) * (h * 0.13) +
-        Math.sin(x * 0.0012 + t * 0.6) * (h * 0.09) +
-        (b - 2.5) * 26;
-      if (x === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
+        h * r.y +
+        Math.sin(x * r.k1 + t * r.sp + i) * (h * r.amp) +
+        Math.sin(x * r.k2 - t * r.sp * 0.61 + i * 2.1) * (h * r.amp * 0.55);
+      if (x === 0) ctx.moveTo(x, y + lean);
+      else ctx.lineTo(x, y + lean);
     }
-    ctx.strokeStyle = [p.a1, p.a2, p.a3][b % 3];
-    ctx.globalAlpha = 0.17;
-    ctx.lineWidth = 46;
-    ctx.lineJoin = "round";
+
+    // One path, three strokes: a wide dim haze, a mid body, a bright core. A
+    // single flat-width stroke of one solid colour is why this read as a
+    // painted noodle rather than as light.
+    ctx.strokeStyle = roles[r.c];
+    for (const [mult, aMult] of [
+      [2.4, 0.28],
+      [1.35, 0.55],
+      [0.5, 1],
+    ]) {
+      ctx.lineWidth = r.wide * mult;
+      ctx.globalAlpha = r.a * aMult;
+      ctx.stroke();
+    }
+
+    /*
+     * Vertical striation — the signature.
+     *
+     * A curtain is made of field lines seen end-on, and without them a green
+     * smear is just a gradient. One path of short rays hung off the centreline,
+     * one stroke. The `g < 0.15` cull is the important part: it makes the rays
+     * cluster and thin out as the field travels, where an unconditional ray
+     * every 34px would be a comb — the evenly-spaced tell in its purest form.
+     */
+    ctx.globalAlpha = r.a * 0.3;
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    for (let x = 0; x <= w; x += 34) {
+      const g = Math.sin(x * 0.021 + t * 1.7 + r.sp * 9);
+      // A high threshold, not a low one: only the top ~25% of the field draws a
+      // ray, so they arrive in loose clusters. At 0.15 nearly every station
+      // qualified and the result was a picket fence — and under `lighter` a
+      // hairline at this alpha over an already-lit ribbon clips straight to
+      // white, which is why the first attempt read as scratches rather than as
+      // structure inside the light.
+      if (g < 0.55) continue;
+      const y =
+        h * r.y +
+        lean +
+        Math.sin(x * r.k1 + t * r.sp + i) * (h * r.amp) +
+        Math.sin(x * r.k2 - t * r.sp * 0.61 + i * 2.1) * (h * r.amp * 0.55);
+      // Kept inside the curtain's own span, so a ray never hangs below it.
+      ctx.moveTo(x, y - r.wide * 0.34);
+      ctx.lineTo(x, y + r.wide * (0.1 + g * 0.34));
+    }
     ctx.stroke();
   }
+  ctx.restore();
   ctx.globalAlpha = 1;
 };
 
@@ -985,76 +1167,258 @@ const plasma: Effect = ({ ctx, w, h, p, t, beat, quality }, cache) => {
   ctx.globalAlpha = 1;
 };
 
-/** 9. Grid tunnel — 26 nested rectangles on a power curve, plus eight spokes. */
-const tunnel: Effect = ({ ctx, w, h, p, t }) => {
-  ctx.strokeStyle = p.a1;
+/**
+ * 9. Grid tunnel — nested rectangles receding to a vanishing point.
+ *
+ * Three things were wrong and all of them met at the centre of the screen.
+ *
+ * The alpha law was `0.38 * (1 - k)`, brightest at `k = 0` — but `s = k^2.4`
+ * crowds the rings *toward* the vanishing point, so the most ink went where the
+ * rings were smallest. The first four were sub-pixel rectangles stacked on one
+ * point and the ring that nearly filled the screen drew at 1.4% alpha. Eight
+ * spokes converged on that same pixel. The result was a bright knot roughly
+ * 150px across sitting directly under the h1, and no visible tunnel wall
+ * anywhere else: depth asserted by a power curve and delivered by nothing.
+ *
+ * And it was a treadmill. `(t * 0.14) % (1/26)` is a correct seamless wrap —
+ * the ring set at the wrap is identical to the set at zero — but every ring is
+ * drawn identically, so the exact same 0.42 seconds played 72 times in half a
+ * minute. Every seventh ring is now a marker that travels outward and passes
+ * you, which makes the real period 2.9s and gives the eye something to follow.
+ */
+const tunnel: Effect = ({ ctx, w, h, p, t, mx, my }) => {
+  // The vanishing point drifts with the shared pointer light, as `scan`'s
+  // instrument does. This is the effect that gains most from it: its entire
+  // geometry hangs off one point, so moving that point moves everything.
+  const cx = w * 0.5 + (mx - 0.5) * w * 0.06;
+  const cy = h * 0.5 + (my - 0.5) * h * 0.06;
+
+  // Rings recycle by index shift, so a stable per-ring identity has to *count
+  // down* with the emission count. With the sign the other way the marker
+  // colour flickers on every wrap, which is worse than no marker at all.
+  const emitted = Math.floor(t * 0.14 * 26);
   ctx.lineWidth = 1;
   for (let i = 0; i < 26; i++) {
     const k = (i / 26 + ((t * 0.14) % (1 / 26))) % 1;
     const s = Math.pow(k, 2.4);
-    ctx.globalAlpha = 0.38 * (1 - k);
-    ctx.strokeRect(w / 2 - (w * s) / 2, h / 2 - (h * s) / 2, w * s, h * s);
+    if (w * s < 14) continue; // degenerate rings on the vanishing point
+    const mark = ((((i - emitted) % 7) + 7) % 7) === 0;
+    ctx.strokeStyle = mark ? p.a1 : p.line;
+    ctx.lineWidth = mark ? 2 : 1;
+    // Fades in from the vanishing point and out at the mouth, peaking around
+    // k≈0.45 where the rings are wide enough to describe a wall.
+    ctx.globalAlpha = (mark ? 0.55 : 0.3) * Math.min(1, k * 5) * (1 - k * k);
+    ctx.strokeRect(cx - (w * s) / 2, cy - (h * s) / 2, w * s, h * s);
   }
-  ctx.globalAlpha = 0.22;
-  ctx.strokeStyle = p.a2;
+
+  // Spokes start clear of the centre, so the aperture stays dark instead of
+  // becoming an eight-line star, and alternate major/minor rather than being
+  // eight identical lines. `faint` because they are furniture, not signal.
+  ctx.strokeStyle = p.faint;
   for (let a = 0; a < 8; a++) {
-    const ang = (a / 8) * 6.28 + t * 0.06;
+    const ang = (a / 8) * TAU + t * 0.06;
+    ctx.globalAlpha = a & 1 ? 0.09 : 0.2;
     ctx.beginPath();
-    ctx.moveTo(w / 2, h / 2);
-    ctx.lineTo(w / 2 + Math.cos(ang) * w, h / 2 + Math.sin(ang) * h);
+    ctx.moveTo(cx + Math.cos(ang) * w * 0.07, cy + Math.sin(ang) * h * 0.07);
+    ctx.lineTo(cx + Math.cos(ang) * w, cy + Math.sin(ang) * h);
     ctx.stroke();
   }
+
+  // Atmospheric perspective, in one fill: the mouth of the tunnel is hazier
+  // than its throat. This is what actually sells depth — scale and alpha only
+  // imply it — and it costs one call against a budget of about thirty.
+  const g = ctx.createRadialGradient(
+    cx,
+    cy,
+    Math.min(w, h) * 0.12,
+    cx,
+    cy,
+    Math.max(w, h) * 0.62,
+  );
+  g.addColorStop(0, `${p.a2}00`);
+  g.addColorStop(1, `${p.a2}1F`);
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
   ctx.globalAlpha = 1;
 };
 
-/** 10. Bokeh — 46 large soft discs rising with lateral drift. */
-const bokeh: Effect = ({ ctx, w, h, p, t, boost }, cache) => {
-  if (!cache.parts || cache.parts.length !== 46) {
-    cache.parts = seed(w, h, 46).map((s) => ({ ...s, r: Math.random() * 90 + 22 }));
+/**
+ * 10. Bokeh — out-of-focus lights rising through the frame.
+ *
+ * **Size is derived from depth, not rolled separately.** `seed()` sets `r` and
+ * the old `.map()` then overwrote it with an independent random, so a 110px
+ * disc was exactly as likely to be the slowest, dimmest, furthest one as the
+ * nearest. Depth of field's whole logic — nearer light, larger circle of
+ * confusion, flatter profile, more parallax, lower peak brightness — was severed
+ * at the first joint, and the effect's name was a promise it did not keep.
+ *
+ * **And the profile is an aperture, not a glow.** Every disc used the identical
+ * ramp from 27% alpha at the centre to nothing at the rim, regardless of size —
+ * which is a gaussian blob, the most templated thing available. Real bokeh is a
+ * nearly *flat* disc with a bright rim, because what you are looking at is the
+ * shape of the aperture. The plateau widens with depth, so far lights stay
+ * soft points and near ones become flat coins.
+ */
+const bokeh: Effect = ({ ctx, w, h, p, t, boost, mx, my }, cache) => {
+  const n = Math.round(Math.min(60, Math.max(20, (w * h) / 28000)));
+  const parts = field(cache, w, h, n, (s) => ({
+    ...s,
+    r: 16 + s.z * 82,
+    // Phase from its own random rather than from `r`: keyed to the radius, the
+    // sway phase changed whenever the size rule was touched.
+    vx: Math.random() * TAU,
+  }));
+  // Far discs first, so near ones occlude them rather than the seed order
+  // deciding. Sorted once per build, not per frame — `z` never changes. The
+  // guard compares against `partsBox` by identity: `field()` makes a fresh box
+  // object on every rebuild, so a resize re-sorts and a steady state does not.
+  if (cache.bokehSorted !== cache.partsBox) {
+    parts.sort((a, b) => a.z - b.z);
+    cache.bokehSorted = cache.partsBox;
   }
-  for (const s of cache.parts) {
-    s.y -= (0.22 + s.z * 0.3) * boost;
-    s.x += Math.sin(t + s.r) * 0.28;
+
+  for (const s of parts) {
+    s.y -= (0.09 + s.z * 0.52) * boost;
+    // `boost` was missing here while the rise had it, so on a 120Hz display the
+    // sway ran at double speed relative to the climb and the two decoupled.
+    s.x += Math.sin(t * 0.7 + s.vx) * 0.31 * boost;
     if (s.y < -s.r) {
       s.y = h + s.r;
       s.x = Math.random() * w;
     }
-    const col = s.z > 0.7 ? p.a1 : s.z > 0.4 ? p.a2 : p.a3;
-    const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, s.r);
-    g.addColorStop(0, `${col}44`);
+
+    // Parallax: near discs slide under the pointer, far ones barely move.
+    // Applied at draw time so it never accumulates into the stored position.
+    const px = s.x + (mx - 0.5) * s.z * 34;
+    const py = s.y + (my - 0.5) * s.z * 22;
+
+    const col = s.z > 0.85 ? p.a1 : s.z > 0.55 ? p.a2 : p.a3;
+    // Peak alpha falls as the disc grows — the same light spread over more area.
+    const peak = Math.round(Math.min(255, 2900 / s.r));
+    const hex = peak.toString(16).padStart(2, "0");
+    const rim = Math.min(255, Math.round(peak * 1.8))
+      .toString(16)
+      .padStart(2, "0");
+    const flat = 0.3 + s.z * 0.52;
+
+    const g = ctx.createRadialGradient(px, py, 0, px, py, s.r);
+    g.addColorStop(0, `${col}${hex}`);
+    g.addColorStop(flat, `${col}${hex}`);
+    g.addColorStop(flat * 0.985 + 0.015, `${col}${rim}`);
     g.addColorStop(1, `${col}00`);
     ctx.fillStyle = g;
+    // Weighted outward, as every depth-of-field photograph is: the subject is
+    // in the middle, and here the subject is the body copy.
+    const d = Math.hypot((px - w / 2) / w, (py - h / 2) / h) * 2;
+    ctx.globalAlpha = 0.5 + Math.min(1, d) * 0.5;
     ctx.beginPath();
-    ctx.arc(s.x, s.y, s.r, 0, TAU);
+    ctx.arc(px, py, s.r, 0, TAU);
     ctx.fill();
   }
+  ctx.globalAlpha = 1;
 };
 
-/** 11. Orbits — seven rings, each with a lit body, speed inverse to radius. */
-const orbits: Effect = ({ ctx, w, h, p, t }) => {
-  const cx = w / 2;
-  const cy = h / 2;
-  for (let i = 1; i <= 7; i++) {
-    const r = i * Math.min(w, h) * 0.062;
-    ctx.strokeStyle = p.line;
-    ctx.globalAlpha = 0.5;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, TAU);
-    ctx.stroke();
-    const ang = t * (1.4 / i) + i;
-    const x = cx + Math.cos(ang) * r;
-    const y = cy + Math.sin(ang) * r;
-    ctx.globalAlpha = 0.9;
+/** How far the orbital plane is squashed vertically — a system seen near edge-on. */
+const ORBIT_TILT = 0.34;
+/** And rolled, so it is not axis-aligned either. */
+const ORBIT_ROLL = 0.14;
+
+/**
+ * 11. Orbits — a system of bodies on a shared plane.
+ *
+ * Three separate uniformity failures met here, and together they made a
+ * dartboard rather than a system.
+ *
+ * Radii were `i * min(w,h) * 0.062` — a perfect arithmetic progression, seven
+ * rings at identical spacing in identical `line` at identical alpha and width.
+ * Periods were `t * (1.4 / i)`, so every body's period was an exact whole
+ * multiple of the innermost: the most resonant ratio set available, producing
+ * rhythmic mass conjunctions and returning the entire system to its starting
+ * configuration every 47.6 seconds. And bodies grew *larger and brighter with
+ * radius*, so the loudest object was the slowest one, contradicting the depth
+ * the falling speeds were asserting.
+ *
+ * Now: one tilted, rolled plane; radii on a power curve; `i^1.47` periods,
+ * detuned off the physical 1.5 exactly so no two bodies are ever commensurate;
+ * bodies that shrink with distance; and a primary at the focus for them to
+ * orbit. Bodies on the far half of the plane are dimmed and drawn *before* the
+ * rings, so the system occludes itself — the one depth cue that cannot be faked.
+ */
+const orbits: Effect = ({ ctx, w, h, p, t, beat, mx, my }) => {
+  const cx = w * 0.5 + (mx - 0.5) * w * 0.03;
+  // Up out of the vignette's fade: at h/2 the outer rings were being erased
+  // while the clear band at the top of the frame held nothing at all.
+  const cy = h * 0.42 + (my - 0.5) * h * 0.03;
+  const rc = Math.cos(ORBIT_ROLL);
+  const rs = Math.sin(ORBIT_ROLL);
+
+  const place = (i: number) => {
+    const r = Math.min(w, h) * 0.062 * Math.pow(i, 1.22);
+    const ang = t * (1.4 / Math.pow(i, 1.47)) + i;
+    const ox = Math.cos(ang) * r;
+    const oy = Math.sin(ang) * r * ORBIT_TILT;
+    return {
+      r,
+      ang,
+      x: cx + ox * rc - oy * rs,
+      y: cy + ox * rs + oy * rc,
+      far: Math.sin(ang) < 0,
+    };
+  };
+
+  const body = (i: number, dim: boolean) => {
+    const q = place(i);
     ctx.fillStyle = [p.a1, p.a2, p.a3][i % 3];
+    ctx.globalAlpha = dim ? 0.38 : 0.95;
     ctx.beginPath();
-    ctx.arc(x, y, 3.4 + i * 0.5, 0, TAU);
+    ctx.arc(q.x, q.y, Math.max(1.6, 4.4 - i * 0.34), 0, TAU);
     ctx.fill();
-    ctx.globalAlpha = 0.3;
+    ctx.globalAlpha = dim ? 0.08 : 0.26;
     ctx.beginPath();
-    ctx.arc(x, y, 12 + i, 0, TAU);
+    ctx.arc(q.x, q.y, Math.max(3, 13 - i * 0.9), 0, TAU);
     ctx.fill();
+  };
+
+  // Far bodies, then the rings over them, then near bodies over the rings.
+  for (let i = 1; i <= 7; i++) if (place(i).far) body(i, true);
+
+  for (let i = 1; i <= 7; i++) {
+    const q = place(i);
+    // The field fades outward instead of stopping at a hard seventh ring, and
+    // the outer rings drop to `faint` so they recede rather than tie.
+    ctx.strokeStyle = i > 4 ? p.faint : p.line;
+    ctx.globalAlpha = 0.62 - i * 0.06;
+    ctx.lineWidth = i < 3 ? 1.2 : 1;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, q.r, q.r * ORBIT_TILT, ORBIT_ROLL, 0, TAU);
+    ctx.stroke();
+
+    // A short trail behind each body, on its own ring. Motion becomes legible
+    // without adding a single particle.
+    ctx.strokeStyle = [p.a1, p.a2, p.a3][i % 3];
+    ctx.globalAlpha = 0.28;
+    ctx.lineWidth = 2.4;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, q.r, q.r * ORBIT_TILT, ORBIT_ROLL, q.ang - 0.55, q.ang);
+    ctx.stroke();
   }
+
+  // The focus. Seven orbits need something to orbit, and this is where `beat`
+  // belongs — the one object in the system entitled to a pulse.
+  ctx.fillStyle = p.fg;
+  ctx.globalAlpha = 0.1 + beat * 0.05;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 26 + beat * 9, 0, TAU);
+  ctx.fill();
+  ctx.fillStyle = p.a1;
+  ctx.globalAlpha = 0.85;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 5.5, 0, TAU);
+  ctx.fill();
+
+  for (let i = 1; i <= 7; i++) if (!place(i).far) body(i, false);
   ctx.globalAlpha = 1;
 };
 
