@@ -760,8 +760,28 @@ zero visible gain, exactly as the de-branding decided for `.vessel` and the stor
 **The verbatim-only rule is retired (2026-08-15).** The client's instruction: *"make this whole
 site's text content understandable by the non tech-savvy… my mum said what the fuck does this all
 mean, and my grandma would know even less."* Home, About, Work, Gallery, Contact, Now, Guestbook,
-the 404 and the greeting dialog were rewritten for comprehension. `scams` and `setup` are still
-pending that pass.
+the 404 and the greeting dialog were rewritten for comprehension.
+
+**`scams` was assessed and deliberately left almost alone — do not "finish" it.** By the numbers it
+looks like the worst page (grade 7.6, the site's highest) and it is the best written for its
+audience: zero sentences over thirty words, and every technical term explained in place at the
+moment it appears ("Event Viewer — every Windows PC on earth is permanently full of red and yellow
+warnings"). Those terms cannot be simplified away, because recognising them *is* the defence. Its
+register is already set flatter than the house voice on purpose. Two words changed: `CRA` spelled
+out in both places.
+
+**`/setup` puts the scam warning *above* the software, and that ordering is a safety decision, not
+a layout one.** The page teaches somebody to install remote-access software and hand control of
+their screen to a voice on the telephone — exactly what a scam call is trying to achieve. Someone
+being talked through it by a criminal is following steps, not browsing, so the warning has to be in
+front of the steps; anyone who reads to the bottom was never the one at risk. Do not move it back
+down for visual balance.
+
+**Naming the nationalities of scam callers was proposed by the client and declined**, with their
+own invitation ("if bad idea dont add"). The reasoning is in `docs/DECISIONS.md` and the short
+version is that it hands the reader a test that produces both false passes and false failures —
+accent is not who started the call, and *who started the call* is the entire defence the page
+teaches. If it comes up again, the useful version is that the accent tells you nothing either way.
 
 **What the rewrite was and was not.** It was not a reading-level problem — measured across all 86
 body blocks the mean Flesch–Kincaid grade was **5.0** and there was not one dictionary jargon word.

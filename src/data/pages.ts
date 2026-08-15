@@ -305,7 +305,10 @@ export const PAGES: Record<PageId, Page> = {
   setup: {
     eyebrow: "before the callout",
     title: "Let me look from here.",
-    lede: "A good half of what goes wrong doesn't need me in the room. Set one of these up and I can see the machine from mine — same fix, no drive, no afternoon spent waiting in.",
+    // "no drive" → "no driving" (2026-08-15). On a computer repair site "no
+    // drive" reads first as *hard* drive, which is the one word on the page
+    // that could be misread as being about the machine rather than the journey.
+    lede: "A good half of what goes wrong doesn't need me in the room. Set one of these up and I can see the machine from mine — same fix, no driving, no afternoon spent waiting in for someone.",
     // One CTA, like Contact's. Two buttons pointing at the same page is a wart,
     // and everything here funnels to the same place anyway: email first.
     ctas: [{ label: "Tell me what's wrong first →", to: "contact", primary: true }],
@@ -313,7 +316,33 @@ export const PAGES: Record<PageId, Page> = {
       {
         kicker: "first",
         title: "Ask before you install anything",
-        body: "Say what the machine is doing and I'll tell you whether remote is any use. A computer that won't turn on, a drive that's stopped spinning, anything that smells hot — that needs hands and a bench. This page is for the rest of it, which is most of it.",
+        body: "Tell me what the machine is doing and I'll tell you whether looking at it from here is any use at all. A computer that won't turn on, a hard drive that has stopped working, anything that smells hot — that needs hands and a workbench. This page is for everything else, which is most of it.",
+      },
+      /*
+       * MOVED UP 2026-08-15 at the client's request — "list software closer to
+       * the disclaimer". It was the last block on the page, three blocks below
+       * the tools it is about.
+       *
+       * It sits *above* the instructions rather than merely beside them, and
+       * that is the whole point of moving it. This page teaches somebody to
+       * install remote-access software and hand control of their screen to a
+       * voice on the phone, which is precisely the thing a scammer spends a call
+       * trying to achieve. A person already being talked through it by a
+       * criminal is following steps, not browsing — so the warning has to be in
+       * front of the steps, not after them. Anyone who reads to the bottom was
+       * never the one at risk.
+       */
+      {
+        kicker: "before any of it",
+        title: "If they rang you, it's a scam",
+        body: "Microsoft does not phone people. Neither does your bank's security department, nor anyone who has found a virus on a computer they have never seen. They will talk you into installing exactly the kind of program this page describes — the same programs, by name. The one difference that matters is who started it: you rang me.",
+        hasList: true,
+        items: [
+          "Hang up — you don't owe them the rest of the call",
+          "Don't install anything they name, however official it sounds",
+          "If you already did, unplug the network cable or turn off the wifi, then ring me",
+          "Nobody legitimate asks to be paid in gift cards. Nobody. Ever",
+        ],
       },
       {
         kicker: "windows",
@@ -336,14 +365,14 @@ export const PAGES: Record<PageId, Page> = {
       {
         kicker: "if it's regular",
         title: "Tailscale, for machines I look after",
-        body: "Worth ten minutes if I'm in your machine more than once. It builds a private link between your computer and mine — nothing else on the internet can reach it, and it survives reboots, so neither of us sets it up again.",
+        body: "Worth the ten minutes if I end up looking at your machine more than once. It builds a private connection between your computer and mine that nothing else on the internet can reach, and it keeps working after the computer is restarted, so neither of us has to set it up a second time.",
         hasList: true,
         items: [
           "Install it from the Tailscale website on that machine",
           "Sign in with an account you already have",
           "Tell me the name it gives the machine",
-          "Screen sharing then runs inside that private link, not out in the open",
-          "Free, for the amount of it we need",
+          "Screen sharing then happens inside that private connection, not out in the open",
+          "Free, for the small amount of it we would use",
         ],
       },
       {
@@ -355,18 +384,6 @@ export const PAGES: Record<PageId, Page> = {
         kicker: "turning it off",
         title: "Whenever you feel like it",
         body: "Quick Assist ends when you close the window. Tailscale uninstalls like any other program, and taking it off the machine takes my way in with it. You don't have to tell me first.",
-      },
-      {
-        kicker: "the warning",
-        title: "If they rang you, it's a scam",
-        body: "Microsoft does not phone people. Neither does your bank's security department, nor anyone who has found a virus on a computer they have never seen. They will talk you into installing exactly the kind of tool this page describes. The difference is that you rang me.",
-        hasList: true,
-        items: [
-          "Hang up — you don't owe them the rest of the call",
-          "Don't install anything they name, however official it sounds",
-          "If you already did, unplug the network cable or turn off the wifi, then ring me",
-          "Nobody legitimate asks for gift cards. Nobody. Ever",
-        ],
       },
     ],
   },
@@ -443,7 +460,7 @@ export const PAGES: Record<PageId, Page> = {
         "If money has already moved, ring your bank now, from the number on your card"
       ] },
       { kicker: "say it again", title: "They will never call you. Not once, not ever.", body: "Microsoft will not ring you. Windows will not ring you. Norton, McAfee, Amazon, PayPal, Apple, Geek Squad and your internet provider will not ring you about a virus, an error, a refund or a renewal. There is no department anywhere that watches your computer and telephones you about it \u2014 that department does not exist. Your bank is the one exception worth mentioning, because a bank genuinely may ring about a suspicious payment. It changes nothing: hang up and ring the number on the back of your card. A real bank will be glad you did. A scammer will do everything they can to stop you." },
-      { kicker: "to be absolutely clear", title: "None of these companies are doing this", body: "Every company named on this page is named because scammers pretend to be them. Every program named is real, legitimate software that scammers talk people into installing. Microsoft, Amazon, Norton, McAfee, PayPal, Apple, the banks and the CRA are not doing any of this, and neither are the makers of any tool listed here. What is described below is how criminals impersonate them \u2014 nothing else." },
+      { kicker: "to be absolutely clear", title: "None of these companies are doing this", body: "Every company named on this page is named because scammers pretend to be them. Every program named is real, legitimate software that scammers talk people into installing. Microsoft, Amazon, Norton, McAfee, PayPal, Apple, the banks and the Canada Revenue Agency are not doing any of this, and neither are the makers of any tool listed here. What is described below is how criminals impersonate them \u2014 nothing else." },
       { kicker: "the tell that costs them the most", title: "They will lose their temper. A real company never does.", loud: true, body: "This is the single most reliable signal on this page. It starts small \u2014 a sigh, a bit of tutting \u2014 and it arrives the moment you stop doing exactly what you are told. No employee of any real company behaves like this, because no real company has anything to gain from it. If you catch yourself thinking \"they are getting annoyed with me\", that is your answer. Hang up.", hasList: true, items: [
         "Sighing, groaning, tutting, or that long exasperated breath down the phone",
         "\"Ma'am. Ma'am. MA'AM.\" \u2014 talking over you, or repeating a line louder instead of answering it",
@@ -468,7 +485,7 @@ export const PAGES: Record<PageId, Page> = {
         "Norton, McAfee or another antivirus, usually about a renewal you never signed up for",
         "Amazon, PayPal or Apple, about a purchase or a refund",
         "Your bank's fraud department, ringing to \"protect\" your account",
-        "The CRA, about a refund, a debt, or a warrant",
+        "The Canada Revenue Agency, about a refund, a debt, or a warrant",
         "Geek Squad or a big-box store's support desk",
         "Your internet provider, about a problem with your connection",
         "A grandchild, a nephew, or a police officer ringing on their behalf"

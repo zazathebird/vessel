@@ -14,6 +14,80 @@ file records what happened to the codebase.
 ---
 
 
+## 2026-08-15 (later) — the plain-English pass, and one addition declined
+
+Client: *"make this whole site's text content understandable by the non
+tech-savvy. I understand it all but my mum said what the fuck does this all
+mean. and my grandma would know even less."*
+
+**Measuring first changed what the job was.** Across all 86 body blocks the mean
+Flesch–Kincaid grade is **5.0** and there is not one dictionary jargon word on
+the site. It was never a reading-level problem, so "use simpler words" would
+have been work with no effect. The copy was *allusive* — short, plain-worded,
+and pointing at something it never named. "Built like a flight simulator, used
+like a business card." "Assembled in your browser so the scrapers don't get it."
+"Two cold joints." "Array resilvering." "/var/www/whatever_you_wanted → exists =
+false." The rule that came out of it: **name the thing, then make the joke about
+it**, and never sand off the voice — the self-deprecation is the point, so the
+flight-simulator line became "This website is far more elaborate than the job
+actually needs, which should tell you where the spare time goes." Same joke,
+same register, now it lands.
+
+Rewritten: home, about, work, gallery, contact, now, guestbook, the 404 and the
+greeting dialog. The pricing block is the load-bearing one — see `CLAUDE.md`.
+
+**The scams page was assessed and deliberately left almost alone**, which is
+worth recording so the next session does not churn it. It looked like the worst
+page by the numbers (grade 7.6, the highest on the site) and is in fact the best
+written for its audience: **zero sentences over thirty words**, and every
+technical term explained in place at the moment it is used — "Event Viewer —
+every Windows PC on earth is permanently full of red and yellow warnings", "The
+netstat command, presented as *look at all these foreign connections*". The
+terms cannot be removed because recognising them *is* the defence. Its register
+was already set flatter than the house voice on purpose. Two words changed:
+`CRA` spelled out to Canada Revenue Agency in both places.
+
+**`/setup`: the warning moved above the software, not merely nearer it** (client:
+"list software closer to the disclaimer"). It was the last of seven blocks,
+three below the tools it is about. It is now the second, directly above Quick
+Assist. The distinction matters: this page teaches somebody to install
+remote-access software and hand control of their screen to a voice on the
+telephone, which is exactly what a scammer spends a call trying to achieve. A
+person being talked through it by a criminal is following steps, not browsing —
+so the warning has to be in front of the steps. Anyone who reads to the bottom
+of the page was never the one at risk. Also `no drive` → `no driving` in the
+lede: on a computer repair site "no drive" reads first as *hard* drive.
+
+**Declined: naming the nationalities of scam callers.** The client offered it
+with "if bad idea dont add", so this is the reasoning rather than a refusal.
+
+- **It hands the reader a false test.** The page's whole defence is *who started
+  the call*, which is a fact the reader always has. Accent is not: domestic
+  call centres and spoofed local numbers exist, voice cloning is cheap, and a
+  scammer who sounds local would sail straight through a filter built on
+  accent. It would also aim suspicion at the large number of legitimate support
+  staff who work from those same countries. A test that produces both false
+  passes and false failures is worse than no test, on the one page where being
+  wrong costs somebody their savings.
+- **The claim is partly wrong as stated.** Jamaica's association is with
+  lottery and advance-fee fraud rather than tech support; Chinese-language
+  operations targeting diaspora communities are substantial rather than rare.
+  Publishing it as fact on a commercial site invites the correction.
+- **It changes how everything else on the page reads.** The page works because
+  it is specific, calm and practical, and it is the client's own reason for
+  building it — "if it helps even one grandparent not get scammed". One line of
+  ethnic profiling is the line that gets screenshotted, and it would be
+  screenshotted next to their real domain name.
+
+The intent behind it is real and is worth keeping, so it is served in the way
+that actually helps: the page already says the tell is who rang whom, and the
+*"they will lose their temper"* block gives a behavioural signal that works
+regardless of who is on the phone. If the client still wants the overseas
+element stated, the useful and true version is that it is a call-centre
+industry, frequently overseas, **and that the accent tells you nothing either
+way** — which inoculates against the false test rather than teaching it.
+
+
 ## 2026-08-15 — two fights at once, and the guardrail that could not have caught it
 
 Client: *"when in landscape mode on mobile, there are two fights going at the
