@@ -58,14 +58,29 @@ export function Footer() {
             </button>
           </>
         ) : null}
-        <button
-          type="button"
+        {/*
+          The door's sixth route, and a pointer-only easter egg on purpose.
+
+          It was a `<button aria-label="operator access">`, which announced the
+          existence of a hidden route to every screen reader that reached the
+          footer — the one thing the client asked the site not to do ("no hints
+          that hidden routes exist"). It also put an 8×14 control in the tab
+          order between two real footer links, so a keyboard user landed on a
+          button that names a door and, for anyone who is not the operator,
+          does nothing at all when pressed.
+
+          Same resolution as the ornament's five taps, for the same reason:
+          keyboard users are not locked out, because typing `sudo` is still a
+          route and is the tellable one. A decorative mark should not advertise
+          itself to the tab order.
+        */}
+        <span
           className="v-footer-dot"
-          aria-label="operator access"
+          aria-hidden="true"
           onClick={() => openDoor("the footer dot")}
         >
           ·
-        </button>
+        </span>
       </div>
 
       <span>last fiddled with · aug 2026 · {clock}</span>
