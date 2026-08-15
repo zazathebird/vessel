@@ -6,7 +6,7 @@ import type { Config } from "./types";
 /**
  * Share codes: base-36 fields joined by hyphens, uppercased.
  * palette · layout · effect · type · toggle bitfield · ornament.
- * Bitfield: 1 grain, 2 breathing, 4 cursor glow, 8 calm, 16 sound.
+ * Bitfield: 1 grain, 2 breathing, 4 cursor glow, 8 calm, 16 sound, 32 slot labels.
  * e.g. "A-3-1-0-7-1".
  *
  * The ornament was added after codes were already in circulation, so it goes
@@ -26,6 +26,15 @@ const BREATHE = 2;
 const CURSOR = 4;
 const CALM = 8;
 const SOUND = 16;
+/**
+ * Tile slot captions ("4:5 · photo slot"), off by default (2026-08-14).
+ *
+ * **No inversion needed here, unlike a default-on boolean would need.** Every
+ * code already in circulation has bit 32 clear, and clear must mean *hidden* —
+ * which is exactly the default the client asked for. A default-on flag would
+ * have had to be stored inverted for the same reason.
+ */
+const SLOTS = 32;
 
 export function encodeShareCode(config: Config): string {
   const layout = LAYOUTS.findIndex((l) => l.id === config.layout);
@@ -35,7 +44,8 @@ export function encodeShareCode(config: Config): string {
     (config.breathe ? BREATHE : 0) +
     (config.cursor ? CURSOR : 0) +
     (config.calm ? CALM : 0) +
-    (config.sound ? SOUND : 0);
+    (config.sound ? SOUND : 0) +
+    (config.slots ? SLOTS : 0);
   const ornament = ORNAMENTS.findIndex((o) => o.id === config.ornament);
   return [config.pal, layout, fx, config.type, bits, ornament]
     .map((n) => Math.max(0, n).toString(36))
@@ -46,7 +56,17 @@ export function encodeShareCode(config: Config): string {
 /** The subset of config a code carries. Applying one also forces mode to Static. */
 export type SharedConfig = Pick<
   Config,
-  "pal" | "layout" | "fx" | "type" | "grain" | "breathe" | "cursor" | "calm" | "sound" | "mode"
+  | "pal"
+  | "layout"
+  | "fx"
+  | "type"
+  | "grain"
+  | "breathe"
+  | "cursor"
+  | "calm"
+  | "sound"
+  | "slots"
+  | "mode"
 > &
   Partial<Pick<Config, "ornament">>;
 
@@ -74,6 +94,7 @@ export function decodeShareCode(input: string): SharedConfig | null {
     cursor: !!(bits & CURSOR),
     calm: !!(bits & CALM),
     sound: !!(bits & SOUND),
+    slots: !!(bits & SLOTS),
     mode: "static",
   };
 }

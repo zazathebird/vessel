@@ -355,6 +355,21 @@ export function SiteConfigPanel() {
           >
             Sound
           </button>
+          {/*
+            Operator-only, and the only control here whose *audience* is the
+            operator rather than the visitor: it prints each tile's slot notes
+            ("4:5 · photo slot") on the page, which is useful while the real
+            photographs are still going in and is production furniture to
+            anybody else. Default off — see `Config.slots`.
+          */}
+          <button
+            type="button"
+            className={`chip${config.slots ? " is-active" : ""}`}
+            aria-pressed={config.slots}
+            onClick={() => update({ slots: !config.slots })}
+          >
+            Slot labels
+          </button>
           <button
             type="button"
             className={`chip${config.calm ? " is-active" : ""}`}

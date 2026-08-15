@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 import { useConfig } from "../config/ConfigContext";
 import { PALETTES } from "../data/palettes";
 import { drawFx } from "./effects";
+import { TIERS, saveTier, storedTier } from "./perf";
 import type { FxCache } from "./effects";
 import { motion } from "./motion";
 
@@ -85,7 +86,11 @@ export function FxCanvas() {
    * below 12ms — so a machine sitting near the boundary settles instead of
    * oscillating, which would be far more visible than the lower resolution.
    */
-  const quality = useRef(1);
+  // Starts from the remembered measurement rather than optimistically at 1 —
+  // see `src/fx/perf.ts`. A slow machine otherwise spends its first seconds at
+  // full resolution finding out it cannot afford full resolution, and those are
+  // the seconds a first-time visitor is looking at.
+  const quality = useRef(storedTier() ?? 1);
   const refit = useRef<(() => void) | null>(null);
 
   const live = useRef({ fx: config.fx, pal: config.pal, calm: config.calm, saver });
@@ -142,7 +147,6 @@ export function FxCanvas() {
     let sampled = 0;
     let sampleMs = 0;
     let sinceChange = 0;
-    const TIERS = [1, 0.75, 0.5];
 
     const step = () => {
       raf = requestAnimationFrame(step);
@@ -166,23 +170,43 @@ export function FxCanvas() {
         sampleMs += frameMs;
         sampled += 1;
       }
+      /*
+       * **Falling is urgent; rising is not.** The two directions get
+       * deliberately different evidence bars.
+       *
+       * A drop needs only 20 sampled frames — about a third of a second — so a
+       * machine that cannot hold the frame stops being asked to within a
+       * blink. The old window was 90 samples plus a 180-frame cooldown, which
+       * on a machine running at 20fps is several seconds of visible stutter
+       * before anything is done about it, and those seconds are the whole
+       * complaint. A promotion still needs 150 samples and a long cooldown,
+       * because a tier change reallocates the buffer and a detector that
+       * flapped between two tiers would cost more than the effect.
+       */
       sinceChange += 1;
-      if (sampled >= 90 && sinceChange >= 180) {
+      const enough = sampled >= 20 && sinceChange >= 40;
+      if (enough) {
         const avg = sampleMs / sampled;
         const tier = TIERS.indexOf(quality.current);
-        // 21ms is a hair under 48fps — comfortably past "smooth" without
-        // reacting to a machine that is merely not a gaming rig.
-        if (avg > 21 && tier < TIERS.length - 1) {
+        // 19ms is a hair over 52fps. Anything slower than that is visible.
+        if (avg > 19 && tier < TIERS.length - 1) {
           quality.current = TIERS[tier + 1];
+          saveTier(quality.current);
           refit.current?.();
           sinceChange = 0;
-        } else if (avg < 12 && tier > 0) {
+          sampled = 0;
+          sampleMs = 0;
+        } else if (avg < 11 && tier > 0 && sampled >= 150 && sinceChange >= 300) {
           quality.current = TIERS[tier - 1];
+          saveTier(quality.current);
           refit.current?.();
           sinceChange = 0;
+          sampled = 0;
+          sampleMs = 0;
+        } else if (sampled >= 150) {
+          sampled = 0;
+          sampleMs = 0;
         }
-        sampled = 0;
-        sampleMs = 0;
       }
 
       const canvas = canvasRef.current;

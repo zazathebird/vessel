@@ -63,6 +63,7 @@ export function loadConfig(): Config {
       ...DEFAULT_CONFIG,
       calm: storedCalm() ?? DEFAULT_CONFIG.calm,
       sound: storedSound() ?? DEFAULT_CONFIG.sound,
+      slots: DEFAULT_CONFIG.slots,
     };
   }
   const saved = raw as Partial<Record<keyof Config, unknown>>;
@@ -101,6 +102,9 @@ export function loadConfig(): Config {
     breathe: bool(saved.breathe, DEFAULT_CONFIG.breathe),
     cursor: bool(saved.cursor, DEFAULT_CONFIG.cursor),
     sound: storedSound() ?? bool(saved.sound, DEFAULT_CONFIG.sound),
+    // Appearance, so published-only: it is the operator's note to themselves,
+    // not a preference a visitor can express.
+    slots: bool(saved.slots, DEFAULT_CONFIG.slots),
     unlocked: bool(saved.unlocked, DEFAULT_CONFIG.unlocked),
   };
 }

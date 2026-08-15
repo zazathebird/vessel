@@ -39,6 +39,21 @@ export interface Config {
    */
   sound: boolean;
   /**
+   * Show the tile slot captions ("4:5 · photo slot", "video · muted loop").
+   *
+   * **Off, and off is the point** (client, 2026-08-14: "the labels for photos
+   * and vids… remove em. they can see its a pic. they dont need to see photo
+   * slot. video slot. JUST show the damn photo"). They were production notes —
+   * aspect ratios and slot types — printed on the page for a visitor who did
+   * not commission the layout and cannot change it.
+   *
+   * Kept as a setting rather than deleted because the captions are genuinely
+   * useful to the operator while the real photographs are still going in: they
+   * say what each slot is *for*. Operator-only, like every other appearance
+   * control, so a visitor never sees them.
+   */
+  slots: boolean;
+  /**
    * Has the operator door been opened in this session. Not persisted and not
    * published, so it is false again after every reload — `loadConfig` reads the
    * published config only, and `unlocked` is not one of its keys. Nothing is
@@ -61,6 +76,7 @@ export const DEFAULT_CONFIG: Config = {
   breathe: true,
   cursor: true,
   sound: false, // a site that makes noise uninvited is a site people leave
+  slots: false, // production notes are for the operator, not the visitor
 
   unlocked: false,
 };

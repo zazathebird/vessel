@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Dialog } from "./Dialog";
 import { useConfig } from "../config/ConfigContext";
 import { hasBeenGreeted, markGreeted } from "../config/persistence";
+import { calibrateOnce } from "../fx/perf";
 
 /**
  * The first-visit greeting (client request, 2026-08-14).
@@ -40,6 +41,19 @@ export function Greeting() {
   }, []);
 
   const dismiss = () => {
+    /*
+     * The button is also the capability probe, and says nothing about it
+     * (client, 2026-08-14: "just have it linked to clicking ok" and "dont say
+     * the site is going to do it").
+     *
+     * A user gesture is the right moment: the machine is idle, a few
+     * milliseconds are invisible behind a closing dialog, and the result is
+     * ready before the first scroll. `calibrateOnce` no-ops if a measurement
+     * is already stored, so this costs a returning visitor nothing — and the
+     * continuous sampling in `FxCanvas` is still the authority either way.
+     * This only decides where it starts.
+     */
+    calibrateOnce();
     // Marked on dismiss, not on show: a visitor who closes the tab during the
     // 1.2s wait has not been greeted, and should be next time.
     markGreeted();
