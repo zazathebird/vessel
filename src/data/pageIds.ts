@@ -38,10 +38,24 @@ export const NAV: { id: PageId; label: string }[] = [
   // one that does not. It also appears in `FOOTER_NAV`, so it is reachable at
   // the top and the bottom of every page on the site.
   { id: "scams", label: "Scams" },
+  /*
+   * Third, moved up from sixth (2026-08-16).
+   *
+   * The argument is the one Scams already made two pills to the left, applied
+   * to the page the spec calls *the only page with a job*: the phone nav is a
+   * horizontal scroller, sixth of seven is behind a swipe, and Contact being
+   * behind a swipe is the site failing at the single thing it is actually for.
+   * Home's primary CTA does point here, but that only helps a visitor who is
+   * standing on Home — from any of the other six pages the nav was the route,
+   * and on a phone it was a hidden one.
+   *
+   * Scams keeps second on its own reasoning, which outranks this: somebody
+   * mid-scam needs it faster than somebody with a broken laptop needs me.
+   */
+  { id: "contact", label: "Contact" },
   { id: "about", label: "About" },
   { id: "work", label: "Work" },
   { id: "gallery", label: "Gallery" },
-  { id: "contact", label: "Contact" },
   { id: "guestbook", label: "Guestbook" },
 ];
 

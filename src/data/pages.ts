@@ -92,7 +92,25 @@ export interface Page {
 
 export const PAGES: Record<PageId, Page> = {
   home: {
-    eyebrow: "pressure nominal",
+    /*
+     * Was "pressure nominal" (2026-08-16). It was instrument flavour on the
+     * three words a stranger reads before anything else on the site, and it is
+     * exactly the failure the 2026-08-15 rewrite was aimed at: short,
+     * plain-worded, and telling the reader nothing. Every other content page's
+     * eyebrow already names what the page is — "selected repairs", "the useful
+     * page", "before the callout", "read this before you call anyone" — and
+     * home was the one that did not, on the page that most needed to.
+     *
+     * It loses a private rhyme with the 404's "pressure lost · http 404",
+     * which **stays**: that one pairs the flavour with its own translation, so
+     * it reads as a joke rather than as a readout, and by the time anyone sees
+     * it they already know what the site is. Roughly nobody sees both and
+     * connects them; everybody sees this one first.
+     *
+     * "one guy" rather than anything grander is the house voice, and the same
+     * joke the third block lands with "No AI, just a guy".
+     */
+    eyebrow: "computer repair · one guy",
     title: "Oh. It's you.",
     lede: "There is no product here, no newsletter, no funnel, and nothing measuring you. The domain was already paid for, so this exists. If you need a machine fixed, contact is one click away and is the only genuinely useful part of it.",
     ctas: [
@@ -198,7 +216,12 @@ export const PAGES: Record<PageId, Page> = {
   gallery: {
     eyebrow: "dumping ground",
     title: "Random shit, catalogued.",
-    lede: "Broken hardware, odd photographs, and the inside of a cable drawer. The pictures only load as you reach them, and anything the camera recorded about where they were taken has been stripped out.",
+    // "The pictures only load as you reach them" was lazy-loading — a fact
+    // about how the site is built, told to somebody who did not commission it
+    // and cannot act on it, which is the thing the client asked to be gone
+    // (2026-08-16). The second clause stays: where a photograph was taken is a
+    // privacy claim about the photographs, which is the reader's business.
+    lede: "Broken hardware, odd photographs, and the inside of a cable drawer. Anything the camera recorded about where these were taken has been stripped out.",
     ctas: [{ label: "Contact instead", to: "contact" }],
     blocks: [
       { kicker: "photo", title: "A laptop taken completely apart", body: "Every screw laid out in the order it came out. It all went back together.", hasTile: true, tile: "4:5 · photo slot", img: "/photos/thinkpad-exploded.jpg", imgAlt: "A laptop opened on a wooden bench, battery and mainboard exposed, screwdrivers alongside" },
@@ -271,7 +294,23 @@ export const PAGES: Record<PageId, Page> = {
       // "Rough quote back, free" is untouched and still true — a rough estimate
       // from an emailed description is not a diagnosis, and it is the one thing
       // in this flow that genuinely costs nothing.
-      { kicker: "how it works", title: "Three steps", body: "", hasList: true, items: ["You email me what is wrong", "I reply with a rough price — that part costs nothing", "You pay the $150, and I get started"] },
+      /*
+       * The body carries the two numbers, and it is here because **step three
+       * says "the $150" and Contact cannot assume the reader has seen home**
+       * (2026-08-16). This is the destination of the primary call to action on
+       * home, on scams and on setup, it is third in the nav, and it is the page
+       * people bookmark and come back to — so arriving cold and meeting a
+       * definite article in front of a number that appears nowhere else on the
+       * page is the common case, not the edge one.
+       *
+       * It repeats the "not a deposit" wording from home's rate block on
+       * purpose. `CLAUDE.md` calls that sentence load-bearing because the wrong
+       * reading of it becomes an argument when the invoice arrives, and a
+       * reader who never saw home would otherwise have no way to get it right.
+       * No number changes here and no fee is named that the client has not
+       * given.
+       */
+      { kicker: "how it works", title: "Three steps", body: "It is $150 to take the job on, and $120 for every hour after that. The $150 is its own charge — it is not a deposit and it does not come off the hourly rate.", hasList: true, items: ["You email me what is wrong", "I reply with a rough price — that part costs nothing", "You pay the $150, and I get started"] },
       { kicker: "include", title: "What to put in the email", body: "The make and model if you know it, what the machine is doing wrong, and roughly when it started. One sentence is genuinely enough — it just saves us a round of questions." },
     ],
   },
@@ -369,7 +408,10 @@ export const PAGES: Record<PageId, Page> = {
         hasList: true,
         items: [
           "Install it from the Tailscale website on that machine",
-          "Sign in with an account you already have",
+          // "an account you already have" assumed the reader knows Tailscale
+          // signs you in with somebody else's account rather than making one.
+          // Named, in prose, not linked — the page's existing rule.
+          "Sign in with your Google, Microsoft or Apple account — it uses one of those instead of making you invent another password",
           "Tell me the name it gives the machine",
           "Screen sharing then happens inside that private connection, not out in the open",
           "Free, for the small amount of it we would use",
@@ -398,7 +440,12 @@ export const PAGES: Record<PageId, Page> = {
       { kicker: "v2.2", title: "Made it behave on a phone", body: "Most people are holding one. It took embarrassingly long to admit that." },
       { kicker: "v2.1", title: "Rewrote what it says about money", body: "The old version promised something I do not actually offer." },
       { kicker: "v2.0", title: "Threw out the terminal", body: "Green text on black was a decision made at 2am in 2009 and defended for far too long." },
-      { kicker: "v1.9", title: "Email hidden from scrapers", body: "Assembled in the browser. The bots get a placeholder, you get an address." },
+      // Missed by the 2026-08-15 rewrite, and the textbook case for it: three
+      // terms ("scrapers", "assembled in the browser", "placeholder") in two
+      // sentences, none of which mean anything to the reader that rewrite was
+      // for. Contact's version of the identical fact was rewritten and lands —
+      // this one still said it sideways. Same joke, named rather than alluded to.
+      { kicker: "v1.9", title: "Hid my email address from the spam machines", body: "Your browser puts it together the moment you click it. The machines that trawl websites collecting addresses get nothing." },
     ],
   },
   guestbook: {
@@ -408,7 +455,7 @@ export const PAGES: Record<PageId, Page> = {
     ctas: [{ label: "Email instead", to: "contact", primary: true }],
     blocks: [
       { kicker: "entry 001", title: "“Got my photos back. All of them.”", body: "— someone who had not backed up since 2011" },
-      { kicker: "entry 002", title: "“Cheaper than the quote for a new one.”", body: "— a five-year-old laptop that now boots in nine seconds" },
+      { kicker: "entry 002", title: "“Cheaper than the quote for a new one.”", body: "— a five-year-old laptop that now starts up in nine seconds" },
       { kicker: "entry 003", title: "“You told me not to buy anything. Who does that?”", body: "— unclear whether this was a compliment" },
       { kicker: "entry 004", title: "“The website is insane.”", body: "— many people, repeatedly" },
       { kicker: "entry 005", title: "“It still smells faintly of the sea.”", body: "— the sand laptop, six months on" },
@@ -499,7 +546,11 @@ export const PAGES: Record<PageId, Page> = {
         "\"I am going to stay on the line with you the entire time.\"",
         "\"We accidentally refunded you too much. You will need to send the difference back.\""
       ] },
-      { kicker: "the phone itself", title: "Give me a call back on my mobile", body: "How they handle the phone gives them away as clearly as what they say. A real company routes you through its own switchboard and is perfectly happy for you to hang up and ring the number on your bill instead. A real support line also opens by telling you the call is recorded, and a scam call essentially never does \u2014 but take that one the right way round: its absence tells you plenty, while hearing it proves nothing at all. It is one line of script, and script is the thing they have most of.", hasList: true, items: [
+      // Quoted like the scammer-voice list items below it. Bare, on a repair
+      // site whose whole business is the reader ringing the operator, it reads
+      // for a beat as the site's own instruction. Nothing else on this page is
+      // touched — see the "do not finish scams" note in CLAUDE.md.
+      { kicker: "the phone itself", title: "“Give me a call back on my mobile”", body: "How they handle the phone gives them away as clearly as what they say. A real company routes you through its own switchboard and is perfectly happy for you to hang up and ring the number on your bill instead. A real support line also opens by telling you the call is recorded, and a scam call essentially never does \u2014 but take that one the right way round: its absence tells you plenty, while hearing it proves nothing at all. It is one line of script, and script is the thing they have most of.", hasList: true, items: [
         "\"Call me back on my cell phone\" \u2014 or any direct personal mobile number",
         "They ring back again and again once you hang up, sometimes for hours",
         "They ring back for days or weeks, and each time they know a little more about you",

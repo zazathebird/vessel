@@ -1639,15 +1639,20 @@ function step(st: DuelState): void {
     st.b.vx -= dir * 0.12;
   }
 
-  // Two grounded fighters must not stand inside each other; a gentle mutual
-  // push reads as bodies, a hard clamp reads as a wall.
-  const gap = centre(st.b) - centre(st.a);
-  if (Math.abs(gap) < BODY_W && st.a.y >= FLOOR_Y && st.b.y >= FLOOR_Y) {
-    const push = gap >= 0 ? 0.8 : -0.8;
-    st.a.x -= push;
-    st.b.x += push;
-  }
-
+  /*
+   * Body separation is handled once, above, by the proportional resolve — this
+   * is deliberately *not* a second constraint.
+   *
+   * There used to be one here: a flat 0.8 push per fighter whenever the centres
+   * were within `BODY_W`. It survived the frame-by-frame pass that added the
+   * soft resolve, so for a while both ran, and the two disagreed in a way that
+   * showed. The resolve clears to 26 units and stops; this one kept pushing to
+   * 30, with no proportionality, so every close exchange ended with a constant
+   * 1.6 units a frame of drift apart in exactly the band where the sequences
+   * want the pair shoulder to shoulder — `the-lock` closes to `LOCK_SEP` and
+   * then had this working against it the whole way. One constraint, and it is
+   * the one that scales with the overlap.
+   */
   stepSparks(st);
 }
 

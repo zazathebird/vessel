@@ -82,9 +82,19 @@ export function FxCanvas() {
    *
    * Measured over a window rather than per frame, because one long frame is
    * usually a garbage collection or a tab regaining focus, not a slow machine.
-   * Hysteresis is deliberately wide — stepping down at 21ms and back up only
-   * below 12ms — so a machine sitting near the boundary settles instead of
-   * oscillating, which would be far more visible than the lower resolution.
+   *
+   * **The two directions are measured against different things, and that is the
+   * correction rather than a refinement.** Falling is judged on the frame
+   * *interval*, because a slow interval is the complaint itself. Rising cannot
+   * be, and for a while was: the bar was an interval under 11ms, i.e. above
+   * 90fps, which a vsync-locked 60Hz display cannot produce no matter how
+   * cheap the effect is. Promotion was therefore unreachable on the commonest
+   * display in the world while demotion stayed reachable, and because every
+   * change is persisted and `calibrateOnce` will not re-probe once anything is
+   * stored, one garbage collection pinned that browser profile to a soft canvas
+   * for good. Rising is now judged on *headroom* — how much of the frame's own
+   * budget the draw actually used — which is a question with an answer at any
+   * refresh rate.
    */
   // Starts from the remembered measurement rather than optimistically at 1 —
   // see `src/fx/perf.ts`. A slow machine otherwise spends its first seconds at
@@ -143,10 +153,31 @@ export function FxCanvas() {
     let raf = 0;
     let lastFrameAt = performance.now();
 
-    // Rolling frame-cost window for the adaptive resolution above.
+    // Rolling frame-cost window for the adaptive resolution above. `sampleMs`
+    // is the wall-clock interval the frame had to fit into; `sampleWork` is the
+    // time actually spent inside `drawFx`. The first says whether we are
+    // keeping up, the second whether there is room to ask for more.
     let sampled = 0;
     let sampleMs = 0;
+    let sampleWork = 0;
     let sinceChange = 0;
+    // Whether the previous frame drew anything. An interval that spans a calm
+    // frame, a hidden tab or `off` measures the gap, not the effect.
+    let drewLast = false;
+    /*
+     * The best tier this machine is allowed to try again, and the frames since
+     * it last tried.
+     *
+     * A promotion that has to be undone within a few seconds is evidence, and
+     * without recording it the detector oscillates: promote on 150 samples,
+     * demote on 20, repeat every few seconds, reallocating the buffer each way.
+     * One failed attempt puts the tier it reached out of bounds for the rest of
+     * the page's life. It is deliberately *not* persisted — the stored tier is
+     * a measurement, this is a note about one session, and a machine that was
+     * busy once should get to try again on the next load.
+     */
+    let ceiling = 0;
+    let sincePromotion = Infinity;
 
     const step = () => {
       raf = requestAnimationFrame(step);
@@ -162,57 +193,16 @@ export function FxCanvas() {
       const dt = Math.min(3, Math.max(0.2, frameMs / (1000 / 60)));
       lastFrameAt = now;
 
-      // Sample only plausible frames. A backgrounded tab and the first paint
-      // both produce enormous deltas that say nothing about the GPU, and
-      // treating them as evidence would drop a fast machine to half resolution
-      // the moment someone switched tabs and came back.
-      if (frameMs > 4 && frameMs < 200) {
-        sampleMs += frameMs;
-        sampled += 1;
-      }
-      /*
-       * **Falling is urgent; rising is not.** The two directions get
-       * deliberately different evidence bars.
-       *
-       * A drop needs only 20 sampled frames — about a third of a second — so a
-       * machine that cannot hold the frame stops being asked to within a
-       * blink. The old window was 90 samples plus a 180-frame cooldown, which
-       * on a machine running at 20fps is several seconds of visible stutter
-       * before anything is done about it, and those seconds are the whole
-       * complaint. A promotion still needs 150 samples and a long cooldown,
-       * because a tier change reallocates the buffer and a detector that
-       * flapped between two tiers would cost more than the effect.
-       */
-      sinceChange += 1;
-      const enough = sampled >= 20 && sinceChange >= 40;
-      if (enough) {
-        const avg = sampleMs / sampled;
-        const tier = TIERS.indexOf(quality.current);
-        // 19ms is a hair over 52fps. Anything slower than that is visible.
-        if (avg > 19 && tier < TIERS.length - 1) {
-          quality.current = TIERS[tier + 1];
-          saveTier(quality.current);
-          refit.current?.();
-          sinceChange = 0;
-          sampled = 0;
-          sampleMs = 0;
-        } else if (avg < 11 && tier > 0 && sampled >= 150 && sinceChange >= 300) {
-          quality.current = TIERS[tier - 1];
-          saveTier(quality.current);
-          refit.current?.();
-          sinceChange = 0;
-          sampled = 0;
-          sampleMs = 0;
-        } else if (sampled >= 150) {
-          sampled = 0;
-          sampleMs = 0;
-        }
-      }
-
       const canvas = canvasRef.current;
-      if (!canvas || !canvas.isConnected || document.hidden) return;
+      if (!canvas || !canvas.isConnected || document.hidden) {
+        drewLast = false;
+        return;
+      }
       const ctx = canvas.getContext("2d");
-      if (!ctx) return;
+      if (!ctx) {
+        drewLast = false;
+        return;
+      }
 
       const { fx, pal, calm, saver: sleeping } = live.current;
       const { w, h, scale } = size.current;
@@ -229,6 +219,11 @@ export function FxCanvas() {
       motion.scrollV *= 0.92;
       if (id === "off") {
         ctx.clearRect(0, 0, w, h);
+        // Calm renders nothing, so a calm frame is not evidence about what the
+        // canvas costs. Counted, it used to be: a visitor sitting in calm on a
+        // fast display climbed the tier to 1 and persisted it, so the next
+        // session on that slow machine opened at full resolution.
+        drewLast = false;
         return;
       }
 
@@ -240,6 +235,7 @@ export function FxCanvas() {
       const boost = (1 + motion.scrollV + (sleeping ? 0.9 : 0)) * dt;
       t += 0.011 * boost;
 
+      const drawStartedAt = performance.now();
       drawFx(id, {
         ctx,
         w,
@@ -254,6 +250,82 @@ export function FxCanvas() {
         mx: motion.mouse.x,
         my: motion.mouse.y,
       }, cache);
+      const workMs = performance.now() - drawStartedAt;
+
+      /*
+       * **Falling is urgent; rising is not.** The two directions get
+       * deliberately different evidence bars.
+       *
+       * A drop needs only 20 sampled frames — about a third of a second — so a
+       * machine that cannot hold the frame stops being asked to within a
+       * blink. The old window was 90 samples plus a 180-frame cooldown, which
+       * on a machine running at 20fps is several seconds of visible stutter
+       * before anything is done about it, and those seconds are the whole
+       * complaint. A promotion still needs 150 samples and a long cooldown,
+       * because a tier change reallocates the buffer and a detector that
+       * flapped between two tiers would cost more than the effect.
+       *
+       * Sampled *after* the draw and only on consecutive drawn frames, so the
+       * window contains frames that actually rendered this effect and nothing
+       * else. A backgrounded tab and the first paint both produce enormous
+       * deltas that say nothing about the GPU.
+       */
+      sinceChange += 1;
+      sincePromotion += 1;
+      if (drewLast && frameMs > 4 && frameMs < 200) {
+        sampleMs += frameMs;
+        sampleWork += workMs;
+        sampled += 1;
+      }
+      drewLast = true;
+
+      if (sampled >= 20 && sinceChange >= 40) {
+        const avg = sampleMs / sampled;
+        const work = sampleWork / sampled;
+        const tier = TIERS.indexOf(quality.current);
+        const settle = () => {
+          sinceChange = 0;
+          sampled = 0;
+          sampleMs = 0;
+          sampleWork = 0;
+        };
+        // 19ms is a hair over 52fps. Anything slower than that is visible.
+        if (avg > 19 && tier < TIERS.length - 1) {
+          // Undoing a promotion made moments ago: that tier is out of reach on
+          // this machine, so stop reaching for it.
+          if (sincePromotion < 900) ceiling = tier + 1;
+          quality.current = TIERS[tier + 1];
+          saveTier(quality.current);
+          refit.current?.();
+          settle();
+        } else if (
+          tier > ceiling &&
+          sampled >= 150 &&
+          sinceChange >= 300 &&
+          avg < 19 &&
+          /*
+           * Headroom, not frame rate. Stepping up multiplies the buffer's
+           * pixel count by the square of the tier ratio, so the question is
+           * whether the draw would still fit if it cost that much more — and
+           * it is asked against `avg`, the budget this display actually
+           * allows, so it reads the same on 60Hz and 144Hz. A third of the
+           * frame is the bar: the rest belongs to React, the palette bleed and
+           * whatever the browser is doing, and a canvas that claims more than
+           * that is the thing people feel.
+           */
+          work * (TIERS[tier - 1] / TIERS[tier]) ** 2 < avg * 0.35
+        ) {
+          quality.current = TIERS[tier - 1];
+          saveTier(quality.current);
+          refit.current?.();
+          sincePromotion = 0;
+          settle();
+        } else if (sampled >= 150) {
+          sampled = 0;
+          sampleMs = 0;
+          sampleWork = 0;
+        }
+      }
     };
 
     raf = requestAnimationFrame(step);

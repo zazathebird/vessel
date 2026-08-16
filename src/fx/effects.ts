@@ -54,7 +54,8 @@ export interface Frame {
    */
   sleeping: boolean;
   /**
-   * The adaptive-resolution tier, 1 / 0.75 / 0.5 — see `FxCanvas`.
+   * The adaptive-resolution tier — one of the six multipliers in `TIERS`,
+   * `1 / 0.8 / 0.62 / 0.5 / 0.38 / 0.28`. See `FxCanvas` and `src/fx/perf.ts`.
    *
    * Only the two effects whose cost is bound by *draw calls* rather than by
    * pixels read it, to coarsen their grid: the buffer shrinking beneath them
@@ -223,6 +224,16 @@ function seed(w: number, h: number, n: number): Particle[] {
  * therefore stored alongside the field and a rebuild happens only when the area
  * moves by more than a third — which a drag crosses once, not continuously.
  * This is the same resize discipline `vessels` and `rain` already follow.
+ *
+ * **The aspect is tested as well as the area, because a phone rotating changes
+ * neither the area nor the count.** 390×844 to 844×390 is the same 329,160px²,
+ * so an area-only guard sees no change at all and keeps coordinates seeded for
+ * a box that no longer exists. `stars` hides it by respawning anything out of
+ * bounds within a frame, but `bokeh` does not: its discs rise at 0.09–0.61
+ * units a frame, and the ones seeded with a `y` between 390 and 844 are now
+ * below the viewport entirely, so the field stays visibly thin for the better
+ * part of fifteen seconds after a rotation. Both dimensions matter, not just
+ * their product.
  */
 function field(
   cache: FxCache,
@@ -233,7 +244,10 @@ function field(
 ): Particle[] {
   const box = cache.partsBox;
   const stale =
-    !cache.parts || !box || Math.abs(w * h - box.w * box.h) / (box.w * box.h) > 0.35;
+    !cache.parts ||
+    !box ||
+    Math.abs(w * h - box.w * box.h) / (box.w * box.h) > 0.35 ||
+    Math.abs(w / h - box.w / box.h) / (box.w / box.h) > 0.35;
   if (stale) {
     const parts = seed(w, h, n);
     cache.parts = tune ? parts.map(tune) : parts;
@@ -574,7 +588,8 @@ function newRainColumn(rows: number, above: boolean): RainColumn {
 const rain: Effect = ({ ctx, w, h, p, boost, quality }, cache) => {
   // A coarser cell at a lower tier is the only lever that helps here: the cost
   // is ~1,900 blits a frame and every one of them survives a smaller buffer.
-  // Rounded, so the two tiers below 1 give whole-pixel cells (20px, 32px).
+  // Rounded, so every tier gives a whole-pixel cell — 16px at 1, then 20, 26,
+  // 32, 42 and 57 down the six-tier table.
   const size = Math.round(RAIN_CELL / quality);
   const columns = Math.max(1, Math.ceil(w / size));
   const rows = Math.ceil(h / size);
@@ -627,10 +642,24 @@ const rain: Effect = ({ ctx, w, h, p, boost, quality }, cache) => {
       // the palette's structural greys rather than its accent, which is what
       // makes it read as distance instead of as "the same rain, dimmer".
       const rows4 = [p.a1, p.fg, p.faint, p.muted];
+      /*
+       * **Painted on the same stride the blit samples on, which is `cw`/`ch`
+       * and not `size`.** The cell has to be a whole number of *device* pixels
+       * for the source rect to be one, so `cw` is `ceil(size * dScale)` — and
+       * `size * dScale` is very rarely an integer, because `dScale` carries
+       * both the device ratio and the quality tier. Laying the glyphs out at
+       * `g * size` while sampling at `g * cw` therefore drifts by the rounding
+       * error, cumulatively, across seventy glyphs: at a 1500px window on a
+       * retina display the buffer clamp gives `dScale` 1.733, so the cell is
+       * 27.73 device pixels wide and sampled as 28, and the last glyph in the
+       * strip is read two-thirds of a cell to the right of where it was drawn.
+       * The high half of the alphabet came out as sliced neighbours. Dividing
+       * back by `dScale` puts the pen where the source rect will look.
+       */
       for (let r = 0; r < 4; r++) {
         o.fillStyle = rows4[r];
         for (let g = 0; g < RAIN_GLYPHS.length; g++) {
-          o.fillText(RAIN_GLYPHS[g], g * size, size * RAIN_CELL_H * r);
+          o.fillText(RAIN_GLYPHS[g], (g * cw) / dScale, (r * ch) / dScale);
         }
       }
     }
@@ -1466,16 +1495,28 @@ const scan: Effect = ({ ctx, w, h, p, t, mx, my }, cache) => {
    * changes — a resize is each effect's own problem, which is exactly what
    * stranded `vessels` earlier today.
    */
-  const key = `${p.line}|${p.faint}`;
+  /*
+   * Rasterised at the device scale, not at CSS pixels.
+   *
+   * `FxCanvas` hands every effect a context already scaled by up to 2, so an
+   * offscreen canvas sized in CSS pixels gets magnified on the way in and the
+   * whole instrument is soft on a retina display — against vector work beside
+   * it that is not. `rain`'s atlas sets the same trap and dodges it the same
+   * way. The scale joins the cache key because the quality tier moves it, and a
+   * sphere cached at the old scale would never be re-rendered.
+   */
+  const dScale = Math.abs(ctx.getTransform().a) || 1;
+  const key = `${p.line}|${p.faint}|${dScale}`;
   const pad = Math.ceil(r * 1.16) + 2;
   const box = pad * 2;
   let sphere = cache.scanSphere;
   if (!sphere || sphere.w !== w || sphere.h !== h || sphere.key !== key) {
     const off = document.createElement("canvas");
-    off.width = box;
-    off.height = box;
+    off.width = Math.ceil(box * dScale);
+    off.height = Math.ceil(box * dScale);
     const o = off.getContext("2d");
     if (o) {
+      o.setTransform(dScale, 0, 0, dScale, 0, 0);
       o.lineWidth = 1;
       o.strokeStyle = p.line;
       o.globalAlpha = 0.85;
@@ -1510,7 +1551,9 @@ const scan: Effect = ({ ctx, w, h, p, t, mx, my }, cache) => {
     sphere = cache.scanSphere = { w, h, key, canvas: off };
   }
   ctx.globalAlpha = 1;
-  ctx.drawImage(sphere.canvas, cx - pad, cy - pad);
+  // Explicit destination size: the buffer is in device pixels now, so the
+  // intrinsic-size overload would draw it at `dScale` times its proper width.
+  ctx.drawImage(sphere.canvas, cx - pad, cy - pad, box, box);
 
   /*
    * The sweep, as one filled wedge instead of twenty-six strokes.

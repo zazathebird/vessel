@@ -395,14 +395,29 @@ ones most likely to be "fixed" by accident:
   what makes a rebuild re-fit *the same* tree instead of rolling a new one on every frame of a
   drag-resize.
 - **The adaptive resolution tier cannot reach a draw-call-bound effect, so
-  effects also receive it as `quality`.** `FxCanvas` samples its own frame time
-  and steps the render buffer through 1 / 0.75 / 0.5 — it measures the machine
-  it is on rather than reading `hardwareConcurrency`, which is wrong in both
-  directions and says nothing about the GPU. That fixes fill rate and does
-  nothing for `rain` (~1,900 blits a frame) or `plasma` (a grid measured in CSS
-  pixels): the half tier quartered their fill and left every draw call in place.
-  Those two coarsen their own grid by `quality`; every other effect ignores it,
-  because for a particle field the buffer really is the whole fix.
+  effects also receive it as `quality`.** `FxCanvas` steps the render buffer
+  through the six multipliers in `TIERS` — `1 / 0.8 / 0.62 / 0.5 / 0.38 / 0.28`
+  — measuring the machine it is on rather than reading `hardwareConcurrency`,
+  which is wrong in both directions and says nothing about the GPU. That fixes
+  fill rate and does nothing for `rain` (~1,900 blits a frame) or `plasma` (a
+  grid measured in CSS pixels): a lower tier quartered their fill and left every
+  draw call in place. Those two coarsen their own grid by `quality`; every other
+  effect ignores it, because for a particle field the buffer really is the whole
+  fix.
+
+  **The two directions are measured against different quantities, and that is
+  load-bearing** (2026-08-16). Falling is judged on the frame *interval*, which
+  is the complaint itself. Rising cannot be, and was: the bar was an interval
+  under 11ms — above 90fps — which a vsync-locked 60Hz display never produces no
+  matter how cheap the effect is, so promotion was unreachable on the commonest
+  display while demotion stayed reachable. Since every change is persisted and
+  `calibrateOnce` will not re-probe once anything is stored, one garbage
+  collection pinned that browser profile to a soft canvas permanently. Rising is
+  now judged on **headroom** — the measured time inside `drawFx`, scaled by the
+  square of the tier ratio, against the frame's own budget — which has an answer
+  at any refresh rate. A promotion that has to be undone within ~900 frames sets
+  a session ceiling so the detector cannot oscillate, and the sampler runs
+  *after* the draw so calm frames (which render nothing) are not evidence.
 - **The duel integrates against `dt` (real elapsed frames), never `boost`.**
   Every other effect is an ambient field and should surge when the page is
   scrolled or asleep. A duel is a performance and keeps its own tempo. It used
@@ -735,11 +750,17 @@ and Changelog, deliberately not a seventh nav pill: the six are a settled design
 `useOperatorRoutes` cycles and Radial's orbit renders. Tailscale is named in prose, not linked —
 the site has no outbound links anywhere.
 
-**The 404's count moved with it: "eight other pages" → "nine".** The counts on that page are jokes
-that depend on being true, which is why the client kept them, so leaving the old number would have
-been the change rather than correcting it. **If another content page is ever added, this number
-moves again.** The 404's other counts — "six ways into a panel", "5 type systems" — remain correct
-and verbatim, and its four-item example list was not touched.
+**The 404's page count moves whenever a content page is added, and it reads "ten other pages"
+today** — it went "eight" → "nine" when `/setup` landed and "nine" → "ten" when `scams` did. The
+counts on that page are jokes that depend on being true, which is why the client kept them, so
+leaving an old number would be the change rather than correcting it. **Verified against the code
+2026-08-16**: home, about, work, gallery, contact, guestbook, now, changelog, setup, scams — ten,
+excluding the 404 itself. The four-item example list was not touched.
+
+The 404's *other* counts — "six ways into a panel", "5 type systems" — are **gone from the page**,
+not merely still correct: they went out with the "Have a palette instead" consolation block when the
+client asked for nothing that advertises the site. They survive only in a code comment. Do not
+restore them on the strength of an older reading of this paragraph.
 
 **The home page's "the rate" block was replaced 2026-08-14**, at the client's word: *"i dont do
 free diag. a mechanic will still charge you to diagnose your cars issues."* It read "Free diagnosis,
