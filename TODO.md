@@ -15,6 +15,41 @@ one-liners because their numbers are cross-referenced from `docs/DECISIONS.md`.
 
 ---
 
+## 2026-08-16 — "nothing on the site is live", root-caused and fixed
+
+**Reported for the second time, and the first fix genuinely did not reach it.**
+Reproduced in a browser, not reasoned about: a visitor whose machine sets
+`prefers-reduced-motion` lands in calm, and calm is total — `is-calm`, canvas at
+`opacity: 0`, **zero** animated elements. Correct as a default; the bug was that
+nothing on the page accounted for it, and the greeting actively contradicted the
+screen ("The background moves… press **plain**" — to stop motion that was not
+happening, with no way back).
+
+Shipped and verified against production: `calmBySystem` on `ConfigContext`, and
+a second `Greeting` branch that names the setting and settles it. Both buttons
+write the preference, so it is asked once. It asks **regardless of the greeting
+flag** — which is the part that matters for anyone already stuck, because they
+have "seen the introduction" recorded and "answered the motion question" not.
+
+**One thing for the client, and it decides whether this was the whole bug:**
+this fix assumes the machine reports `prefers-reduced-motion: reduce` (Windows:
+*Settings → Accessibility → Visual effects → Animation effects*, off). If motion
+is still dead on a machine where that setting is **on**, the cause is something
+else and this is the wrong tree — say so and it gets re-opened with fresh
+measurements rather than another guess.
+
+Two smaller things surfaced while measuring, neither fixed, neither urgent:
+
+- **The published site rolls `fx` on every visit** (`mode: "visit"`, all scopes
+  true) and `off` is one of the sixteen effects in the pool — so roughly one
+  visit in sixteen legitimately has no canvas effect at all, which looks exactly
+  like the bug just fixed. Worth deciding whether `off` should be excluded from
+  the roll while everything else stays.
+- **`vessel.tier.v1` was absent** on a browser that has loaded the site many
+  times, so the stored performance tier is either not being written or not being
+  read back. Unconfirmed either way; it only costs a slow machine its first few
+  seconds, which is what the probe exists to prevent.
+
 ## This session's leftovers (2026-08-14)
 
 Everything here is *additive*. The site is shipped and working; none of these
