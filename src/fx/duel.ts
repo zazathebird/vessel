@@ -2135,6 +2135,30 @@ function drawFighter(
     ctx.translate(0, cxFeet);
     ctx.scale(1 + f.land * 0.14, 1 - f.land * 0.14);
     ctx.translate(0, -cxFeet);
+  } else if (f.move === "spin_attack") {
+    /*
+     * **The body turns with the blade** (TODO B, 2026-08-16). The spin was in
+     * the sword and nowhere else: the figure stood square to the viewer while
+     * its arms swept a full circle around it, which is why the move read as a
+     * flourish rather than as a turn. Flattening the horizontal axis to a
+     * vertical line and back is the whole trick — it is what a body rotating
+     * through 180° looks like in a silhouette, it costs one `scale`, and unlike
+     * anything drawn in detail it survives being 60px tall on a phone.
+     *
+     * Two details are deliberate. It is **squared, so it never goes negative**:
+     * the blade is drawn inside this same transform, so a signed `cos` would
+     * mirror the sword to the fighter's other side halfway through and fight
+     * the arc its own keyframes are drawing. And it turns **once**, not twice —
+     * this move's blade goes up, holds, and comes down rather than sweeping a
+     * full revolution, so a body that went edge-on twice would be turning
+     * faster than the sword it is supposed to be following. Squaring also makes
+     * it linger near full width instead of passing through it linearly, which
+     * is the difference between a person turning and a sheet of paper. The
+     * floor keeps a sliver so the silhouette never quite vanishes.
+     */
+    const p = Math.min(1, f.mf / MOVES.spin_attack.frames);
+    const turn = Math.cos(p * Math.PI);
+    ctx.scale(Math.max(0.12, turn * turn * 0.86 + 0.14), 1);
   }
 
   /** Travel, in local units: positive is forward whichever way the figure faces. */
@@ -2324,14 +2348,26 @@ function drawFighter(
     ctx.stroke();
   }
 
-  // ---- the force rings ---------------------------------------------------
+  /*
+   * ---- the force rings ----------------------------------------------------
+   *
+   * **A pull's rings converge; a push's expand** (TODO B, 2026-08-16). Both
+   * force moves drew the same outward-travelling, fading rings, so the two were
+   * visually identical — and once `force_pull` was fixed to actually drag its
+   * victim inward, an expanding ring was arguing with the thing it was drawn on
+   * top of. Reversing the radius and the fade is the whole difference: rings
+   * arriving and brightening read as gathering, rings leaving and dimming read
+   * as shoving.
+   */
   if (f.action === "force" && forceP > 0.3 && forceP < 0.9) {
     const q = (forceP - 0.3) / 0.6;
+    const pulling = f.move === "force_pull";
     ctx.strokeStyle = v.spark;
     ctx.lineWidth = 2;
     for (let i = 0; i < 3; i += 1) {
-      const r = (q * 90 + i * 14) % 110;
-      ctx.globalAlpha = (1 - q) * 0.4 * v.dim;
+      const t = pulling ? 1 - q : q;
+      const r = (t * 90 + i * 14) % 110;
+      ctx.globalAlpha = (pulling ? q : 1 - q) * 0.4 * v.dim;
       ctx.beginPath();
       ctx.arc(offHandX + 6, offHandY, Math.max(4, r), -0.8, 0.8);
       ctx.stroke();
