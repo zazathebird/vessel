@@ -149,17 +149,34 @@ export function duelCamera(
   const feet = h * CAM_FEET;
   // Fit the pair across, and whatever is highest down. The tighter wins, so a
   // somersault pulls back rather than leaving through the top of the slot.
+  const dying = st.a.action === "dead" || st.b.action === "dead";
+  /*
+   * The floor relaxes while somebody is down. `CAM_MIN` exists to stop the
+   * figures shrinking to nothing during normal play, and during a two-second
+   * victory hold that concern does not apply — whereas a corpse laid on its
+   * side is nearly three times as wide as a standing fighter, so at the 190px
+   * slot the floor itself was what clipped it, not the easing.
+   */
   const want = Math.max(
-    CAM_MIN,
+    dying ? CAM_MIN * 0.7 : CAM_MIN,
     Math.min(CAM_MAX, Math.min(w / (focus.width + CAM_MARGIN * 2), feet / (FEET_Y - focus.top))),
   );
+  /*
+   * A fighter going down is the sharpest correction the camera ever has to
+   * make: `drawFighter` lays a corpse on its side, so the pair's extent grows
+   * by about 57 units on a single frame. The normal pull-back rate needs ~27
+   * frames to cover that, and every one of them clips the body — which is why
+   * widening `duelFocus` alone still left 23% of death-hold frames cut off.
+   * This is the same reasoning that makes pulling back faster than pushing in;
+   * a death is just the extreme of it, and it is known on the frame it happens.
+   */
   const next: DuelCam = cam
     ? {
-        x: approach(cam.x, focus.cx, CAM_PAN, frames),
+        x: approach(cam.x, focus.cx, dying ? CAM_PAN * 2.4 : CAM_PAN, frames),
         scale: approach(
           cam.scale,
           want,
-          want < cam.scale ? CAM_ZOOM_OUT : CAM_ZOOM_IN,
+          want < cam.scale ? (dying ? 0.34 : CAM_ZOOM_OUT) : CAM_ZOOM_IN,
           frames,
         ),
       }

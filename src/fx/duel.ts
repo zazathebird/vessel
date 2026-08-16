@@ -123,6 +123,24 @@ const SHIN = 16;
 const BLADE_LEN = 58;
 /** How far the sword hand orbits its shoulder. */
 const HAND_REACH = 20;
+/*
+ * The off arm gets its own, longer bones, and the reason is geometry rather
+ * than anatomy (2026-08-16).
+ *
+ * It reaches from the *far* shoulder at local x −11 across the chest to a grip
+ * that orbits +11 ± 20, so it has to span 30–42 units against the 24 the two
+ * shared bones give it. `joint()` clamps the cosine and straightens the limb
+ * correctly, but `limb()` then draws to the target anyway, so the arm
+ * rubber-banded: measured, it was over-extended on **98.6% of figure-frames**
+ * and drawn as a single straight line across the chest that never bent at the
+ * elbow. With the spine and the shoulder bar that closes a triangle over the
+ * torso — which is uncomfortably close to the filled slab the client read as
+ * "they are holding shields" in the first place.
+ *
+ * The endpoints do not move. The arm simply gains an elbow.
+ */
+const OFF_UPPER_ARM = 20;
+const OFF_FOREARM = 20;
 /** Samples in the blade's motion smear, and where along the blade it starts. */
 /**
  * Centre-to-centre separation the blade lock closes to, in world units.
@@ -190,6 +208,12 @@ interface Fighter {
   land: number;
   /** Blade positions over the last few frames, world units, newest last. */
   trail: { hx: number; hy: number; tx: number; ty: number }[];
+  /**
+   * Frames until a blocked attacker bounces into `recoil`, or 0 for none.
+   * Deferred rather than immediate — see the `blocked` branch of
+   * `resolveContact`.
+   */
+  bounce: number;
 }
 
 interface Spark {
@@ -258,6 +282,7 @@ function makeFighter(x: number, facing: 1 | -1, style: FighterStyle): Fighter {
     stride: Math.random() * TAU,
     land: 0,
     trail: [],
+    bounce: 0,
   };
 }
 
@@ -1341,6 +1366,8 @@ function setMove(f: Fighter, id: MoveId, outcome?: Beat["outcome"], power = 1): 
   f.beatPower = power;
   f.action = MOVES[id].chan;
   f.struck = outcome === undefined;
+  // A deferred bounce belongs to the move that earned it, never to this one.
+  f.bounce = 0;
 }
 
 /**
@@ -1443,7 +1470,25 @@ function resolveContact(st: DuelState, f: Fighter, foe: Fighter, m: Move): void 
     // Sparks at the true crossing of the two blades, and the attacker bounces.
     const near = bladeGap(tip, bladeWorld(foe));
     spawnSparks(st, near.x, near.y, 18, 0, -1.1);
-    setMove(f, "recoil");
+    /*
+     * **The bounce is deferred, because switching move on the contact frame
+     * deleted the swing it is bouncing off** (2026-08-16).
+     *
+     * The drawn blade is a spring and it lags the keyframe table by three to
+     * five frames. `setMove(f, "recoil")` here retargets it to recoil's raised
+     * angle on the very frame the table reaches the bottom of the arc, so the
+     * spring turns around before it ever gets there. Measured over 164 blocked
+     * overheads the blade's lowest drawn point was **0.23 rad *above*
+     * horizontal**, against +1.37 when the same move runs uninterrupted: the
+     * downstroke — the whole readable part of a sword swing — was never drawn
+     * at all. Around 40% of the strikes in the pool are scripted `blocked`, so
+     * this was most of the swordplay.
+     *
+     * Five frames is the spring's lag. `bounce` is cleared by `setMove` so a
+     * deferred recoil can never land on top of a move the director has since
+     * assigned.
+     */
+    f.bounce = 5;
     st.hitStop = 3;
   } else if (f.outcome === "miss" && tip.ty > FLOOR_Y + BODY_H - 6) {
     // A swing that finishes in the floor throws sparks off it.
@@ -1482,6 +1527,16 @@ function stepFighter(st: DuelState, f: Fighter, foe: Fighter): void {
   if (m.contact >= 0 && !f.struck && f.mf >= m.contact) {
     f.struck = true;
     resolveContact(st, f, foe, m);
+  }
+
+  // The deferred bounce off a block. Set inside `resolveContact` above, which
+  // is why this is tested after it rather than before.
+  if (f.bounce > 0) {
+    f.bounce -= 1;
+    if (f.bounce === 0) {
+      setMove(f, "recoil");
+      return;
+    }
   }
 
   // Sustained travel, by move rather than by a separate intent flag. `circle`
@@ -1758,10 +1813,26 @@ function step(st: DuelState): void {
     const gb = bladeWorld(st.b);
     const near = bladeGap(ga, gb);
     st.clash = Math.max(0, st.clash - 1);
-    if (near.d < 9 && st.clash === 0) {
-      // How hard they met: the sum of both blades' angular speeds. A parry that
-      // catches a full swing throws far more than two blades drifting together.
-      const force = Math.min(1, (Math.abs(st.a.bladeV) + Math.abs(st.b.bladeV)) * 3.4);
+    // How hard they met: the sum of both blades' angular speeds. A parry that
+    // catches a full swing throws far more than two blades drifting together.
+    const force = Math.min(1, (Math.abs(st.a.bladeV) + Math.abs(st.b.bladeV)) * 3.4);
+    /*
+     * **Proximity is not contact, and the force floor is what says so**
+     * (2026-08-16). Two fighters at rest hold their guards 28.5 units forward
+     * of centre with a 58-unit blade, so their tips need 155 units of clearance
+     * and the pair stand at a median of 123 — which means the resting blades
+     * genuinely overlap, and this test fired on them for ever. Measured: a
+     * burst every second, **84% of them while neither fighter was attacking or
+     * parrying**, and sparks that constant make the ones marking a real parry
+     * mean nothing.
+     *
+     * It got worse when `LEASH` came in — pulling the pair together traded two
+     * figures at opposite ends of the arena for permanently tangled swords, and
+     * the crossing rate went 21.7% of frames to 41.5%. The floor is the cheap
+     * half of the answer and costs nothing in spacing: it removes 94% of the
+     * resting showers and keeps every burst that came off a real swing.
+     */
+    if (near.d < 9 && st.clash === 0 && force > 0.15) {
       spawnSparks(st, near.x, near.y, 6 + Math.round(force * 16), 0, -0.5 - force);
       st.clash = force > 0.45 ? 16 : 30;
       // A hard clash shoves both fighters apart, which is what sells it as
@@ -1831,6 +1902,20 @@ function stepSparks(st: DuelState): void {
     sp.x += sp.vx;
     sp.y += sp.vy;
     sp.vy += 0.25;
+    /*
+     * The ground is solid. Gravity was applied and never tested against it, so
+     * 3.8% of spark-frames were drawn below the ground line — up to 171 units
+     * under it, two and a half body heights into the void beneath the stage,
+     * which is most visible on exactly the floor-strike burst that should be
+     * skittering along it. A little energy is kept horizontally and most is
+     * taken out vertically, so they scatter along the ground and die there.
+     */
+    if (sp.y > FEET_Y) {
+      sp.y = FEET_Y;
+      sp.vy *= -0.32;
+      sp.vx *= 0.72;
+      sp.life -= 1 / 24;
+    }
     sp.life -= 1 / 24;
     if (sp.life > 0) alive.push(sp);
   }
@@ -2049,7 +2134,11 @@ function drawFighter(
   const breath = Math.sin(st.idle * 0.045 + f.phase) * 1.1;
   const airborne = f.y < FLOOR_Y - 0.5;
   const speed = Math.min(1, Math.abs(localVx) / 2.2);
-  const headY = -15 + breath * 0.6;
+  // -8, not -15: at -15 there were a measured 9.02 world units of empty canvas
+  // between the top of the spine stroke and the bottom of the head disc — over
+  // half a head, reading as a head floating clear of the shoulders, and none of
+  // the four style marks reaches down far enough to bridge it.
+  const headY = -8 + breath * 0.6;
 
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
@@ -2162,7 +2251,7 @@ function drawFighter(
   }
   ctx.globalAlpha = bodyAlpha * 0.85;
   ctx.strokeStyle = v.ink;
-  limb(-SHOULDER_X + lean, shY, offHandX, offHandY, UPPER_ARM, FOREARM, 1, 4.5);
+  limb(-SHOULDER_X + lean, shY, offHandX, offHandY, OFF_UPPER_ARM, OFF_FOREARM, 1, 4.5);
 
   // ---- the sword arm ------------------------------------------------------
   if (!dead) {
@@ -2312,12 +2401,35 @@ function drawFighter(
  * leaving it reads as a bug.
  */
 export function duelFocus(st: DuelState): { cx: number; width: number; top: number } {
-  const ca = centre(st.a);
-  const cb = centre(st.b);
   const apex = (f: Fighter) => f.y - (f.vy < 0 ? (f.vy * f.vy) / (2 * GRAVITY) : 0);
+  /*
+   * **A dead fighter lies down, and the camera has to be told** (2026-08-16).
+   *
+   * `drawFighter` rotates a corpse 90° about its feet, so it stops being 30
+   * units wide and becomes about 87 — but this reported `BODY_W` for it either
+   * way, and derived the centre from the two upright body centres. So for the
+   * whole victory hold the camera framed a standing pair that was not there and
+   * let the fallen one hang out of the side: measured at the ornament's buffer,
+   * **84.6% of death-hold frames clipped a body, the worst by 173px of 700** —
+   * a quarter of the frame gone, during the two seconds the design nominates as
+   * the announcement. Death holds are 7.4% of all frames.
+   *
+   * So each fighter reports the span it actually occupies and the frame is
+   * built from the union of the two, rather than from their centres.
+   */
+  const span = (f: Fighter) => {
+    const c = centre(f);
+    if (f.action !== "dead") return { lo: c - BODY_W / 2, hi: c + BODY_W / 2 };
+    const toe = c - f.facing * (BODY_H + 17);
+    return { lo: Math.min(c, toe), hi: Math.max(c, toe) };
+  };
+  const a = span(st.a);
+  const b = span(st.b);
+  const lo = Math.min(a.lo, b.lo);
+  const hi = Math.max(a.hi, b.hi);
   return {
-    cx: (ca + cb) / 2,
-    width: Math.abs(cb - ca) + BODY_W,
+    cx: (lo + hi) / 2,
+    width: hi - lo,
     top: Math.min(apex(st.a), apex(st.b)) - 26,
   };
 }
@@ -2380,7 +2492,9 @@ export function drawDuel(ctx: CanvasRenderingContext2D, st: DuelState, v: DuelVi
   ctx.strokeStyle = v.spark;
   ctx.lineCap = "round";
   for (const sp of st.sparks) {
-    ctx.globalAlpha = Math.min(1, sp.life) * 0.85;
+    // `* v.dim`: the bodies already fade with it, and sparks at full strength
+    // behind body copy are exactly the legibility case `dim` exists for.
+    ctx.globalAlpha = Math.min(1, sp.life) * 0.85 * v.dim;
     ctx.lineWidth = Math.max(0.8, 2.2 * sp.life);
     ctx.beginPath();
     ctx.moveTo(sp.x - sp.vx * 1.8, sp.y - sp.vy * 1.8);
