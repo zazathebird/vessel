@@ -40,11 +40,17 @@ measurements rather than another guess.
 
 Two smaller things surfaced while measuring, neither fixed, neither urgent:
 
-- **The published site rolls `fx` on every visit** (`mode: "visit"`, all scopes
-  true) and `off` is one of the sixteen effects in the pool — so roughly one
-  visit in sixteen legitimately has no canvas effect at all, which looks exactly
-  like the bug just fixed. Worth deciding whether `off` should be excluded from
-  the roll while everything else stays.
+- ~~**The published site rolls `fx` on every visit**~~ — **fixed 2026-08-16**
+  (`29f5aed`), client approved. `off` was one of the sixteen in the pool, so
+  roughly one visit in sixteen arrived with no canvas effect at all — the same
+  symptom as the bug above, from an unrelated cause. `ROLLABLE_FX` and
+  `ROLLABLE_ORNAMENTS` are new *lists*, not new flags: `off` is a fine thing to
+  choose and a terrible thing to be given, so `FX` (the wire format) and
+  `PICKABLE_FX` (the menu) are untouched and no share code moves. The empty
+  ornament went the same way, and for a second reason — five taps on it reveal
+  the footer sign-in link, which on the phone band is the only findable route to
+  an account. Simulated 200,000 rolls: zero exhaustions, every layout and all
+  fifteen remaining effects still reachable.
 - **`vessel.tier.v1` was absent** on a browser that has loaded the site many
   times, so the stored performance tier is either not being written or not being
   read back. Unconfirmed either way; it only costs a slow machine its first few
@@ -489,15 +495,29 @@ a `permerror`, not a lenient policy.**
   **Risk if done carelessly**: a CAA set that omits a CA Cloudflare actually uses
   makes certificate *renewal* fail silently, weeks later. The dashboard validates
   the set against its own issuance; the API does not.
-- **DNSSEC: half done.** Cloudflare's half is enabled and the zone is signed;
-  the DS is **not** published, so it is inert and safe to leave. The exact DS to
-  publish at Namespro is in `docs/SECURITY-AUDIT.md` §7, derived from the live
-  DNSKEY and cross-checked against Cloudflare's own digest. **Namespro has no
-  DNSSEC UI** — verified while signed in, across both *Edit domain settings* and
-  all five *Useful Tools* — so the remaining step is a **support ticket** asking
-  them to publish the DS to CIRA, not a form. A wrong DS takes the whole domain
-  down for validating resolvers, so verify with `dig +dnssec` straight after and
-  keep Cloudflare's "Cancel Setup" in reach.
+- **DNSSEC: half done, and the ticket is now written and ready to send** —
+  `docs/DNSSEC-TICKET.md` (2026-08-16). Cloudflare's half is enabled and the zone
+  is signed; the DS is **not** published, so it is inert and safe to leave. The
+  document carries a straight answer to *is this required* (no — but worth doing,
+  because it is the only thing on the list that closes certificate mis-issuance
+  via DNS, which CAA and HSTS both fail to), the paste-ready ticket, the
+  verification commands, and the rollback.
+
+  **The DS was re-derived from the live DNSKEY on 2026-08-16** rather than
+  trusted: the derivation script was validated first against `cloudflare.com`,
+  `ietf.org` and `cira.ca`, reproducing all three published digests exactly, and
+  then agreed with both §7's recorded figure and Cloudflare's own. Key tag 2371,
+  algorithm 13, digest type 2.
+
+  **It could not be submitted from this side, and neither blocker is fixable
+  here**: Namespro's ticket form carries a reCAPTCHA v2 checkbox, and the ticket
+  wants to be filed from the signed-in account (their own form warns an anonymous
+  ticket is untracked) — which needs the account password. Both are things this
+  side must not do. The client sends it; everything else is prepared.
+
+  **The bigger risk on this domain is not DNSSEC**: auto-renew is disabled
+  (expiry 2027-Aug-09), and every protection in the audit is worth nothing the
+  day the domain lapses.
 - **Auto-renew is disabled on `mcclevarty.ca`** (expiry 2027-Aug-09). Noticed
   while in the registrar; not changed, because it is a billing choice. But every
   other protection here is worth nothing the day the domain lapses.

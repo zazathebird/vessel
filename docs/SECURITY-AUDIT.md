@@ -108,6 +108,18 @@ So the remaining step is **a support ticket to Namespro** asking them to publish
 to CIRA, not a form to fill in. That is the normal route for a registrar without a DNSSEC UI, and it
 is why this could not simply be finished once logged in.
 
+**That ticket is written: `docs/DNSSEC-TICKET.md` (2026-08-16).** It holds the paste-ready subject
+and body, a straight answer to whether DNSSEC is required here at all, the post-publish verification
+commands, and the rollback. The DS above was **re-derived from the live DNSKEY that day** rather than
+carried forward on trust — the derivation was validated against `cloudflare.com`, `ietf.org` and
+`cira.ca` first, reproducing all three of their published digests exactly, and then agreed with both
+this section and Cloudflare's own displayed value.
+
+**It cannot be submitted from this side.** Namespro's form has a reCAPTCHA v2 checkbox, and the
+ticket should be filed from the signed-in account — their own page warns that an anonymous ticket is
+untracked and its history unavailable, which is the wrong footing for a DS change. Both blockers are
+the client's to clear.
+
 **Noticed in passing, and worth its own decision**: `mcclevarty.ca` has **auto-renew disabled**
 (expiry 2027-Aug-09). A domain that does not auto-renew is a domain that can lapse, and every other
 protection in this document is worth nothing the day it does. Not changed — it is a billing choice,
