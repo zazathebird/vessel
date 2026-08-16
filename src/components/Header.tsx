@@ -4,6 +4,7 @@ import { useConfig } from "../config/ConfigContext";
 import { chromeUntouched, hasBeenGreeted, saveCalmPreference, saveSoundPreference } from "../config/persistence";
 import { useSession } from "../auth/SessionContext";
 import { NAV, OPERATOR_NAV, PATHS } from "../data/pageIds";
+import { useEdgeFade } from "../hooks/useEdgeFade";
 import { openCommandPalette } from "./CommandPalette";
 
 /**
@@ -27,6 +28,14 @@ export function Header() {
    * moment either switch is touched.
    */
   const nudge = useRef(hasBeenGreeted() && chromeUntouched()).current;
+
+  /**
+   * The pill row scrolls sideways on the narrow bands, and `useEdgeFade` is what
+   * tells the reader so — on whichever edge is actually hiding something. See
+   * the hook for why this is measured rather than driven off the band.
+   */
+  const navRef = useRef<HTMLElement | null>(null);
+  useEdgeFade(navRef);
 
   const taps = useRef(0);
   const tapTimer = useRef<number | undefined>(undefined);
@@ -86,7 +95,7 @@ export function Header() {
           <span className="v-wordmark">mcclevarty.ca</span>
         </span>
 
-        <nav className="v-nav" aria-label="Primary">
+        <nav className="v-nav" aria-label="Primary" ref={navRef}>
           {NAV.map((item) => (
             <a
               key={item.id}

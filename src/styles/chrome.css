@@ -275,26 +275,67 @@
 }
 
 /*
- * The scroll has to look like a scroll (2026-08-14 audit).
+ * The scroll has to look like a scroll (2026-08-14 audit), on the edge that is
+ * actually hiding something (2026-08-16 review).
  *
- * Measured on the phone band: the pill row overflows by 66px, its scrollbar is
- * hidden by the rule above, and the last pill was simply sliced mid-word —
- * "GUE". Nothing said there was more to the right, so Guestbook was, in
- * practice, hidden on a phone. A fade at the trailing edge is the whole fix: a
- * cut letter reads as broken, a fading one reads as continuing.
+ * Measured on the phone band: the pill row overflowed, its scrollbar is hidden
+ * by the rule above, and the last pill was simply sliced mid-word — "GUE".
+ * Nothing said there was more to the right, so Guestbook was, in practice,
+ * hidden on a phone. A fade at that edge is the whole fix: a cut letter reads as
+ * broken, a fading one reads as continuing.
  *
  * `mask-image`, not an overlay pseudo-element: the row is a scroll container,
  * so a positioned child would scroll away with the content.
  *
- * **Phone only.** It went on tablet too at first, on the reasoning that the row
- * always overflows — true of a phone, false of a tablet, where 900px fits the
- * six public pills with room to spare. That gave every tablet visitor a
- * permanently faded "Guestbook" with nothing scrolled off behind it, and an
- * affordance pointing at nothing is worse than none. Unconditional within the
- * phone band is fine: six pills never fit a phone.
+ * **This used to say `.band-phone`, and that was the bug.** The reasoning was
+ * that a tablet fits "the six public pills with room to spare" — true when
+ * written, false from the moment Scams became a seventh pill hours later. At
+ * 600px the tablet band reproduced the original symptom exactly, hard-edged
+ * "GUEST", with the fix sitting one selector away. It was also never going to
+ * survive the operator's nav, which is ten pills.
+ *
+ * So the mask is bound to a measurement instead — `useEdgeFade` writes
+ * `data-fade`, and no breakpoint appears here at all. The row that does not
+ * scroll gets no attribute and no mask, which is what the phone-only scoping was
+ * protecting: an affordance pointing at nothing is worse than none.
+ *
+ * **Both edges, for that same reason.** Scrolled to the end, the trailing fade
+ * pointed right at nothing while the leading pill was sliced flat against the
+ * left. One edge was lying in every scrolled state.
+ *
+ * Not transitioned, deliberately: this is a readout of where you are, not a
+ * motion. It is also neither a colour nor a position, so it sits outside the
+ * 0.9s/140ms split `interaction.css` draws — nothing to get wrong.
  */
-.band-phone .v-nav {
-  mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 34px), transparent 100%);
+.v-nav[data-fade] {
+  --nav-fade: 34px;
+}
+
+.v-nav[data-fade="end"] {
+  -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - var(--nav-fade)), transparent 100%);
+  mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - var(--nav-fade)), transparent 100%);
+}
+
+.v-nav[data-fade="start"] {
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 var(--nav-fade), #000 100%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 var(--nav-fade), #000 100%);
+}
+
+.v-nav[data-fade="both"] {
+  -webkit-mask-image: linear-gradient(
+    90deg,
+    transparent 0,
+    #000 var(--nav-fade),
+    #000 calc(100% - var(--nav-fade)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    90deg,
+    transparent 0,
+    #000 var(--nav-fade),
+    #000 calc(100% - var(--nav-fade)),
+    transparent 100%
+  );
 }
 
 .band-phone .v-nav::-webkit-scrollbar,

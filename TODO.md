@@ -555,10 +555,13 @@ Found while building; none blocking. Reasoning in `CLAUDE.md` unless noted.
 4. **Signup discloses handle availability (409)** while `challenge` hides it.
 5. **TURN**: enable Cloudflare TURN (per-byte spend, short-lived credentials
    already specified) or leave hard-NAT pairs with the honest failure (§12 P).
-6. **Contact-page email** (`src/data/mail.ts`): the site assembles
-   `patrickmcclevarty@outlook.com` (verbatim from the spec) but the address on
-   file is `…@hotmail.ca`. Contact is the one page with a job — confirm the
-   mailbox is real and read. (Carried from the 2026-08-13 full review.)
+6. ~~**Contact-page email**~~ — **closed 2026-08-16, no change needed.** The site
+   assembles `patrickmcclevarty@outlook.com` while the address on file here is
+   `…@hotmail.ca`, and the discrepancy was real but not a bug: the client keeps
+   both. *"Hotmail.ca is my main email for personal stuff. Outlook.com is for
+   business. I use both. keep outlook on the website."* The business address is
+   the correct one for the one page with a job. **Do not "fix" this to the
+   hotmail address** — it has now been queried twice and answered.
 7. **Per-account subdomains: wanted at all?** If yes, an Origin allowlist must
    land first (`design/GUIDE-SUBDOMAINS.md`); if no, the guide can be closed.
 8. **When to retire the Pages project** — it is the rollback; retiring it
