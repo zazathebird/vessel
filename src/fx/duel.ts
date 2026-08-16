@@ -521,6 +521,41 @@ interface Move {
   /** Which animation channel `drawFighter` should use. */
   chan: Action;
   impulse?: { at: number; vx: number; vy?: number };
+  /**
+   * Size the horizontal impulse to the gap that actually exists when it fires,
+   * so the move travels `gap + span` instead of a fixed distance. Negative to
+   * deliberately stop short — a strike wants to arrive in reach, not on top of
+   * its target.
+   *
+   * **A fixed impulse cannot cross a variable gap, and both moves that need to
+   * cross one had a fixed impulse** (2026-08-16). `DECAY` is 0.9, so a move
+   * travels ten times its `vx` and no further: `flip_over` at 10.5 covers 105
+   * units and was launched from a median of 158, so the somersault — "the most
+   * recognisable move in the genre" — cleared the opponent on **29%** of
+   * attempts and otherwise tumbled impressively and landed back where it
+   * started. `leap_strike` at 4.2 covers 42 and was being asked to cross 245:
+   * **100% of its hits landed short, by a median of 188 units.**
+   *
+   * Clamped either side of the authored value so this stays a correction rather
+   * than a new physics: a move can be asked for three times its impulse, never
+   * more, and never less than half.
+   */
+  span?: number;
+  /**
+   * What a landed blow does to the *victim*, along the attacker's facing.
+   * Defaults to 5.2 for a force move and 1.8 for a blade.
+   *
+   * **It exists because it has to be signed** (2026-08-16). The knock was
+   * hardcoded as `facing * (chan === "force" ? 5.2 : 1.8)`, and `facing` points
+   * at the opponent, so every force move threw its victim *away* — including
+   * `force_pull`, whose entire job is to drag them in. Measured over 74
+   * landings it imparted 4.7 units a frame outward and the separation 30 frames
+   * later was unchanged: the pull never closed anything, and
+   * `pull-and-punish` — a whole sequence built on that setup — delivered "the
+   * biggest thrust in the pool" at a median of 280 units, four body-widths
+   * short.
+   */
+  knock?: number;
 }
 
 /** Named blade angles. 0 is level and forward; negative is up. */
@@ -581,7 +616,8 @@ const MOVES: Record<MoveId, Move> = {
       [0.7, 1.15, "out"],
       [1, GUARD_MID, "out"],
     ],
-    contact: 21,
+    // 21 fired a frame before the blade reached 0.95 at 21.6. See `spin_attack`.
+    contact: 22,
     power: 1,
     chan: "attacking",
   },
@@ -596,7 +632,8 @@ const MOVES: Record<MoveId, Move> = {
       [0.58, 0.55, "in"],
       [1, GUARD_MID, "out"],
     ],
-    contact: 18,
+    // The blade arrives at 18.6; firing at 18 threw away 31 units of reach.
+    contact: 19,
     power: 1,
     chan: "attacking",
   },
@@ -650,10 +687,14 @@ const MOVES: Record<MoveId, Move> = {
       [0.75, 1.1, "in"],
       [1, GUARD_MID, "out"],
     ],
-    contact: 34,
+    // The blade arrives at 36 (0.75 × 48). See `spin_attack`.
+    contact: 36,
     power: 1.3,
     chan: "attacking",
     impulse: { at: 8, vx: 4.2, vy: -11.5 },
+    // Land in reach rather than on top of them: the blade covers ~90 from the
+    // grip, so aim the leap to finish just inside that.
+    span: -80,
   },
   spin_attack: {
     frames: 40,
@@ -664,7 +705,17 @@ const MOVES: Record<MoveId, Move> = {
       [0.8, 0.7, "in"],
       [1, GUARD_MID, "out"],
     ],
-    contact: 23,
+    /*
+     * **Contact is the frame the blade *arrives*, not the frame the move is
+     * halfway through** (2026-08-16). This was 23, which is inside the `hold`
+     * plateau: the blade is parked overhead from frame 10 to 28 and does not
+     * come down until 32. So the damage, the spark burst and the knockdown all
+     * fired with the tip 19 units forward of the grip, the victim reacted, and
+     * the sword swept through empty air nine frames later. Of the six attacks
+     * four were early against their own keyframe tables — this one by nine
+     * frames, the rest by one or two.
+     */
+    contact: 32,
     power: 1.25,
     chan: "attacking",
   },
@@ -705,7 +756,9 @@ const MOVES: Record<MoveId, Move> = {
     contact: -1,
     power: 0,
     chan: "neutral",
-    impulse: { at: 0, vx: -1.6 },
+    // `at: 1`, not 0 — see `knockdown` below. The three reaction moves are the
+    // only ones that ever asked for frame 0, and none of them were getting it.
+    impulse: { at: 1, vx: -1.6 },
   },
   // A hit that produces no reaction did not happen. The blade goes off-guard,
   // which is the visual definition of vulnerability.
@@ -715,7 +768,7 @@ const MOVES: Record<MoveId, Move> = {
     contact: -1,
     power: 0,
     chan: "neutral",
-    impulse: { at: 0, vx: -2.5 },
+    impulse: { at: 1, vx: -2.5 },
   },
   knockdown: {
     frames: 56,
@@ -723,7 +776,27 @@ const MOVES: Record<MoveId, Move> = {
     contact: -1,
     power: 0,
     chan: "neutral",
-    impulse: { at: 0, vx: -4.2, vy: -6 },
+    /*
+     * **`at: 1` is the first frame a move can have, not 0, and asking for 0
+     * silently did nothing** (2026-08-16, client: the fight "seems a little
+     * off"). `setMove` starts `mf` at 0 and `stepFighter` increments it
+     * *before* testing the impulse, so the earliest value the test ever sees is
+     * 1. All three reaction moves — recoil, stagger and this — asked for 0, so
+     * for their whole existence not one of them received the velocity it
+     * declares.
+     *
+     * Measured over 240,000 frames: **13,591 frames of `knockdown`, of which
+     * 0.0% were airborne.** Nobody has ever been knocked down. `the-long-wind`
+     * spends 1.7 seconds winding up the heaviest blow in the pool and the
+     * victim stood exactly where they were and drooped their blade. Whatever
+     * movement recoil and stagger did show was the flat 1.8 that
+     * `resolveContact` adds, not their own -1.6 and -2.5.
+     *
+     * That is most of why the fight had no weight, and it is why the numbers on
+     * the other moves look conservative — they were tuned against a fight in
+     * which nothing was ever knocked back.
+     */
+    impulse: { at: 1, vx: -4.2, vy: -6 },
   },
   backstep: {
     frames: 26,
@@ -773,6 +846,8 @@ const MOVES: Record<MoveId, Move> = {
     power: 0,
     chan: "neutral",
     impulse: { at: 7, vx: 10.5, vy: -13.2 },
+    // Past them, not onto them — the somersault's whole job is to swap sides.
+    span: 40,
   },
   // The only move where the target closes distance involuntarily. Rings that
   // converge inward plus a body travelling the wrong way is a clear read even
@@ -783,6 +858,9 @@ const MOVES: Record<MoveId, Move> = {
     contact: 15,
     power: 0.35,
     chan: "force",
+    // Negative: toward the puller. This is the move the signed `knock` exists
+    // for — see the field's note.
+    knock: -4.6,
   },
   // A fighter hanging in the air with a slack blade. It deals nothing — its
   // whole job is to set up the blow that follows.
@@ -801,6 +879,11 @@ const MOVES: Record<MoveId, Move> = {
     contact: -1,
     power: 0,
     chan: "neutral",
+    // Positive, i.e. *toward* the opponent — the one reaction in the table that
+    // travels forward, because being dragged off balance is its whole job. It
+    // carried no impulse at all, so the reaction to a pull was a fighter
+    // standing still looking startled.
+    impulse: { at: 1, vx: 3.4 },
   },
   // Lifted. Gravity is suspended for the duration (see the physics step) and
   // the blade droops — a limp blade is the whole tell.
@@ -844,6 +927,29 @@ interface Sequence {
 /** Centre-to-centre bands the sequence pool is filtered by. */
 const CLOSE = 132;
 const MID = 245;
+/**
+ * Where the soft leash starts pulling the pair back together.
+ *
+ * An empirical optimum, and both directions off it are worse — measured as the
+ * distance from the attacking blade to the victim's body on the frame damage is
+ * dealt, over 90,000 frames per setting:
+ *
+ * | leash at | close-band time | blade-to-body median | blade actually touching |
+ * |---|---|---|---|
+ * | 245 (`MID`) | 35% | 42.8 | 28% |
+ * | 170 | 50% | 12.5 | 40% |
+ * | **150** | **55%** | **11.1** | **45%** |
+ * | 132 (`CLOSE`) | 65% | 26.4 | 16% |
+ *
+ * Leashing at `CLOSE` looks like it should be best and is the worst of the four:
+ * holding the pair permanently inside sword range means the director scripts a
+ * third more blows, and it scripts them at moments the choreography has not set
+ * up, so more of them land in air. Just *outside* sword range is the right
+ * place to stand — it leaves a band the pair can hold each other at without
+ * being dragged in, which is what measuring an opponent looks like, and the
+ * sequences then close the last stretch themselves.
+ */
+const LEASH = 150;
 
 /*
  * The pool. Beats name roles, never sides — see the fairness note above.
@@ -924,20 +1030,31 @@ const SEQUENCES: Sequence[] = [
     ],
   },
   {
+    /*
+     * **Re-ranged far → mid on 2026-08-16, with the leash.** These four are the
+     * gap-closers — leaps, a shove, a pull — and they were authored for a band
+     * the fight no longer visits: once the leash engages just outside sword
+     * range the far bracket is 0.2% of frames, and all four went to *zero*
+     * picks. They also read better from mid, because `leap_strike` carries 42
+     * units of travel and was being asked to cross 245. `close-in` stays far
+     * on purpose: something sensible has to answer the far band on the rare
+     * occasions it happens, and pure closing is that answer.
+     */
     id: "close-the-gap",
     weight: 10,
-    range: "far",
+    range: "mid",
     length: 110,
     beats: [
       { who: "ATT", move: "leap_strike", at: 0, outcome: "hit" },
-      { who: "DEF", move: "stagger", at: 34 },
+      // Lands at 36 now, not 34.
+      { who: "DEF", move: "stagger", at: 36 },
       { who: "ATT", move: "guard", at: 64 },
     ],
   },
   {
     id: "leap-evaded",
     weight: 7,
-    range: "far",
+    range: "mid",
     length: 116,
     beats: [
       { who: "ATT", move: "leap_strike", at: 0, outcome: "miss" },
@@ -950,7 +1067,7 @@ const SEQUENCES: Sequence[] = [
   {
     id: "pushed",
     weight: 9,
-    range: "far",
+    range: "mid",
     length: 122,
     beats: [
       { who: "ATT", move: "force_push", at: 0, outcome: "hit" },
@@ -1033,11 +1150,15 @@ const SEQUENCES: Sequence[] = [
        * So the grind can lean the right way for a second and a half before the
        * blow lands, which is the whole point of the image.
        */
-      { who: "ATT", move: "lock", at: 22, power: 1 },
-      { who: "DEF", move: "lock", at: 22, power: 0 },
+      // 23, not 22: the overhead above now resolves its block *on* frame 22,
+      // and `setMove` clears `struck`, so a lock starting on the same frame
+      // would silently delete the block that opens the whole sequence.
+      { who: "ATT", move: "lock", at: 23, power: 1 },
+      { who: "DEF", move: "lock", at: 23, power: 0 },
       // The press breaks: the winner drives through and the loser is thrown off.
       { who: "ATT", move: "strike_diagonal", at: 116, outcome: "hit", power: 0.8 },
-      { who: "DEF", move: "stagger", at: 134 },
+      // Lands at 135 now (116 + 19), so the stagger cannot stay on 134.
+      { who: "DEF", move: "stagger", at: 135 },
       { who: "ATT", move: "guard", at: 158 },
     ],
   },
@@ -1149,7 +1270,7 @@ const SEQUENCES: Sequence[] = [
   {
     id: "pull-and-punish",
     weight: 5,
-    range: "far",
+    range: "mid",
     length: 138,
     beats: [
       { who: "ATT", move: "force_pull", at: 0, outcome: "hit", power: 0.35 },
@@ -1182,7 +1303,10 @@ const SEQUENCES: Sequence[] = [
     length: 118,
     beats: [
       { who: "ATT", move: "spin_attack", at: 0, outcome: "hit", power: 1.25 },
-      { who: "DEF", move: "knockdown", at: 25 },
+      // Two frames after the blow lands, as authored — the landing moved from
+      // 23 to 32 when `spin_attack`'s contact was corrected. A damage reaction
+      // may never precede its own cause; a *parry* may, and several do.
+      { who: "DEF", move: "knockdown", at: 34 },
       { who: "ATT", move: "flourish", at: 60 },
       { who: "DEF", move: "guard", at: 92 },
     ],
@@ -1232,9 +1356,20 @@ function chooseSequence(st: DuelState): void {
   let pool = SEQUENCES.filter((s) => s.range === band || s.range === "any");
   /*
    * Under pressure the pool loses its quiet sequences and the blows get
-   * heavier. This is the hard rail against a match that will not end: it is
+   * heavier. This is the rail against a match that will not end: it is
    * deterministic, symmetric, and applies to whoever happens to be attacking,
-   * so it cannot favour a side. A normal match never reaches it.
+   * so it cannot favour a side.
+   *
+   * **It is a closer, not an emergency, and the comment here used to say
+   * otherwise** (measured 2026-08-16). "A normal match never reaches it" was
+   * written when the counter was monotonic across the page's whole life and the
+   * rail was firing on 98.6% of picks; resetting it per match fixed that, and
+   * the claim was left behind uncorrected in the other direction. A match runs
+   * about 24 sequences against a threshold of 22, so in practice the rail takes
+   * the last one or two of **every** match — **16%** of all picks across
+   * 360,000 frames, not zero. That is a fair description of a fight tightening
+   * as it ends, and it is why matches converge at all; just do not raise the
+   * threshold expecting to touch an edge case, because it is the ending.
    */
   const hard = st.dir.pressure > 22;
   if (hard) pool = pool.filter((s) => s.beats.some((b) => b.outcome === "hit"));
@@ -1298,7 +1433,7 @@ function resolveContact(st: DuelState, f: Fighter, foe: Fighter, m: Move): void 
     const hx = Math.max(foe.x - 6, Math.min(foe.x + BODY_W + 6, tip.tx));
     const hy = Math.max(foe.y - 10, Math.min(foe.y + BODY_H, tip.ty));
     damage(st, foe, (8 + Math.random() * 5) * m.power * f.beatPower * f.attackPower);
-    foe.vx += f.facing * (m.chan === "force" ? 5.2 : 1.8);
+    foe.vx += f.facing * (m.knock ?? (m.chan === "force" ? 5.2 : 1.8));
     spawnSparks(st, hx, hy, 14, f.facing * 1.2, 0.6);
     // Hit-stop: both fighters' move clocks freeze for two frames while the
     // sparks keep flying. Two frames is nothing to describe and a great deal to
@@ -1334,7 +1469,13 @@ function stepFighter(st: DuelState, f: Fighter, foe: Fighter): void {
   f.mf += 1;
 
   if (m.impulse && f.mf === m.impulse.at) {
-    f.vx += f.facing * m.impulse.vx;
+    let vx = m.impulse.vx;
+    if (m.span !== undefined) {
+      // Travel is `vx / (1 - DECAY)`, so invert that for the gap in front of us.
+      const want = (Math.abs(centre(foe) - centre(f)) + m.span) * (1 - DECAY);
+      vx = Math.max(m.impulse.vx * 0.5, Math.min(m.impulse.vx * 3, want));
+    }
+    f.vx += f.facing * vx;
     if (m.impulse.vy) f.vy = m.impulse.vy;
   }
 
@@ -1552,10 +1693,22 @@ function step(st: DuelState): void {
    * fight is closest and most looked at — the parry into `the-lock` opened at
    * 16 units of separation, so the press began with the pair interpenetrating.
    *
-   * A soft positional resolve rather than a bounce: velocity is the
-   * choreography's, and a fighter who was scripted to close should still be
-   * closing on the next frame. Only the overlap is taken out, a third of it per
-   * frame, so contact settles over a few frames instead of snapping.
+   * A positional resolve rather than a bounce: velocity is the choreography's,
+   * and a fighter who was scripted to close should still be closing on the next
+   * frame. Only the overlap is taken out — so the pair slide along their contact
+   * instead of driving through each other, which is what reads as two bodies.
+   *
+   * **The whole overlap comes out on the frame it appears, and that number was
+   * measured** (2026-08-16). It used to take a third per frame, on the reasoning
+   * that contact should settle over a few frames rather than snap. Stepped over
+   * 360,000 frames the settling never arrived: the fighters are driven by the
+   * choreography at a closing speed that outruns a third-of-the-gap correction,
+   * so the residue compounds and the silhouettes were interpenetrating on
+   * **6.1%** of frames. Nor is it a smooth curve — 0.34 and 0.6 measure the same
+   * (5.8% and 5.5%), because either one loses the race, and only full resolution
+   * wins it, at **0.5%**. That is better than the two constraints this replaced
+   * managed between them (0.9%), and the frame it takes to resolve is 16ms, which
+   * is not a thing anybody sees.
    *
    * **Grounded pairs only**, and that exclusion is the whole reason `flip_over`
    * still works: the somersault's entire job is to pass over the opponent and
@@ -1572,7 +1725,7 @@ function step(st: DuelState): void {
     // further than they look, and a lock needs them shoulder to shoulder.
     const over = 26 - Math.abs(gap);
     if (grounded && over > 0) {
-      const push = (over / 2) * 0.34 * (gap < 0 ? -1 : 1);
+      const push = (over / 2) * (gap < 0 ? -1 : 1);
       st.a.x -= push;
       st.b.x += push;
       for (const f of [st.a, st.b]) {
@@ -1631,9 +1784,25 @@ function step(st: DuelState): void {
    * pull whichever fighter happened to be further from the middle harder,
    * which feeds the two sides different sequence pools and is the subtlest way
    * a bias could get in here.
+   *
+   * **It engages just outside sword range — see `LEASH`** (2026-08-16, client:
+   * the fight "seems a little off"). It used to engage at a hardcoded 290 while
+   * the director classified anything past 245 as far, a 45-unit dead band where
+   * the pool had already given up on swordplay and nothing was pulling the pair
+   * back. Measured, the fight sat in the far bracket **13.5%** of the time in
+   * stretches with a **worst case of 1,022 frames — seventeen seconds** of two
+   * figures at opposite ends of the arena, advancing and circling and never
+   * touching. In a box this size that does not read as spacing, it reads as
+   * broken.
+   *
+   * The number had to come in much further than the dead band alone suggested,
+   * because fixing the reaction impulses gave every landed blow real knock-back
+   * for the first time: with those live and the leash at 245, close-range time
+   * fell to 35%, *below* where it had been. The old distances were tuned
+   * against a fight in which nothing was ever knocked anywhere.
    */
   const sep = Math.abs(centre(st.b) - centre(st.a));
-  if (sep > 290) {
+  if (sep > LEASH) {
     const dir = centre(st.a) < centre(st.b) ? 1 : -1;
     st.a.vx += dir * 0.12;
     st.b.vx -= dir * 0.12;

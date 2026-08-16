@@ -64,10 +64,39 @@ const PAIRINGS: Record<"duel" | "duelholy", [FighterStyle, FighterStyle]> = {
  * horizontal one.
  */
 /** World units of clear air kept either side of the pair. */
-const CAM_MARGIN = 46;
+const CAM_MARGIN = 32;
 /** Where the feet line sits in the square, as a fraction of its height. */
 const CAM_FEET = 0.82;
-const CAM_MIN = 1.45;
+/**
+ * **The floor is what decides whether you can see both fighters at all, and at
+ * 1.45 you could not** (2026-08-16, client: the fight "seems a little off").
+ *
+ * `want` is clamped up to this, so a floor above the scale that fits the pair
+ * does not zoom out politely — it crops. Stepped over 90,000 frames at the
+ * three slot sizes the site actually uses, with the old 1.45 and a 46-unit
+ * margin:
+ *
+ * | slot | both bodies in frame | both blades too |
+ * |---|---|---|
+ * | 190px (phone) | **31%** | **12%** |
+ * | 240px | 57% | 46% |
+ * | 340px (desk) | 96% | 86% |
+ *
+ * On a phone the camera wanted a scale of 0.73 to fit the pair and was held at
+ * 1.45 on **100%** of frames — exactly twice too close — so two thirds of the
+ * time one of the two fighters was outside the box. A duel with one fighter in
+ * shot is not a duel; it is a figure swinging at nothing, with a blade arriving
+ * from off-screen. That is the single most likely thing behind the report.
+ *
+ * At 0.7 it is 99% / 84% on the phone and ~85% at every size, so the framing
+ * finally behaves the same on a phone as on a desk. The wider clamp does *not*
+ * make the camera a character: within any one slot the measured 5th-to-95th
+ * percentile swing is 1.9–2.1×, the same as before — 0.7 to 2.9 is the range
+ * across *all* slot sizes, not the range any one viewer sees. Median figure
+ * height lands at 57px in a 190px slot and 103px in a 340px one, which is what
+ * this file's own docs always claimed it did.
+ */
+const CAM_MIN = 0.7;
 const CAM_MAX = 2.9;
 /** Per-60Hz-frame approach rates. Zoom is slower than pan, because a zoom that
  *  keeps up with a lunge reads as the picture breathing. */

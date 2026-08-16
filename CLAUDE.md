@@ -588,8 +588,15 @@ All deliberate. Add to this list rather than silently diverging.
      forty seconds after load. Four sequences fired twice an hour, `standoff`
      never fired again after the opening match, and `disengage` took 30% of
      every exchange because `any` range puts it in all three shrunken pools.
-     The rail's own comment says "a normal match never reaches it"; that is only
-     true with the reset.
+
+     **The rail is the ending of every match, not an emergency, and its comment
+     claimed the opposite in both directions** (measured 2026-08-16). Before the
+     reset it fired on 98.6% of picks; after it, the comment still read "a normal
+     match never reaches it", which is also false. A match runs ~24 sequences
+     against a threshold of 22, so the rail takes the last one or two of *every*
+     match — **16%** of all picks. That is a fight tightening as it ends and it
+     is why matches converge at all. Do not raise the threshold expecting to
+     touch an edge case.
    - **`bladeGap`'s second solve uses `vw`, not `uw`.** Re-solving segment `b`
      against a clamped `s` is `((w + s·u)·v)/(v·v)`. With `uw` it reported
      segments that provably cross as 16 units apart and returned `r = 0` for
@@ -598,10 +605,36 @@ All deliberate. Add to this list rather than silently diverging.
      A geometry bug that presents as an art problem.
    - **The body separation is grounded-only, and the exemption is `flip_over`.**
      Two 30-unit bodies overlapped on 3.9% of frames with no constraint but the
-     arena walls. The resolve is soft and positional (a third of the overlap per
-     frame, velocity untouched, because velocity is the choreography's) and it
-     must never apply in the air: the somersault's whole job is to pass over the
-     opponent and swap the sides.
+     arena walls. The resolve is positional, never a bounce — velocity is the
+     choreography's — and it must never apply in the air: the somersault's whole
+     job is to pass over the opponent and swap the sides.
+
+     **It takes the whole overlap out on the frame it appears, and softening
+     that is the trap** (2026-08-16). There were two constraints for a while,
+     this one and an older flat 0.8 push, and the flat one turned out to be
+     carrying it: deleting it as redundant took interpenetration from 0.9% of
+     frames to **6.1%**, because a third-of-the-gap correction loses the race
+     against the closing speed the choreography drives at and the residue
+     compounds. It is not a gentle curve either — 0.34 and 0.6 both measure ~5.5%,
+     and only full resolution wins the race. At full resolution the **minimum
+     grounded separation over 240,000 frames is exactly 26.00** — the target
+     itself, never once under it — which is better than the two constraints
+     managed together and is as tight as the number can get. The ~5% of
+     *airborne* frames that do overlap are `flip_over` passing over the
+     opponent, which is the exemption working, not a residue to chase.
+   - **The leash engages at `MID`, the same constant the director calls "far"
+     at, and the coupling is the point** (2026-08-16, client: the fight "seems a
+     little off"). It used to engage at a hardcoded 290 while `chooseSequence`
+     classified anything past 245 as far — a 45-unit dead band where the pool
+     had already given up on swordplay and nothing was pulling the pair back.
+     Measured, the fight sat in the far bracket **13.5%** of the time in
+     stretches median 136 frames and worst case **1,022 — seventeen seconds** of
+     two figures at opposite ends of the arena never touching. In a box this size
+     that reads as broken, not as spacing. Tying it to `MID` drops far occupancy
+     to 3.7% and the longest stretch to 217 frames. **Do not pull it in further**:
+     200 and 170 keep improving that number and start eating the mid bracket,
+     which is real fighting distance — approach, probe and retreat all live
+     there, and a pair that can never be at arm's length is a worse problem.
    - **`the-lock` closes the pair to `LOCK_SEP` itself.** `close` range is under
      132 units, which is nowhere near close enough for two 58-unit blades to
      meet — measured over 51 locks they averaged 30.8 apart. The ease is
@@ -611,6 +644,53 @@ All deliberate. Add to this list rather than silently diverging.
      same role coin as everything else and the renderer never reads `dir`.
      Nothing in `stepLock` consults a condition or can extend the move, which is
      what keeps the timeout-free match-reset loop safe.
+
+   **Five more shipped bugs, found 2026-08-16** — client: the fight "seems a
+   little off", no further detail. Every one was found by stepping the real
+   `advanceDuel` in Node over 90,000–400,000 frames, because animation cannot be
+   watched in this environment; every number below is measured, not reasoned
+   about. **The lesson worth keeping is that four of the five were silent
+   arithmetic in data rather than logic anyone could see reading the file.**
+
+   - **`impulse: { at: 0 }` never fired, so nothing was ever knocked anywhere.**
+     `setMove` starts `mf` at 0 and `stepFighter` increments *before* testing,
+     so frame 1 is the earliest an impulse can match. All three reaction moves —
+     `recoil`, `stagger`, `knockdown` — asked for 0. Measured: **13,591 frames
+     of `knockdown`, 0.0% of them airborne.** Nobody had ever been knocked down;
+     the heaviest blow in the pool landed and the victim stood still. Now 36.6%.
+     This is most of why the fight had no weight, and it means every distance in
+     the file was tuned against a fight with no knock-back.
+   - **Four of the six attacks dealt damage before the blade arrived.**
+     `spin_attack` fired at frame 23, inside a `hold` plateau that parks the
+     blade overhead until 28 and swings at 32 — the damage, sparks and knockdown
+     all landed with the tip 19 units forward, and the sword swept through empty
+     air nine frames later. Contact is now the frame the keyframe table actually
+     delivers the blade. **A damage reaction may never precede its cause; a
+     *parry* may, and several deliberately do** — check reaction beats against
+     `at + contact` when you touch either.
+   - **`force_pull` pushed.** The knock was `facing * 5.2` and `facing` points at
+     the opponent, so the pull threw its victim away and `pull-and-punish`
+     delivered its payoff thrust at a median of 280 units. `Move.knock` is signed
+     for this reason; `stumble_in` also carried no impulse at all.
+   - **A fixed impulse cannot cross a variable gap.** `DECAY` 0.9 means a move
+     travels ten times its `vx` and no further, so `flip_over` covered 105 units
+     from a median launch of 158 and the somersault **crossed on 29% of
+     attempts**; `leap_strike` covered 42 and **100% of its hits landed short**,
+     by a median of 188. `Move.span` sizes both to the real gap: now 98.6% and
+     0%.
+   - **The camera's floor cropped a fighter out of the frame.** See the long note
+     on `CAM_MIN` in `DuelOrnament.tsx` — on a phone both fighters were fully
+     visible on **31%** of frames and both blades on **12%**, because the floor
+     sat at twice the scale that fits the pair. Now 99% and 84%.
+
+   Two knock-ons worth knowing. The leash had to come in a long way (`LEASH`,
+   150) because working knock-back genuinely widens the fight — with impulses
+   live and the old distance, close-range time *fell* to 35%. And tightening the
+   leash empties the far bracket, which silently starved all five `far`
+   sequences to **zero picks**; four were re-ranged to `mid` and `close-in`
+   deliberately kept far so something sensible still answers that band. **If you
+   move the leash again, re-check the sequence distribution** — the ranges and
+   the leash are coupled, and the failure is invisible.
 
    **One fight at a time, enforced in two places on purpose** (2026-08-15, client: "when in
    landscape mode on mobile, there are two fights going at the same time"). The duel has two homes
