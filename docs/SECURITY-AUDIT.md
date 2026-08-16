@@ -1,3 +1,30 @@
+# Security review — 2026-08-16 (the `hud-pass` branch, which is what production serves)
+
+**Result: no findings.** Recorded because a clean pass is only worth anything if it says what it
+checked — otherwise the next session cannot tell "reviewed and clear" from "never looked".
+
+**Why this pass happened**: `hud-pass` is 25 commits and ~6,480 insertions ahead of `main` and has
+been serving production throughout, without a security review. This closes that gap.
+
+| Surface | Verdict | The reason it holds |
+|---|---|---|
+| `worker/site-config.ts` — inline script injection | clear | `raw.replace(/</g, "\\u003c")` runs over `JSON.stringify` output, so `<` can only occur inside a JSON string literal where `<` is a valid escape. Kills `</script>`, `<script` and `<!--` in one stroke. Payload is never re-parsed between escaping and `head.append` |
+| — its D1 provenance | clear | `publishSiteConfig` is the **only** writer of `site_config`; it does `requireAccount` then refuses non-operators, filters to `PUBLISHED_KEYS`, and caps at 2KB. No visitor-reachable path writes that table |
+| — U+2028 / U+2029 | clear, deliberately noted | Unescaped by `JSON.stringify` and they pass the `<` filter, but ES2019 made both legal inside string literals. They cannot terminate a string or inject a statement |
+| `loadConfig` field validation | clear | `pal`/`type` via `Number.isInteger` + range; `layout`/`fx`/`ornament`/`mode`/`page` via `oneOf` against the hardcoded catalogues; `scope` iterated over known keys with values forced boolean; everything else `bool()`. No `else` branch and no spread of the raw object, so an unknown key cannot reach `Config` |
+| `shareCode.ts` decode | clear | Field count checked; each part must match `/^[0-9a-z]+$/` *before* `parseInt(…, 36)`, so no negatives, `NaN` or `Infinity`; `pal`/`type` clamped; `layout`/`fx`/`ornament` resolve through `ARRAY[i] ?? ARRAY[0]` and return `.id`, so the output is always a catalogue-owned string and never attacker text |
+| `theme.ts` — CSS injection | clear | No config-derived **string** reaches a custom property. Every value originates in `PALETTES` / `TYPESETS` / `BAND_TOKENS` / `LAYOUT_*` via bounds-guarded indices; the numeric properties come from module constants. No `url()` sink |
+| `sitelab.html` / `fxlab.html` reaching production | clear, **verified not assumed** | `vite.config.ts` declares no `build.rollupOptions.input`, both files sit at the repo root rather than `public/`, and `dist/` contains exactly one HTML file. Separately, the bench's `innerHTML` is not injectable: interpolations pass through its `esc()`, and the two values used *unescaped* (`w`/`h`) come from a fixed lookup table, not the query string |
+| The new PostToolUse typecheck hook | clear | The file path reaches only a quoted `case "$f" in` word (quoting suppresses glob expansion) and a quoted `echo`. No `eval`, no unquoted expansion into command position, no command substitution. A path containing `$(…)` or `;` is inert |
+
+**Repo-wide sweep**: `dangerouslySetInnerHTML|innerHTML|eval(|new Function|document.write|
+insertAdjacentHTML|outerHTML` across `src/`, `worker/` and both HTML entries returns **one** hit —
+the dev-only bench above. `ContentBlock.tsx`'s `<img src={block.img}>` draws from the static
+`pages.ts` module, not config. `fonts.css` references only same-origin `/fonts/*.woff2`, consistent
+with `default-src 'self'`; no external origin appears anywhere in the changed data or style files.
+
+---
+
 # Security audit — 2026-08-13
 
 A full pass over the Worker, the auth stack (both halves), headers, cookies, the client, and DNS,
