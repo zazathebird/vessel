@@ -11,4 +11,12 @@ dist/
 # Local Worker secrets. The real ones are set with `wrangler secret put` and
 # live only in Cloudflare; this file holds development placeholders.
 .dev.vars
-.claude/
+# Personal and machine-local Claude Code state stays out; the shared pieces are
+# checked in deliberately. `.claude/skills/` is institutional knowledge — the
+# whole point of writing a skill down is that the next session and the next
+# machine get it — and `settings.json` carries the project's hooks.
+.claude/*
+!.claude/settings.json
+!.claude/skills/
+.claude/settings.local.json
+.claude/*.lock
