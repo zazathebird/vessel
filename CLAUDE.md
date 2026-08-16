@@ -275,8 +275,9 @@ ones most likely to be "fixed" by accident:
   layout id that no longer exists would otherwise render an unstyled page forever
 - **Two fields are stored and read back, and the rule is what they share: they are the settings a
   visitor can set for themselves.** `calm` (2026-08-13) and `sound` (2026-08-14), each under its own
-  key (`vessel.calm.v1`, `vessel.sound.v1`), written only by their three deliberate toggles — the
-  header chip, the panel, the command palette. Everything else is *appearance*, which belongs to the
+  key (`vessel.calm.v1`, `vessel.sound.v1`), written only by their deliberate toggles — the header
+  chip, the panel, the command palette, and (2026-08-16) the greeting's reduced-motion branch, which
+  is a fourth writer of `vessel.calm.v1` and the only one that is not a switch. Everything else is *appearance*, which belongs to the
   operator and stays published-only. Calm must survive because a visitor turned it on; sound must
   survive because a visitor turned it off. Do not read either from the full-config echo `saveConfig`
   writes — that would freeze whatever was published on the first visit. **The test for adding a
@@ -295,6 +296,24 @@ ones most likely to be "fixed" by accident:
   Returning visitors get the two chips flashing three times instead (`is-nudge`), and only while
   neither has been touched: a control advertising the off switch for motion must not become the most
   restless thing on the page.
+- **The one exception is OS-forced calm, and there the dialog must extract a choice** (2026-08-16,
+  client report: "nothing on the site is live, no moving animations" — the *second* time that was
+  reported). A visitor whose machine sets `prefers-reduced-motion` is put into calm on arrival, which
+  stays the right default. The bug was that nothing said so: the canvas goes to `opacity: 0`, every
+  animation is stripped, the `is-nudge` chip flash is stripped with them — and then the greeting
+  opened and said *"The background moves"*, told them to press **plain** to stop motion that was not
+  happening, and never mentioned the way back. **The only dialog on the page described a different
+  page**, which is indistinguishable from a broken site. So `calmBySystem` on `ConfigContext` names
+  that state and `Greeting.tsx` branches on it: it names the setting, and both buttons call
+  `chooseMotion`, which writes the preference **either way**. Three things there are load-bearing.
+  It **asks regardless of the greeting flag** — those are two different facts ("has seen the
+  introduction" vs "has answered the motion question"), and anyone who dismissed the greeting before
+  this shipped has the first and not the second, which is precisely the stuck state that was
+  reported. It **cannot become a nag**, because `calmBySystem` is derived from the stored preference
+  rather than latched. And turning motion on restores `grain`/`breathe` **from the config the visitor
+  arrived with**, not from `DEFAULT_CONFIG`, so a site published without grain does not acquire it
+  here. The still option leads and takes focus, and Escape agrees with it: the visitor's computer
+  already asked for that.
 - **That button is also the capability probe, and says nothing about it** (`src/fx/perf.ts`, client:
   "just have it linked to clicking ok", "dont say the site is going to do it"). `FxCanvas` adapts
   continuously but cannot know anything on the first frame, so a slow machine spent its opening

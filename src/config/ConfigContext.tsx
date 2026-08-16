@@ -19,7 +19,14 @@ import { PATHS, pageFromPath } from "../data/pageIds";
 import type { PageId } from "../data/pageIds";
 import { adaptLayout, bandForWidth, isAdapted } from "./bands";
 import type { Band } from "./bands";
-import { SAVE_DEBOUNCE_MS, calmPreference, hasVisited, loadConfig, saveConfig } from "./persistence";
+import {
+  SAVE_DEBOUNCE_MS,
+  calmPreference,
+  hasVisited,
+  loadConfig,
+  saveCalmPreference,
+  saveConfig,
+} from "./persistence";
 import { describeRoll, roll } from "./randomiser";
 import { useSession } from "../auth/SessionContext";
 import { DEFAULT_CONFIG } from "./types";
@@ -27,6 +34,14 @@ import type { Config } from "./types";
 
 interface ConfigContextValue {
   config: Config;
+  /**
+   * Calm is on because the OS asked for reduced motion and the visitor has
+   * expressed no preference of their own. Read by `Greeting.tsx`, which is the
+   * only place that tells them so.
+   */
+  calmBySystem: boolean;
+  /** Settle the reduced-motion question for good. See `chooseMotion`. */
+  chooseMotion: (moving: boolean) => void;
   /** Merge a partial update into config. */
   update: (patch: Partial<Config>) => void;
   /** Navigate — pushes a real URL, dives the stage, and applies per-page rolls. */
@@ -100,9 +115,20 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   // holding an answer that arrives whenever it arrives.
   const { isOperator } = useSession();
 
-  // Read storage during the first render so there is no flash of default palette.
-  const [config, setConfig] = useState<Config>(() => {
-    if (typeof window === "undefined") return { ...DEFAULT_CONFIG };
+  /*
+   * Boot state, read from storage during the first render so there is no flash
+   * of the default palette.
+   *
+   * `loadConfig()` is called once and its result kept, rather than called again
+   * later to recover what the reduced-motion override replaced: `chooseMotion`
+   * has to put `grain` and `breathe` back exactly as the visitor arrived with
+   * them, and a second call would be a second source of truth for that.
+   */
+  const [boot] = useState(() => {
+    if (typeof window === "undefined") {
+      const config = { ...DEFAULT_CONFIG };
+      return { loaded: config, systemCalm: false, config };
+    }
     const loaded = loadConfig();
     const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
     /*
@@ -119,11 +145,39 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
      *
      * `null` means no preference was ever expressed, which is the only case the
      * OS hint should decide. The CSS half of the same fix is in base.css.
+     *
+     * **`systemCalm` names that case, and it is on the context because the
+     * visitor has to be told** (2026-08-16, client report: "nothing on the site
+     * is live, no moving animations"). Honouring the hint is right; doing it
+     * silently is not. Everything stops, the canvas goes to `opacity: 0`, and
+     * the greeting then insists the background moves and explains how to stop
+     * it — so the one dialog on the page contradicts the page. That reads as a
+     * broken site, not a considerate one. See `Greeting.tsx`.
      */
-    const chosen = calmPreference();
-    const motion = reduced && chosen === null ? { calm: true, grain: false, breathe: false } : null;
-    return { ...loaded, ...motion, page: pageFromPath(window.location.pathname) };
+    const systemCalm = reduced && calmPreference() === null;
+    const motion = systemCalm ? { calm: true, grain: false, breathe: false } : null;
+    return {
+      loaded,
+      systemCalm,
+      config: { ...loaded, ...motion, page: pageFromPath(window.location.pathname) },
+    };
   });
+
+  const [config, setConfig] = useState<Config>(boot.config);
+
+  /**
+   * Calm is on because the operating system asked for it, and the visitor has
+   * still expressed nothing either way.
+   *
+   * Re-derived from the stored preference rather than latched, so it goes false
+   * the moment *any* of the four toggles writes one — the header chip, the
+   * panel, the command palette or the greeting — and cannot be left claiming
+   * "your computer chose this" about a state the visitor chose themselves.
+   */
+  const calmBySystem = useMemo(
+    () => boot.systemCalm && config.calm && calmPreference() === null,
+    [boot.systemCalm, config.calm],
+  );
 
   const [band, setBand] = useState<Band>(() =>
     typeof window === "undefined" ? "desk" : bandForWidth(window.innerWidth),
@@ -233,6 +287,31 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     live.current = { ...live.current, config: { ...live.current.config, ...patch } };
     setConfig((previous) => ({ ...previous, ...patch }));
   }, []);
+
+  /**
+   * The greeting's answer, and the only route out of OS-forced calm a visitor
+   * is ever shown (`calmBySystem`).
+   *
+   * It writes the preference **either way**, which is the load-bearing part: an
+   * unanswered hint is what makes the site look broken on every load, so the
+   * one dialog that raises it has to settle it. Whichever button is pressed,
+   * `calmBySystem` is false from here on and nothing asks again.
+   *
+   * Turning motion on restores `grain` and `breathe` from the config the
+   * visitor actually arrived with — not from `DEFAULT_CONFIG` — so a site
+   * published without grain does not quietly acquire it here.
+   */
+  const chooseMotion = useCallback(
+    (moving: boolean) => {
+      saveCalmPreference(!moving);
+      if (!moving) {
+        update({ calm: true });
+        return;
+      }
+      update({ calm: false, grain: boot.loaded.grain, breathe: boot.loaded.breathe });
+    },
+    [update, boot.loaded.grain, boot.loaded.breathe],
+  );
 
   const shuffle = useCallback(() => {
     // roll() is random and say() dispatches state — neither may live inside a
@@ -511,6 +590,8 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   const value = useMemo<ConfigContextValue>(
     () => ({
       config,
+      calmBySystem,
+      chooseMotion,
       update,
       go,
       shuffle,
@@ -542,6 +623,8 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     }),
     [
       config,
+      calmBySystem,
+      chooseMotion,
       update,
       go,
       shuffle,
