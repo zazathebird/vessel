@@ -1,5 +1,5 @@
-import { LAYOUTS, PICKABLE_FX, TYPESETS } from "../data/catalog";
-import { ORNAMENTS } from "../data/ornaments";
+import { LAYOUTS, ROLLABLE_FX, TYPESETS } from "../data/catalog";
+import { ROLLABLE_ORNAMENTS } from "../data/ornaments";
 import { PALETTES } from "../data/palettes";
 import { isAllowed } from "../data/guardrails";
 import type { Config } from "./types";
@@ -34,8 +34,12 @@ export function roll(config: Config): RollResult | null {
       layout: scope.layout ? pick(LAYOUTS).id : config.layout,
       // PICKABLE_FX: a withdrawn effect is not a legal roll, even though a
       // share code carrying it still applies.
-      fx: scope.fx ? pick(PICKABLE_FX).id : config.fx,
-      ornament: scope.ornament ? pick(ORNAMENTS).id : config.ornament,
+      // ROLLABLE_*, not PICKABLE_*: the dice may not hand out an absence. See
+      // the note on ROLLABLE_FX — a rolled `off` is a blank background and a
+      // rolled empty ornament is a blank hero slot, and neither is
+      // distinguishable from the site being broken.
+      fx: scope.fx ? pick(ROLLABLE_FX).id : config.fx,
+      ornament: scope.ornament ? pick(ROLLABLE_ORNAMENTS).id : config.ornament,
       type: scope.type ? pickIndex(TYPESETS.length) : config.type,
       grain: scope.toggles ? Math.random() > 0.35 : config.grain,
       breathe: scope.toggles ? Math.random() > 0.2 : config.breathe,

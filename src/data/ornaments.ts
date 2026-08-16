@@ -35,5 +35,22 @@ export const ORNAMENTS: { id: OrnamentId; label: string }[] = [
   { id: "duelholy", label: "Lightswords: saint & serpent" },
 ];
 
+/**
+ * The ornaments the *dice* may hand out — everything but "None".
+ *
+ * Same rule as `ROLLABLE_FX`, and for a second reason on top of the aesthetic
+ * one: five taps on this element are what reveal the footer's sign-in link, and
+ * on the phone band that is the only *findable* route to an account. Rolling
+ * the slot empty removes it for a reason no visitor could see. The duel
+ * guardrail already settled this once — when a background duel forces the
+ * ornament to yield it yields to `DEFAULT_ORNAMENT`, deliberately not to
+ * `null` — so an automatic mechanism emptying the slot is a decided question,
+ * and a roll is exactly such a mechanism.
+ *
+ * "None" stays in `ORNAMENTS`, so the panel still offers it and its share-code
+ * index never moves; the operator can still choose a bare hero deliberately.
+ */
+export const ROLLABLE_ORNAMENTS = ORNAMENTS.filter((o) => o.id !== "none");
+
 /** Lens is the default: it holds still and lets only the light move. */
 export const DEFAULT_ORNAMENT: OrnamentId = "lens";

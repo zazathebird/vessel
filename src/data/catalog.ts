@@ -116,6 +116,28 @@ export const FX: FxEntry[] = [
  */
 export const PICKABLE_FX: FxEntry[] = FX.filter((effect) => !effect.hidden);
 
+/**
+ * The effects the *dice* may hand out — `PICKABLE_FX` minus `off`.
+ *
+ * A third list rather than a third flag, because this is not a property of the
+ * entry: `off` is a perfectly good thing for an operator to choose, and a
+ * terrible thing to be given at random. The published site runs `mode: "visit"`
+ * with every scope on, so before this existed roughly **one visit in sixteen**
+ * arrived with no canvas effect at all — which is indistinguishable from a
+ * broken site, and is the same complaint ("nothing on the site is live") that
+ * the reduced-motion greeting branch was built for on 2026-08-16. Two unrelated
+ * causes, one symptom; this is the second of them.
+ *
+ * The rule it encodes, which is the part worth keeping: **a roll never rolls an
+ * absence.** Rolling the effect off is not one of sixteen aesthetics, it is the
+ * dice declining to play, and the visitor cannot tell that from a failure.
+ * `ROLLABLE_ORNAMENTS` says the same thing about the empty hero slot.
+ *
+ * `FX` (the wire format) and `PICKABLE_FX` (the menu) are both untouched, so no
+ * share code moves and the operator loses no choice.
+ */
+export const ROLLABLE_FX: FxEntry[] = PICKABLE_FX.filter((effect) => effect.id !== "off");
+
 export interface TypeSet {
   id: TypeSetId;
   label: string;
