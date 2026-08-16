@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>sitelab — the real site, at a chosen config (dev only)</title>
+    <!--
+      A development-only bench for the *site*, the way fxlab.html is a bench for
+      the effects. Open it at http://localhost:5173/sitelab.html with
+      `npm run dev` running.
+
+      WHY IT EXISTS. Reviewing the site page by page, band by band and layout by
+      layout — the standing client request — needs two levers this environment
+      does not otherwise have.
+
+      1. A LAYOUT LEVER. Appearance is published-only and the panel that sets it
+         is operator-gated, so in `npm run dev` (no Worker, no D1) every page
+         renders DEFAULT_CONFIG and thirteen of the fourteen archetypes are
+         unreachable. This page writes `window.__VESSEL_SITE__` *before* the
+         bundle loads, which is precisely the contract `publishedConfig()`
+         already reads — so the site is driven through its real published-config
+         path rather than through a debug hook bolted into the app.
+
+      2. A BAND LEVER. `resize_window` silently fails in the automated browser
+         (innerWidth stays 1536), and production sends `x-frame-options: DENY`,
+         so the site cannot be framed at a phone size there either. Vite sends no
+         such header, so an iframe pointed at this page at 420x860 is the only
+         way to see the phone band — and the band is computed from the *iframe's*
+         own width, so it is a real phone band and not a simulated one.
+
+      WHY A SEPARATE PAGE AND NOT `?site=` ON THE APP. That exact question was
+      asked and answered on 2026-08-14: the bench is kept, the query parameter is
+      not. A debug entry point inside the app is a debug entry point in
+      production; a root HTML file is not, because Vite declares no
+      `rollupOptions.input`, so the build has one entry (index.html) and `dist/`
+      never receives this file. Verify with `npm run build` — the same guarantee
+      fxlab.html relies on. If a multi-page input map is ever added, leave both
+      of these out of it.
+
+      USAGE. Every field is optional and falls through to the app's own default.
+
+        /sitelab.html?layout=hud
+        /sitelab.html?layout=terminal&pal=24&fx=telemetry&path=/scams
+        /sitelab.html?layout=mosaic&calm=1&band=phone
+        /sitelab.html?all=1                — every layout, one iframe each
+
+      layout  a LayoutId          fx       an FxId           pal   0..24
+      type    0..4                ornament an OrnamentId     calm  0|1
+      grain/breathe/cursor/sound/slots  0|1
+      path    the route to render, e.g. /contact  (uses the History API, so the
+              app's own router sees it exactly as it would a real URL)
+      band    phone | tablet | desk    frame the page in an iframe of that
+              band's width. The band is computed from `window.innerWidth`, and
+              inside an iframe that is the *iframe's* width — so this is a real
+              band, not a simulated one, and it is the only way to reach the
+              phone band here at all (`resize_window` silently fails in the
+              automated browser; innerWidth stays 1536).
+      all     1   every layout at once, one framed cell each, captioned with
+              what the band actually adapts it to. Combines with `band`.
+
+      TWO MODES, ONE FILE. With `all` or `band` present this page is a *harness*
+      and does not mount the site at all — it builds iframes that each load this
+      same file with `_f=1`, which is the recursion guard. Without them it is the
+      single-config bench described above. The layout list and the adaptation
+      rules are imported from `src/data/catalog.ts` and `src/config/bands.ts`
+      rather than restated here, for the same reason presets derive their share
+      code instead of hardcoding it: a bench that disagrees with the app is worse
+      than no bench, because it disagrees silently.
+    -->
+    <style>
+      html, body { margin: 0; background: #0a0a0c; }
+      #root { min-height: 100vh; }
+
+      /* Harness chrome only. Deliberately plain and deliberately not themed:
+         nothing here should be mistakable for the site under review. */
+      .lab { font: 13px/1.5 ui-monospace, "JetBrains Mono", monospace; color: #d6d6de; padding: 14px 16px 28px; }
+      .lab h1 { font-size: 13px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: #8b8b99; margin: 0 0 4px; }
+      .lab .sub { color: #6b6b78; margin: 0 0 16px; }
+      .lab .sub b { color: #b9b9c6; font-weight: 600; }
+      .grid { display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start; }
+      .cell { display: flex; flex-direction: column; gap: 6px; }
+      .cap { display: flex; justify-content: space-between; gap: 12px; color: #8b8b99; }
+      .cap b { color: #e6e6ef; font-weight: 600; }
+      .cap .adapt { color: #d08a3c; }
+      .cell iframe { border: 1px solid #26262e; background: #000; display: block; }
+      .lab a { color: #7aa2d6; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      // Written before the module below, which is the whole point: the client
+      // half of published config (`src/config/siteConfig.ts`) reads this global
+      // *synchronously during the first render*, so anything set afterwards is
+      // too late and the site would render defaults with no clue why.
+      (function () {
+        var q = new URLSearchParams(location.search);
+
+        // Harness mode short-circuits everything below. It must not write
+        // __VESSEL_SITE__ and must not touch history: the query string is the
+        // harness's own input, and replaceState would throw it away.
+        window.__LAB_HARNESS__ = (q.has("all") || q.has("band")) && q.get("_f") !== "1";
+        if (window.__LAB_HARNESS__) return;
+
+        var cfg = {};
+        var str = ["layout", "fx", "ornament", "mode"];
+        var num = ["pal", "type"];
+        var bool = ["calm", "grain", "breathe", "cursor", "sound", "slots"];
+        str.forEach(function (k) { if (q.has(k)) cfg[k] = q.get(k); });
+        num.forEach(function (k) { if (q.has(k)) cfg[k] = Number(q.get(k)); });
+        bool.forEach(function (k) { if (q.has(k)) cfg[k] = q.get(k) === "1"; });
+
+        // A bench that re-rolled its own config on every reload would be
+        // useless — two screenshots of "the same" page would not be the same
+        // page. `static` is the mode that leaves the published values alone.
+        cfg.mode = cfg.mode || "static";
+        cfg.scope = { pal: false, layout: false, fx: false, ornament: false, type: false, toggles: false };
+
+        if (Object.keys(cfg).length) window.__VESSEL_SITE__ = cfg;
+
+        // The router reads the real location, so put the requested route there
+        // before the app mounts. replaceState keeps this page's query string out
+        // of the app's way while leaving the path it routes on.
+        var path = q.get("path");
+        if (path) history.replaceState(null, "", path);
+      })();
+    </script>
+    <script type="module">
+      // Two modes, decided by the classic script above. Mounting the site is a
+      // dynamic import rather than a static `<script src>` because the harness
+      // must be able to *not* mount it; a static tag always runs.
+      if (!window.__LAB_HARNESS__) {
+        await import("/src/main.tsx");
+      } else {
+        const { LAYOUTS } = await import("/src/data/catalog.ts");
+        const { adaptLayout } = await import("/src/config/bands.ts");
+
+        const q = new URLSearchParams(location.search);
+        const band = q.get("band") || "desk";
+
+        // Widths sit inside each band rather than on its edge: PHONE_MAX is 560
+        // and TABLET_MAX 900, so 420/760 are comfortably within, and a desk cell
+        // is the narrowest thing that is still unambiguously desk.
+        const SIZE = {
+          phone: [420, 860],
+          tablet: [760, 1024],
+          desk: [1280, 820],
+        };
+        const [w, h] = SIZE[band] || SIZE.desk;
+
+        // Everything except the harness's own controls is passed straight
+        // through, so `?all=1&pal=24&calm=1&path=/scams` means what it reads as.
+        const passthrough = new URLSearchParams();
+        for (const [k, v] of q) {
+          if (k !== "all" && k !== "band" && k !== "_f" && k !== "layout") passthrough.set(k, v);
+        }
+        passthrough.set("_f", "1");
+
+        const cells = q.has("all")
+          ? LAYOUTS.map((l) => ({ id: l.id, label: l.label }))
+          : [{ id: q.get("layout") || "", label: q.get("layout") || "(published default)" }];
+
+        const src = (id) => {
+          const p = new URLSearchParams(passthrough);
+          if (id) p.set("layout", id);
+          return "/sitelab.html?" + p.toString();
+        };
+
+        const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+        // The adapted note is the point of the captions: thirteen of the
+        // fourteen archetypes are unreachable in `npm run dev`, and on the phone
+        // band most of them collapse to Stack. Saying which is the difference
+        // between "Mosaic looks wrong" and "Mosaic is not what is on screen".
+        const caption = (c) => {
+          if (!c.id) return `<b>${esc(c.label)}</b>`;
+          const real = adaptLayout(c.id, band);
+          const note = real !== c.id ? `<span class="adapt">→ ${esc(real)}</span>` : "";
+          return `<b>${esc(c.label)}</b>${note}`;
+        };
+
+        document.getElementById("root").innerHTML = `
+          <div class="lab">
+            <h1>sitelab — ${esc(q.has("all") ? "all layouts" : "single")} · ${esc(band)} band · ${w}×${h}</h1>
+            <p class="sub">
+              route <b>${esc(q.get("path") || "/")}</b> ·
+              ${esc(cells.length)} frame${cells.length === 1 ? "" : "s"} ·
+              an amber arrow means this band adapts that layout to another one, so
+              the cell is showing the adaptation and not the archetype.
+            </p>
+            <div class="grid">
+              ${cells
+                .map(
+                  (c) => `
+                <div class="cell">
+                  <div class="cap" style="width:${w}px">${caption(c)}<span>${esc(c.id || "")}</span></div>
+                  <iframe src="${esc(src(c.id))}" width="${w}" height="${h}" loading="lazy"
+                          title="${esc(c.label)}"></iframe>
+                </div>`
+                )
+                .join("")}
+            </div>
+          </div>`;
+        document.title = `sitelab — ${q.has("all") ? "all layouts" : cells[0].label} · ${band}`;
+      }
+    </script>
+  </body>
+</html>
