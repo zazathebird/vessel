@@ -9,13 +9,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.tool_input.file_path // .tool_response.filePath // empty' | { read -r f; case \"$f\" in *src/*.ts|*src/*.tsx|*worker/*.ts) out=$(npm run typecheck 2>&1) || { { echo \"Typecheck FAILED after editing $f\"; echo \"$out\" | grep -E 'error TS' | head -12; } >&2; exit 2; };; esac; }",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath // empty' | { read -r f; case \"$f\" in *src/*|*worker/*|*scripts/*) out=$(npm run check:fast 2>&1) || { { echo \"Checks FAILED after editing $f\"; echo \"$out\" | grep -E '^FAIL|error TS' | head -12; } >&2; exit 2; };; esac; }",
             "async": true,
             "asyncRewake": true,
             "timeout": 120,
-            "statusMessage": "Typechecking…",
-            "rewakeSummary": "Typecheck failed",
-            "rewakeMessage": "The project no longer typechecks after your last edit. Fix it before moving on:"
+            "statusMessage": "Checking\u2026",
+            "rewakeSummary": "Checks failed",
+            "rewakeMessage": "A check failed after your last edit. These are the gates that exist because this exact class of bug shipped before \u2014 fix it before moving on:"
           }
         ]
       }

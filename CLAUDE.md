@@ -1207,6 +1207,37 @@ Found while building; none are blocking. Listed in `TODO.md`; the reasoning is h
 4. **Signup discloses handle availability** (409) while `challenge` goes to real trouble to hide it.
    Defensible — availability is inherently public — but the two should not disagree.
 
+## Checks — run them, and add to them
+
+`npm run check` is the gate. `npm run check:fast` (4s) is the same thing without the duel
+simulation and runs automatically after every edit to `src/`, `worker/` or `scripts/` via the
+`PostToolUse` hook in `.claude/settings.json`. The full pass is `predeploy`, so **nothing reaches
+production without it**.
+
+It exists because on 2026-08-17 a single long session shipped a QR encoder that would not scan, a
+CSS rule silently dropped by a scripted edit that landed inside the previous block, a duel sequence
+that had become unreachable, and an accessibility error that could never have been announced.
+**Every one of them typechecked, built, and looked right.** The gap was never "does it compile" —
+it was "does the thing it claims to do actually happen".
+
+What it covers: types; stylesheet brace balance; the QR encoder against the ISO Reed-Solomon worked
+example, both format copies agreeing on a published level-M value, and a round trip back to the
+input; the duel's fairness, sequence reachability and numerical stability over 360,000 stepped
+frames; the catalogue counts this file documents; and that every route has copy and the 404's page
+count is still true.
+
+**Each gate is there because that exact failure shipped.** Verified by breaking each one
+deliberately and confirming it fails — including the QR bug that broke a real scan, which the suite
+catches as *"format copies disagree at 21x21: 45f9 vs 4579"*.
+
+**When you fix a bug that got past the checks, add a check.** That is the whole discipline, and it
+is cheaper than the alternative every time.
+
+**It cannot check everything, and the report says so out loud** rather than implying a green run
+means correct: whether the fight *reads* well (rAF parks here, so it cannot be watched), whether a
+layout is beautiful or the copy sounds right, whether a QR actually scans on a phone, and the
+operator surfaces, which need a signed-in session. A green suite is a floor, not a verdict.
+
 ## Deployment
 
 Served by a **Cloudflare Worker with static assets** (`wrangler.toml`), not Pages. Pages cannot
