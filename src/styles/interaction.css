@@ -228,8 +228,23 @@
 
 /* The reveal toggle. `.vessel` prefix for 0-2-0, so these beat the 0-1-0 rules
    in chrome.css on specificity rather than on import order — the rule this
-   file's header sets out. Colour is left to the palette at 0.9s; only the
-   scale belongs here, at the interaction layer's 90ms. */
+   file's header sets out.
+
+   **It needs its own `transition`, and the first version had none at all.**
+   Without it the button's colour and its revealed-state accent *cut* on a
+   palette change while every control around them cross-fades over 0.9s, and the
+   press `scale` snaps at 0ms instead of 90ms so it reads as a glitch rather
+   than a press. Both halves are declared here, each on its own timing, which is
+   the split this file exists to enforce: colour belongs to the palette, scale
+   belongs to interaction. (An earlier comment claimed colour was "left to the
+   palette" while the rule under it set a hover colour with no transition —
+   wrong in both directions.) */
+.vessel .v-reveal {
+  transition:
+    color 0.9s ease,
+    scale var(--t-press) var(--ease-ui);
+}
+
 .vessel .v-reveal:hover:not(:disabled) {
   color: var(--fg);
 }

@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 /**
  * A password input with a reveal toggle.
@@ -15,19 +15,9 @@ import { useId, useState } from "react";
  * check the thing you actually have. Signup asks for both, and only signup —
  * see the note on `confirm` in `SignUp.tsx`.
  *
- * Three details are load-bearing:
- *
- * - **`type="button"`.** Inside a `<form>` a bare `<button>` submits it, so the
- *   reveal toggle would create the account.
- * - **The label is associated by `id`, not by nesting.** The rest of the account
- *   forms wrap the input in its `<label>`, which is fine until there is a button
- *   beside it — a click on a control inside a label also activates the label,
- *   which re-targets focus and makes the toggle behave oddly. Explicit
- *   `htmlFor` keeps the association without the nesting.
- * - **`autoComplete` is passed through** rather than hardcoded. `new-password`
- *   on signup and `current-password` on sign-in is what tells a password manager
- *   to offer generation versus retrieval, and getting it wrong is how people end
- *   up with an unsaved password — the exact failure this component exists for.
+ * Everything below was corrected after an adversarial review found the first
+ * version shipped with two ways to lose a password and an error nobody would
+ * hear. Each one is noted where it sits.
  */
 export function PasswordField({
   label,
@@ -38,6 +28,7 @@ export function PasswordField({
   autoFocus,
   error,
   onBlur,
+  hideSignal,
 }: {
   label: string;
   value: string;
@@ -56,9 +47,26 @@ export function PasswordField({
    */
   error?: string;
   onBlur?: () => void;
+  /**
+   * Change this to force the field back to hidden.
+   *
+   * Parents bump it when they submit. Two reasons, both about the secret
+   * outliving the moment it was needed: browsers exclude `type="password"` from
+   * session/bfcache form restore but *not* `type="text"`, so a revealed field
+   * left revealed can come back in plaintext on Back; and a rejected sign-in
+   * otherwise leaves the password on screen for as long as the tab is open.
+   */
+  hideSignal?: number;
 }) {
   const [shown, setShown] = useState(false);
   const id = useId();
+
+  useEffect(() => {
+    if (hideSignal !== undefined) setShown(false);
+  }, [hideSignal]);
+
+  const hintId = `${id}-hint`;
+  const errorId = `${id}-error`;
 
   return (
     <div className="v-field">
@@ -74,15 +82,35 @@ export function PasswordField({
           onChange={(e) => onChange(e.target.value)}
           autoComplete={autoComplete}
           spellCheck={false}
+          /*
+           * **`autoCorrect` and `autoCapitalize` are the reveal's hidden cost.**
+           * iOS suppresses both while a field is `type="password"` and applies
+           * them the moment it becomes `type="text"` — so revealing and carrying
+           * on typing gets you a capitalised first letter and autocorrected
+           * words, the field shows what you typed, and a *different* string
+           * reaches PBKDF2. At signup that is a sealed account: exactly the
+           * failure this component exists to prevent, reintroduced by the fix.
+           */
+          autoCorrect="off"
+          autoCapitalize="off"
           autoFocus={autoFocus}
           onBlur={onBlur}
           aria-invalid={error ? true : undefined}
-          aria-describedby={error ? `${id}-error` : undefined}
+          aria-describedby={error ? errorId : hint ? hintId : undefined}
         />
         <button
           type="button"
-          className="v-reveal"
-          aria-pressed={shown}
+          className={`v-reveal${shown ? " is-shown" : ""}`}
+          /*
+           * A name that says what the button *does*, and no `aria-pressed`.
+           *
+           * Carrying both is the documented anti-pattern: a changing label plus
+           * a state makes a reader announce "hide, pressed", where the label is
+           * the next action and the state is the current one. And the name has
+           * to include which field — signup has two of these, and "show, show"
+           * in a button list is unusable.
+           */
+          aria-label={`${shown ? "Hide" : "Show"} ${label.toLowerCase()}`}
           aria-controls={id}
           // Without this the button takes focus off the field on mousedown, so
           // revealing loses your place in what you were typing.
@@ -94,18 +122,20 @@ export function PasswordField({
       </div>
       {error ? (
         /*
-         * `role="alert"` rather than a live region on a permanent node: this
-         * element only exists while the field is invalid, so it announces on
-         * appearing and says nothing the rest of the time. The caller decides
-         * *when* to pass an error — signup waits until the field has been left
-         * once, so it does not accuse you of a mismatch while you are still
-         * halfway through typing the second copy.
+         * **`key` is what makes this announce.** Both branches render a `<span>`
+         * at the same position, so without distinct keys React reconciles them
+         * as one element and patches `role`, `id` and text in place — no node is
+         * inserted, and `role="alert"` fires on *insertion*. The first version
+         * had no keys and its comment claimed it announced; measured against how
+         * React reconciles, it would not have.
          */
-        <span id={`${id}-error`} className="v-field-error" role="alert">
+        <span key="error" id={errorId} className="v-field-error" role="alert">
           {error}
         </span>
       ) : hint ? (
-        <span className="v-field-hint">{hint}</span>
+        <span key="hint" id={hintId} className="v-field-hint">
+          {hint}
+        </span>
       ) : null}
     </div>
   );

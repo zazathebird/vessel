@@ -49,6 +49,8 @@ export function SignUp() {
    * the site says so out loud.
    */
   const [confirmTouched, setConfirmTouched] = useState(false);
+  // Bumped on submit so both fields drop back to hidden — see `hideSignal`.
+  const [hideSignal, setHideSignal] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ handle: string; codes: string[] } | null>(null);
@@ -72,6 +74,7 @@ export function SignUp() {
 
   async function onSubmit(event: React.FormEvent) {
     event.preventDefault();
+    setHideSignal((n) => n + 1);
     if (!ready) return;
 
     setBusy(true);
@@ -169,6 +172,7 @@ export function SignUp() {
           value={password}
           onChange={setPassword}
           autoComplete="new-password"
+          hideSignal={hideSignal}
           hint={
             tooShort
               ? `At least ${MIN_PASSWORD_LENGTH} characters — ${MIN_PASSWORD_LENGTH - password.length} to go.`
@@ -182,6 +186,7 @@ export function SignUp() {
           onChange={setConfirm}
           onBlur={() => setConfirmTouched(true)}
           autoComplete="new-password"
+          hideSignal={hideSignal}
           error={confirmTouched && mismatch ? "Passwords do not match." : undefined}
           hint="Because there is no email reset — a typo here is an account nobody can open."
         />

@@ -108,23 +108,23 @@ function ChangePassword() {
         />
       </label>
 
-      <label className="v-field">
-        <span className="v-field-label">New password</span>
-        <input
-          className="v-input"
-          type="password"
-          value={next}
-          onChange={(e) => {
-            setNext(e.target.value);
-            setDone(false);
-          }}
-          autoComplete="new-password"
-        />
-        <span className="v-field-hint">
-          At least {MIN_PASSWORD_LENGTH} characters. Your recovery codes keep working — they are
-          not tied to the password.
-        </span>
-      </label>
+      {/*
+        * This one gets the reveal too, and the six other password inputs in the
+        * app do not. The rule is not "signup only" but **create-a-password
+        * versus confirm-a-password**: a typo in a *current* password costs one
+        * more attempt, while a typo here sets a password you cannot type again
+        * and the way out is spending one of ten recovery codes.
+        */}
+      <PasswordField
+        label="New password"
+        value={next}
+        onChange={(v) => {
+          setNext(v);
+          setDone(false);
+        }}
+        autoComplete="new-password"
+        hint={`At least ${MIN_PASSWORD_LENGTH} characters. Your recovery codes keep working — they are not tied to the password.`}
+      />
 
       {error ? (
         <p className="v-account-error" role="alert">{error}</p>

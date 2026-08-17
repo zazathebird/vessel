@@ -2593,6 +2593,17 @@
   padding-right: 68px;
 }
 
+/* The site's 44px touch convention (base.css chips, `.v-btn` on the small
+   bands) applies here too — it was missed on the first pass. Worse than the
+   raw number suggests: `.band-phone .v-input` is 16px, so the field is ~46px
+   tall and a 25px target floated in the middle of it. */
+.band-phone .v-reveal,
+.band-tablet .v-reveal {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+}
+
 .v-reveal {
   position: absolute;
   right: 6px;
@@ -2610,8 +2621,16 @@
   cursor: pointer;
 }
 
-/* Pressed state is the accent, so "showing" is legible at a glance rather than
-   only from the word. `--a1` clears 3:1 against every palette's surface. */
-.v-reveal[aria-pressed="true"] {
+/* Revealed state takes the accent, so "showing" is legible at a glance rather
+   than only from the word.
+
+   The threshold here is **4.5:1, not 3:1** — an earlier comment cited the
+   non-text minimum, but this is an 11px text label and 1.4.3 applies. Measured
+   across the 25 palettes `--a1` on `--surface` runs 3.91–13.93:1, so Oxide
+   (3.91) sits under it; that is consistent with the site's documented position
+   on its low-contrast palettes rather than a new failure, and the unrevealed
+   `--muted` state passes everywhere at 6.21–8.31. Recorded rather than papered
+   over. */
+.v-reveal.is-shown {
   color: var(--a1);
 }
