@@ -2815,14 +2815,19 @@
 /* Text-sized controls gain an invisible hit area — padding pulled back by an
    equal negative margin, so no layout shifts. The footer link is where the
    five-tap ornament reveal lands; 10px type is not a touch target. */
+/* 14px, not 12: with the footer's ~16px line the 12px version measured 40px
+   tall — under the 44px touch floor the .v-btn rule above holds everything
+   else to (2026-08-17 audit; the sweep's only sub-44 targets were these and
+   the account links). Horizontal padding stays 6px: the row's gap is 14px, so
+   wider hit areas would overlap adjacent links, which is worse than narrow. */
 .band-phone .v-footer-link {
-  padding: 12px 6px;
-  margin: -12px -6px;
+  padding: 14px 6px;
+  margin: -14px -6px;
 }
 
 .band-phone .v-account-link {
-  padding: 8px 2px;
-  margin: -8px -2px;
+  padding: 12px 2px;
+  margin: -12px -2px;
 }
 
 /* Explorer rows reach touch size; pane width and the tile grid already did. */
