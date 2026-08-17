@@ -1868,6 +1868,22 @@
   outline: none;
 }
 
+/*
+ * A per-field validation failure. Distinct from `.v-field-hint`, which is
+ * advice — this is the site telling you something is wrong, so it takes the
+ * danger token rather than the muted one.
+ *
+ * `--a3` is exempt from the calm collapse (see `theme.ts`), which matters here:
+ * before that exemption this message would have rendered in the faintest grey
+ * on the site for every visitor whose machine asks for reduced motion.
+ */
+.v-field-error {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--a3);
+}
+
 .v-field-hint,
 .v-account-note {
   font-size: 12px;

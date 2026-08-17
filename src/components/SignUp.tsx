@@ -38,6 +38,17 @@ export function SignUp() {
    * costs one more attempt rather than the account.
    */
   const [confirm, setConfirm] = useState("");
+  /*
+   * Whether the confirm field has been left at least once.
+   *
+   * The mismatch only surfaces after that, because a second copy is *always*
+   * mismatched while it is being typed — flagging it live means the form calls
+   * you wrong for every character until the last one, which trains people to
+   * ignore the message that matters. The submit button is disabled throughout
+   * regardless, so nothing can be submitted mid-typing; this only decides when
+   * the site says so out loud.
+   */
+  const [confirmTouched, setConfirmTouched] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ handle: string; codes: string[] } | null>(null);
@@ -169,12 +180,10 @@ export function SignUp() {
           label="Password again"
           value={confirm}
           onChange={setConfirm}
+          onBlur={() => setConfirmTouched(true)}
           autoComplete="new-password"
-          hint={
-            mismatch
-              ? "These do not match yet."
-              : "Because there is no email reset — a typo here is an account nobody can open."
-          }
+          error={confirmTouched && mismatch ? "Passwords do not match." : undefined}
+          hint="Because there is no email reset — a typo here is an account nobody can open."
         />
 
         {error ? (

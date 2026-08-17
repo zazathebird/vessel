@@ -36,6 +36,8 @@ export function PasswordField({
   autoComplete,
   hint,
   autoFocus,
+  error,
+  onBlur,
 }: {
   label: string;
   value: string;
@@ -43,6 +45,17 @@ export function PasswordField({
   autoComplete: "new-password" | "current-password";
   hint?: React.ReactNode;
   autoFocus?: boolean;
+  /**
+   * A validation failure for this field. Rendered instead of the hint, styled
+   * as an error, announced, and reflected on the input as `aria-invalid`.
+   *
+   * Deliberately separate from `hint` rather than a hint that changes wording:
+   * a hint and a failure look identical to a screen reader and nearly identical
+   * to a sighted user, and "these do not match" needs to read as something
+   * being wrong rather than as advice.
+   */
+  error?: string;
+  onBlur?: () => void;
 }) {
   const [shown, setShown] = useState(false);
   const id = useId();
@@ -62,6 +75,9 @@ export function PasswordField({
           autoComplete={autoComplete}
           spellCheck={false}
           autoFocus={autoFocus}
+          onBlur={onBlur}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? `${id}-error` : undefined}
         />
         <button
           type="button"
@@ -76,7 +92,21 @@ export function PasswordField({
           {shown ? "hide" : "show"}
         </button>
       </div>
-      {hint ? <span className="v-field-hint">{hint}</span> : null}
+      {error ? (
+        /*
+         * `role="alert"` rather than a live region on a permanent node: this
+         * element only exists while the field is invalid, so it announces on
+         * appearing and says nothing the rest of the time. The caller decides
+         * *when* to pass an error — signup waits until the field has been left
+         * once, so it does not accuse you of a mismatch while you are still
+         * halfway through typing the second copy.
+         */
+        <span id={`${id}-error`} className="v-field-error" role="alert">
+          {error}
+        </span>
+      ) : hint ? (
+        <span className="v-field-hint">{hint}</span>
+      ) : null}
     </div>
   );
 }
