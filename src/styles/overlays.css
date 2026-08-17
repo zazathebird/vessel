@@ -556,3 +556,16 @@
   color: var(--faint);
   opacity: 0.6;
 }
+
+
+/* The TOTP QR. Centred, with a little air, and a hard maximum so it does not
+   become the page on a phone. `display: block` because an inline SVG picks up
+   the line-box descender gap otherwise, which reads as a lopsided margin. */
+.v-qr {
+  display: block;
+  width: 100%;
+  max-width: 220px;
+  height: auto;
+  margin: 4px auto 2px;
+  border-radius: var(--radius);
+}
