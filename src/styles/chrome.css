@@ -1613,12 +1613,29 @@
   color: var(--muted);
 }
 
+/*
+ * The click-to-reveal address.
+ *
+ * **The hit area is grown upward and the growth is cancelled by an equal
+ * negative margin, so the button gets bigger and the page does not move**
+ * (2026-08-16). Measured at the phone band it was 292 × 30.7px while every
+ * other control on Contact — the nav pills, the chips, the primary CTA — is 44.
+ * It clears the AA minimum of 24 and it is a wide target, so this is not a
+ * failure; it was simply the smallest tap target on the one page the spec calls
+ * the only page with a job, and the single most important action on it.
+ *
+ * The padding cannot just be increased: the 2px underline *is* the affordance,
+ * it has to stay tight under the text, and extra space above the address would
+ * change the block's vertical rhythm. Padding up, margin back down, same
+ * picture, 44px of finger.
+ */
 .v-mail {
   align-self: flex-start;
   background: none;
   border: 0;
   border-bottom: 2px solid var(--a1);
-  padding: 0 0 5px;
+  padding: 13px 0 5px;
+  margin-top: -13px;
   cursor: pointer;
   font-family: var(--font-mono);
   font-size: clamp(17px, 1.7vw, 22px);
