@@ -443,7 +443,21 @@ function writeFormat(m: boolean[][], size: number, mask: number): void {
   m[7][8] = at(8);
   for (let i = 9; i <= 14; i += 1) m[14 - i][8] = at(i);
 
-  for (let i = 0; i <= 7; i += 1) m[size - 1 - i][8] = at(i);
-  for (let i = 8; i <= 14; i += 1) m[8][size - 15 + i] = at(i);
+  /*
+   * The second copy splits **seven then eight**, not eight then seven.
+   *
+   * Bits 0-6 run up the column below the bottom-left finder; bits 7-14 run
+   * along the row beside the top-right one. The module at `(size - 8, 8)` in
+   * between is the *dark module* — always set, carrying no information.
+   *
+   * Getting this wrong is invisible to almost every check: the symbol is
+   * structurally perfect, the first copy is correct, and a round-trip decoder
+   * that reads the first copy round-trips fine. It fails only where it matters,
+   * in a real scanner, which reads both copies and takes the one that passes
+   * BCH. A phone that will not scan a QR everything else says is valid is the
+   * symptom this produced.
+   */
+  for (let i = 0; i <= 6; i += 1) m[size - 1 - i][8] = at(i);
+  for (let i = 7; i <= 14; i += 1) m[8][size - 15 + i] = at(i);
   m[size - 8][8] = true;
 }
