@@ -12,7 +12,7 @@ import { openCommandPalette } from "./CommandPalette";
  * the siteconfig button (visible only once the operator door has ever opened).
  */
 export function Header() {
-  const { band, config, go, update, say, chime, togglePanel, openDoor, panelOpen } = useConfig();
+  const { band, config, go, update, say, chime, togglePanel, openDoor, panelOpen, layout } = useConfig();
   // Operator tabs (404 / Account / Admin / Config) appear only once the session
   // probe answers operator. Like everything session-gated they start hidden and
   // arrive — never flash and vanish (SessionContext's rule).
@@ -95,8 +95,21 @@ export function Header() {
           <span className="v-wordmark">mcclevarty.ca</span>
         </span>
 
-        <nav className="v-nav" aria-label="Primary" ref={navRef}>
-          {NAV.map((item) => (
+        {/*
+          On Radial the dial in the ornament slot is the primary navigation and
+          this row stands down (2026-08-17). Hiding the links with CSS alone
+          left two <nav aria-label="Primary"> landmarks in the tree — one of
+          them empty for non-operators — so screen-reader landmark navigation
+          offered a "Primary" that led nowhere. The links now come out of the
+          tree on Radial, the landmark renders only when it has content (the
+          operator tabs), and it is labelled by what it then holds. The
+          .layout-radial CSS rule stays as a belt for the same links.
+          `layout` is the adapted layout, so this cannot fire off the desk band
+          — Radial collapses to Cinematic/Stack elsewhere, exactly like the CSS.
+        */}
+        {(layout !== "radial" || isOperator) && (
+        <nav className="v-nav" aria-label={layout === "radial" ? "Operator" : "Primary"} ref={navRef}>
+          {layout !== "radial" && NAV.map((item) => (
             <a
               key={item.id}
               href={PATHS[item.id]}
@@ -138,6 +151,7 @@ export function Header() {
             </button>
           )}
         </nav>
+        )}
 
         <div className="v-header-right">
           {band !== "desk" && (
