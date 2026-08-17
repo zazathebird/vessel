@@ -7,11 +7,12 @@
  * the whole assembly physically pumps, and it reads as a speaker cone rather
  * than as something alive.
  *
- * So the ornament became a setting, like everything else on this site. All five
- * are drawn in CSS from palette tokens only — no images, no webfonts, per the
- * spec's Assets rule — and all five sit in the same square slot, so the layouts
- * that size it (Radial's 540px, Magazine's 180px) and the ones that hide it
- * outright keep working without knowing which is on.
+ * So the ornament became a setting, like everything else on this site. There
+ * are eight now; all but the two duels (a canvas) are drawn in CSS from palette
+ * tokens only — no images, no webfonts, per the spec's Assets rule — and every
+ * one sits in the same square slot, so the layouts that size it (Radial's
+ * 540px, Magazine's 180px) and the ones that hide it outright keep working
+ * without knowing which is on.
  */
 
 export type OrnamentId =

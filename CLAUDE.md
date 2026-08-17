@@ -534,18 +534,39 @@ All deliberate. Add to this list rather than silently diverging.
 7. **The hero ornament is a setting, not a fixture** (`src/data/ornaments.ts`). The spec ships only
    the valve, and the client's objection to it was specific and right: `v-dilate` scales the rings
    as well as brightening them, so the whole assembly physically pumps and reads as a speaker cone.
-   There are now seven — **Lens** (the default: a recessed eye where the geometry is dead still and
-   only the light moves), Valve (unchanged), Aperture, Orrery, None, and (2026-08-13) the two
-   **lightsword duels** from `docs/DUEL.md`, the only canvas ornament
-   (`src/components/DuelOrnament.tsx`) — pickable in siteconfig, rollable under a sixth `ornament`
-   scope, and carried as a sixth share-code field. All seven sit in one square slot (`.v-ornament`),
-   so the layouts that resize it and the ones that hide it need no knowledge of which is showing,
-   and Radial's orbiting nav pills work over any of them. The duels' `FX` background entries were
-   re-listed on 2026-08-14, so the fight now has both homes the client asked for.
+   There are now **eight**, and **four of them are withdrawn** (2026-08-17, client: *"the circles,
+   what looks like HAL from 2001… need to go"*): Lens, Valve, Aperture and Orrery carry `hidden`
+   and are gone from every menu but still resolve from stored config and share codes — the
+   `FX`/`PICKABLE_FX` mechanism, applied to ornaments for the first time (`PICKABLE_ORNAMENTS`,
+   plus `ROLLABLE_ORNAMENTS` = pickable minus "None", the same rule as `ROLLABLE_FX` and for the
+   extra reason that five taps on this slot are the phone band's only findable route to sign-in).
+   Offered today: None, the two **lightsword duels** from `docs/DUEL.md` (2026-08-13, the only
+   canvas ornament — `src/components/DuelOrnament.tsx`), and **Sonar** (appended at index 7,
+   2026-08-17, now `DEFAULT_ORNAMENT`) — a scope the site reads rather than a circle it admires:
+   bezel, range rings, one beam on a 4.8s revolution, and contacts whose flares are
+   `animation-delay`-matched to the beam's arrival at their bearing, arithmetic written out in
+   `chrome.css`. **Retime the beam and every delay is wrong.** An out-of-range share-code ornament
+   field resolves to `DEFAULT_ORNAMENT`, not index 0 — index 0 is withdrawn, and the decode fell
+   back to it for a day before the check suite gained the gate. All eight sit in one square slot
+   (`.v-ornament`), so the layouts that resize it and the ones that hide it need no knowledge of
+   which is showing. The duels' `FX` background entries were re-listed on 2026-08-14, so the fight
+   has both homes the client asked for.
 
    Two consequences worth knowing: `SCOPES` now has six entries, not the spec's five; and share
    codes are six fields, with five-field codes still decoding and simply leaving the ornament alone.
    The siteconfig panel therefore has an **Ornament** section the spec's list does not mention.
+
+   **Radial's dial lives in this slot and is the only navigation on that layout** (2026-08-17,
+   client: *"if the links to pages are going to be swirling around, dont have them at the top of
+   the page also"*). The seven pills are placed from `--i`/`--n` set inline from `NAV` — one
+   circle at any count, bearings 360/n apart — replacing the enumerated per-pill percentages whose
+   radius varied with label length and which left the seventh pill dead centre when `scams` joined
+   `NAV`. The header's nav links stand down on Radial in React (not only CSS, so the landmark
+   count stays honest: the dial is "Primary", the header's landmark renders only for operators and
+   is then "Operator"), operator tabs are excluded from the stand-down, Radial exists only on the
+   desk band, and the slot survives even at ornament "None" because the navigation lives in it.
+   **Calm must not dim it**: `.is-calm .v-ornament` halves opacity, and a same-element
+   `.is-calm.layout-radial` rule excepts the dial — it is the page's only primary nav there.
 8. **The hero vitals strip is removed**, at the client's request (`fa95fba`, 2026-08-12). The
    palette name, layout name, effect name and `pulse 47 bpm` were a readout of state nobody asked
    to see — *show the layout, do not caption it.* The 404's `pressure lost` variant and the

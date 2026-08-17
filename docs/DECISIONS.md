@@ -14,6 +14,64 @@ file records what happened to the codebase.
 ---
 
 
+## 2026-08-17 (audit) — the uncommitted dial/sonar work reviewed, four majors found and fixed
+
+The full-site audit began by putting the previous session's uncommitted work (the Radial dial
+rebuild, the nav stand-down, the sonar ornament) through an adversarial review before committing
+it — the lesson this file keeps recording is that defects are found by someone other than the
+author, and this work had never had another eye on it. Four majors, all real:
+
+- **The share-code decode fell back to the withdrawn Lens.** `decodeShareCode` resolved an
+  out-of-range ornament field to `ORNAMENTS[0]` — correct while index 0 was the default, wrong the
+  moment the default moved to sonar and index 0 became `hidden` — while the `ornaments.ts` comment
+  and a brand-new check both *asserted* the fallback was `DEFAULT_ORNAMENT`. Fixed; the suite
+  gained three gates: the ornament wire order pinned as a literal (a reorder passes every count
+  check and repoints every code in circulation), hidden-index-decodes, and
+  out-of-range-decodes-to-default. Verified by breaking the fallback deliberately.
+- **Calm halved the opacity of Radial's only navigation.** `.is-calm .v-ornament { opacity: 0.5 }`
+  predates the stand-down and was harmless while the header duplicated the dial; with the
+  duplicate gone, calm — the mode every `prefers-reduced-motion` visitor lands in — rendered the
+  seven main pages' only route at 50%. A same-element `.is-calm.layout-radial` rule now excepts
+  the dial from the dimming (animation stays off). Verified in the live DOM.
+- **Two "Primary" landmarks on Radial, one empty.** CSS hid the header's links but left the named
+  landmark; screen-reader landmark navigation offered a Primary that led nowhere next to the
+  dial's real one. The links now leave the tree on Radial and the header landmark renders only
+  with content (operator tabs), labelled Operator.
+- **The docs contradicted the code.** CLAUDE.md still said seven ornaments with Lens the default;
+  neither it nor this file recorded the dial rebuild or the stand-down. Corrected (deviation 7
+  carries the full current state).
+
+Minor, same pass: sonar contact b1's `animation-delay` disagreed with the file's own derivation
+(−0.42s vs −0.413s; b2/b3 matched); a superseded tether comment sat above its replacement
+asserting the enumerated design the rebuild removed.
+
+**Recorded for the client, not changed** (surfaced by the same review):
+
+- With Lens/Valve/Aperture/Orrery withdrawn, `ROLLABLE_ORNAMENTS` is `{duel, duelholy, sonar}`,
+  so on the published `mode: "visit"` roughly **two thirds of re-rolled visits now get a
+  lightsword duel in the hero** and sonar — the requested replacement — is the minority outcome.
+  If that reads wrong, the lever is weighting or trimming the rollable list, not un-hiding.
+- Hiding changes menus, not published state: **if the currently published config names one of the
+  withdrawn four, first-time visitors keep getting it until a republish** — hidden means
+  unlisted, not invalid, and that is load-bearing for stored codes.
+
+### The dial rebuild and the sonar, for the record (built 2026-08-17, previous session)
+
+The measurements lived only in FABLE-START.md and code comments; this file is their home.
+**Radial's dial was never a circle**: positions were enumerated as percentages of each pill's own
+box, so the radius varied with label length — measured radii 54/93/113/54/83/113px — and when
+`scams` made `NAV` seven entries the seventh pill matched no `:nth-child` rule and sat dead
+centre, *Guestbook* overlapping *Contact* by 95×34px. Rebuilt from `--i`/`--n` set inline from
+the data: all seven at r=207.9px, bearings 51.4° apart, zero overlaps; an eighth page is a `NAV`
+change and nothing else. The header's nav row stands down on Radial (client: the same seven links
+twice in one viewport); operator tabs are excluded, Radial exists only on desk, and the ornament
+slot survives even at "None" because the navigation lives in it. **Sonar** is appended at
+ornament index 7 and is the new default; the four withdrawn circles are `hidden` via
+`PICKABLE_ORNAMENTS` — the `FX`/`PICKABLE_FX` mechanism applied to ornaments for the first time —
+and each contact's flare is `animation-delay`-matched to the beam's arrival at its bearing
+(arithmetic in `chrome.css`; retime the beam and every delay is wrong).
+
+
 ## 2026-08-17 (later) — the signup form was 210px wide on the layout production publishes
 
 Client: *"there is an issue with creating a profile… the current view does not

@@ -699,6 +699,15 @@ Found while building; none blocking. Reasoning in `CLAUDE.md` unless noted.
    hotmail address** — it has now been queried twice and answered.
 7. **Per-account subdomains: wanted at all?** If yes, an Origin allowlist must
    land first (`design/GUIDE-SUBDOMAINS.md`); if no, the guide can be closed.
+10. **Rolled visits are now two-thirds lightsword duels** (2026-08-17). Hiding
+   the four circles leaves the dice choosing among duel/duelholy/sonar, and the
+   live site publishes `mode: "visit"` — so the requested replacement (sonar)
+   is the *minority* outcome of a roll. If that reads wrong, the lever is
+   weighting or trimming `ROLLABLE_ORNAMENTS`, not un-hiding the circles.
+11. **A republish may be needed for the withdrawn circles to fully go**
+   (2026-08-17). Hidden means unlisted, not invalid: if the currently published
+   config names Lens/Valve/Aperture/Orrery, first-time visitors keep getting it
+   until the operator republishes. Check the published row after deploying.
 8. **When to retire the Pages project** — it is the rollback; retiring it
    deletes the `_redirects` trap class.
 9. ~~**Free-diagnostic copy rewrite**~~ — done 2026-08-14. The client's words:
