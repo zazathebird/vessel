@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useConfig } from "../config/ConfigContext";
 import { MIN_PASSWORD_LENGTH, signUp } from "../auth/flows";
 import { ApiError } from "../auth/api";
+import { PasswordField } from "./PasswordField";
 
 /**
  * Account creation.
@@ -25,6 +26,18 @@ export function SignUp() {
 
   const [handle, setHandle] = useState("");
   const [password, setPassword] = useState("");
+  /*
+   * **Signup asks twice, and only signup** (2026-08-17).
+   *
+   * A reveal toggle catches most typos and NIST 800-63B prefers it to
+   * confirm-by-retyping — but the two catch different mistakes, and the cost of
+   * being wrong here is unlike anywhere else on the site. There is no email
+   * reset (§9 collects no address), so a password mistyped at *creation* is an
+   * account nobody can ever open, which is exactly how this site's own operator
+   * spent a day locked out. Sign-in does not confirm, because a typo there
+   * costs one more attempt rather than the account.
+   */
+  const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ handle: string; codes: string[] } | null>(null);
@@ -39,7 +52,12 @@ export function SignUp() {
   }, [result, holdSaver]);
 
   const tooShort = password.length > 0 && password.length < MIN_PASSWORD_LENGTH;
-  const ready = handle.trim().length >= 3 && password.length >= MIN_PASSWORD_LENGTH && !busy;
+  const mismatch = confirm.length > 0 && confirm !== password;
+  const ready =
+    handle.trim().length >= 3 &&
+    password.length >= MIN_PASSWORD_LENGTH &&
+    confirm === password &&
+    !busy;
 
   async function onSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -135,21 +153,29 @@ export function SignUp() {
           <span className="v-field-hint">Letters, digits and hyphens. No email is collected.</span>
         </label>
 
-        <label className="v-field">
-          <span className="v-field-label">Password</span>
-          <input
-            className="v-input"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="new-password"
-          />
-          <span className="v-field-hint">
-            {tooShort
+        <PasswordField
+          label="Password"
+          value={password}
+          onChange={setPassword}
+          autoComplete="new-password"
+          hint={
+            tooShort
               ? `At least ${MIN_PASSWORD_LENGTH} characters — ${MIN_PASSWORD_LENGTH - password.length} to go.`
-              : `At least ${MIN_PASSWORD_LENGTH} characters. It never leaves your browser.`}
-          </span>
-        </label>
+              : `At least ${MIN_PASSWORD_LENGTH} characters. It never leaves your browser.`
+          }
+        />
+
+        <PasswordField
+          label="Password again"
+          value={confirm}
+          onChange={setConfirm}
+          autoComplete="new-password"
+          hint={
+            mismatch
+              ? "These do not match yet."
+              : "Because there is no email reset — a typo here is an account nobody can open."
+          }
+        />
 
         {error ? (
           <p className="v-account-error" role="alert">{error}</p>

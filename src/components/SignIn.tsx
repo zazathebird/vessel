@@ -14,6 +14,7 @@ import { signInWithPasskey, webAuthnSupported } from "../auth/passkeys";
 import { ApiError, api, type MeResult } from "../auth/api";
 import { Passkeys } from "./Passkeys";
 import { Setups } from "./Setups";
+import { PasswordField } from "./PasswordField";
 import { TotpEnrol } from "./TotpEnrol";
 
 /**
@@ -572,21 +573,17 @@ export function SignIn() {
             the key rather than a way around it.
           </p>
 
-          <label className="v-field">
-            <span className="v-field-label">New password</span>
-            <input
-              className="v-input"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="new-password"
-              autoFocus
-            />
-            <span className="v-field-hint">
-              At least {MIN_PASSWORD_LENGTH} characters. Your remaining recovery codes keep
-              working.
-            </span>
-          </label>
+          {/* The single highest-stakes password field on the site: it is reached
+              only by spending a recovery code, and there are ten and no way to
+              mint more. A typo here costs another one. */}
+          <PasswordField
+            label="New password"
+            value={password}
+            onChange={setPassword}
+            autoComplete="new-password"
+            autoFocus
+            hint={`At least ${MIN_PASSWORD_LENGTH} characters. Your remaining recovery codes keep working.`}
+          />
 
           {error ? (
             <p className="v-account-error" role="alert">{error}</p>
@@ -722,17 +719,13 @@ export function SignIn() {
           />
         </label>
 
-        <label className="v-field">
-          <span className="v-field-label">Password</span>
-          <input
-            className="v-input"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password"
-          />
-          <span className="v-field-hint">It never leaves your browser.</span>
-        </label>
+        <PasswordField
+          label="Password"
+          value={password}
+          onChange={setPassword}
+          autoComplete="current-password"
+          hint="It never leaves your browser."
+        />
 
         {error ? (
           <p className="v-account-error" role="alert">{error}</p>

@@ -762,11 +762,16 @@
 .vessel:not(.is-calm).layout-stack .v-block,
 .vessel:not(.is-calm).layout-ledger .v-block,
 .vessel:not(.is-calm).layout-marginalia .v-block {
+  /* The extents are under 100% and the stop reaches `transparent` well inside
+     them, so the wash fades out *within* its own box. Sized larger (115%/130%)
+     the transparent stop fell outside the visible area, leaving a soft but
+     unmistakable rectangle behind the headline — a panel, which is exactly what
+     this was not supposed to become. */
   background: radial-gradient(
-    115% 130% at 28% 45%,
-    color-mix(in srgb, var(--bg) 74%, transparent) 0%,
-    color-mix(in srgb, var(--bg) 52%, transparent) 52%,
-    transparent 82%
+    72% 78% at 30% 46%,
+    color-mix(in srgb, var(--bg) 76%, transparent) 0%,
+    color-mix(in srgb, var(--bg) 46%, transparent) 42%,
+    transparent 72%
   );
 }
 
@@ -2550,4 +2555,47 @@
 .vessel .v-block.is-loud .v-list li {
   font-size: clamp(14px, 1.15vw, 16px);
   font-weight: 500;
+}
+
+
+/*
+ * The password reveal toggle (2026-08-17).
+ *
+ * The button sits *inside* the field's box rather than beside it, so adding it
+ * costs no layout: `.v-input` grows padding on the trailing side to make room
+ * and the control is absolutely positioned into that gap. A sibling button
+ * would have needed the row to become a flex container, which would have
+ * changed every account form's rhythm for one field.
+ */
+.v-input-wrap {
+  position: relative;
+  display: block;
+}
+
+.v-input-wrap .v-input {
+  width: 100%;
+  padding-right: 68px;
+}
+
+.v-reveal {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  translate: 0 -50%;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+/* Pressed state is the accent, so "showing" is legible at a glance rather than
+   only from the word. `--a1` clears 3:1 against every palette's surface. */
+.v-reveal[aria-pressed="true"] {
+  color: var(--a1);
 }
