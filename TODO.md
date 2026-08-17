@@ -245,6 +245,22 @@ target on the site at 30.7px.
   (`FxCanvas`, 2026-08-16). Nothing has been toned down or removed, so the
   sign-off condition attached to this request has not been triggered.
 
+  **All sixteen effects were then measured, and there is no fruit left on this
+  tree** (2026-08-16, `fxlab.html`'s own steady-state readout, 654×368 device
+  pixels at dpr 2). Steady cost per frame, worst first: `rain` 0.11ms, `plasma`
+  0.12, `constellation` 0.07, `bokeh` 0.06, `flow` 0.05, and everything else at
+  or under 0.04 — against a 16.7ms frame. `rain`'s first second is 0.54ms
+  because that is when its glyph atlas is built, which is what the atlas is for.
+  Scaled to a full-bleed retina canvas the worst effect is still around a tenth
+  of the frame budget.
+
+  So the honest answer to "make everything faster" is that the canvas is not
+  what would be slow — the one real defect was the tier being unable to climb,
+  and it is fixed. If a machine still struggles, the next place to look is
+  outside the effects: the 369KB bundle, the 178KB of webfonts, or the layout
+  cost of the 0.9s palette bleed. **Do not go tuning effect internals on
+  suspicion; measure first, the bench prints the number.**
+
 ### G. ~~Docs that are now behind the code~~ — **done 2026-08-16**
 
 - `docs/DUEL.md` had gone further wrong than "behind": it said the parry state
