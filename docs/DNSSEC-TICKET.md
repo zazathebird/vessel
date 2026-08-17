@@ -53,6 +53,26 @@ the Namespro account, make it that one.
 
 ---
 
+## Status — **SENT 2026-08-16, ticket 790542585**
+
+Submitted from the signed-in account at 18:36 PST, category *technical*, reply address
+`patrickmcclevarty@hotmail.ca`. Namespro confirmed receipt on screen and quote a response within
+1.5 business hours. **Awaiting their confirmation, then run the verification below.**
+
+Two notes for whoever picks this up:
+
+- **There was no reCAPTCHA.** The earlier attempt recorded reCAPTCHA v2 as the blocker; on the
+  signed-in `Support.asp` form there is none — the `captcha` field is a hidden input. The real
+  blockers were only the login and the session, which rides in the `sID` URL parameter, so the
+  login has to happen in the same tab that is being driven.
+- **The form validates with `onsubmit="return checkForm()"`.** It returned `true` cleanly here;
+  if a future submit appears to do nothing, check that before assuming the click missed.
+
+**Auto-renew was offered and declined** the same session (2026-08-16). Both `mcclevarty.ca` and
+`mcclevarty.com` show `autoRenewal = no` with expiry 2027-Aug-09. That is the client's call and is
+recorded rather than re-argued — but it remains true that this document's own recommendation ranks
+it above DNSSEC, so it is worth raising once more nearer the date.
+
 ## The ticket
 
 Namespro's support form, from the signed-in account. Subject and body are ready to paste.
@@ -165,6 +185,11 @@ figure recorded in `docs/SECURITY-AUDIT.md` §7 on 2026-08-14 and Cloudflare's o
 
 Three independent sources agreeing is the standard this change deserves, given that being wrong
 takes the domain off the internet.
+
+**Baseline recorded at the moment the ticket was sent (2026-08-17T01:36Z):** DS at parent — none;
+`delv` — `no valid signature found` / `; unsigned answer`; site — HTTP 200. This is the "before"
+half of the verification above, captured deliberately so the "after" has something to be compared
+against rather than judged on its own.
 
 **Live state at the time of writing (2026-08-16):**
 
