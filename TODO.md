@@ -215,6 +215,36 @@ Worth deciding before starting: whether the output is one findings document the
 client reads and prioritises, or a fix-as-found pass. The audit is large enough
 that fixing as found makes it impossible to review what changed and why.
 
+**Decided fix-as-found, with one commit per finding** (2026-08-16, client: "your
+call for everything"). That answers the reviewability worry — the commit message
+is the findings document, and each one carries its own measurement.
+
+**Coverage so far.** All sixteen routes at the desk band, at both ends of the
+tablet band (600px and 760px — the historic nav regression lived at 600 while
+760 was fine), and at 420px. All fourteen layout archetypes at desk and phone.
+Calm on and off across all fourteen. A full copy read-through. Measured on every
+route: horizontal overflow, `h1` count, images without `alt`, controls without
+an accessible name, unlabelled inputs, and tap-target size. **Result: zero
+horizontal overflow anywhere, one `h1` per route, every control named, every
+input labelled.** One finding, fixed: `.v-mail` on Contact was the smallest tap
+target on the site at 30.7px.
+
+**Still uncovered, and why:**
+
+- **The operator surfaces** — the panel, the door, the command palette, the
+  admin screens. Reaching them means signing in, which means entering a password
+  into a form, which is something I will not do even against a throwaway local
+  account. The wiring was verified statically instead and is sound: the panel
+  maps over the live `PALETTES` / `PRESETS` / `LAYOUTS` / `PICKABLE_FX` /
+  `ORNAMENTS` arrays with no hardcoded list, so every catalogue entry is
+  necessarily present and pickable. What has *not* been seen is how any of it
+  looks. Sign in and it can be reviewed from there.
+- **"If possible, make everything run faster."** Partly done and not as a
+  removal: the adaptive resolution tier could only ever fall, never rise, on a
+  60Hz display, so one bad second pinned a machine to a soft canvas permanently
+  (`FxCanvas`, 2026-08-16). Nothing has been toned down or removed, so the
+  sign-off condition attached to this request has not been triggered.
+
 ### G. ~~Docs that are now behind the code~~ — **done 2026-08-16**
 
 - `docs/DUEL.md` had gone further wrong than "behind": it said the parry state
