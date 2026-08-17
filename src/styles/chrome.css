@@ -1007,7 +1007,14 @@
 .v-sonar-ring {
   position: absolute;
   border-radius: 50%;
-  border: 1px solid var(--line);
+  /* --edge, not --line (2026-08-17 audit). At 1px on a dark card --line
+     (1.22–1.61:1) is genuinely invisible, and with the rings gone the scope
+     read as a featureless disc with a cone — a pie chart, which is the "wtf is
+     this circle" failure the sonar exists to replace. The markings are the
+     instrument: an unreadable dial is not restraint, it is absence. --edge is
+     the same hairline weight the bezel already uses; hierarchy comes from the
+     cross sitting a step below (see below), not from vanishing. */
+  border: 1px solid var(--edge);
   transition: border-color 0.9s ease;
 }
 
@@ -1022,7 +1029,10 @@
 }
 
 /* The bearing cross. Two hairlines rather than four spokes: at this size four
-   separate elements read as clutter and the crossing already states the axes. */
+   separate elements read as clutter and the crossing already states the axes.
+   Kept on --line deliberately when the rings moved to --edge (2026-08-17): the
+   cross is the quietest mark on the scope, and the step between the two tokens
+   is the hierarchy. */
 .v-sonar-cross {
   position: absolute;
   inset: 5%;
@@ -1085,9 +1095,15 @@
  */
 .v-sonar-blip {
   position: absolute;
-  width: 6px;
-  height: 6px;
-  margin: -3px 0 0 -3px;
+  /* Sized to the slot, not to a pixel count (2026-08-17 audit): a fixed 6px
+     contact was proportionate at the 340px slot, lost in Radial's 540px well
+     and oversized against the phone's 190px scope. 2.2% of the slot with a
+     5px floor keeps the same read at every size. Centred with the translate
+     property — v-ping animates the scale property, and the two compose;
+     the old negative margin only knew about 6px. */
+  width: max(5px, 2.2%);
+  aspect-ratio: 1;
+  translate: -50% -50%;
   border-radius: 50%;
   background: var(--a1);
   opacity: 0;
