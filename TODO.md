@@ -344,6 +344,30 @@ floated detached in mid-page. A regression from the buffer change (before it,
 
 ## Accounts
 
+### 3b. Operator locked out — **runbook written 2026-08-16, `docs/ACCOUNT-RECOVERY.md`**
+
+The client forgot the password to the only operator account and asked for a password-reset feature
+"only for me". **Declined, with reasoning recorded in that document** — one already exists (ten
+recovery codes, which restore grant authority in full rather than merely letting you back in), and a
+second could not be scoped to one person, would require the escrow §5 rejects permanently, and has
+no email to send to because §9 collects none.
+
+The runbook is verified against the live schema: how to read the surviving credentials from the D1
+console, the recovery-code and passkey paths, and — if both are gone — signing up a fresh account and
+promoting it with one `UPDATE`. Two facts that make that last path cheap and are easy to get wrong:
+a brand-new account signs in on the password alone, because the Worker only demands a TOTP stage when
+a `confirmed_at` row exists; and the old account's sealed grant key costs nothing today, because
+grants do not exist yet — the table is deliberately absent from `migrations/`.
+
+**Known gap, deliberate:** a sole operator who loses password, recovery codes *and* passkey has no
+in-product way back. The same property that makes operator reset safe makes self-rescue impossible.
+The mitigation is the ten codes.
+
+**Note for whoever holds the token:** `wrangler d1 execute --remote` fails with *"not authorized to
+access this service [code: 7403]"* — this repo's token can deploy but not query D1. Use the
+dashboard console.
+
+
 ### 3. ~~Operator password reset~~ — done 2026-08-13
 ### 4. ~~TOTP enrolment screen~~ — done 2026-08-13
 ### 5. ~~Passkeys, saved setups, dialog primitive, command palette~~ — done 2026-08-13
