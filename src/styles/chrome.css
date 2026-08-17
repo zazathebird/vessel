@@ -1095,11 +1095,13 @@
   transition: background-color 0.9s ease;
 }
 
-/* θ 35°, r 30% */
+/* θ 35°, r 30% — t = 4.3867s, so the delay is −0.413, not the −0.42 it
+   shipped with: 7ms early is invisible, but the formula above exists so these
+   numbers cannot be arbitrary, and a value that disagrees with it is wrong. */
 .v-sonar-blip.b1 {
   left: 67.2%;
   top: 25.4%;
-  animation-delay: -0.42s;
+  animation-delay: -0.413s;
 }
 /* θ 150°, r 41% */
 .v-sonar-blip.b2 {
@@ -1452,16 +1454,6 @@
     translateY(calc(var(--orbit-r) * -1)) rotate(calc(var(--angle) * -1));
 }
 
-/*
- * Tethers. The pills used to float unattached, which is why the layout read as
- * six buttons near a circle rather than as a dial. Each now has a spoke running
- * back to the centre, and the active one's lights.
- *
- * The rotations are enumerated for the same reason the positions above are, and
- * they are the same six angles read backwards: a pill at -30° has its centre at
- * 150°. This block already carries the note that a change to NAV's length means
- * editing it — that now costs twelve rules rather than six.
- */
 /*
  * Tethers. Each pill has a spoke running back to the centre, and the active
  * one's lights — without them the layout reads as seven buttons near a circle
