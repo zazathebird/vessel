@@ -51,10 +51,21 @@ Two smaller things surfaced while measuring, neither fixed, neither urgent:
   the footer sign-in link, which on the phone band is the only findable route to
   an account. Simulated 200,000 rolls: zero exhaustions, every layout and all
   fifteen remaining effects still reachable.
-- **`vessel.tier.v1` was absent** on a browser that has loaded the site many
-  times, so the stored performance tier is either not being written or not being
-  read back. Unconfirmed either way; it only costs a slow machine its first few
-  seconds, which is what the probe exists to prevent.
+- ~~**`vessel.tier.v1` was absent**~~ — **not a bug; the key does not exist**
+  (resolved 2026-08-16). The performance tier is stored under **`vessel.perf.v1`**
+  (`src/fx/perf.ts`), and `vessel.tier.v1` has never appeared anywhere in the
+  codebase, so the check was looking for a key nothing writes. Verified live: on
+  a cleared profile the key is absent before the greeting and reads `0.5`
+  immediately after its button, which is `calibrateOnce` running on the way out
+  exactly as designed.
+
+  Two things worth keeping from checking it. The probe returned **`0.5` — the
+  lowest tier it is allowed to return** — on this machine, which is the floor
+  doing its job on a browser that is slow for reasons unrelated to the GPU. And
+  before the 2026-08-16 `FxCanvas` fix that would have been *permanent*:
+  promotion required a frame interval under 11ms, i.e. above 90fps, which a
+  60Hz display cannot produce, so nothing could ever climb back. A wrongly-low
+  probe now self-corrects within seconds.
 
 ## This session's leftovers (2026-08-14)
 
@@ -82,6 +93,28 @@ What a filmstrip still cannot judge is *tempo*: whether the stillness between
 exchanges reads as poise or as a hang, and whether ~50s per match is right. That
 needs eyes on a real screen. Watch it and say.
 
+**Reviewed again 2026-08-16, after the client said it "seems a little off" with
+no further detail — ten more defects, all shipping, all fixed.** The method moved
+on from the filmstrip: bundle the real module with esbuild and step
+`advanceDuel` in Node over 90,000–400,000 frames, plus a recording mock 2D
+context for the drawn ones. `CLAUDE.md` deviation 9 has the list and the numbers;
+`docs/DUEL.md`'s *Verification note* has the method. The headline: `impulse:
+{ at: 0 }` could never fire, so **no fighter had ever been knocked down** across
+13,591 frames of `knockdown`; blocked strikes never drew their downstroke, which
+is ~40% of the pool; and the ornament camera showed both fighters on only 31% of
+frames at the phone slot.
+
+**The tempo question above is now partly answered and partly changed.** Matches
+run ~45s rather than ~50s, because blows land where they are aimed. Stillness
+measures at a median of 0.9s between exchanges with bursts of 0.45s, which is the
+intended contrast. Whether that *reads* as poise or as a hang is still a
+question only an eye can settle — and it is now the main open one, because the
+correctness questions have been answered. **One trade is deliberately left
+live**: pulling the pair into sword range (`LEASH`) means their resting blades
+overlap more than they used to, 41.5% of frames against 21.7%. The spurious
+sparks that came off that are gone; the visual crossing is not. Undoing it costs
+the contact quality, so it wants a look before anyone trades it back.
+
 ### B. Duel choreography — the moves designed but not yet built
 
 The director and its 23 sequences are in. Still on the design sheet and worth
@@ -106,11 +139,16 @@ having, roughly in payoff order:
 - **`blade_throw`.** The thrown blade leaves the hand for ~40 frames. The
   silhouette losing its brightest element is an enormous read and nothing else
   in the set does it. Needs renderer support for a detached blade.
-- **`spin_attack`'s body flatten.** Currently the blade spins but the figure
-  does not; `scale(facing * cos(spin), 1)` would flatten it to a vertical line
-  and back, which reads at any size.
-- **Converging rings on `force_pull`.** It reuses the push's expanding rings,
-  so the two force moves look the same.
+- ~~**`spin_attack`'s body flatten.**~~ **Built 2026-08-16.** Squared rather
+  than signed, because the blade is drawn inside the same transform and a signed
+  cosine would mirror the sword to the fighter's other side halfway through and
+  fight the arc its own keyframes are drawing; and it turns once rather than
+  twice, because this move's blade goes up, holds and comes down rather than
+  sweeping a revolution.
+- ~~**Converging rings on `force_pull`.**~~ **Built 2026-08-16**, and it mattered
+  more than it looked: `force_pull` was also *pushing* its victim away (the knock
+  was unsigned), so the expanding rings were arguing with a fixed physics bug
+  rather than merely duplicating the push's look.
 
 ### C. Severing / dismemberment — **deferred by the client**
 
@@ -177,12 +215,16 @@ Worth deciding before starting: whether the output is one findings document the
 client reads and prioritises, or a fix-as-found pass. The audit is large enough
 that fixing as found makes it impossible to review what changed and why.
 
-### G. Docs that are now behind the code
+### G. ~~Docs that are now behind the code~~ — **done 2026-08-16**
 
-- `docs/DUEL.md` still describes the pre-director engine and the filled-block
-  figures. Both are gone: fighters are stick figures and decide nothing.
-- `CLAUDE.md`'s duel deviation (9) describes the skeleton work and the
-  `drawFighter` rules that the stick-figure rewrite replaced.
+- `docs/DUEL.md` had gone further wrong than "behind": it said the parry state
+  was declined (it exists), that sound was not built (it is), that attract mode
+  was live (it was removed), and left the health-bar question open (answered:
+  ornament-only). All corrected in place rather than deleted, and its
+  *Verification note* now carries the measurement method that found this
+  session's ten defects — which is the part worth reusing on any other effect.
+- `CLAUDE.md`'s deviation 9 now covers both the choreography and the rendering
+  passes with their measurements.
 
 ## Do this first
 

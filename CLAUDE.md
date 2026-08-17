@@ -645,12 +645,15 @@ All deliberate. Add to this list rather than silently diverging.
      Nothing in `stepLock` consults a condition or can extend the move, which is
      what keeps the timeout-free match-reset loop safe.
 
-   **Five more shipped bugs, found 2026-08-16** — client: the fight "seems a
+   **Ten more shipped bugs, found 2026-08-16** — client: the fight "seems a
    little off", no further detail. Every one was found by stepping the real
-   `advanceDuel` in Node over 90,000–400,000 frames, because animation cannot be
-   watched in this environment; every number below is measured, not reasoned
-   about. **The lesson worth keeping is that four of the five were silent
-   arithmetic in data rather than logic anyone could see reading the file.**
+   `advanceDuel` in Node over 90,000–400,000 frames (and, for the drawn ones, by
+   driving `drawDuel` through a recording mock 2D context), because animation
+   cannot be watched in this environment; every number below is measured, not
+   reasoned about. `docs/DUEL.md`'s *Verification note* describes the method,
+   which is the part worth carrying to any other effect. **The lesson worth
+   keeping is that most of these were silent arithmetic in data rather than
+   logic anyone could see reading the file.**
 
    - **`impulse: { at: 0 }` never fired, so nothing was ever knocked anywhere.**
      `setMove` starts `mf` at 0 and `stepFighter` increments *before* testing,
@@ -682,6 +685,56 @@ All deliberate. Add to this list rather than silently diverging.
      on `CAM_MIN` in `DuelOrnament.tsx` — on a phone both fighters were fully
      visible on **31%** of frames and both blades on **12%**, because the floor
      sat at twice the scale that fits the pair. Now 99% and 84%.
+
+   - **Blocked strikes never drew their downstroke, and ~40% of the pool is
+     scripted `blocked`.** The drawn blade is a spring that lags its keyframe
+     table by 3–5 frames, and `setMove(f, "recoil")` fired on the contact frame
+     — turning the blade around on the very frame the table reached the bottom
+     of the arc. Measured over 164 blocked overheads the lowest point the blade
+     actually reached was **0.23 rad *above* horizontal**, against +1.37 for the
+     same move uninterrupted. `Fighter.bounce` defers it by the spring's own lag
+     (now 1.35), and `setMove` clears `bounce` so a deferred recoil can never
+     land on a move the director has since assigned.
+   - **The clash test fired on proximity, not contact.** At rest the guard puts a
+     blade tip 77.5 units forward, so two facing fighters need 155 units of
+     clearance and stand at ~123 — their resting blades genuinely overlap, and
+     the test showered sparks off them roughly once a second, **84% of bursts
+     while neither fighter was attacking or parrying**. Constant sparks make the
+     ones marking a real parry mean nothing. A `force > 0.15` floor is the half
+     that costs nothing in spacing. **Tightening `LEASH` made this worse** —
+     crossing went 21.7% of frames to 41.5% — and that trade is still live: the
+     other half of the fix would be a wider resting stance or a shorter guard
+     reach, both of which cost the contact quality the leash bought.
+   - **The block burst was thrown into clear air.** At the contact frame the two
+     blades are a median of 13.2 units apart and 54% of blocks are further apart
+     than the blade is wide; the burst was placed at the *midpoint* of that gap,
+     so it touched neither sword. They do meet — closest approach is 0.2 units,
+     one frame later — so it fires then, on the same deferred bounce.
+   - **`duelFocus` reported a standing width for a fighter lying down.**
+     `drawFighter` rotates a corpse 90° about its feet, so it occupies ~87 units
+     rather than 30, and for the whole victory hold the camera framed a standing
+     pair that was not there: **84.6% of death-hold frames clipped a body, worst
+     173px of 700**, during the two seconds the design nominates as the
+     announcement. Each fighter now reports its true span, and the camera both
+     corrects faster and relaxes its floor while somebody is down.
+   - **The off arm was anatomically impossible on 98.6% of figure-frames.** It
+     spans 30–42 units from the far shoulder across the chest on 24 units of
+     bone; `joint()` straightens it correctly but `limb()` then draws to the
+     target anyway, so it rubber-banded into a single straight line that never
+     bent — closing a triangle over the torso with the spine and shoulder bar,
+     which is close to the filled slab the client read as shields in the first
+     place. It has its own longer bones now; the endpoints do not move.
+
+   Four smaller ones, all measured: the head floated **9.02 units** clear of the
+   spine, over half a head; sparks obeyed gravity but not the floor and rained up
+   to 171 units under the stage; sparks ignored `dim`, putting full-strength
+   sparks behind body copy in the background presentation; and both force moves
+   drew identical outward rings, so a pull looked like a push — which mattered
+   more once `force_pull` was fixed to actually pull.
+
+   **Deliberately not taken:** the loser's blade vanishes on a single frame at
+   death. The fix risks a lit sword lying on the ground for two seconds, and that
+   is a judgement that wants an eye rather than a measurement.
 
    Two knock-ons worth knowing. The leash had to come in a long way (`LEASH`,
    150) because working knock-back genuinely widens the fight — with impulses

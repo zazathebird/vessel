@@ -19,6 +19,15 @@
 > literal colours, no fixed pixel geometry, state on the caller's cache, the
 > caller clamps the delta), the health-bar split between ornament and
 > background, and the naming/likeness constraint.
+>
+> **Revised again 2026-08-16.** Ten more shipped bugs, found by measurement
+> rather than by eye after the client said the fight "seems a little off" — the
+> headline being that no fighter had ever actually been knocked down and that
+> blocked strikes never drew their downstroke. The sections below are corrected
+> where they had gone false (attract mode, the "no parry" note, sound, the
+> health-bar question), and *Verification note* at the end now describes the
+> method, which is the part worth carrying to any other effect. `CLAUDE.md`
+> deviation 9 has the full list with the numbers.
 
 **Update 2026-08-13, later the same day:** two client requests landed on top of
 the rebuild. (1) The four silhouettes were upgraded so each pairing reads
@@ -47,16 +56,16 @@ client originally asked for. (The old note here about re-listing dating the
 `docs/DECISIONS.md` 2026-08-13 has the build note and 2026-08-14 the re-listing;
 the sections below remain the spec the rebuild was built to.
 
-**Attract mode** (2026-08-14, client request): the screensaver has no rendering
-of its own — it is the configured effect, alone and boosted, which is why "make
-the screensaver run the fight" needed nothing built. What did need building is
-that the duel stayed at *background* settings once the chrome had faded, with no
-copy left to stay out of the way of. `Frame.sleeping` now eases the fight to
-~1.4× scale, `dim` 1 and health bars over the same 1.6s the chrome takes to
-fade. Eased and not switched, `DuelView.barAlpha` added because `bars` is a
-boolean and can only pop, and the ease is asymmetric on purpose — roughly twice
-as slow settling back, because waking is when you want the page, not a second
-animation. The ornament passes neither and is unaffected.
+**~~Attract mode~~ — built 2026-08-14 and removed the same week**, at the
+client's word: *"make sure the screensaver battles are the same graphics as the
+nonscreensaver ones."* The screensaver has no rendering of its own — it is the
+configured effect, alone and boosted — and the version described here gave the
+sleeping fight its own scale, `dim` and health bars, i.e. a second presentation
+nobody asked for. What survived is the *background* presentation, because that
+is the direction with a hard constraint: body copy has to read through it.
+`Frame.sleeping` remains on the contract with no consumer (see the note on it in
+`src/fx/effects.ts`) and **health bars are ornament-only**. `DuelView.barAlpha`
+survives because `bars` is a boolean and can only pop; it defaults to 1.
 
 **Open against the background home**: the fighters are centred with their feet
 at 80% viewport height, so on Cinematic at a short viewport they sit behind the
@@ -110,10 +119,16 @@ tuning error:
   *happened*, so there was nothing to animate toward.
 - Line-art stick figures read as a diagram at background opacity.
 
-The code is still in `src/fx/effects.ts` as `EFFECTS.duel` / `EFFECTS.duelholy`.
-The reusable parts are the clash-detection geometry, the spark field and the
-three-pass blade rendering (wide faint glow → mid → bright `fg` core), which the
-client liked. **The stance machine is not reusable** and should be replaced.
+**Both were done.** The stance machine is gone; `EFFECTS.duel` and
+`EFFECTS.duelholy` in `src/fx/effects.ts` are now thin hosts that call into
+`src/fx/duel.ts`. The three parts named here as worth keeping were kept: the
+clash-detection geometry, the spark field, and the three-pass blade rendering
+(wide faint glow → mid → bright core). Two of the three have since been found
+wrong in ways that presented as art problems rather than as bugs — `bladeGap`
+solved its second segment against the wrong vector and reported crossing blades
+as 16 units apart, and the clash test had no force floor so it fired on proximity
+rather than on contact. Both are fixed; the note stands as a warning that
+"liked the look of it" is not the same as "verified".
 
 ## The design the client supplied
 
@@ -139,27 +154,30 @@ authoritative statement of what "animated a LOT better" means. Its decisions:
 *matches with winners*, not a continuous exchange. That is what the earlier
 version lacked and why it had nothing to build tension toward.
 
-### Where the shipped version now departs from the reference (2026-08-14)
+### Where the shipped version now departs from the reference
 
-The table above is the reference, and stays as written. The client then asked for
-better-looking characters and fights, so three of its rows no longer describe
-what ships. Everything else — the match loop, the decision function, the damage
-numbers, the per-match power roll — is unchanged.
+The table above is the reference and stays as written. Almost none of it now
+describes what ships, and the two survivors are the ones that mattered: **the
+match loop with winners**, and **per-match `attackPower` / `forcePower`**.
 
-- **Bodies** are no longer plain rectangles. The torso stops at the hips and the
-  figures have two articulated arms and two legs, solved as two-bone chains.
-- **Timing**: the slash is 20 frames, not 15, split into anticipation, strike and
-  follow-through, with the damage frame moved from 5 to 11 so the blow lands at
-  the bottom of the swing. The kick drops 20 → 16 to pay the frames back; the
-  measured effect on match length was 9.6s → 10.5s.
-- **Feedback**: sparks spawn at the blade's real tip rather than the midpoint
-  between the two fighters, biased along the swing, and draw as streaks.
+- **Bodies** are stick figures — see the banner at the top of this file.
+- **Decision** is gone. A director picks a scripted `Sequence` and assigns the
+  two roles on a coin flip; fighters choose nothing.
+- **Timing** is keyframe tables per move, 26–56 frames, with a dead hold at the
+  top of every wind-up. Strikes are 4–6 frames for the whole arc; the tempo
+  comes from the contrast with 20–40 frames of stillness between exchanges.
+- **Feedback**: sparks come off the true blade-to-blade crossing as well as off
+  landed blows, and draw as streaks.
 
-Still deliberately absent, and it is the reference's own gap: **there is no block
-or parry state**. A miss is a coin flip rolled before the swing starts, and the
-defender does nothing about it. Adding one is the only change that can alter
-match outcomes — a mutual block lock would leave a match never ending — so it
-was declined rather than forgotten.
+**The block and parry state this section used to say was declined now exists**
+(`parry_high`, `parry_low`, `parry_cross`, `lock`, and `blocked` as a scripted
+outcome). The reasoning for declining it was sound and is worth keeping, because
+it is exactly what makes the current design safe: a *reactive* block can extend a
+move indefinitely and the match-reset loop has no timeout, so a mutual block lock
+would hang the effect. The way in was to make blocks **scripted rather than
+reactive** — sequences have fixed lengths, the director advances unconditionally,
+and the blade lock's duration is rolled when it starts. Nothing waits on a
+condition. Do not add a block that does.
 
 ## Porting it into this codebase
 
@@ -183,14 +201,21 @@ must change:
 
 Health bars and a match counter are fine in the ornament slot but are probably
 wrong at full-page background opacity, where text has to stay readable. Worth
-asking which.
+asking which. **Answered: bars are ornament-only, and there is no match counter
+or winner text anywhere** — the fallen fighter, the spark burst and the winner's
+raised blade are the announcement, for the same reason the hero vitals strip was
+removed (show, do not caption).
 
-## Sound
+## ~~Sound~~ — built 2026-08-14
 
-Asked for twice and **not built**. The site has no audio at all today. WebAudio
-synthesis fits the *Assets* rule (no files), but autoplay does not: it needs an
-explicit control, a persisted toggle, and a share-code field. That is a spec
-change, not a patch — see `SPEC.md` *Assets* and the share-code note below.
+This section said the site had no audio. It does now: `src/audio/engine.ts`,
+synthesised so `SPEC.md`'s *Assets* rule still holds, with the pitch derived from
+the palette so no voice contains a literal frequency. Every requirement listed
+here was met — an explicit control, a persisted toggle under its own key
+(`vessel.sound.v1`), and a share-code field (toggle bit 16). **There is no
+ambient bed, no loop and no timer**: every voice is fired by a gesture, which is
+how autoplay policy is satisfied, and the `AudioContext` is not constructed until
+the first voice. The duel does not currently make any sound of its own.
 
 ## Share-code trap, already paid for once
 
@@ -205,9 +230,37 @@ change, not a patch — see `SPEC.md` *Assets* and the share-code note below.
   cycle. When the duels return at indices 12 and 13, their codes are
   `0-0-C-0-7-0` and `0-0-D-0-7-0`.
 
-## Verification note
+## Verification note — and the method that actually works
 
 An occluded Chrome window freezes `requestAnimationFrame`, so **animation cannot
 be verified from a screenshot** in this environment. Static rendering and layout
-can be. The motion has to be checked by the client, and their two rejections are
-the only motion feedback that exists so far.
+can be. That much has always been true and still is.
+
+**What was wrong was the conclusion drawn from it** — that motion could only be
+checked by the client. On 2026-08-16 the client reported the fight "seemed a
+little off" with no further detail, and ten bugs were found without watching a
+single frame, by **bundling the real module with esbuild and stepping
+`advanceDuel` in Node over 90,000–400,000 frames**, measuring the state directly.
+Some of them were not subtle: `impulse: { at: 0 }` could never fire, so across
+13,591 frames of `knockdown` **0.0% were airborne** — nobody had ever been
+knocked down. Blocked strikes never drew their downstroke. The ornament camera
+showed both fighters on 31% of frames at the phone slot. None of that needed an
+eye; all of it needed a number.
+
+The technique generalises, and it is why `duelCamera` and `duelFocus` are
+exported and pure:
+
+- **Step the real module, never a re-implementation.** A bench that re-implements
+  the logic only ever confirms the bench.
+- **Measure the thing the complaint is about.** "Looks off" is not measurable;
+  *blade-to-body distance on the frame damage is dealt* is, and it was 42.8 units.
+- **Drive a mock 2D context** when the question is about what is drawn rather
+  than what is simulated — that is how the off arm was caught over-extending on
+  98.6% of frames.
+- **Sweep constants rather than arguing about them.** The leash, the camera floor
+  and the body-separation strength were all chosen from a table of measurements,
+  and in two of the three cases the value that looked obviously right was worst.
+
+Numbers in this file and in `CLAUDE.md`'s deviation 9 are from those runs. The
+client's eye is still the authority on whether it *reads* well — but "we cannot
+check it here" is no longer a true statement about correctness.
