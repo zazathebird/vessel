@@ -67,6 +67,29 @@ Two smaller things surfaced while measuring, neither fixed, neither urgent:
   60Hz display cannot produce, so nothing could ever climb back. A wrongly-low
   probe now self-corrects within seconds.
 
+## 2026-08-17 — audit round two, and a gate so this stops recurring
+
+**`npm run check` is now the gate** (9 checks, ~40s; `check:fast` is 4s and runs after every edit
+via the `PostToolUse` hook; the full pass is `predeploy`). Each gate exists because that exact
+failure shipped, and each was verified by deliberately breaking it. **When something gets past it,
+add a check** — that is the whole discipline.
+
+**The lesson of the session, recorded because it kept repeating:** almost every real defect was
+found by *someone other than the author*. A code review found seven canvas bugs; two duel audits
+found fourteen; an accessibility audit found eight and disproved two claims in `CLAUDE.md`; an
+adversarial re-review of my own commits found four of my own measured-sounding claims were wrong.
+The one time I skipped review, I shipped a QR encoder with three scanner-fatal bugs — and my own
+test could not have caught one of them, because it shared the encoder's map.
+
+**Still needing a person, and the check suite says so out loud:** whether the fight *reads* well
+(rAF parks here), whether any layout is beautiful or the copy sounds right, whether a QR actually
+scans on a phone, and the operator surfaces — which have still never been seen, because they need a
+signed-in session.
+
+**Known and deliberate:** three palettes (oxide, xerox, peat) still fail AA on danger text, down
+from all 25. `close-in` is the only `far` sequence and the leash makes that band rare, so it is
+exempt from the reachability check.
+
 ## This session's leftovers (2026-08-14)
 
 Everything here is *additive*. The site is shipped and working; none of these
