@@ -992,7 +992,7 @@ const SEQUENCES: Sequence[] = [
     // favour a side or drift the pair off toward one wall.
     id: "close-in",
     weight: 22,
-    range: "far",
+    range: "mid",
     length: 108,
     beats: [
       { who: "ATT", move: "advance", at: 0 },
@@ -1067,9 +1067,19 @@ const SEQUENCES: Sequence[] = [
      * the fight no longer visits: once the leash engages just outside sword
      * range the far bracket is 0.2% of frames, and all four went to *zero*
      * picks. They also read better from mid, because `leap_strike` carries 42
-     * units of travel and was being asked to cross 245. `close-in` stays far
-     * on purpose: something sensible has to answer the far band on the rare
-     * occasions it happens, and pure closing is that answer.
+     * units of travel and was being asked to cross 245.
+     *
+     * **`close-in` joined them on 2026-08-17, correcting a claim made here a
+     * day earlier.** It was left at `far` "so something sensible answers the
+     * far band on the rare occasions it happens" — and measured over 1,200,000
+     * frames, it never happens: the far bracket holds 0.21% of frames and
+     * *zero* of 9,487 sequence decisions, because `LEASH` (150) pulls the pair
+     * back inside `MID` (245) long before a sequence ends. So the pool's single
+     * largest entry, weight 22 of ~172, had quietly become unreachable — the
+     * same "declared weights describing a fight nobody has seen" failure the
+     * pressure-rail fix called out, arrived at from the other side. Nothing is
+     * `far` now, and that is honest: the band exists in `chooseSequence` but
+     * the leash means the fight does not decide anything there.
      */
     id: "close-the-gap",
     weight: 10,
@@ -1497,13 +1507,33 @@ function resolveContact(st: DuelState, f: Fighter, foe: Fighter, m: Move): void 
     // watch — it is the cheapest weight cue available.
     st.hitStop = 2;
   } else if (f.outcome === "blocked") {
-    // The burst is deferred with the bounce, one frame, and the reason is the
-    // same spring lag: measured at the contact frame the two blades are a
-    // median of 13.2 units apart and 54% of blocks are further apart than the
-    // blade is wide — up to 39 — so the shower fired in clear air, placed at
-    // the midpoint of a gap and therefore touching neither sword. They do meet:
-    // closest approach in a window around the burst is 0.2 units, one frame
-    // after it used to fire. So it fires then instead, off the real crossing.
+    // The true crossing of the two blades — `bladeGap` returns the closest
+    // approach of the two segments and the midpoint between them.
+    const near = bladeGap(tip, bladeWorld(foe));
+    /*
+     * **The burst fires here, on the contact frame. An earlier claim that it
+     * was deferred by a frame was wrong** (corrected 2026-08-17 by an
+     * adversarial re-review of that same change).
+     *
+     * The deferral was written as `bounce = 5` plus a `bounce === 4` branch in
+     * `stepFighter` — but that countdown runs *later in the same call*, so it
+     * decremented to 4 and fired on the contact frame anyway. It was
+     * bit-for-bit inert, and the figures claimed for it ("median gap 5.7,
+     * in-clear-air rate halved") do not reproduce: re-measured over 200,000
+     * frames the gap at the burst has a median of **14.25** units with 56.5%
+     * beyond blade width — essentially unchanged.
+     *
+     * **Actually deferring it is worse, which is why it stays here.** One real
+     * frame later the median measures **29.7** with 92.5% in clear air, because
+     * by then the attacker is following through and the blades are separating.
+     * The contact frame is the closest they ever get.
+     *
+     * So the original audit's finding stands and is still open: the burst is
+     * placed at the *midpoint* of the gap and therefore touches neither sword.
+     * The fix it wants is spatial — put it on the defender's blade at the point
+     * nearest the attacker's tip — not temporal.
+     */
+    spawnSparks(st, near.x, near.y, 18, 0, -1.1);
 
     /*
      * **The bounce is deferred, because switching move on the contact frame
@@ -1519,9 +1549,18 @@ function resolveContact(st: DuelState, f: Fighter, foe: Fighter, m: Move): void 
      * at all. Around 40% of the strikes in the pool are scripted `blocked`, so
      * this was most of the swordplay.
      *
-     * Five frames is the spring's lag. `bounce` is cleared by `setMove` so a
-     * deferred recoil can never land on top of a move the director has since
-     * assigned.
+     * `bounce` starts at 5 and is decremented once in this same call, so the
+     * recoil lands **four** frames after contact, which is the spring's lag.
+     * `setMove` clears it, so a deferred recoil can never land on top of a move
+     * the director has since assigned.
+     *
+     * **The measured cost of that window:** in 28.7% of blocked strikes the
+     * director assigns the next beat inside it (`wall-of-parries` parries at 24
+     * against a contact at 22; `the-lock` at 23), so the bounce is eaten and
+     * `recoil` never plays. That is the price of drawing the downstroke, and
+     * the downstroke is worth more — shortening the window to rescue the recoil
+     * puts the blade's turnaround back on top of the swing, which is the bug
+     * this whole change exists to fix.
      */
     f.bounce = 5;
     st.hitStop = 3;
@@ -1568,11 +1607,6 @@ function stepFighter(st: DuelState, f: Fighter, foe: Fighter): void {
   // is why this is tested after it rather than before.
   if (f.bounce > 0) {
     f.bounce -= 1;
-    // One frame after the block resolved, where the blades actually cross.
-    if (f.bounce === 4) {
-      const near = bladeGap(bladeWorld(f), bladeWorld(foe));
-      spawnSparks(st, near.x, near.y, 18, 0, -1.1);
-    }
     if (f.bounce === 0) {
       setMove(f, "recoil");
       return;

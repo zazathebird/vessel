@@ -594,9 +594,11 @@ All deliberate. Add to this list rather than silently diverging.
      reset it fired on 98.6% of picks; after it, the comment still read "a normal
      match never reaches it", which is also false. A match runs ~24 sequences
      against a threshold of 22, so the rail takes the last one or two of *every*
-     match — **16%** of all picks. That is a fight tightening as it ends and it
-     is why matches converge at all. Do not raise the threshold expecting to
-     touch an edge case.
+     match — **7.4%** of all picks, measured over 400,000 frames at 23.0 picks
+     per match. (An earlier note here said 16%; the direction was right, the
+     magnitude out by two — corrected 2026-08-17.) That is a fight tightening as
+     it ends and it is why matches converge at all. Do not raise the threshold
+     expecting to touch an edge case.
    - **`bladeGap`'s second solve uses `vw`, not `uw`.** Re-solving segment `b`
      against a clamped `s` is `((w + s·u)·v)/(v·v)`. With `uw` it reported
      segments that provably cross as 16 units apart and returned `r = 0` for
@@ -616,10 +618,14 @@ All deliberate. Add to this list rather than silently diverging.
      frames to **6.1%**, because a third-of-the-gap correction loses the race
      against the closing speed the choreography drives at and the residue
      compounds. It is not a gentle curve either — 0.34 and 0.6 both measure ~5.5%,
-     and only full resolution wins the race. At full resolution the **minimum
-     grounded separation over 240,000 frames is exactly 26.00** — the target
-     itself, never once under it — which is better than the two constraints
-     managed together and is as tight as the number can get. The ~5% of
+     and only full resolution wins the race. At full resolution grounded
+     interpenetration falls to **0.10% of frames**, better than the two
+     constraints managed together. **It is not zero, and an earlier claim here
+     that the minimum was "exactly 26.00, never once under it" was wrong**
+     (corrected 2026-08-17): the push is re-clamped to the arena immediately
+     after, so a fighter pinned against a wall absorbs only half the correction
+     and the true minimum is **14.67**. All 248 sub-target frames in 300,000 had
+     a fighter at `x ≤ 20` or `x ≥ 650`. The ~5% of
      *airborne* frames that do overlap are `flip_over` passing over the
      opponent, which is the exemption working, not a residue to chase.
    - **The leash engages at `MID`, the same constant the director calls "far"
@@ -681,10 +687,19 @@ All deliberate. Add to this list rather than silently diverging.
      attempts**; `leap_strike` covered 42 and **100% of its hits landed short**,
      by a median of 188. `Move.span` sizes both to the real gap: now 98.6% and
      0%.
-   - **The camera's floor cropped a fighter out of the frame.** See the long note
-     on `CAM_MIN` in `DuelOrnament.tsx` — on a phone both fighters were fully
-     visible on **31%** of frames and both blades on **12%**, because the floor
-     sat at twice the scale that fits the pair. Now 99% and 84%.
+   - **The camera framed a corpse as though it were standing.** `duelFocus`
+     reported `BODY_W` for a fighter `drawFighter` lays on its side at nearly
+     three times that width, so **76.4%** of death-hold frames clipped a body;
+     reporting the true span takes that to **10.8%**.
+
+     **The `CAM_MIN` half of this was a mistake and is reverted** (2026-08-17).
+     It claimed both fighters were visible on only 31% of phone frames —
+     measured against `w = 190`, a call that does not exist, because the
+     ornament canvas is a fixed 700×700 buffer that CSS scales down. At the real
+     700 the fit never drops below 1.63, so neither floor has ever bound a
+     frame. The note on `CAM_MIN` has the full correction. The lesson worth
+     keeping: **drive a bench with the parameters the call site actually
+     uses.**
 
    - **Blocked strikes never drew their downstroke, and ~40% of the pool is
      scripted `blocked`.** The drawn blade is a spring that lags its keyframe
@@ -705,11 +720,15 @@ All deliberate. Add to this list rather than silently diverging.
      crossing went 21.7% of frames to 41.5% — and that trade is still live: the
      other half of the fix would be a wider resting stance or a shorter guard
      reach, both of which cost the contact quality the leash bought.
-   - **The block burst was thrown into clear air.** At the contact frame the two
-     blades are a median of 13.2 units apart and 54% of blocks are further apart
-     than the blade is wide; the burst was placed at the *midpoint* of that gap,
-     so it touched neither sword. They do meet — closest approach is 0.2 units,
-     one frame later — so it fires then, on the same deferred bounce.
+   - **The block burst is thrown into clear air, and this one is still open.**
+     At the contact frame the blades are a median of ~14 units apart and over
+     half of blocks are further apart than the blade is wide; the burst sits at
+     the *midpoint* of that gap and so touches neither sword. A 2026-08-16 "fix"
+     that deferred it by a frame was **inert** — the countdown it hung on runs
+     later in the same call — and deferring it for real measures *worse* (median
+     29.7), because by then the attacker is following through. The fix this
+     wants is spatial, not temporal: put the burst on the defender's blade at
+     the point nearest the attacker's tip.
    - **`duelFocus` reported a standing width for a fighter lying down.**
      `drawFighter` rotates a corpse 90° about its feet, so it occupies ~87 units
      rather than 30, and for the whole victory hold the camera framed a standing

@@ -64,39 +64,40 @@ const PAIRINGS: Record<"duel" | "duelholy", [FighterStyle, FighterStyle]> = {
  * horizontal one.
  */
 /** World units of clear air kept either side of the pair. */
-const CAM_MARGIN = 32;
+const CAM_MARGIN = 46;
 /** Where the feet line sits in the square, as a fraction of its height. */
 const CAM_FEET = 0.82;
 /**
- * **The floor is what decides whether you can see both fighters at all, and at
- * 1.45 you could not** (2026-08-16, client: the fight "seems a little off").
+ * **The floor is currently unreachable, and the story of how it got changed is
+ * worth keeping** (corrected 2026-08-17).
  *
- * `want` is clamped up to this, so a floor above the scale that fits the pair
- * does not zoom out politely — it crops. Stepped over 90,000 frames at the
- * three slot sizes the site actually uses, with the old 1.45 and a 46-unit
- * margin:
+ * On 2026-08-16 this was lowered from 1.45 to 0.7, with a table showing that at
+ * "190px (phone)" the camera wanted a scale of 0.73 and was pinned at 1.45 on
+ * 100% of frames, cropping a fighter out of shot two thirds of the time. Every
+ * number in it was measured against a call that does not exist. **The canvas
+ * below is a fixed `width={700} height={700}` buffer** and the render loop
+ * passes `canvas.width`, so `duelCamera` is only ever asked to fit the pair
+ * into 700 units; CSS then scales that one picture down to whatever the slot
+ * is. A bench passing `w = 190` was measuring a responsive canvas nobody wrote.
  *
- * | slot | both bodies in frame | both blades too |
- * |---|---|---|
- * | 190px (phone) | **31%** | **12%** |
- * | 240px | 57% | 46% |
- * | 340px (desk) | 96% | 86% |
+ * Re-measured at the real 700, over 200,000 frames: the raw fit never falls
+ * below **1.63**, so neither 1.45 nor 0.7 has ever bound a single frame, and
+ * an A/B of the two is identical. The floor is dead code either way, and it is
+ * back at 1.45 because a live constant that lies about why it holds a value is
+ * worse than one that simply is not reached.
  *
- * On a phone the camera wanted a scale of 0.73 to fit the pair and was held at
- * 1.45 on **100%** of frames — exactly twice too close — so two thirds of the
- * time one of the two fighters was outside the box. A duel with one fighter in
- * shot is not a duel; it is a figure swinging at nothing, with a blade arriving
- * from off-screen. That is the single most likely thing behind the report.
+ * `CAM_MARGIN` went back to 46 for a better reason than symmetry: at 32 the
+ * camera sat at `CAM_MAX` on 20.1% of frames instead of 4.6%, and **death-hold
+ * clipping went from 10.8% to 19.7%** — a corpse is nearly three times as wide
+ * as a standing fighter, so the tighter margin is exactly wrong at the one
+ * moment the frame has the most to hold. The 32 bought a 6% larger figure
+ * (190px of 700 to 201) against nearly double the clipping, and it was chosen
+ * to fix a phone that was never the problem.
  *
- * At 0.7 it is 99% / 84% on the phone and ~85% at every size, so the framing
- * finally behaves the same on a phone as on a desk. The wider clamp does *not*
- * make the camera a character: within any one slot the measured 5th-to-95th
- * percentile swing is 1.9–2.1×, the same as before — 0.7 to 2.9 is the range
- * across *all* slot sizes, not the range any one viewer sees. Median figure
- * height lands at 57px in a 190px slot and 103px in a 340px one, which is what
- * this file's own docs always claimed it did.
+ * **If this canvas is ever made responsive, revisit the floor first.** It is
+ * the assumption everything above rests on.
  */
-const CAM_MIN = 0.7;
+const CAM_MIN = 1.45;
 const CAM_MAX = 2.9;
 /** Per-60Hz-frame approach rates. Zoom is slower than pan, because a zoom that
  *  keeps up with a lunge reads as the picture breathing. */

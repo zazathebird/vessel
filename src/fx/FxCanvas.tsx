@@ -178,6 +178,25 @@ export function FxCanvas() {
      */
     let ceiling = 0;
     let sincePromotion = Infinity;
+    /*
+     * **Promotion is a single, bounded correction of the *probe*, not an
+     * ongoing search** (2026-08-17, after an adversarial re-review of the
+     * 2026-08-16 rewrite found the previous version guaranteed a stutter).
+     *
+     * The tier this session started at came from `probeTier()` — one short
+     * synchronous sample, which the probe's own docs admit can read a machine
+     * as far slower than it is. That guess deserves exactly one chance to be
+     * wrong. A tier arrived at by *measurement*, i.e. by demoting because the
+     * frame was actually late, deserves none: it is evidence, and evidence
+     * beats a guess.
+     *
+     * So the first demotion clears this permanently for the session, and there
+     * is at most one promotion attempt per load. That bounds the worst case to
+     * a single ~1s stutter on a machine whose probe misfired, instead of the
+     * repeating promote-stutter-demote cycle the previous version produced on
+     * exactly the "decade-old shitbox Acer" `perf.ts` is written for.
+     */
+    let mayPromote = true;
 
     const step = () => {
       raf = requestAnimationFrame(step);
@@ -294,31 +313,44 @@ export function FxCanvas() {
           // Undoing a promotion made moments ago: that tier is out of reach on
           // this machine, so stop reaching for it.
           if (sincePromotion < 900) ceiling = tier + 1;
+          // Measured beats guessed: once the frame has actually been late, the
+          // probe's opinion is spent and nothing climbs again this session.
+          mayPromote = false;
           quality.current = TIERS[tier + 1];
           saveTier(quality.current);
           refit.current?.();
           settle();
         } else if (
+          mayPromote &&
           tier > ceiling &&
           sampled >= 150 &&
           sinceChange >= 300 &&
           avg < 19 &&
           /*
-           * Headroom, not frame rate. Stepping up multiplies the buffer's
-           * pixel count by the square of the tier ratio, so the question is
-           * whether the draw would still fit if it cost that much more — and
-           * it is asked against `avg`, the budget this display actually
-           * allows, so it reads the same on 60Hz and 144Hz. A third of the
-           * frame is the bar: the rest belongs to React, the palette bleed and
-           * whatever the browser is doing, and a canvas that claims more than
-           * that is the thing people feel.
+           * Headroom, against a **fixed 16.7ms frame** rather than against the
+           * interval we happen to be achieving.
+           *
+           * Using `avg` here was backwards: it made the budget *larger* exactly
+           * as the machine got slower (a display struggling at 18.9ms was
+           * granted 6.6ms, one running clean at 8ms only 2.8ms), so the test
+           * was most permissive when it should have been strictest.
+           *
+           * Be honest about what this term can and cannot do. `workMs` brackets
+           * Canvas2D command submission, and rasterisation is asynchronous — so
+           * for a fill-bound effect, which is the whole premise of a
+           * *resolution* tier, it is close to constant across tiers and cannot
+           * tell you the next one is affordable. It is a floor, not a proof:
+           * it stops a promotion when the main thread is visibly busy. What
+           * actually bounds the risk is `mayPromote` above — one attempt, only
+           * from a probe-set tier.
            */
-          work * (TIERS[tier - 1] / TIERS[tier]) ** 2 < avg * 0.35
+          work * (TIERS[tier - 1] / TIERS[tier]) ** 2 < 16.7 * 0.35
         ) {
           quality.current = TIERS[tier - 1];
           saveTier(quality.current);
           refit.current?.();
           sincePromotion = 0;
+          mayPromote = false;
           settle();
         } else if (sampled >= 150) {
           sampled = 0;
