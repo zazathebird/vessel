@@ -25,6 +25,7 @@ import type { Env } from "./env";
 import { RateLimiter } from "./rate-limit";
 import { MachineSignal } from "./signal";
 import { publishSiteConfig, readSiteConfig, withSiteConfig } from "./site-config";
+import { withPageMeta } from "./page-meta";
 
 export { MachineSignal, RateLimiter };
 export type { Env };
@@ -270,9 +271,12 @@ export default {
       // than serving nothing. The nonce ties the injected script to the CSP:
       // minted here, stamped on the script by `withSiteConfig`, named by the
       // policy `harden` attaches.
+      // `withPageMeta` wraps the outside because it must run whether or not a
+      // config is published — `withSiteConfig` returns the response untouched
+      // when there is no row, and the head still needs a title either way.
       const nonce = cspNonce();
       return harden(
-        await withSiteConfig(await env.ASSETS.fetch(request), env, nonce),
+        withPageMeta(await withSiteConfig(await env.ASSETS.fetch(request), env, nonce), url),
         cspPolicy(nonce, url),
       );
     }
