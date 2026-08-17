@@ -30,7 +30,7 @@ import { PAGES } from "../src/data/pages";
 import { PATHS } from "../src/data/pageIds";
 import { LAYOUTS, FX, PICKABLE_FX, TYPESETS, SCOPES } from "../src/data/catalog";
 import { PALETTES } from "../src/data/palettes";
-import { ORNAMENTS } from "../src/data/ornaments";
+import { DEFAULT_ORNAMENT, ORNAMENTS, PICKABLE_ORNAMENTS } from "../src/data/ornaments";
 
 /**
  * `--fast` skips only the duel simulation, which is 360,000 stepped frames and
@@ -87,6 +87,45 @@ check("css braces balance", () => {
   }
   must(bad.length === 0, `unbalanced: ${bad.join(", ")}`);
   return `${readdirSync(dir).filter((f) => f.endsWith(".css")).length} stylesheets balanced`;
+});
+
+// ---- 2b. The account form is not sized by whatever contains it -------------
+//
+// 2026-08-17, client: "there is an issue with creating a profile… the current
+// view does not give a large enough field for passwords."
+//
+// `.v-account` is a direct child of `.v-stage`, and Side-scroll's stage is a
+// horizontally scrolling flex row — so the section became a flex item and was
+// sized by the track. Measured 210px on desk against 472px in the other
+// thirteen layouts; minus the reveal button's reserve that is about **eight
+// characters** of a twelve-character minimum password, on the one form the site
+// cannot recover a typo in. Side-scroll is what the live site publishes, so this
+// was the state of production.
+//
+// A `max-width` alone does not prevent it: a flex item with only a maximum is
+// still free to shrink to its content. The fix is an explicit `width`, plus the
+// stage opting out of the track when it holds an account form. Both are asserted
+// here because the real test needs a browser and this suite has none — a
+// tripwire on the two declarations is what is available, and it is exactly the
+// pair that was missing.
+
+check("the account form owns its width", () => {
+  const css = readFileSync("src/styles/chrome.css", "utf8");
+
+  const block = css.match(/(^|\n)\.v-account\s*\{([^}]*)\}/);
+  must(block !== null, "no `.v-account` rule found in chrome.css");
+  const body = block![2];
+  must(
+    /(^|[\s;])width\s*:/.test(body),
+    "`.v-account` sets no explicit `width` — a `max-width` alone lets Side-scroll's flex track shrink it",
+  );
+
+  must(
+    /\.layout-sidescroll\s+\.v-stage:has\(\.v-account\)/.test(css),
+    "Side-scroll's stage no longer opts out of its track for account pages",
+  );
+
+  return "explicit width, and Side-scroll's stage opts out";
 });
 
 // ---- 3. The QR encoder -----------------------------------------------------
@@ -336,12 +375,24 @@ check("catalogues match the documented counts", () => {
   must(FX.length === 16, `${FX.length} effects, expected 16`);
   must(TYPESETS.length === 5, `${TYPESETS.length} typesets, expected 5`);
   must(SCOPES.length === 6, `${SCOPES.length} scopes, expected 6`);
-  must(ORNAMENTS.length === 7, `${ORNAMENTS.length} ornaments, expected 7`);
+  must(ORNAMENTS.length === 8, `${ORNAMENTS.length} ornaments, expected 8`);
   // A hidden effect is unlisted, not invalid — but the two lists must never
   // disagree about anything other than a `hidden` flag.
   must(
     PICKABLE_FX.every((f) => FX.some((g) => g.id === f.id)),
     "PICKABLE_FX contains an effect missing from FX",
+  );
+  must(
+    PICKABLE_ORNAMENTS.every((o) => ORNAMENTS.some((p) => p.id === o.id)),
+    "PICKABLE_ORNAMENTS contains an ornament missing from ORNAMENTS",
+  );
+  // The default has to be something a human can still get back to. It is also
+  // what a background duel makes the ornament yield to and what an out-of-range
+  // share-code index resolves to, so a hidden default would be a slot nobody
+  // could re-select once they left it.
+  must(
+    PICKABLE_ORNAMENTS.some((o) => o.id === DEFAULT_ORNAMENT),
+    `DEFAULT_ORNAMENT (${DEFAULT_ORNAMENT}) is hidden — it must stay pickable`,
   );
   return `${LAYOUTS.length}/${PALETTES.length}/${FX.length}/${ORNAMENTS.length} layouts/palettes/fx/ornaments`;
 });

@@ -7,6 +7,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `TODO.md`; how to start a session and verify a deploy lives in `docs/HANDOFF.md`. If this file and
 `TODO.md` disagree, `TODO.md` is newer.
 
+## Use the skills — standing client instruction (2026-08-17)
+
+**Load every skill that applies to the task at hand, before starting it, whenever the skill would
+improve the quality of what gets built.** Not "if it seems necessary" — if it applies, load it.
+Then *say in the reply which ones you loaded*, because a skill used silently is indistinguishable
+from a skill skipped, and the client has had to ask three times in one session.
+
+The ones that apply here most often:
+
+- **`verify-site`** — any change that has to be *seen*: a layout, a band, a string in the live DOM,
+  "it looks broken". It encodes four environment traps that each cost a session, and guessing
+  instead of running the bench is the failure mode it exists to prevent.
+- **`frontend-design`** — visual or graphic work on the site. Standing client instruction.
+- **`code-review`** / **`security-review`** — before a deploy that touches `worker/` or `src/auth`.
+- **`dataviz`**, **`artifact-design`**, **`artifact-diagramming`** — anything charted or published
+  as an artifact.
+
+Judgement still applies: a skill that would not improve the result is not worth the tokens. The bar
+is *would this help*, not *is this strictly required*.
+
 ## The project
 
 "Vessel" — a personal site for an independent computer repair operator, built from a complete
@@ -241,6 +261,17 @@ Five CSS gotchas that have already bitten once each, all worth knowing before ed
   float's box — the text wraps around a notch — and never paints the glyph. Magazine is the only
   layout with `columns`, so it is the only place a drop cap was wanted and the only place the usual
   implementation cannot work. It uses `initial-letter: 3 3` behind `@supports`, which does.
+- **`.v-account` is a child of `.v-stage`, not of `.v-grid` — and one stage is a flex row.** Its
+  `grid-column: 1 / -1` therefore does nothing in Side-scroll, where `.v-stage` is
+  `display: flex; overflow-x: auto`: the form became a track item and was sized by the filmstrip at
+  **210px** on desk against 472px everywhere else, which after the reveal button's 68px reserve is
+  about eight characters of a twelve-character minimum password — on the one form with no recovery
+  from a typo, on the layout production publishes. **A `max-width` cannot fix this**: a flex item
+  with only a maximum still shrinks to its content, so `.v-account` sets an explicit
+  `width: min(100%, 34rem)`. Side-scroll's stage opts out of its own track via
+  `:has(.v-account)` — keyed on the form rather than on a list of page ids, so a new account page
+  inherits it. `npm run check` gates both declarations; `docs/DECISIONS.md` 2026-08-17 has the
+  measurements.
 - **`clip-path` clips `box-shadow` away.** The HUD's chamfered corners are a `clip-path`, so its
   elevation is a `drop-shadow` *filter*, which follows the clipped silhouette. Note the second
   consequence: `filter` makes an element a containing block for `position: fixed` descendants — safe

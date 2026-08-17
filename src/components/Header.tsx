@@ -100,7 +100,7 @@ export function Header() {
             <a
               key={item.id}
               href={PATHS[item.id]}
-              className={`chip v-pill${config.page === item.id ? " is-active" : ""}`}
+              className={`chip v-pill v-pill-nav${config.page === item.id ? " is-active" : ""}`}
               aria-current={config.page === item.id ? "page" : undefined}
               onClick={(event) => {
                 event.preventDefault();

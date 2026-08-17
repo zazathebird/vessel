@@ -249,6 +249,50 @@ body {
   }
 }
 
+/*
+ * The sonar beam's revolution, and the contacts it lights (2026-08-17).
+ *
+ * Separate from `v-spin` even though both are a full turn: the beam's period is
+ * the clock every `v-ping` delay is measured against, so the two must be able to
+ * move independently — retiming the beam while a 60s decorative spin keeps its
+ * own pace is the normal edit here.
+ */
+@keyframes v-sweep {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/*
+ * A contact answering the beam. It is dark until the beam crosses its bearing,
+ * flares, then decays over roughly a fifth of the revolution and waits.
+ *
+ * **The light has to come *from* the sweep** — that is the whole difference
+ * between a scope and a spinning gradient, and it is bought entirely with
+ * `animation-delay`: each contact's delay is the fraction of the period at which
+ * the beam reaches it. Change the beam's period and every delay is wrong, which
+ * is why the two live next to each other and the arithmetic is written down
+ * where the delays are set.
+ */
+@keyframes v-ping {
+  0% {
+    opacity: 0.95;
+    scale: 1.75;
+  }
+  9% {
+    opacity: 0.7;
+    scale: 1;
+  }
+  38% {
+    opacity: 0;
+    scale: 1;
+  }
+  100% {
+    opacity: 0;
+    scale: 1;
+  }
+}
+
 @keyframes v-breathe {
   0%,
   100% {

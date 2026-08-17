@@ -534,6 +534,37 @@
    and not a contrast reduction on anything but the track's own edges. */
 
 /*
+ * **The account pages opt out of the track** (2026-08-17, client: "there is an
+ * issue with creating a profile… the current view does not give a large enough
+ * field for passwords"). Side-scroll is the layout the live site publishes, so
+ * this is what the client was looking at.
+ *
+ * The rule above makes the stage a horizontally scrolling flex row. `.v-account`
+ * is a direct child of the stage, not of `.v-grid`, so it became a flex item and
+ * was sized by the track: measured **210px** on desk and 248px at the bottom of
+ * the tablet band, against 472px in the other thirteen layouts. Minus the 68px
+ * the reveal button reserves that is ~129px of field — about **eight characters**
+ * of a twelve-character minimum password, on the one form in the site that has
+ * no way to recover from a typo (§9 collects no email, so a mistyped password at
+ * creation is an account nobody can open). `overflow-y: hidden` then clipped
+ * whatever did not fit the track's height.
+ *
+ * Terminal already establishes the precedent that a layout may opt out of the
+ * stage's rules when its content demands it. An account form is a task, not
+ * content — nothing about it reads better as a filmstrip cell — so on this one
+ * layout it takes the ordinary column. `:has()` keeps the exception keyed to the
+ * thing that needs it rather than to a list of page ids that a new account page
+ * would have to remember to join.
+ */
+.layout-sidescroll .v-stage:has(.v-account) {
+  display: block;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
+/*
  * Stack's snap sections — `proximity`, never `mandatory`.
  *
  * **This was the phone's "scrolling doesn't hold its place" bug** (client,
@@ -908,8 +939,13 @@
   margin-inline: auto;
 }
 
+/* The dial's size is a variable because the orbit radius is derived from it.
+   Two literals that have to agree is exactly how the old orbit drifted out of
+   being a circle. */
 .layout-radial .v-ornament {
-  width: min(62vw, 540px);
+  --dial: min(62vw, 540px);
+  --orbit-r: calc(var(--dial) * 0.385);
+  width: var(--dial);
 }
 
 .layout-magazine .v-ornament {
@@ -923,6 +959,176 @@
   inset: 0;
   width: 100%;
   height: 100%;
+}
+
+/* Sonar — the default ornament since 2026-08-17 ---------------------------
+ *
+ * Client: *"the circles, what looks like HAL from 2001, and the other lame
+ * layouts need to go… a sonar with sweeping radar ping would be better."*
+ *
+ * The objection was to circles that depict nothing, and the answer is not to
+ * stop drawing a circle — it is to draw one that is an *instrument*. A scope is
+ * read rather than admired, and looking for the fault in somebody's machine is
+ * what this site is about, so the geometry finally means something.
+ *
+ * Palette tokens only, like every ornament but the duels: `--edge` for the
+ * bezel (a real boundary, so it takes the 3:1 token rather than the hairline
+ * one), `--line` for the range rings and bearings, `--a1` for the beam and its
+ * contacts. It recolours with the 0.9s bleed and needs no canvas and no asset.
+ */
+
+.v-sonar-bezel {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid var(--edge);
+  /* A faint pool of light in the well, so the scope has a bottom rather than
+     being a ring drawn on the background. */
+  background: radial-gradient(
+    circle at 50% 50%,
+    color-mix(in oklab, var(--a1) 9%, transparent),
+    transparent 72%
+  );
+  transition: border-color 0.9s ease;
+}
+
+.v-sonar-ring {
+  position: absolute;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  transition: border-color 0.9s ease;
+}
+
+.v-sonar-ring.s1 {
+  inset: 13%;
+}
+.v-sonar-ring.s2 {
+  inset: 28%;
+}
+.v-sonar-ring.s3 {
+  inset: 43%;
+}
+
+/* The bearing cross. Two hairlines rather than four spokes: at this size four
+   separate elements read as clutter and the crossing already states the axes. */
+.v-sonar-cross {
+  position: absolute;
+  inset: 5%;
+  border-radius: 50%;
+  background:
+    linear-gradient(
+      to right,
+      transparent calc(50% - 0.5px),
+      var(--line) calc(50% - 0.5px),
+      var(--line) calc(50% + 0.5px),
+      transparent calc(50% + 0.5px)
+    ),
+    linear-gradient(
+      to bottom,
+      transparent calc(50% - 0.5px),
+      var(--line) calc(50% - 0.5px),
+      var(--line) calc(50% + 0.5px),
+      transparent calc(50% + 0.5px)
+    );
+}
+
+/*
+ * The beam: one wedge, bright at its leading edge and decaying behind it.
+ *
+ * **The bright edge has to be the trailing stop of the gradient**, not the
+ * leading one. `conic-gradient` measures clockwise from twelve o'clock and the
+ * element turns clockwise, so the stop at the *largest* angle is the one moving
+ * into new water. Written the intuitive way round — bright at 0deg — the wedge
+ * sweeps faint-edge-first and reads as a smear being dragged rather than as a
+ * beam finding things.
+ */
+.v-sonar-beam {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    color-mix(in oklab, var(--a1) 34%, transparent) 66deg,
+    transparent 67deg
+  );
+  animation: v-sweep 4.8s linear infinite;
+}
+
+/*
+ * Contacts. Positions are `left`/`top` percentages of the slot, computed from a
+ * bearing θ measured clockwise from twelve o'clock at radius r:
+ *
+ *   x = 50 + r·sin θ      y = 50 − r·cos θ
+ *
+ * and each delay is when the beam's leading edge (which sits 66° ahead of the
+ * wedge's origin) arrives there, over the 4.8s period:
+ *
+ *   t = ((θ − 66) mod 360) / 360 × 4.8      delay = −((4.8 − t) mod 4.8)
+ *
+ * A negative delay starts the animation already part-way through, which is what
+ * puts each flare on the frame the beam actually reaches it. The arithmetic is
+ * written out because it is invisible in the result when it is right and looks
+ * merely arbitrary when it is wrong.
+ */
+.v-sonar-blip {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  border-radius: 50%;
+  background: var(--a1);
+  opacity: 0;
+  animation: v-ping 4.8s linear infinite;
+  transition: background-color 0.9s ease;
+}
+
+/* θ 35°, r 30% */
+.v-sonar-blip.b1 {
+  left: 67.2%;
+  top: 25.4%;
+  animation-delay: -0.42s;
+}
+/* θ 150°, r 41% */
+.v-sonar-blip.b2 {
+  left: 70.5%;
+  top: 85.5%;
+  animation-delay: -3.68s;
+}
+/* θ 255°, r 24% */
+.v-sonar-blip.b3 {
+  left: 26.8%;
+  top: 56.2%;
+  animation-delay: -2.28s;
+}
+
+.v-sonar-core {
+  position: absolute;
+  width: 5%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: var(--a1);
+  opacity: 0.75;
+  transition: background-color 0.9s ease;
+}
+
+/*
+ * Calm parks the instrument; it does not switch it off.
+ *
+ * `.is-calm` strips `animation` everywhere, which would leave the beam at 0° and
+ * every contact at `opacity: 0` — a scope with nothing on it, which reads as
+ * broken rather than as still. So the beam is rotated to a bearing by hand and
+ * the contacts are held at their post-flare brightness. Calm is a second full
+ * aesthetic here as everywhere else: an instrument at rest, not a failed one.
+ */
+.is-calm .v-sonar-beam {
+  animation: none;
+  transform: rotate(214deg);
+}
+
+.is-calm .v-sonar-blip {
+  animation: none;
+  opacity: 0.6;
 }
 
 .v-valve-dash {
@@ -1170,12 +1376,53 @@
   animation: none;
 }
 
-/* Radial orbit: six pills distributed evenly from -90°, offset by 160% of a
- * pill's own size. NAV has a fixed length, so this is enumerated rather than
- * computed — which is only safe because .v-orbit holds nothing but the pills.
- * The count was seven until the 404 pill moved behind sign-in (2026-08-13);
- * these are the six-way positions, so if NAV's length ever changes again this
- * block has to change with it. */
+/*
+ * **On Radial the header's nav row stands down, because the dial is the nav**
+ * (2026-08-17, client: *"if the links to pages are going to be swirling around,
+ * dont have them at the top of the page also"*). Seven pills at the top and the
+ * same seven around the ornament is the site saying the same thing twice in one
+ * viewport, and it is what made the layout read as unfinished rather than as a
+ * choice.
+ *
+ * Three things keep this safe. `.v-pill-nav` marks only the `NAV` links, so the
+ * operator's own tabs and the Config toggle — which are *not* on the dial —
+ * survive. Radial exists on the desk band alone (`adaptLayout` sends it to
+ * Cinematic on tablet and Stack on phone), so no small screen is ever left
+ * without a header nav. And `Ornament.tsx` keeps the slot on this layout even at
+ * ornament "None", so the dial cannot be switched off by a setting that says
+ * nothing about navigation.
+ */
+.layout-radial .v-nav .v-pill-nav {
+  display: none;
+}
+
+/* Radial's dial — rebuilt 2026-08-17 ---------------------------------------
+ *
+ * **What was here was not a circle.** Six positions were enumerated as
+ * percentages of *each pill's own box* — `translate(138.56%, -80%)` and so on —
+ * so a wide label sat further out than a narrow one and the "orbit" was an
+ * irregular scatter. Measured on the live site the six radii ran 54, 93, 113,
+ * 54, 83 and 113px.
+ *
+ * Worse, `NAV` gained `scams` on 2026-08-14 and became seven. The seventh pill
+ * matched no `:nth-child` rule, so it took no transform at all and rendered at
+ * `left: 50%; top: 50%` — dead centre of the ornament, on top of everything.
+ * *Guestbook* overlapped *Contact* by 95×34px, which is what the client was
+ * looking at when they said it looked like it was made by a high-school kid.
+ * They were right, and the block's own comment had predicted precisely this
+ * failure without preventing it.
+ *
+ * So the angles come from the data now: `--n` is `NAV.length` and `--i` the
+ * index, both set inline by `Ornament.tsx`. Adding an eighth page is a change to
+ * `NAV` and nothing else. The radius is a real length derived from `--dial`
+ * rather than a percentage of anything that varies, which is what makes it one
+ * circle instead of seven.
+ *
+ * **Spacing has margin at seven and is not unlimited.** Adjacent centres are a
+ * chord of 2·r·sin(180°/n) apart — 180px at n = 7 and r = 208, against a widest
+ * pill of 95px. It stays clear past a dozen; much beyond that the dial wants a
+ * larger radius or shorter labels, and the failure would be visible immediately
+ * rather than silent as the old one was. */
 .v-orbit {
   position: absolute;
   inset: 0;
@@ -1186,6 +1433,11 @@
   left: 50%;
   top: 50%;
   z-index: 6;
+  --angle: calc(var(--i) / var(--n) * 360deg);
+  /* Out along the bearing, then turned back so the label stays horizontal —
+     a pill rotated to its own tangent is unreadable at seven-o'clock. */
+  transform: translate(-50%, -50%) rotate(var(--angle))
+    translateY(calc(var(--orbit-r) * -1)) rotate(calc(var(--angle) * -1));
 }
 
 /*
@@ -1198,14 +1450,28 @@
  * 150°. This block already carries the note that a change to NAV's length means
  * editing it — that now costs twelve rules rather than six.
  */
+/*
+ * Tethers. Each pill has a spoke running back to the centre, and the active
+ * one's lights — without them the layout reads as seven buttons near a circle
+ * rather than as a dial.
+ *
+ * **The rotation is derived, not enumerated.** A bar with `transform-origin:
+ * left center` rotated by φ points along (cos φ, sin φ); the centre lies from
+ * the pill along (−sin θ, cos θ) for a bearing θ measured clockwise from twelve
+ * o'clock, so φ = 90° + θ. That identity is why twelve hand-written rules — six
+ * positions and six rotations, the pair that fell out of step the moment `NAV`
+ * grew — are now two declarations that cannot disagree with each other or with
+ * the count.
+ */
 .v-orbit-pill::before {
   content: "";
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 96px;
+  width: var(--orbit-r);
   height: 1px;
   transform-origin: left center;
+  transform: rotate(calc(90deg + var(--angle)));
   background: linear-gradient(to right, transparent, var(--line));
   pointer-events: none;
   transition: background 0.9s ease;
@@ -1213,43 +1479,6 @@
 
 .v-orbit-pill.is-active::before {
   background: linear-gradient(to right, transparent, var(--a1));
-}
-
-.v-orbit-pill:nth-child(1) {
-  transform: translate(-50%, -50%) translate(0%, -160%);
-}
-.v-orbit-pill:nth-child(1)::before {
-  transform: rotate(90deg);
-}
-.v-orbit-pill:nth-child(2)::before {
-  transform: rotate(150deg);
-}
-.v-orbit-pill:nth-child(3)::before {
-  transform: rotate(210deg);
-}
-.v-orbit-pill:nth-child(4)::before {
-  transform: rotate(270deg);
-}
-.v-orbit-pill:nth-child(5)::before {
-  transform: rotate(330deg);
-}
-.v-orbit-pill:nth-child(6)::before {
-  transform: rotate(30deg);
-}
-.v-orbit-pill:nth-child(2) {
-  transform: translate(-50%, -50%) translate(138.56%, -80%);
-}
-.v-orbit-pill:nth-child(3) {
-  transform: translate(-50%, -50%) translate(138.56%, 80%);
-}
-.v-orbit-pill:nth-child(4) {
-  transform: translate(-50%, -50%) translate(0%, 160%);
-}
-.v-orbit-pill:nth-child(5) {
-  transform: translate(-50%, -50%) translate(-138.56%, 80%);
-}
-.v-orbit-pill:nth-child(6) {
-  transform: translate(-50%, -50%) translate(-138.56%, -80%);
 }
 
 /* Content grid + blocks -------------------------------------------------- */
@@ -1847,9 +2076,25 @@
    interaction.css at 140ms, because a colour transition and a pointer response
    cannot share one timing.                                                    */
 
+/*
+ * **The form is measured against the secret it holds, not against a reading
+ * measure** (2026-08-17). `46ch` is the right width for prose and the wrong one
+ * for this: it resolved to 472px, and the reveal toggle spends 68px of that, so
+ * a revealed password had ~24 characters of room on desk and ~17 on the phone.
+ * A field you cannot read the whole of defeats the reason `PasswordField` has a
+ * reveal at all — the point is to *proof-read* what you typed before an
+ * unrecoverable account is created from it.
+ *
+ * `width`, not just `max-width`: on Side-scroll this section is a flex item (see
+ * the stage rule above), and a flex item with only a maximum is still free to
+ * shrink to its content. The explicit width stops the track sizing it; the
+ * percentage resolves against whatever container the layout provides, so nothing
+ * overflows a narrow one.
+ */
 .v-account {
   grid-column: 1 / -1;
-  max-width: 46ch;
+  flex: 0 0 auto;
+  width: min(100%, 34rem);
   margin: 0 auto;
   padding: 4px 0 8px;
 }
@@ -1887,6 +2132,24 @@
   font-size: 13px;
   color: var(--fg);
   outline: none;
+}
+
+/*
+ * Account fields are larger than the site's other inputs, deliberately.
+ *
+ * 13px mono is the size at which `l`/`1` and `0`/`O` stop being separable, and
+ * these are the fields whose contents have to be proof-read rather than merely
+ * read. The small bands already sit at 16px for the iOS focus-zoom threshold
+ * (`.band-phone .v-input`, later in this file, which outranks this on order at
+ * equal specificity) — so this brings the desk band most of the way to meeting
+ * them rather than introducing a third size.
+ *
+ * Scoped to `.v-account` on purpose: the command palette's field is the same
+ * class and has its own rhythm, and it holds a command, not a secret.
+ */
+.v-account .v-input {
+  font-size: 15px;
+  padding: 13px 14px;
 }
 
 /*

@@ -6,7 +6,7 @@ import { api, type SavedSetup } from "../auth/api";
 import { decodeShareCode } from "../config/shareCode";
 import { saveCalmPreference, saveSoundPreference } from "../config/persistence";
 import { LAYOUTS, PICKABLE_FX, TYPESETS } from "../data/catalog";
-import { ORNAMENTS } from "../data/ornaments";
+import { PICKABLE_ORNAMENTS } from "../data/ornaments";
 import { PRESETS } from "../data/presets";
 import { PALETTES } from "../data/palettes";
 import { FOOTER_NAV, NAV } from "../data/pageIds";
@@ -208,7 +208,11 @@ export function CommandPalette() {
       TYPESETS.forEach((typeset, index) =>
         add(`type-${typeset.id}`, `type — ${typeset.label}`, () => update({ type: index })),
       );
-      for (const ornament of ORNAMENTS) {
+      // `PICKABLE_ORNAMENTS`, not `ORNAMENTS` — the same split `PICKABLE_FX`
+      // uses two blocks above. Anything offering a choice to a human reads the
+      // menu; only code *resolving* a stored or shared value reads the full
+      // wire-format list, because a hidden ornament is unlisted, not invalid.
+      for (const ornament of PICKABLE_ORNAMENTS) {
         add(`orn-${ornament.id}`, `ornament — ${ornament.label}`, () =>
           update({ ornament: ornament.id }),
         );

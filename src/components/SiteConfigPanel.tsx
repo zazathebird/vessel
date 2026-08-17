@@ -9,7 +9,7 @@ import { saveCalmPreference, saveSoundPreference } from "../config/persistence";
 import { decodeShareCode, encodeShareCode } from "../config/shareCode";
 import { LAYOUTS, MODES, PICKABLE_FX, SCOPES, TYPESETS } from "../data/catalog";
 import type { ScopeId } from "../data/catalog";
-import { ORNAMENTS } from "../data/ornaments";
+import { PICKABLE_ORNAMENTS } from "../data/ornaments";
 import { PALETTES } from "../data/palettes";
 import { PRESETS } from "../data/presets";
 import { useFocusTrap } from "../hooks/useFocusTrap";
@@ -269,9 +269,9 @@ export function SiteConfigPanel() {
       </section>
 
       <section className="v-panel-section">
-        <h2 className="v-panel-label">Ornament — {ORNAMENTS.length}</h2>
+        <h2 className="v-panel-label">Ornament — {PICKABLE_ORNAMENTS.length}</h2>
         <div className="v-chip-row">
-          {ORNAMENTS.map((ornament) => (
+          {PICKABLE_ORNAMENTS.map((ornament) => (
             <button
               key={ornament.id}
               type="button"

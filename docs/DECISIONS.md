@@ -14,6 +14,76 @@ file records what happened to the codebase.
 ---
 
 
+## 2026-08-17 (later) — the signup form was 210px wide on the layout production publishes
+
+Client: *"there is an issue with creating a profile… the current view does not
+give a large enough field for passwords. please fix this for each and every
+single layout and theme."*
+
+**Measured before touching anything**, across all fourteen layouts at four
+viewport widths, via `sitelab.html` (the `_f=1` single-frame mode, one iframe
+resized per band — `resize_window` does not work in this environment):
+
+| | `.v-account` width | usable field | characters visible |
+|---|---|---|---|
+| desk, thirteen layouts | 472px | 391px | ~24 |
+| **desk, side-scroll** | **210px** | **129px** | **~8** |
+| tablet 600, side-scroll | 248px | 167px | ~10 |
+| phone, all layouts | 369px | 288px | 29 |
+
+Side-scroll is what the live site publishes, so the bottom-left cell was
+production. **Eight characters of a twelve-character minimum password**, on the
+one form in the site that cannot recover from a typo — §9 collects no email, so
+a password mistyped at creation is an account nobody can ever open, which is the
+exact failure `PasswordField`'s reveal toggle was written for two days earlier.
+A field that cannot show eight characters defeats a reveal toggle completely.
+
+**The cause was a container, not the field.** `.v-account` is a direct child of
+`.v-stage`, not of `.v-grid` — and `.layout-sidescroll .v-stage` is
+`display: flex; overflow-x: auto`, the filmstrip track. So the section became a
+flex item and was sized by the track, and `overflow-y: hidden` clipped whatever
+did not fit the track's height. `grid-column: 1 / -1` on `.v-account` does
+nothing in a flex container, and `max-width: 46ch` cannot help: **a flex item
+with only a maximum is still free to shrink to its content.**
+
+Three changes:
+
+1. **The stage opts out of the track when it holds an account form** —
+   `.layout-sidescroll .v-stage:has(.v-account)` returns to a block column.
+   Terminal already establishes that a layout may opt out of the stage's rules;
+   an account form is a task, not content, and nothing about it reads better as
+   a filmstrip cell. Keyed on `:has(.v-account)` rather than on a list of page
+   ids so a new account page inherits it instead of having to remember to join.
+   Verified that `/work`, `/gallery` and `/` keep the track (`scrollWidth` 3049
+   against a 1180 client width) while `/signup` and `/signin` do not.
+2. **`.v-account` sets an explicit `width: min(100%, 34rem)`**, not a maximum.
+   The percentage resolves against whatever container the layout provides, so
+   nothing overflows a narrow one; measured horizontal overflow is 0 at every
+   band.
+3. **`.v-account .v-input` goes to 15px / 13px padding.** 13px mono is where
+   `l`/`1` and `0`/`O` stop being separable, and these are the fields whose
+   contents have to be proof-read. The small bands already sit at 16px for the
+   iOS focus-zoom threshold, so this closes a gap rather than adding a third
+   size. Scoped to `.v-account` deliberately: the command palette shares the
+   class, has its own rhythm, and holds a command rather than a secret.
+
+After, measured across all fourteen layouts: **51 characters** at desk, 47 at the
+top of the tablet band, 46 at its bottom, 29 on the phone, zero horizontal
+overflow anywhere. Identical across all five typesets and in calm — the widths
+are in `rem` and `%`, so no palette or typeface moves them.
+
+**The phone did not improve and is not a failure.** 29 characters is the
+physical ceiling of a 420px viewport once the stage's 18px gutters and the
+reveal button's 68px reserve are paid, and it already clears the 12-character
+minimum comfortably. Said out loud rather than folded into the improvement.
+
+`scripts/check.ts` gains *the account form owns its width*. The real test needs
+a browser and this suite has none, so it is a tripwire on the two declarations
+that were missing — an explicit `width` on `.v-account`, and the side-scroll
+opt-out — and it was verified by deleting each in turn and confirming the
+suite fails with the right message.
+
+
 ## 2026-08-15 (later) — the plain-English pass, and one addition declined
 
 Client: *"make this whole site's text content understandable by the non
