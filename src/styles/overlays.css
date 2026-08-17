@@ -240,7 +240,9 @@
   font-weight: 400;
   letter-spacing: 0.24em;
   text-transform: uppercase;
-  color: var(--faint);
+  /* `--muted`: these are the panel's `<h2>` section headings, not decoration,
+     and operator-only is not a WCAG exemption. `--faint` fails AA on all 25. */
+  color: var(--muted);
 }
 
 /* The one place in the panel that needs a sentence rather than a label: what
@@ -480,7 +482,9 @@
   padding: 13px 15px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  color: var(--faint);
+  /* `--muted`: instructional text a person is expected to read. `--faint`
+     fails AA on all 25 palettes (2026-08-17 audit). */
+  color: var(--muted);
 }
 
 .v-door-value {
@@ -527,7 +531,9 @@
   font-size: 10px;
   letter-spacing: 0.14em;
   line-height: 1.7;
-  color: var(--faint);
+  /* `--muted`: instructional text a person is expected to read. `--faint`
+     fails AA on all 25 palettes (2026-08-17 audit). */
+  color: var(--muted);
 }
 
 /* Screensaver --------------------------------------------------------------- */
@@ -561,11 +567,19 @@
 /* The TOTP QR. Centred, with a little air, and a hard maximum so it does not
    become the page on a phone. `display: block` because an inline SVG picks up
    the line-box descender gap otherwise, which reads as a lopsided margin. */
+/* No `border-radius`. It rounded the corners of the symbol *including its quiet
+   zone* — at 16px on a 220px symbol that is over three modules, which does not
+   reach the finder patterns but does eat quiet-zone area diagonally adjacent to
+   all three of them, which is precisely where a locator looks. Nothing is gained
+   by rounding a QR code.
+
+   280px rather than 220: the real `otpauth://` URI is 127-141 bytes, so it lands
+   on version 8 at 49 modules plus 8 of quiet zone. At 220px that is 3.9px per
+   module, which is tight for a phone camera photographing a screen. */
 .v-qr {
   display: block;
   width: 100%;
-  max-width: 220px;
+  max-width: 280px;
   height: auto;
-  margin: 4px auto 2px;
-  border-radius: var(--radius);
+  margin: 6px auto 4px;
 }

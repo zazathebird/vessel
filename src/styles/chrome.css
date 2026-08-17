@@ -749,6 +749,17 @@
  * text needs and reads as the ambient light this design already uses
  * everywhere.
  *
+ * **Scoped to `.v-hero-text` only, and that is a correction** (2026-08-17). It
+ * originally also targeted `.v-block` in Stack, Ledger and Marginalia at
+ * specificity 0-4-0 — which silently outranked two pre-existing rules and undid
+ * both. `:not(.band-phone).layout-stack .v-block` (0-3-0) is a *stronger* shade
+ * pool than this wash, so desk and tablet Stack came out of an accessibility fix
+ * with **less** protection than before it; and `.band-phone.layout-stack
+ * .v-block` (0-3-0) sets the phone card's `--surface` panel, which this replaced
+ * with a `--bg` wash on the layout nearly every other one collapses into. Both
+ * were heavily commented decisions, overwritten without their comments being
+ * touched. The hero is the case that genuinely had no background of its own.
+ *
  * Set as a `background` on the element rather than a pseudo-element on purpose:
  * `.v-stage` scrolls vertically, so its `overflow-x` computes to `auto`, and a
  * pseudo-element bleeding sideways would give the whole stage a horizontal
@@ -758,20 +769,22 @@
  * Calm is excluded because calm hides the canvas outright, so there is nothing
  * to sit on and the wash would only flatten the palette.
  */
-.vessel:not(.is-calm) .v-hero-text,
-.vessel:not(.is-calm).layout-stack .v-block,
-.vessel:not(.is-calm).layout-ledger .v-block,
-.vessel:not(.is-calm).layout-marginalia .v-block {
+.vessel:not(.is-calm) .v-hero-text {
   /* The extents are under 100% and the stop reaches `transparent` well inside
      them, so the wash fades out *within* its own box. Sized larger (115%/130%)
      the transparent stop fell outside the visible area, leaving a soft but
      unmistakable rectangle behind the headline — a panel, which is exactly what
      this was not supposed to become. */
+  /* Centred, and reaching `transparent` at 62% of a 62%-wide ellipse — measured
+     by rasterising the actual CSS, because the previous "well inside its box"
+     claim was wrong: alpha at the left edge was **0.463**, a hard vertical cut
+     down the middle of the page on desk Stack. Centring the origin removes the
+     asymmetry that put the strongest part against an edge. */
   background: radial-gradient(
-    72% 78% at 30% 46%,
-    color-mix(in srgb, var(--bg) 76%, transparent) 0%,
-    color-mix(in srgb, var(--bg) 46%, transparent) 42%,
-    transparent 72%
+    62% 68% at 50% 46%,
+    color-mix(in srgb, var(--bg) 74%, transparent) 0%,
+    color-mix(in srgb, var(--bg) 40%, transparent) 34%,
+    transparent 62%
   );
 }
 
@@ -831,7 +844,11 @@
   padding: 15px 24px;
   min-height: 46px;
   cursor: pointer;
-  border: 1px solid var(--line);
+  /* `--edge`, not `--line`: this is the hero call to action, the most
+     important control on the site, and it was missed by the 2026-08-17 pass
+     that moved the other controls. At `--line` its border measured ~1.4:1
+     against a 3:1 requirement. */
+  border: 1px solid var(--edge);
   background: transparent;
   color: var(--muted);
   border-radius: var(--radius);
@@ -1559,7 +1576,11 @@
 .v-block-idx {
   font-family: var(--font-mono);
   font-size: 10px;
-  color: var(--faint);
+  /* `--muted`: this renders the text "01" and is not `aria-hidden`, so it is
+     exposed content and `--faint` fails AA on all 25 palettes. Triaged as
+     decorative on the first pass, which was wrong — it is in the accessibility
+     tree. */
+  color: var(--muted);
 }
 
 /* Headings balance their line breaks (2026-08-14 audit). Titles like

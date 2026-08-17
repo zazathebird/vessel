@@ -16,7 +16,8 @@
  * wrong, is the same mistake with extra steps.
  *
  * **Scope, deliberately narrow.** Byte mode, error-correction level M, versions
- * 1 to 10 — up to 271 bytes, against an `otpauth://` URI that runs about 80. No
+ * 1 to 10 — up to **213 bytes** (271 is the level-L figure), against an
+ * `otpauth://` URI that measures 127-141 bytes and lands on version 8, 49×49. No
  * kanji mode, no numeric or alphanumeric optimisation, no structured append.
  * Everything here is needed by that one string and nothing else is.
  *
@@ -186,8 +187,15 @@ function bitStream(bytes: Uint8Array, version: number): number[] {
   for (let i = 0; i < bits.length; i += 8) {
     words.push(bits.slice(i, i + 8).reduce((acc, bit) => (acc << 1) | bit, 0));
   }
-  const PAD = [0xec, 0x11];
-  while (words.length < dataCodewords) words.push(PAD[words.length % 2 === 0 ? 0 : 1]);
+  // The pad run alternates EC / 11 **from its own start**, not from the absolute
+  // codeword index — keying it to `words.length` made 106 of 214 payload lengths
+  // begin the run on 0x11. Decoders ignore pad bytes so nothing broke, but it is
+  // not what the specification says.
+  let padEven = true;
+  while (words.length < dataCodewords) {
+    words.push(padEven ? 0xec : 0x11);
+    padEven = !padEven;
+  }
   return words;
 }
 
@@ -246,22 +254,28 @@ function reserved(size: number, version: number): boolean[][] {
   };
 
   /*
-   * **Nine by nine, not eight** — rows and columns 0 to 8 inclusive.
+   * **Nine by nine only in the top-left corner.** The other two are 9×8 and
+   * 8×9, and getting that wrong costs sixteen data modules on every symbol.
    *
-   * The finder is 7 and the separator takes it to 8, which is what an
-   * `i <= 7` loop covers; but row 8 and column 8 carry the *format
-   * information*, and they have to be reserved too. Leaving them out let the
-   * data placement write payload bits into them, which `writeFormat` then
-   * overwrote — corrupting one byte per clobbered module. It survived every
-   * structural check (finders, timing, format bits all read back correct) and
-   * was caught only by decoding the encoder's own output, which is the whole
-   * argument for having a round-trip test rather than an eyeball.
+   * Top-left really is 9×9: finder, separator, and *both* format legs meet
+   * there. Top-right has no format leg on column `size - 9`, so it is 9 rows by
+   * 8 columns; bottom-left has none on row `size - 9`, so it is 8 by 9. Marking
+   * all three as 9×9 reserves sixteen modules the specification says are data —
+   * measured, version 1 leaves 192 data modules where the standard requires
+   * 208 — so every bit after the first shifts and the tail of the stream is
+   * never written. A reader gets uncorrectable Reed-Solomon syndromes in every
+   * block.
+   *
+   * **The round-trip test cannot catch this**, because the decoder derives its
+   * map from this same function and shifts identically. `npm run check` asserts
+   * the free-module count against the published capacity instead, which needs
+   * no decoder and cannot share the mistake.
    */
   for (let i = 0; i <= 8; i += 1) {
     for (let j = 0; j <= 8; j += 1) {
       mark(i, j);
-      mark(i, size - 1 - j);
-      mark(size - 1 - i, j);
+      if (j <= 7) mark(i, size - 1 - j);
+      if (i <= 7) mark(size - 1 - i, j);
     }
   }
   for (let i = 0; i < size; i += 1) {
@@ -437,27 +451,35 @@ export function qrMatrix(text: string): boolean[][] {
 function writeFormat(m: boolean[][], size: number, mask: number): void {
   const bits = formatBits(mask);
   const at = (i: number) => ((bits >> i) & 1) === 1;
-  for (let i = 0; i <= 5; i += 1) m[8][i] = at(i);
-  m[8][7] = at(6);
-  m[8][8] = at(7);
-  m[7][8] = at(8);
-  for (let i = 9; i <= 14; i += 1) m[14 - i][8] = at(i);
 
   /*
-   * The second copy splits **seven then eight**, not eight then seven.
+   * **Both copies were transposed** — a mirror of the specification across the
+   * main diagonal — and the failure mode is worse than not scanning.
    *
-   * Bits 0-6 run up the column below the bottom-left finder; bits 7-14 run
-   * along the row beside the top-right one. The module at `(size - 8, 8)` in
-   * between is the *dark module* — always set, carrying no information.
+   * The module *positions* were right; the bit-to-position mapping was
+   * reversed. Reading a symbol at specification positions gave `0x696D` where
+   * `0x5B4B` was intended, and `0x696D` is Hamming distance **3** from the
+   * published level-Q/mask-7 codeword — which BCH(15,5) corrects. So a scanner
+   * does not reject the format, it *accepts* it, concludes the symbol is level
+   * Q under mask 7, and unmasks and de-blocks with the wrong structure. Both
+   * copies agreed on the same wrong answer, so there was no second opinion to
+   * fall back on.
    *
-   * Getting this wrong is invisible to almost every check: the symbol is
-   * structurally perfect, the first copy is correct, and a round-trip decoder
-   * that reads the first copy round-trips fine. It fails only where it matters,
-   * in a real scanner, which reads both copies and takes the one that passes
-   * BCH. A phone that will not scan a QR everything else says is valid is the
-   * symptom this produced.
+   * Checked against ZXing's `MatrixUtil.TYPE_INFO_COORDINATES` and
+   * python-qrcode's `setup_type_info`, which agree with each other.
+   *
+   * Copy one wraps the top-left finder: bits 0-5 down column 8, then the two
+   * corner modules, then bits 9-14 leftward along row 8. Copy two is eight
+   * modules along row 8 from the right edge, then seven down column 8 from the
+   * bottom — with the dark module between them.
    */
-  for (let i = 0; i <= 6; i += 1) m[size - 1 - i][8] = at(i);
-  for (let i = 7; i <= 14; i += 1) m[8][size - 15 + i] = at(i);
+  for (let i = 0; i <= 5; i += 1) m[i][8] = at(i);
+  m[7][8] = at(6);
+  m[8][8] = at(7);
+  m[8][7] = at(8);
+  for (let i = 9; i <= 14; i += 1) m[8][14 - i] = at(i);
+
+  for (let i = 0; i <= 7; i += 1) m[8][size - 1 - i] = at(i);
+  for (let i = 8; i <= 14; i += 1) m[size - 15 + i][8] = at(i);
   m[size - 8][8] = true;
 }

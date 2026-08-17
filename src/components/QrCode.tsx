@@ -16,17 +16,29 @@ import { qrMatrix } from "../auth/qr";
  * lives here, where it is visible, rather than baked into a matrix nobody can
  * measure.
  *
- * **Colours are the palette's, and that is a real constraint rather than a
- * flourish.** A scanner needs contrast between modules and background and does
- * not care which way round — but it does need the *background* to be lighter or
- * darker consistently. `--fg` on `--surface` clears it on all 25 palettes,
- * which is checked the same way every other contrast pair here is.
+ * **Dark modules on a light ground, with literal colours, and that is the one
+ * thing here that must not be palette-driven** (corrected 2026-08-17).
+ *
+ * The first version used `--fg` on `--surface`. Contrast was excellent —
+ * 12.8:1 to 16.9:1 — but `--fg` is *lighter* than `--surface` in **25 of 25**
+ * palettes, so it drew a photographic negative: light modules on a dark ground.
+ * ZXing does not look for inverted symbols by default (upstream's position is
+ * that it is out of spec and would waste half the decode budget), and ZXing is
+ * what Android authenticators are built on. That produces exactly the reported
+ * failure: scans on one phone, refuses on another.
+ *
+ * No palette token is dark enough to be the module colour, so this is a
+ * deliberate exception to *no component should contain a literal colour* — the
+ * same carve-out already recorded for `BLADE_COLORS` in `src/fx/duel.ts`, and
+ * for the same kind of reason: the outside world has an opinion about this
+ * value and the palette does not get a vote. The card around it stays
+ * palette-coloured; only the symbol and its quiet zone are fixed.
  *
  * `shape-rendering="crispEdges"` matters: antialiased module edges at small
  * sizes are the usual reason a generated QR scans on a phone held still and
  * fails on one held by a person.
  */
-export function QrCode({ value, size = 200 }: { value: string; size?: number }) {
+export function QrCode({ value, size = 260 }: { value: string; size?: number }) {
   const modules = useMemo(() => qrMatrix(value), [value]);
 
   const QUIET = 4;
@@ -51,8 +63,8 @@ export function QrCode({ value, size = 200 }: { value: string; size?: number }) 
       role="img"
       aria-label="QR code for the authenticator secret"
     >
-      <rect width={span} height={span} fill="var(--surface)" />
-      <path d={path} fill="var(--fg)" />
+      <rect width={span} height={span} fill="#ffffff" />
+      <path d={path} fill="#000000" />
     </svg>
   );
 }

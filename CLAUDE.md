@@ -1363,5 +1363,24 @@ The failures that existed, and what was done about them (all 2026-08-17):
   colour alone (1.4.1), and `.v-hero-text`'s `min-width: 300px` relaxed to `min(300px, 100%)`
   because it forced 13px of horizontal overflow at a 320px viewport (1.4.10).
 
-**Still open and deliberate:** `--faint` remains on `.v-caret`, `.v-block-idx` and the operator
-panel's labels. Those are decorative or operator-only; the informational uses moved.
+**A second pass on 2026-08-17 corrected the first**, after an independent verification found three
+of the eight fixes incomplete or damaging:
+
+- **The canvas wash was scoped far too widely.** At 0-4-0 it silently outranked
+  `:not(.band-phone).layout-stack .v-block` — a *stronger* shade pool — so desk and tablet Stack came
+  out of an accessibility fix with **less** protection than before it; and it overrode
+  `.band-phone.layout-stack .v-block`, replacing the phone card's `--surface` panel with a `--bg`
+  wash on the layout nearly everything collapses into. Both were commented decisions, overwritten
+  without their comments being touched. It is scoped to `.v-hero-text` alone now, which is the case
+  that genuinely had no background. Its gradient also still did not reach `transparent` — measured
+  alpha **0.463** at the left edge, a hard cut down the middle of the page.
+- **`--edge` missed `.v-cta`**, the hero call to action and the most important control on the site,
+  which sat at ~1.4:1 against a 3:1 requirement.
+- **`--faint` triage was wrong.** `.v-block-idx` renders the text "01" and is not `aria-hidden`, so
+  it is exposed content; `.v-panel-label` styles the panel's `<h2>` headings, and operator-only is
+  not a WCAG exemption. Both moved, along with the door's instructional text. `.v-caret` and
+  `.v-footer-dot` remain, and those genuinely are decorative.
+
+**Three palettes still fail on danger text** — oxide 3.00, xerox 4.07, peat 4.25 — down from all 25.
+Consistent with this file's documented position on the low-contrast palettes rather than a new
+failure, and recorded rather than hidden.

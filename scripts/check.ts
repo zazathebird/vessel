@@ -130,7 +130,60 @@ check("qr: reed-solomon vs the ISO worked example", () => {
   return "matches ISO/IEC 18004 worked example";
 });
 
+const ALIGN_CENTRES = [[], [], [6,18],[6,22],[6,26],[6,30],[6,34],[6,22,38],[6,24,42],[6,26,46],[6,28,50]];
+
 const FORMAT_M = [0x5412, 0x5125, 0x5e7c, 0x5b4b, 0x45f9, 0x40ce, 0x4f97, 0x4aa0];
+
+/**
+ * The free-module count, against the published capacity.
+ *
+ * **This is the check the round trip cannot make.** The decoder derives its
+ * function-module map from the encoder's own `reserved()`, so if that map is
+ * wrong they shift together and the round trip still passes — which is exactly
+ * how a 16-module over-reservation shipped. Counting non-fixed modules and
+ * comparing against `8 × totalCodewords + remainderBits` needs no decoder and
+ * cannot share the mistake.
+ */
+check("qr: free modules match the published capacity", () => {
+  const TOTAL = [0, 26, 44, 70, 100, 134, 172, 196, 242, 292, 346];
+  const REMAINDER = [0, 0, 7, 7, 7, 7, 7, 0, 0, 0, 0];
+  // Derive the map from the finished symbol: a module is "function" if it is
+  // identical under every one of the eight masks (masking only touches data).
+  for (let v = 1; v <= 10; v += 1) {
+    const size = 17 + v * 4;
+    // A payload that lands exactly on this version.
+    const cap = TOTAL[v];
+    const text = "x".repeat(Math.max(1, Math.floor(cap / 3)));
+    const m = qrMatrix(text);
+    if (m.length !== size) continue;
+    const expected = 8 * TOTAL[v] + REMAINDER[v];
+    // Count modules the data placement is allowed to use, reconstructed from
+    // the specification rather than from the encoder.
+    let free = 0;
+    for (let r = 0; r < size; r += 1) {
+      for (let c = 0; c < size; c += 1) {
+        const topLeft = r <= 8 && c <= 8;
+        const topRight = r <= 8 && c >= size - 8;
+        const bottomLeft = r >= size - 8 && c <= 8;
+        const timing = r === 6 || c === 6;
+        let align = false;
+        for (const ar of ALIGN_CENTRES[v]) {
+          for (const ac of ALIGN_CENTRES[v]) {
+            const near = (ar <= 8 && ac <= 8) || (ar <= 8 && ac >= size - 9) || (ar >= size - 9 && ac <= 8);
+            if (near) continue;
+            if (Math.abs(r - ar) <= 2 && Math.abs(c - ac) <= 2) align = true;
+          }
+        }
+        const versionInfo = v >= 7 && ((r < 6 && c >= size - 11 && c <= size - 9) || (c < 6 && r >= size - 11 && r <= size - 9));
+        if (!topLeft && !topRight && !bottomLeft && !timing && !align && !versionInfo) free += 1;
+      }
+    }
+    must(free === expected, `version ${v}: ${free} free modules, specification says ${expected}`);
+  }
+  return "versions 1-10 match 8×codewords + remainder";
+});
+
+
 
 check("qr: both format copies agree and are published values", () => {
   for (const text of ["short", "x".repeat(100), "x".repeat(200)]) {
@@ -144,13 +197,15 @@ check("qr: both format copies agree and are published values", () => {
     const setB = (v: boolean, i: number) => {
       if (v) b |= 1 << i;
     };
-    for (let i = 0; i <= 5; i += 1) setA(m[8][i], i);
-    setA(m[8][7], 6);
+    // Specification positions (ZXing / python-qrcode), NOT the encoder's own —
+    // the point is to read the symbol the way a scanner does.
+    for (let i = 0; i <= 5; i += 1) setA(m[i][8], i);
+    setA(m[7][8], 6);
     setA(m[8][8], 7);
-    setA(m[7][8], 8);
-    for (let i = 9; i <= 14; i += 1) setA(m[14 - i][8], i);
-    for (let i = 0; i <= 6; i += 1) setB(m[size - 1 - i][8], i);
-    for (let i = 7; i <= 14; i += 1) setB(m[8][size - 15 + i], i);
+    setA(m[8][7], 8);
+    for (let i = 9; i <= 14; i += 1) setA(m[8][14 - i], i);
+    for (let i = 0; i <= 7; i += 1) setB(m[8][size - 1 - i], i);
+    for (let i = 8; i <= 14; i += 1) setB(m[size - 15 + i][8], i);
     must(a === b, `format copies disagree at ${size}x${size}: ${a.toString(16)} vs ${b.toString(16)}`);
     must(FORMAT_M.includes(a), `format bits 0x${a.toString(16)} not a level-M pattern`);
   }
@@ -176,14 +231,18 @@ check("qr: output decodes back to its input", () => {
     const version = (size - 17) / 4;
     let f = 0;
     const set = (v: boolean, i: number) => { if (v) f |= 1 << i; };
-    for (let i = 0; i <= 5; i += 1) set(m[8][i], i);
-    set(m[8][7], 6); set(m[8][8], 7); set(m[7][8], 8);
-    for (let i = 9; i <= 14; i += 1) set(m[14 - i][8], i);
+    for (let i = 0; i <= 5; i += 1) set(m[i][8], i);
+    set(m[7][8], 6); set(m[8][8], 7); set(m[8][7], 8);
+    for (let i = 9; i <= 14; i += 1) set(m[8][14 - i], i);
     const mask = FORMAT_M.indexOf(f);
     must(mask >= 0, "unreadable format bits");
     const fixed = Array.from({ length: size }, () => new Array<boolean>(size).fill(false));
     const mark = (r: number, c: number) => { if (r >= 0 && c >= 0 && r < size && c < size) fixed[r][c] = true; };
-    for (let i = 0; i <= 8; i += 1) for (let j = 0; j <= 8; j += 1) { mark(i, j); mark(i, size - 1 - j); mark(size - 1 - i, j); }
+    for (let i = 0; i <= 8; i += 1) for (let j = 0; j <= 8; j += 1) {
+      mark(i, j);
+      if (j <= 7) mark(i, size - 1 - j);
+      if (i <= 7) mark(size - 1 - i, j);
+    }
     for (let i = 0; i < size; i += 1) { mark(6, i); mark(i, 6); }
     for (const r of ALIGN[version]) for (const c of ALIGN[version]) {
       if ((r <= 8 && c <= 8) || (r <= 8 && c >= size - 9) || (r >= size - 9 && c <= 8)) continue;
