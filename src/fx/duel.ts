@@ -1005,7 +1005,13 @@ const SEQUENCES: Sequence[] = [
     id: "step-in",
     weight: 13,
     range: "mid",
-    length: 84,
+        // 112, not 84: `advance` is 54 frames and the last beat starts at 58, so
+    // the sequence used to end 28 frames inside its own closing move, cutting
+    // it off with no stillness after it. At weight 13 this is among the most
+    // frequently seen things in the fight, and the only overrun big enough to
+    // read — `disengage`, `pushed`, `the-lock` and `close-in` overrun by 14
+    // frames or fewer.
+    length: 112,
     beats: [
       { who: "ATT", move: "advance", at: 0 },
       { who: "DEF", move: "guard", at: 0 },
@@ -1111,8 +1117,22 @@ const SEQUENCES: Sequence[] = [
       // one event with a stutter in it, which is the point.
       { who: "ATT", move: "strike_rising", at: 0, outcome: "hit", power: 0.7 },
       { who: "DEF", move: "strike_diagonal", at: 4, outcome: "hit", power: 0.7 },
-      { who: "ATT", move: "backstep", at: 40 },
-      { who: "DEF", move: "backstep", at: 40 },
+      /*
+       * **Both blows land and both fighters now flinch** (2026-08-16). They
+       * landed on frames 16 and 23 and the only reactions in the sequence were
+       * backsteps at 40 — 24 and 17 frames later, and a backstep is a decision,
+       * not a flinch. So the one sequence in the pool whose whole idea is that
+       * neither fighter defends had two swords connect and nobody react to
+       * either, which reads as both attacks missing.
+       *
+       * Ordered after *both* contacts rather than after each fighter's own
+       * wound: staggering the defender at 17 would cut its strike before that
+       * strike lands, and then it is not a trade.
+       */
+      { who: "DEF", move: "stagger", at: 24 },
+      { who: "ATT", move: "stagger", at: 25 },
+      { who: "ATT", move: "backstep", at: 62 },
+      { who: "DEF", move: "backstep", at: 62 },
     ],
   },
   {
@@ -1210,8 +1230,13 @@ const SEQUENCES: Sequence[] = [
     beats: [
       { who: "ATT", move: "kick", at: 0, outcome: "hit" },
       { who: "DEF", move: "knockdown", at: 10 },
+      // The overhead misses into the floor beside the fallen fighter, which
+      // `resolveContact` turns into a burst of sparks off the ground.
       { who: "ATT", move: "strike_overhead", at: 32, outcome: "miss" },
-      { who: "DEF", move: "parry_high", at: 70 },
+      // There was a `parry_high` here, at 70. The strike it was answering
+      // whiffed at 54, and the defender is in `knockdown` until 66 — so it
+      // parried nothing, sixteen frames late, while lying down and getting up.
+      // A fighter on the ground does not parry; it rises and guards, below.
       { who: "ATT", move: "guard", at: 96 },
       { who: "DEF", move: "guard", at: 96 },
     ],
@@ -1220,7 +1245,12 @@ const SEQUENCES: Sequence[] = [
     id: "the-long-wind",
     weight: 5,
     range: "mid",
-    length: 176,
+        // 182: the closing `knockdown` starts at 126 and runs 56 frames, so at 176
+    // the fighter was cut out of the last six frames of getting up and popped
+    // into whatever the next sequence assigned. `disengage` still overruns by
+    // 14, deliberately left: its last beat is `circle`, a drift, and nobody can
+    // see a drift end early.
+    length: 182,
     beats: [
       // 1.7 seconds of nothing, then the biggest single blow in the pool. The
       // contrast *is* the sequence — it should not get tightened in tuning.
@@ -1810,9 +1840,12 @@ function step(st: DuelState): void {
    * `bladeGap` is the real segment-to-segment distance, so this fires on the
    * frame the blades genuinely cross and at the point they cross, not on a
    * proximity guess between the two bodies. Deliberately independent of damage:
-   * `dist` remains the sole authority on whether a blow lands (gating damage on
-   * blade geometry would make misses routine, stop health draining, and hang
-   * the match-reset loop, which has no timeout). This is presentation only.
+   * **the script remains the sole authority on whether a blow lands.** There is
+   * no `dist` and no distance test anywhere in `resolveContact` — that name is
+   * left over from the pre-director engine — and the reasoning is unchanged and
+   * still load-bearing: gating damage on blade geometry would make misses
+   * routine, stop health draining, and hang the match-reset loop, which has no
+   * timeout. This is presentation only.
    *
    * `clash` is a cooldown, not a flag — without it a slow cross showers sparks
    * on sixty consecutive frames and looks like a welding torch. With it, one
