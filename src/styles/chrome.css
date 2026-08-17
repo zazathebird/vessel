@@ -922,6 +922,18 @@
   animation: none;
 }
 
+/* On Radial the ornament slot holds the orbit dial, which since the header's
+   nav row stood down (2026-08-17) is the ONLY primary navigation on the page.
+   Calm's half-opacity is fine for a decoration and not for the main nav —
+   calm is the mode every prefers-reduced-motion visitor lands in, and the
+   2026-08-17 accessibility pass moved footer links off --faint for smaller
+   deficits than a 0.5 multiplier. Same-element classes (is-calm and
+   layout-radial both sit on the wrapper), 0-3-0 beats the 0-2-0 above. The
+   drift stays off; only the dimming is excepted. */
+.is-calm.layout-radial .v-ornament {
+  opacity: 1;
+}
+
 /* The phone band is deliberately absent here since the mobile-parity pass
    (2026-08-13): phones render the ornament at the band token's size. Layouts
    with no room for the slot still hide it everywhere. */
