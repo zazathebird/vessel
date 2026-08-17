@@ -726,9 +726,15 @@ All deliberate. Add to this list rather than silently diverging.
      the *midpoint* of that gap and so touches neither sword. A 2026-08-16 "fix"
      that deferred it by a frame was **inert** — the countdown it hung on runs
      later in the same call — and deferring it for real measures *worse* (median
-     29.7), because by then the attacker is following through. The fix this
-     wants is spatial, not temporal: put the burst on the defender's blade at
-     the point nearest the attacker's tip.
+     29.7), because by then the attacker is following through. **The spatial
+     half was done on 2026-08-17**: `bladeGap` now returns the closest point on
+     each blade as well as their midpoint, and the burst spawns on the
+     *attacker's* blade — by construction on the sword that just swung. That
+     part is arithmetic and needs no evidence. What could not be shown is that
+     it reads better: an A/B against the midpoint over 300,000 frames was
+     indistinguishable, because sparks get velocity at spawn and both blades
+     move, so a frame later the drift exceeds the difference. **Do not "verify"
+     this with another bench** — it wants an eye.
    - **`duelFocus` reported a standing width for a fighter lying down.**
      `drawFighter` rotates a corpse 90° about its feet, so it occupies ~87 units
      rather than 30, and for the whole victory hold the camera framed a standing
