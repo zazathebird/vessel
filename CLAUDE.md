@@ -1293,5 +1293,38 @@ against that rule's 0-1-0, so it wins on specificity regardless of file order an
 with the normal 2px `--a1` ring. Verified in a browser 2026-08-12: real click, `:focus-visible`
 matches, computed outline `solid 2px` at 3px offset. Do not "fix" this.
 
-Still open, and genuinely unresolved rather than overlooked: several palettes fail WCAG AA on body
-text. That is deliberate — Peat especially — and calm mode is the intended remedy.
+**The old note here said "several palettes fail WCAG AA on body text… calm mode is the intended
+remedy". Both halves were measured on 2026-08-17 and both are wrong.**
+
+- **Body text passes everywhere.** `--muted` on a card measures **6.26–8.57:1** across all 25
+  palettes. Peat's worst body figure is 6.26. There was never a body-copy failure.
+- **Calm cannot fix a palette contrast problem, by construction.** `themeVars()` changes five things
+  in calm and **none of them is `--fg`, `--muted`, `--faint` or `--a1`.** Raising `--panel` to 92%
+  moves a card *toward* `--surface`, which on every one of the 25 dark palettes is lighter than
+  `--bg` — so calm nudges light-on-dark text very slightly the *wrong* way (6.26–8.28) and
+  `saturate(0.45)` takes a little more. There is no `.is-calm` rule anywhere that overrides a colour
+  token.
+
+**What calm does remedy is the canvas**, which the old note never mentioned: it hides it outright,
+and the canvas was where the real failures were.
+
+The failures that existed, and what was done about them (all 2026-08-17):
+
+- **Text on the canvas** — `.v-hero-text` and Stack/Ledger/Marginalia blocks have no background, so
+  copy composited straight onto the effect. Over `aurora`, **33.4%** of the frame was under 4.5:1
+  for body copy and **11%** under it for the h1, worst region **1.00:1**. Fixed with a soft `--bg`
+  wash under that type (`chrome.css`), rather than dimming the canvas everywhere as Magazine does.
+- **`--faint` failed AA on all 25 palettes** (2.78–4.09:1) and was the colour of the footer, which
+  is real navigation, and of `::placeholder`. Both moved to `--muted`.
+- **Calm collapsed `--a3`, the danger token, into `--faint`** — so destructive buttons and
+  authentication errors were the faintest thing on the page at a median **3.06:1**, in the mode
+  every reduced-motion visitor lands in. `a3` is now exempt from the collapse.
+- **`--line` is not a contrast-bearing colour** (1.22–1.61:1) and was the entire visual boundary of
+  inputs, buttons and chips — 1.4.11 wants 3:1. Controls now use `--edge`; hairlines keep `--line`.
+- Skip link added (2.4.1), block headings promoted `h3`→`h2` (1.3.1 — `/scams` was one `h1` above
+  thirty-three sibling `h3`s), footer current-page given `aria-current` and an underline rather than
+  colour alone (1.4.1), and `.v-hero-text`'s `min-width: 300px` relaxed to `min(300px, 100%)`
+  because it forced 13px of horizontal overflow at a 320px viewport (1.4.10).
+
+**Still open and deliberate:** `--faint` remains on `.v-caret`, `.v-block-idx` and the operator
+panel's labels. Those are decorative or operator-only; the informational uses moved.

@@ -171,7 +171,11 @@ body {
   padding: 9px 12px;
   border-radius: var(--radius);
   text-transform: uppercase;
-  border: 1px solid var(--line);
+  /* `--edge`, not `--line`: this border is the only thing that makes the control
+     look like a control, and `--line` measures 1.22–1.61:1 against every one of
+     the 25 palettes — WCAG 1.4.11 needs 3:1 for a non-text indicator. See
+     `--edge` in theme.ts. Decorative hairlines keep `--line`. */
+  border: 1px solid var(--edge);
   background: none;
   color: var(--muted);
   cursor: pointer;
@@ -349,9 +353,15 @@ body {
 }
 
 /* `opacity: 1` is required, not decorative — Firefox defaults ::placeholder to
-   0.54 and would otherwise fade --faint twice. */
+   0.54 and would otherwise fade the colour twice.
+
+   `--muted`, not `--faint` (2026-08-17 accessibility audit): `--faint` measures
+   2.78–4.09:1 against every one of the 25 palettes' backgrounds and so fails
+   WCAG 1.4.3 on all of them, in both modes. `--muted` clears it everywhere at
+   6.3–9.0:1. Placeholder text is a hint about what a field wants, not
+   decoration. */
 .vessel ::placeholder {
-  color: var(--faint);
+  color: var(--muted);
   opacity: 1;
 }
 
@@ -375,4 +385,41 @@ body {
 .vessel .chip.is-nudge {
   animation: v-nudge 1.15s ease-in-out 3;
   animation-delay: 1.4s;
+}
+
+/*
+ * The skip link (WCAG 2.4.1). Off-screen until focused, then a real, visible
+ * control at the top-left — `clip-path`/`position: absolute` rather than
+ * `display: none`, because a hidden element is not focusable and a skip link
+ * that cannot be focused is not a skip link.
+ *
+ * Colours come from the palette like everything else, so it inherits the
+ * bleed. It sits outside `.v-chrome` deliberately, next to the overlays: the
+ * screensaver fades the chrome to `opacity: 0` and marks it `inert`, and a
+ * bypass control must not go with it.
+ */
+.vessel .v-skip {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  z-index: 100;
+  padding: 10px 16px;
+  border: 1px solid var(--a1);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  text-decoration: none;
+  transform: translateY(-200%);
+}
+
+/* `:focus`, not only `:focus-visible`. A skip link is reached by Tab, which
+   does match `:focus-visible` — but it is also the one control that must appear
+   for *any* focus, including a programmatic `.focus()` from a script or an
+   assistive technology moving the caret. There is no case where this element is
+   focused and should stay hidden. */
+.vessel .v-skip:focus,
+.vessel .v-skip:focus-visible {
+  transform: translateY(0);
 }

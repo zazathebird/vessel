@@ -133,10 +133,25 @@ export default function App() {
       <div className="v-grain" aria-hidden="true" />
       <div ref={glowRef} className="v-cursor-glow" aria-hidden="true" />
 
+      {/*
+        * Skip link — WCAG 2.4.1 Bypass Blocks, and it earns its place here
+        * rather than being a checkbox item (2026-08-17 audit). Every page puts
+        * seven nav pills, two chips and the wordmark ahead of the content, and
+        * on the phone band that nav is a 593px horizontal scroller inside a
+        * 284px box: a keyboard user tabs through a strip that slides sideways
+        * underneath them before reaching the h1. The landmarks were already
+        * correct, which covers screen-reader users; this is the half that was
+        * missing for sighted keyboard users.
+        *
+        * Visually hidden until focused — see `.v-skip` in base.css.
+        */}
+      <a className="v-skip" href="#main">
+        Skip to content
+      </a>
       <div ref={chromeRef} className={`v-chrome${saver ? " is-sleeping" : ""}`}>
         <Header />
 
-        <main ref={stageRef} className="v-stage" style={{ animation: stageAnimation }}>
+        <main id="main" tabIndex={-1} ref={stageRef} className="v-stage" style={{ animation: stageAnimation }}>
           {layout === "terminal" ? (
             <>
               <div className="v-termbar" aria-hidden="true">

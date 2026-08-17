@@ -627,7 +627,7 @@
   background: color-mix(in oklab, var(--a1) 7%, transparent);
 }
 
-.layout-hud .v-block h3 {
+.layout-hud .v-block h2 {
   font-family: var(--font-mono);
   font-size: clamp(15px, 1.2vw, 18px);
   letter-spacing: 0.01em;
@@ -706,7 +706,7 @@
 .layout-sheet .v-tile {
   order: 1;
 }
-.layout-sheet .v-block h3 {
+.layout-sheet .v-block h2 {
   order: 2;
 }
 .layout-sheet .v-block p {

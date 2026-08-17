@@ -30,7 +30,14 @@ export function ContentBlock({
         </span>
         <span className="v-block-idx">{String(index + 1).padStart(2, "0")}</span>
       </div>
-      <h3>{block.title}</h3>
+      {/*
+        * `h2`, not `h3` (2026-08-17 accessibility audit). Every content page ran
+        * `h1` followed only by `h3`s — a skipped level, WCAG 1.3.1 — and on
+        * `/scams` that is one `h1` above **thirty-three** consecutive sibling
+        * `h3`s, flattening the page whose entire value is being navigable by
+        * heading while somebody is being pressured on the phone.
+        */}
+      <h2>{block.title}</h2>
       {block.body && <p>{block.body}</p>}
 
       {block.hasList && block.items && (

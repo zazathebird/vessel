@@ -123,14 +123,49 @@ export function themeVars(config: Config, layout: LayoutId, band: Band): CSSProp
     "--bg": palette.bg,
     "--surface": palette.surface,
     "--line": palette.line,
+    /*
+     * The border colour for things you can *operate* — inputs, buttons, chips,
+     * the share-code field. Separate from `--line`, which stays the decorative
+     * hairline on cards and rules.
+     *
+     * **It exists because `--line` is not a contrast-bearing colour** (2026-08-17
+     * accessibility audit). Measured across all 25 palettes, `--line` is
+     * **1.22–1.61:1** against the surfaces it sits on, and WCAG 1.4.11 needs 3:1
+     * for the visual boundary of a control — and on this site that 1px border is
+     * the *only* thing distinguishing a text field or a chip from the background,
+     * since neither has a fill. `--muted` clears the bar everywhere it is used as
+     * text (6.3–9.0:1), so it clears it comfortably as an edge.
+     *
+     * Cards and hairlines deliberately keep `--line`: a card border is not a
+     * control, 1.4.11 does not apply to it, and thickening every rule on the site
+     * would change the drawing rather than fix an affordance.
+     */
+    "--edge": palette.muted,
     "--fg": palette.fg,
     "--muted": palette.muted,
     "--faint": palette.faint,
     "--a1": lost ? palette.muted : palette.a1,
-    // Calm leaves exactly one accent: a2 and a3 collapse into the neutral ramp.
-    // 404 drops all three, or the one left saturated is the one it draws the eye to.
+    /*
+     * Calm leaves exactly one accent: `a2` collapses into the neutral ramp.
+     * 404 drops all three, or the one left saturated is the one it draws the
+     * eye to.
+     *
+     * **`a3` is exempt from the calm collapse, because it is the danger token**
+     * (2026-08-17 accessibility audit). It colours `.v-btn-danger`'s text, the
+     * `.v-account-error` border and `.v-door-pending` — it carries meaning,
+     * where `a2` is decorative. Collapsing it to `faint` made destructive
+     * actions and authentication errors the *faintest* thing on the page:
+     * measured across the 25 palettes, danger text fell from a median 9.60:1 to
+     * **3.06:1**, failing AA on every one of them, and the error border failed
+     * the 3:1 non-text minimum on 24 of 25.
+     *
+     * That is not an edge case here. This browser — and any visitor whose OS
+     * asks for reduced motion — lands in calm by default, so calm was the mode
+     * in which "your password was wrong" was hardest to see. The 404 still
+     * drops it: that page has no errors and no destructive buttons.
+     */
     "--a2": calm ? palette.muted : lost ? palette.faint : palette.a2,
-    "--a3": calm || lost ? palette.faint : palette.a3,
+    "--a3": lost ? palette.faint : palette.a3,
 
     "--font-body": type.body,
     "--font-display": type.display,

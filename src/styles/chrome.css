@@ -720,7 +720,54 @@
   flex-direction: column;
   gap: 18px;
   flex: 1 1 380px;
-  min-width: 300px;
+  /* `min()`, not a bare 300px: at a 320px viewport (400% zoom of 1280) the
+     phone band's 18px page padding leaves 284px, so a hard 300px floor pushed
+     13px of horizontal overflow onto every one of the sixteen routes — WCAG
+     1.4.10 Reflow. Clean at 390px and above, which is why it survived the
+     earlier sweeps: they measured 420 and up. */
+  min-width: min(300px, 100%);
+}
+
+/*
+ * **Text that sits directly on the canvas needs a bed under it** (2026-08-17
+ * accessibility audit, WCAG 1.4.3).
+ *
+ * `.v-hero-text` has no background of its own in any layout, and neither do
+ * `.v-block`s in Stack, Ledger and Marginalia — the copy is composited straight
+ * onto a canvas running at `opacity: 0.9`. Sampling real pixels out of the
+ * effects after 600 stepped frames, on Nebula Drift: over `aurora` **33.4%** of
+ * the frame is below 4.5:1 for `--muted` body copy and **11%** is below it for
+ * `--fg`, with the worst region at **1.00:1** — and aurora's bright wash is one
+ * large contiguous shape, so overlap with the headline is certain rather than
+ * probabilistic. `bokeh` is 12.8% and `vessels`, the default effect, 6.7%.
+ *
+ * **A wash, not a panel, and not a dimmed canvas.** Magazine already solves
+ * this by dropping the canvas to `opacity: 0.28`, and that works — it takes
+ * aurora to 2.9% — but doing it everywhere would mute the one thing the site is
+ * actually built around, on the layout the phone band collapses almost
+ * everything into. A soft ellipse of `--bg` under the type restores the bed the
+ * text needs and reads as the ambient light this design already uses
+ * everywhere.
+ *
+ * Set as a `background` on the element rather than a pseudo-element on purpose:
+ * `.v-stage` scrolls vertically, so its `overflow-x` computes to `auto`, and a
+ * pseudo-element bleeding sideways would give the whole stage a horizontal
+ * scrollbar — the trap documented at the top of this file that cost a session.
+ * A background cannot bleed.
+ *
+ * Calm is excluded because calm hides the canvas outright, so there is nothing
+ * to sit on and the wash would only flatten the palette.
+ */
+.vessel:not(.is-calm) .v-hero-text,
+.vessel:not(.is-calm).layout-stack .v-block,
+.vessel:not(.is-calm).layout-ledger .v-block,
+.vessel:not(.is-calm).layout-marginalia .v-block {
+  background: radial-gradient(
+    115% 130% at 28% 45%,
+    color-mix(in srgb, var(--bg) 74%, transparent) 0%,
+    color-mix(in srgb, var(--bg) 52%, transparent) 52%,
+    transparent 82%
+  );
 }
 
 .v-eyebrow {
@@ -1513,7 +1560,7 @@
 /* Headings balance their line breaks (2026-08-14 audit). Titles like
    "Nobody, deliberately." were dropping a single word to line two constantly.
    Pure line-breaking — no box changes. The lede already had `pretty`. */
-.v-block h3 {
+.v-block h2 {
   text-wrap: balance;
   margin: 0;
   font-size: clamp(19px, 1.6vw, 24px);
@@ -1661,7 +1708,10 @@
   font-size: var(--footer-size);
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--faint);
+  /* `--muted`, not `--faint`: the footer is real navigation, and `--faint`
+     fails WCAG 1.4.3 on all 25 palettes (2.93–4.09:1 on `--bg`) in both modes.
+     See the ::placeholder note in base.css. */
+  color: var(--muted);
   transition: border-color 0.9s ease, color 0.9s ease;
 }
 
@@ -1685,12 +1735,25 @@
   font-size: inherit;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--faint);
+  /* `--muted`, not `--faint`: the footer is real navigation, and `--faint`
+     fails WCAG 1.4.3 on all 25 palettes (2.93–4.09:1 on `--bg`) in both modes.
+     See the ::placeholder note in base.css. */
+  color: var(--muted);
   transition: color 0.9s ease;
 }
 
+/* The current footer page.
+ *
+ * **The underline is not decoration — it is the whole conformance** (2026-08-17
+ * accessibility audit). This rule was `color: var(--a1)` alone, which makes the
+ * current page distinguishable *only* by colour and fails WCAG 1.4.1 Use of
+ * Color. The header pills escape it because they carry `aria-current` and a
+ * ring; the footer had neither. `aria-current="page"` is now on the button too,
+ * for the half of this that screen readers care about. */
 .v-footer-link.is-active {
   color: var(--a1);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 /* The found sign-in link — five taps on the ornament. `backwards`, never a
@@ -1787,7 +1850,11 @@
 
 .v-input {
   padding: 12px 13px;
-  border: 1px solid var(--line);
+  /* `--edge`, not `--line`: this border is the only thing that makes the control
+     look like a control, and `--line` measures 1.22–1.61:1 against every one of
+     the 25 palettes — WCAG 1.4.11 needs 3:1 for a non-text indicator. See
+     `--edge` in theme.ts. Decorative hairlines keep `--line`. */
+  border: 1px solid var(--edge);
   border-radius: var(--radius);
   background: color-mix(in oklab, var(--bg) 60%, transparent);
   font-family: var(--font-mono);
@@ -1816,7 +1883,11 @@
 .v-btn {
   align-self: flex-start;
   padding: 11px 18px;
-  border: 1px solid var(--line);
+  /* `--edge`, not `--line`: this border is the only thing that makes the control
+     look like a control, and `--line` measures 1.22–1.61:1 against every one of
+     the 25 palettes — WCAG 1.4.11 needs 3:1 for a non-text indicator. See
+     `--edge` in theme.ts. Decorative hairlines keep `--line`. */
+  border: 1px solid var(--edge);
   border-radius: var(--radius);
   background: transparent;
   font-family: var(--font-mono);
@@ -2461,7 +2532,7 @@
   );
 }
 
-.vessel .v-block.is-loud h3 {
+.vessel .v-block.is-loud h2 {
   font-size: clamp(23px, 2.5vw, 34px);
   color: var(--a1);
 }

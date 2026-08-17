@@ -26,6 +26,7 @@ export function Footer() {
             key={item.id}
             type="button"
             className={`v-footer-link${config.page === item.id ? " is-active" : ""}`}
+            aria-current={config.page === item.id ? "page" : undefined}
             onClick={() => go(item.id)}
           >
             {item.label}
@@ -35,6 +36,7 @@ export function Footer() {
           <button
             type="button"
             className={`v-footer-link is-found${config.page === "signin" ? " is-active" : ""}`}
+            aria-current={config.page === "signin" ? "page" : undefined}
             onClick={() => go("signin")}
           >
             {me ? "account" : "sign in"}
@@ -45,6 +47,7 @@ export function Footer() {
             <button
               type="button"
               className={`v-footer-link${config.page === "signin" ? " is-active" : ""}`}
+              aria-current={config.page === "signin" ? "page" : undefined}
               onClick={() => go("signin")}
             >
               account
@@ -52,6 +55,7 @@ export function Footer() {
             <button
               type="button"
               className={`v-footer-link${config.page === "admin" ? " is-active" : ""}`}
+              aria-current={config.page === "admin" ? "page" : undefined}
               onClick={() => go("admin")}
             >
               admin

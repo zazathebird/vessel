@@ -89,6 +89,38 @@ document.querySelector('.vessel').className
 **Calm is a second full aesthetic, not a degraded one.** Review it deliberately with `?calm=1` —
 just don't let it be the thing you review by accident.
 
+## Traps 5 and 6, found 2026-08-17 during the accessibility audit
+
+5. **`:focus` never matches, so focus styles cannot be observed.** The window has no OS
+   focus — `document.hasFocus()` is `false` — and `:focus` / `:focus-visible` are scoped to the
+   focused document. `el.focus()` *does* move `document.activeElement`, so the two disagree and the
+   naive check reports a broken focus style that is actually fine. To test one, add a temporary
+   class rule at the **same specificity** as the `:focus` rule and confirm nothing overrides the
+   declaration:
+
+   ```js
+   const st = document.createElement('style');
+   st.textContent = '.vessel .v-skip.__probe { transform: translateY(0); }';  // matches 0-3-0
+   document.head.appendChild(st);
+   el.classList.add('__probe');
+   // …measure, then clean up
+   ```
+
+6. **`getComputedStyle` returns gamma-shifted colours inside the app frame** — `#0b0a1f` reads back
+   as `rgb(9, 8, 25)`. Close enough to look right, wrong enough to move a contrast ratio across a
+   WCAG boundary. Compute contrast from the **tokens** (`src/data/palettes.ts` plus the `--panel`
+   rules in `theme.ts`), not from `getComputedStyle`. For canvas contrast, sample real pixels out of
+   `fxlab.html` after stepping frames.
+
+**And a CSS-editing hazard that cost a round trip here:** inserting a rule "after" a declaration by
+matching on one of its properties can land the new rule *inside* the old block, leaving a stray `}`.
+The site still renders — CSS error recovery skips to the next valid rule — so the symptom is one
+rule silently not applying, not a visible break. Check balance after any scripted CSS edit:
+
+```sh
+node -e "const c=require('fs').readFileSync('src/styles/chrome.css','utf8');let d=0,b=0;for(const x of c){if(x==='{')d++;else if(x==='}'){d--;if(d<0){b++;d=0}}}console.log(b,d)"
+```
+
 ## Verifying a string (trap 4)
 
 Never conclude from the source file or a green build.
