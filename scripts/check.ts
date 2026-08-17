@@ -31,6 +31,7 @@ import { PATHS } from "../src/data/pageIds";
 import { LAYOUTS, FX, PICKABLE_FX, TYPESETS, SCOPES } from "../src/data/catalog";
 import { PALETTES } from "../src/data/palettes";
 import { DEFAULT_ORNAMENT, ORNAMENTS, PICKABLE_ORNAMENTS } from "../src/data/ornaments";
+import { decodeShareCode } from "../src/config/shareCode";
 
 /**
  * `--fast` skips only the duel simulation, which is 360,000 stepped frames and
@@ -394,7 +395,35 @@ check("catalogues match the documented counts", () => {
     PICKABLE_ORNAMENTS.some((o) => o.id === DEFAULT_ORNAMENT),
     `DEFAULT_ORNAMENT (${DEFAULT_ORNAMENT}) is hidden — it must stay pickable`,
   );
+  // The wire ORDER, not just the count. Length checks pass a reorder, and a
+  // reorder silently repoints every share code in circulation — the exact
+  // failure the append-only rule exists to prevent. Append here when appending
+  // there; any other edit to this list is the bug this line exists to catch.
+  const ORNAMENT_WIRE = "lens,valve,aperture,orrery,none,duel,duelholy,sonar";
+  must(
+    ORNAMENTS.map((o) => o.id).join(",") === ORNAMENT_WIRE,
+    `ornament wire order changed: ${ORNAMENTS.map((o) => o.id).join(",")}`,
+  );
   return `${LAYOUTS.length}/${PALETTES.length}/${FX.length}/${ORNAMENTS.length} layouts/palettes/fx/ornaments`;
+});
+
+check("hidden ornaments still decode; out-of-range falls to the default", () => {
+  // The first actually-hidden catalogue entries landed 2026-08-17, so this is
+  // the first time "hidden means unlisted, not invalid" is load-bearing: a
+  // stored config or share code naming a withdrawn ornament must keep meaning
+  // it. And a field past the end of the list must resolve to DEFAULT_ORNAMENT,
+  // not to index 0 — index 0 is Lens, which is withdrawn; the decode fell back
+  // to it until 2026-08-17 while two comments claimed otherwise.
+  const lens = decodeShareCode("0-0-0-0-0-0");
+  must(lens?.ornament === "lens", `hidden ornament at index 0 decoded to ${lens?.ornament}`);
+  const far = decodeShareCode("0-0-0-0-0-Z");
+  must(
+    far?.ornament === DEFAULT_ORNAMENT,
+    `out-of-range ornament decoded to ${far?.ornament}, expected ${DEFAULT_ORNAMENT}`,
+  );
+  const five = decodeShareCode("0-0-0-0-0");
+  must(five !== null && !("ornament" in five), "a five-field code should leave the ornament alone");
+  return "index 0 (hidden) resolves, out-of-range resolves to the default, five-field codes abstain";
 });
 
 check("every route has copy, and the 404's page count is true", () => {

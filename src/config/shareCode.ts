@@ -1,5 +1,5 @@
 import { FX, LAYOUTS, TYPESETS } from "../data/catalog";
-import { ORNAMENTS } from "../data/ornaments";
+import { DEFAULT_ORNAMENT, ORNAMENTS } from "../data/ornaments";
 import { PALETTES } from "../data/palettes";
 import type { Config } from "./types";
 
@@ -84,7 +84,12 @@ export function decodeShareCode(input: string): SharedConfig | null {
 
   const [pal, layout, fx, type, bits, ornament] = numbers;
   return {
-    ...(ornament === undefined ? {} : { ornament: (ORNAMENTS[ornament] ?? ORNAMENTS[0]).id }),
+    // Out of range falls back to DEFAULT_ORNAMENT, not to index 0: the head of
+    // the list is Lens, which is withdrawn (hidden) — handing it out for a
+    // malformed field would resurrect the exact ornament the client pulled.
+    // The FX/layout fallbacks below stay on index 0 because their index 0 is
+    // not hidden; if one ever is, it needs this same treatment.
+    ...(ornament === undefined ? {} : { ornament: ORNAMENTS[ornament]?.id ?? DEFAULT_ORNAMENT }),
     pal: Math.min(pal, PALETTES.length - 1),
     layout: (LAYOUTS[layout] ?? LAYOUTS[0]).id,
     fx: (FX[fx] ?? FX[0]).id,
