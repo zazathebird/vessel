@@ -1864,9 +1864,19 @@ async function main(): Promise<void> {
     check("bit 4 is cursor glow", bitOf({ cursor: true }) === "4");
     check("bit 8 is calm", bitOf({ calm: true }) === "8");
     check("bit 16 is sound", bitOf({ sound: true }) === "G"); // 16 in base 36
+    check("bit 32 is slot labels", bitOf({ slots: true }) === "W"); // 32 in base 36
+    // Bit 64 is stored **inverted**: set means entrances OFF. Every code already
+    // in circulation has it clear and entrances default on, so clear has to keep
+    // meaning on. Asserted from both sides because an inversion that is written
+    // backwards round-trips perfectly and is wrong for everyone holding a code.
+    check("entrances on leaves bit 64 clear", bitOf({ entrances: true }) === "0");
+    check("entrances off sets bit 64", bitOf({ entrances: false }) === "1S"); // 64
     check(
-      "every toggle at once still fits one base-36 character",
-      bitOf({ grain: true, breathe: true, cursor: true, calm: true, sound: true }) === "V",
+      "the full bitfield is 127, and outgrowing one base-36 character is fine",
+      bitOf({
+        grain: true, breathe: true, cursor: true, calm: true,
+        sound: true, slots: true, entrances: false,
+      }) === "3J",
     );
 
     // Codes minted before a field existed must keep meaning what they meant.
@@ -1905,7 +1915,11 @@ async function main(): Promise<void> {
 
     check("garbage decodes to null", decodeShareCode("nope") === null);
     check("a four-field code is refused", decodeShareCode("0-0-0-0") === null);
-    check("a seven-field code is refused", decodeShareCode("0-0-0-0-0-0-0") === null);
+    // Seven is the ceiling since the station landed (2026-08-18), not six. This
+    // assertion said "a seven-field code is refused" for the day in between and
+    // was the harness's only red line — the *format* moved and the test did not.
+    check("a seven-field code is accepted", decodeShareCode("0-0-0-0-0-0-0") !== null);
+    check("an eight-field code is refused", decodeShareCode("0-0-0-0-0-0-0-0") === null);
     check("a non-base-36 field is refused", decodeShareCode("0-0-!-0-0-0") === null);
     check("an empty string is refused", decodeShareCode("") === null);
 

@@ -7,8 +7,9 @@ import type { Config } from "./types";
 /**
  * Share codes: base-36 fields joined by hyphens, uppercased.
  * palette · layout · effect · type · toggle bitfield · ornament · station.
- * Bitfield: 1 grain, 2 breathing, 4 cursor glow, 8 calm, 16 sound, 32 slot labels.
- * e.g. "A-3-1-0-7-1".
+ * Bitfield: 1 grain, 2 breathing, 4 cursor glow, 8 calm, 16 sound, 32 slot
+ * labels, 64 entrances **off** (inverted — see `ENTRANCES_OFF`).
+ * e.g. "A-3-1-0-7-1-0".
  *
  * The ornament was added after codes were already in circulation, so it goes
  * last and is optional on the way in: a five-field code still decodes, and
@@ -16,7 +17,7 @@ import type { Config } from "./types";
  *
  * **The station (2026-08-18) took a seventh field, not a bit.** The bitfield is
  * where a new *boolean* goes while bits remain, and 128 is free — but a station
- * is one of four values, not a flag, and packing an enum into bits is how a
+ * is one of three values, not a flag, and packing an enum into bits is how a
  * catalogue gains a fifth entry and silently overflows into its neighbour. It
  * follows the ornament's precedent exactly: appended last, optional on the way
  * in, and **absent means abstain rather than reset** — so all three of the
