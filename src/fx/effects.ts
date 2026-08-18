@@ -195,7 +195,15 @@ export interface FxCache {
   } | null;
 }
 
+/**
+ * Sloppy 2π, fine for full-circle `arc()` calls (anything ≥ 2π draws a closed
+ * circle) and **never as a modulus or divisor**: used as a wrap it slips
+ * 0.0168 rad per revolution, which is how `scan`'s contact flares drifted to
+ * the opposite side of the dial over half an hour (fixed 2026-08-18). Angle
+ * arithmetic uses `REV`.
+ */
 const TAU = 6.3;
+const REV = Math.PI * 2;
 
 function seed(w: number, h: number, n: number): Particle[] {
   return Array.from({ length: n }, () => ({
@@ -330,7 +338,8 @@ const vessels: Effect = ({ ctx, w, h, p, t, beat, mx, my }, cache) => {
     const due = b.depth * 0.24 + (b.phase / TAU) * 0.12;
     const grow = Math.min(1, Math.max(0, (age - due) / 0.4));
     if (grow <= 0) continue;
-    const near = 1 - Math.min(1, Math.hypot(b.x2 - mx * w, b.y2 - my * h) / 420);
+    // Viewport-relative reach: a fixed 420px lit the whole field on a phone.
+    const near = 1 - Math.min(1, Math.hypot(b.x2 - mx * w, b.y2 - my * h) / (Math.min(w, h) * 0.5));
     const wave = (Math.sin(t * 2.2 - b.depth * 0.9 + b.phase) + 1) / 2;
     ctx.strokeStyle = b.depth < 2 ? p.a1 : b.depth < 4 ? p.a2 : p.a3;
     ctx.globalAlpha = (0.1 + wave * 0.2 + near * 0.28) * grow;
@@ -438,7 +447,10 @@ const flow: Effect = ({ ctx, w, h, p, t, boost }, cache) => {
       if (x === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     }
-    ctx.strokeStyle = l === 0 || l === 2 ? p.faint : p.line;
+    // `faint` on the loud/wide lanes, `line` on the quiet pair — swapped
+    // 2026-08-18: measured, `faint` outshines `line` on all 25 palettes, so
+    // the loud lanes were the least visible wires in the composition.
+    ctx.strokeStyle = l === 0 || l === 2 ? p.line : p.faint;
     ctx.globalAlpha = LANE_A[l];
     ctx.lineWidth = LANE_W[l];
     ctx.stroke();
@@ -495,11 +507,14 @@ const flow: Effect = ({ ctx, w, h, p, t, boost }, cache) => {
  * the march wraps.
  */
 const pressure: Effect = ({ ctx, w, h, p, t, beat, mx, my }) => {
-  const cx = w * 0.5 + (mx - 0.5) * w * 0.05;
+  // The slow sine pair is the touch-device wander `scan` documents: on a
+  // phone mx/my never move, and a pressure source that never drifts is a
+  // bullseye printed on the page. Incommensurate periods, ~1% amplitude.
+  const cx = w * 0.5 + (mx - 0.5) * w * 0.05 + Math.sin(t * 0.083) * w * 0.012;
   // Up out of the body copy. At 0.55h the bright focal disc — the loudest
   // single object in the effect — sat directly behind the text, at up to 0.32
   // alpha with a hard edge, on palettes already documented as failing AA.
-  const cy = h * 0.34 + (my - 0.5) * h * 0.05;
+  const cy = h * 0.34 + (my - 0.5) * h * 0.05 + Math.cos(t * 0.059) * h * 0.012;
   // One slow term with no common factor with either existing cycle, so the
   // composite never resolves inside a visit.
   const swell = 0.8 + 0.2 * Math.sin(t * 0.137);
@@ -513,7 +528,9 @@ const pressure: Effect = ({ ctx, w, h, p, t, beat, mx, my }) => {
     const bp = (Math.sin(t * 0.9 - i * 0.55) + 1) / 2;
     // Colour and weight key off `i`, never off `k` — off `k` they would flip
     // as a ring crossed a threshold, every 1.6 seconds.
-    ctx.strokeStyle = i < 2 ? p.a1 : i < 5 ? p.a2 : i < 9 ? p.a3 : p.line;
+    // `faint`, not `line`, for the outer rings — same measured invisibility
+    // as the tunnel wall (≤ 1.08:1 effective on the darker palettes).
+    ctx.strokeStyle = i < 2 ? p.a1 : i < 5 ? p.a2 : i < 9 ? p.a3 : p.faint;
     ctx.globalAlpha = (1 - k) * 0.3 * (0.55 + bp * 0.8) * swell;
     // Every third ring heavy, the rest hairlines: a ring field reads as a
     // series of events rather than as a grid.
@@ -730,7 +747,11 @@ const rain: Effect = ({ ctx, w, h, p, boost, quality }, cache) => {
       // trail: flicker belongs where the eye already is, and a twinkling dead
       // tail is noise. The total mutation count barely moves.
       const fade = 1 - k / stream.length;
-      if (Math.random() < RAIN_MUTATE * (1 + 3 * fade)) stream.glyphs[row] = randomGlyph();
+      // `* boost`: mutation was a fixed per-frame probability, so a 120Hz
+      // display flickered glyphs twice as fast as a 60Hz one, and the
+      // screensaver doubled fall speed without touching flicker. `boost`
+      // folds in the delta correction, which ties both back together.
+      if (Math.random() < RAIN_MUTATE * (1 + 3 * fade) * boost) stream.glyphs[row] = randomGlyph();
       ctx.globalAlpha = fade * fade * dim;
       ctx.drawImage(
         atlas.canvas,
@@ -746,7 +767,7 @@ const rain: Effect = ({ ctx, w, h, p, boost, quality }, cache) => {
     }
 
     if (head >= 0 && head <= rows) {
-      if (Math.random() < RAIN_MUTATE * 4) stream.glyphs[head] = randomGlyph();
+      if (Math.random() < RAIN_MUTATE * 4 * boost) stream.glyphs[head] = randomGlyph();
       // No bloom on the far plane — a distant light does not flare.
       if (!stream.deep) {
         const bw = atlas.bloom.width / dScale;
@@ -819,17 +840,23 @@ const stars: Effect = ({ ctx, w, h, p, boost, mx, my }, cache) => {
       s.z = Math.random() + 0.2;
     }
 
+    // One star in ~200 is a bright wanderer — `fg`, triple trail — so the
+    // field has an occasional event instead of pure uniformity. Derived from
+    // the seeded `r`, which `stars` never otherwise reads: it costs no new
+    // state, and because respawn re-rolls `z` but not `r`, the *same* star
+    // stays the bright one for the life of the field.
+    const hot = s.r > 2.888;
     // Three bands rather than a binary split at z > 0.8, so the far plane gets
     // `faint` — the role that exists for it — and the palette shows three
     // colours instead of two.
-    ctx.strokeStyle = s.z > 0.86 ? p.a1 : s.z > 0.5 ? p.a2 : p.faint;
-    ctx.globalAlpha = 0.16 + s.z * 0.56;
+    ctx.strokeStyle = hot ? p.fg : s.z > 0.86 ? p.a1 : s.z > 0.5 ? p.a2 : p.faint;
+    ctx.globalAlpha = hot ? 0.5 + s.z * 0.4 : 0.16 + s.z * 0.56;
     // Off the sub-pixel floor: `z * 1.5` bottomed out at 0.3px, which
     // antialiases to grey regardless of the colour set above it.
-    ctx.lineWidth = 0.55 + s.z * 1.35;
+    ctx.lineWidth = hot ? 1.3 + s.z * 1.2 : 0.55 + s.z * 1.35;
     // The trail has a floor too, for the same reason the speed does — it was
     // `dx * 0.05`, so the centre of the field drew dots, not streaks.
-    const tl = 3 + sp * 4.2;
+    const tl = (3 + sp * 4.2) * (hot ? 3 : 1);
     ctx.beginPath();
     ctx.moveTo(s.x, s.y);
     ctx.lineTo(s.x - (dx / d) * tl, s.y - (dy / d) * tl);
@@ -907,12 +934,26 @@ const constellation: Effect = ({ ctx, w, h, p, t, boost, mx, my }, cache) => {
      * the definition of depth asserted and not delivered — and `s.r` bottomed
      * out at 0.5px, a 1px-diameter arc, which is a smudge rather than a shape.
      */
-    const near = 1 - Math.min(1, Math.hypot(s.x - mx * w, s.y - my * h) / 420);
-    ctx.fillStyle = near > 0.7 ? p.a3 : s.z > 0.85 ? p.fg : s.z > 0.5 ? p.a1 : p.a2;
+    // Viewport-relative reach — a fixed 420px lit the whole field on a phone.
+    const near = 1 - Math.min(1, Math.hypot(s.x - mx * w, s.y - my * h) / (Math.min(w, h) * 0.5));
+    ctx.fillStyle = s.z > 0.85 ? p.fg : s.z > 0.5 ? p.a1 : p.a2;
     ctx.globalAlpha = 0.2 + s.z * 0.44 + near * 0.26;
+    const nr = 0.9 + s.z * 1.8;
     ctx.beginPath();
-    ctx.arc(s.x, s.y, 0.9 + s.z * 1.8, 0, TAU);
+    ctx.arc(s.x, s.y, nr, 0, TAU);
     ctx.fill();
+    // The pointer highlight eases in over near ∈ [0.55, 0.85] instead of the
+    // old hard snap to `a3` at 0.7, which popped under a moving cursor at
+    // exactly the spot the eye was following. Drawn over the base dot so the
+    // depth colour never flips — only the highlight breathes.
+    const hot = Math.min(1, Math.max(0, (near - 0.55) / 0.3));
+    if (hot > 0) {
+      ctx.fillStyle = p.a3;
+      ctx.globalAlpha = (0.2 + s.z * 0.44 + near * 0.26) * hot;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, nr, 0, TAU);
+      ctx.fill();
+    }
   }
   /*
    * Reject on the squared distance before taking a square root.
@@ -966,12 +1007,20 @@ const constellation: Effect = ({ ctx, w, h, p, t, boost, mx, my }, cache) => {
  * at exactly 5:3 and repeated every 48s, well inside the time someone spends
  * looking at it.
  */
+/**
+ * Wavelengths as cycles-per-viewport (`c1`/`c2`), not radians-per-pixel — the
+ * `LANE_CYC` lesson from `flow`, applied here 2026-08-18. The old per-pixel
+ * constants were tuned on a desk viewport; at 390px every ribbon carried
+ * under half a wave and the aurora collapsed to five near-straight parallel
+ * bands on exactly the band where the canvas is most of what a visitor sees.
+ * Values are the desk look (1526px) restated, so the desk render is unchanged.
+ */
 const AURORA_RIBBONS = [
-  { y: 0.22, amp: 0.15, wide: 118, a: 0.075, k1: 0.0019, k2: 0.00061, sp: 0.29, c: 0 },
-  { y: 0.28, amp: 0.1, wide: 74, a: 0.11, k1: 0.0031, k2: 0.00088, sp: 0.37, c: 2 },
-  { y: 0.33, amp: 0.19, wide: 44, a: 0.17, k1: 0.0047, k2: 0.0012, sp: 0.53, c: 1 },
-  { y: 0.26, amp: 0.07, wide: 26, a: 0.24, k1: 0.0069, k2: 0.0017, sp: 0.71, c: 2 },
-  { y: 0.4, amp: 0.24, wide: 156, a: 0.055, k1: 0.0013, k2: 0.00044, sp: 0.97, c: 0 },
+  { y: 0.22, amp: 0.15, wide: 118, a: 0.075, c1: 0.46, c2: 0.15, sp: 0.29, c: 0 },
+  { y: 0.28, amp: 0.1, wide: 74, a: 0.11, c1: 0.75, c2: 0.21, sp: 0.37, c: 2 },
+  { y: 0.33, amp: 0.19, wide: 44, a: 0.17, c1: 1.14, c2: 0.29, sp: 0.53, c: 1 },
+  { y: 0.26, amp: 0.07, wide: 26, a: 0.24, c1: 1.68, c2: 0.41, sp: 0.71, c: 2 },
+  { y: 0.4, amp: 0.24, wide: 156, a: 0.055, c1: 0.32, c2: 0.11, sp: 0.97, c: 0 },
 ];
 
 /** 7. Aurora — five curtains of light hung in the upper frame. */
@@ -987,6 +1036,8 @@ const aurora: Effect = ({ ctx, w, h, p, t, mx }) => {
 
   for (let i = 0; i < AURORA_RIBBONS.length; i++) {
     const r = AURORA_RIBBONS[i];
+    const k1 = (r.c1 * REV) / w;
+    const k2 = (r.c2 * REV) / w;
     // Near and far curtains shear against each other under the pointer.
     const lean = (mx - 0.5) * (i - 2) * 34;
     ctx.beginPath();
@@ -996,8 +1047,8 @@ const aurora: Effect = ({ ctx, w, h, p, t, mx }) => {
     for (let x = 0; x <= w; x += 26) {
       const y =
         h * r.y +
-        Math.sin(x * r.k1 + t * r.sp + i) * (h * r.amp) +
-        Math.sin(x * r.k2 - t * r.sp * 0.61 + i * 2.1) * (h * r.amp * 0.55);
+        Math.sin(x * k1 + t * r.sp + i) * (h * r.amp) +
+        Math.sin(x * k2 - t * r.sp * 0.61 + i * 2.1) * (h * r.amp * 0.55);
       if (x === 0) ctx.moveTo(x, y + lean);
       else ctx.lineTo(x, y + lean);
     }
@@ -1040,8 +1091,8 @@ const aurora: Effect = ({ ctx, w, h, p, t, mx }) => {
       const y =
         h * r.y +
         lean +
-        Math.sin(x * r.k1 + t * r.sp + i) * (h * r.amp) +
-        Math.sin(x * r.k2 - t * r.sp * 0.61 + i * 2.1) * (h * r.amp * 0.55);
+        Math.sin(x * k1 + t * r.sp + i) * (h * r.amp) +
+        Math.sin(x * k2 - t * r.sp * 0.61 + i * 2.1) * (h * r.amp * 0.55);
       // Kept inside the curtain's own span, so a ray never hangs below it.
       ctx.moveTo(x, y - r.wide * 0.34);
       ctx.lineTo(x, y + r.wide * (0.1 + g * 0.34));
@@ -1227,8 +1278,11 @@ const tunnel: Effect = ({ ctx, w, h, p, t, mx, my }) => {
   // The vanishing point drifts with the shared pointer light, as `scan`'s
   // instrument does. This is the effect that gains most from it: its entire
   // geometry hangs off one point, so moving that point moves everything.
-  const cx = w * 0.5 + (mx - 0.5) * w * 0.06;
-  const cy = h * 0.5 + (my - 0.5) * h * 0.06;
+  // Plus the touch-device wander `scan` and `pressure` carry: with no pointer
+  // the vanishing point was nailed to dead centre, and this is the effect
+  // whose whole geometry hangs off that one point.
+  const cx = w * 0.5 + (mx - 0.5) * w * 0.06 + Math.sin(t * 0.071) * w * 0.013;
+  const cy = h * 0.5 + (my - 0.5) * h * 0.06 + Math.cos(t * 0.047) * h * 0.013;
 
   // Rings recycle by index shift, so a stable per-ring identity has to *count
   // down* with the emission count. With the sign the other way the marker
@@ -1240,7 +1294,9 @@ const tunnel: Effect = ({ ctx, w, h, p, t, mx, my }) => {
     const s = Math.pow(k, 2.4);
     if (w * s < 14) continue; // degenerate rings on the vanishing point
     const mark = ((((i - emitted) % 7) + 7) % 7) === 0;
-    ctx.strokeStyle = mark ? p.a1 : p.line;
+    // `faint` for the wall: at alpha ≤ 0.3, `line` measured ≤ 1.08:1 on the
+    // darker half of the palettes — the tunnel was only its marker rings.
+    ctx.strokeStyle = mark ? p.a1 : p.faint;
     ctx.lineWidth = mark ? 2 : 1;
     // Fades in from the vanishing point and out at the mouth, peaking around
     // k≈0.45 where the rings are wide enough to describe a wall.
@@ -1339,10 +1395,14 @@ const bokeh: Effect = ({ ctx, w, h, p, t, boost, mx, my }, cache) => {
       .padStart(2, "0");
     const flat = 0.3 + s.z * 0.52;
 
+    // The nearest discs get a chromatic rim — the bright stop in `a2` while
+    // the body stays `a1`. Real fast glass fringes its out-of-focus
+    // highlights at the edge; one token swap on one stop is the whole cost.
+    const rimCol = s.z > 0.85 ? p.a2 : col;
     const g = ctx.createRadialGradient(px, py, 0, px, py, s.r);
     g.addColorStop(0, `${col}${hex}`);
     g.addColorStop(flat, `${col}${hex}`);
-    g.addColorStop(flat * 0.985 + 0.015, `${col}${rim}`);
+    g.addColorStop(flat * 0.985 + 0.015, `${rimCol}${rim}`);
     g.addColorStop(1, `${col}00`);
     ctx.fillStyle = g;
     // Weighted outward, as every depth-of-field photograph is: the subject is
@@ -1400,31 +1460,43 @@ const orbits: Effect = ({ ctx, w, h, p, t, beat, mx, my }) => {
       ang,
       x: cx + ox * rc - oy * rs,
       y: cy + ox * rs + oy * rc,
+      // `far` decides draw *order* (binary by necessity); `depth` carries the
+      // continuous value so alpha can ease through the crossing.
       far: Math.sin(ang) < 0,
+      depth: Math.sin(ang),
     };
   };
 
-  const body = (i: number, dim: boolean) => {
+  const body = (i: number) => {
     const q = place(i);
+    // Eased through the plane crossing: the old far/near booleans flipped
+    // alpha 0.38↔0.95 in a single frame, at the ellipse extremes — exactly
+    // where a body is largest on screen. `front` runs 0→1 over
+    // sin(ang) ∈ [−0.15, 0.15], so at the crossing itself both draw passes
+    // agree and the order swap is invisible.
+    const front = Math.min(1, Math.max(0, (q.depth + 0.15) / 0.3));
     ctx.fillStyle = [p.a1, p.a2, p.a3][i % 3];
-    ctx.globalAlpha = dim ? 0.38 : 0.95;
+    ctx.globalAlpha = 0.38 + 0.57 * front;
     ctx.beginPath();
     ctx.arc(q.x, q.y, Math.max(1.6, 4.4 - i * 0.34), 0, TAU);
     ctx.fill();
-    ctx.globalAlpha = dim ? 0.08 : 0.26;
+    ctx.globalAlpha = 0.08 + 0.18 * front;
     ctx.beginPath();
     ctx.arc(q.x, q.y, Math.max(3, 13 - i * 0.9), 0, TAU);
     ctx.fill();
   };
 
   // Far bodies, then the rings over them, then near bodies over the rings.
-  for (let i = 1; i <= 7; i++) if (place(i).far) body(i, true);
+  for (let i = 1; i <= 7; i++) if (place(i).far) body(i);
 
   for (let i = 1; i <= 7; i++) {
     const q = place(i);
-    // The field fades outward instead of stopping at a hard seventh ring, and
-    // the outer rings drop to `faint` so they recede rather than tie.
-    ctx.strokeStyle = i > 4 ? p.faint : p.line;
+    // The field fades outward instead of stopping at a hard seventh ring.
+    // `faint` on the *inner* rings, `line` on the outer — measured on all 25
+    // palettes `faint` is the brighter of the two on canvas, so the original
+    // assignment (outer = faint "so they recede") made the outer rings pop
+    // forward and inverted the hierarchy it was stating.
+    ctx.strokeStyle = i > 4 ? p.line : p.faint;
     ctx.globalAlpha = 0.62 - i * 0.06;
     ctx.lineWidth = i < 3 ? 1.2 : 1;
     ctx.beginPath();
@@ -1455,7 +1527,7 @@ const orbits: Effect = ({ ctx, w, h, p, t, beat, mx, my }) => {
   ctx.arc(cx, cy, 5.5, 0, TAU);
   ctx.fill();
 
-  for (let i = 1; i <= 7; i++) if (!place(i).far) body(i, false);
+  for (let i = 1; i <= 7; i++) if (!place(i).far) body(i);
   ctx.globalAlpha = 1;
 };
 
@@ -1473,9 +1545,12 @@ const orbits: Effect = ({ ctx, w, h, p, t, beat, mx, my }) => {
  */
 const scan: Effect = ({ ctx, w, h, p, t, mx, my }, cache) => {
   // A shallow pointer drift, not a follow: the instrument is mounted, and a
-  // sphere that chases the cursor reads as a toy.
-  const cx = w / 2 + (mx - 0.5) * w * 0.05;
-  const cy = h / 2 + (my - 0.5) * h * 0.05;
+  // sphere that chases the cursor reads as a toy. The two slow sines are for
+  // touch devices, where mx/my never move and the mount would otherwise be
+  // bolted dead centre for the whole visit — incommensurate periods (~94s and
+  // ~146s), amplitude ~1% of the viewport, invisible under a live pointer.
+  const cx = w / 2 + (mx - 0.5) * w * 0.05 + Math.sin(t * 0.067) * w * 0.011;
+  const cy = h / 2 + (my - 0.5) * h * 0.05 + Math.cos(t * 0.043) * h * 0.011;
   const r = Math.min(w, h) * 0.4;
 
   /*
@@ -1506,7 +1581,7 @@ const scan: Effect = ({ ctx, w, h, p, t, mx, my }, cache) => {
    * sphere cached at the old scale would never be re-rendered.
    */
   const dScale = Math.abs(ctx.getTransform().a) || 1;
-  const key = `${p.line}|${p.faint}|${dScale}`;
+  const key = `${p.faint}|${dScale}`;
   const pad = Math.ceil(r * 1.16) + 2;
   const box = pad * 2;
   let sphere = cache.scanSphere;
@@ -1518,7 +1593,12 @@ const scan: Effect = ({ ctx, w, h, p, t, mx, my }, cache) => {
     if (o) {
       o.setTransform(dScale, 0, 0, dScale, 0, 0);
       o.lineWidth = 1;
-      o.strokeStyle = p.line;
+      // `faint`, not `line`: the wireframe is the subject of this effect, and
+      // `--line` measures 1.20–1.27:1 effective on seven palettes — the sphere
+      // reduced to a rotating wedge plus dots, the same failure the sonar's
+      // rings had in CSS. The rim ticks below already use `faint`; now the
+      // sphere they decorate is no longer dimmer than its own furniture.
+      o.strokeStyle = p.faint;
       o.globalAlpha = 0.85;
       // Longitudes: ellipses whose width is the cosine of their own angle,
       // which is what a set of great circles looks like seen edge-on.
@@ -1553,7 +1633,16 @@ const scan: Effect = ({ ctx, w, h, p, t, mx, my }, cache) => {
   ctx.globalAlpha = 1;
   // Explicit destination size: the buffer is in device pixels now, so the
   // intrinsic-size overload would draw it at `dScale` times its proper width.
-  ctx.drawImage(sphere.canvas, cx - pad, cy - pad, box, box);
+  // A slow precession on the cached blit — ~14°/min. The wireframe is static
+  // by construction (that is the whole performance win), but a perfectly
+  // frozen sphere reads as printed; rotating the blit costs one transform and
+  // makes the instrument read as tracking. The rim ticks ride along, which
+  // reads as the mount turning with its scope.
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(t * 0.004);
+  ctx.drawImage(sphere.canvas, -pad, -pad, box, box);
+  ctx.restore();
 
   /*
    * The sweep, as one filled wedge instead of twenty-six strokes.
@@ -1624,8 +1713,11 @@ const scan: Effect = ({ ctx, w, h, p, t, mx, my }, cache) => {
   for (let b = 0; b < 6; b++) {
     const bang = b * 1.047 + 0.4;
     const brad = 0.26 + (((b * 7) % 10) / 10) * 0.6;
-    const since = ((ang - bang) % TAU + TAU) % TAU;
-    const life = Math.max(0, 1 - (since / TAU) * 6.4 / 2);
+    // `REV`, not `TAU`: this is a modulus, and 6.3 as a full circle slips
+    // 0.0168 rad per revolution — measured, the flares were 74° off the beam
+    // by minute ten and on the opposite side of the dial by minute thirty.
+    const since = ((ang - bang) % REV + REV) % REV;
+    const life = Math.max(0, 1 - (since / REV) * 6.4 / 2);
     if (life <= 0) continue;
 
     const bx = cx + Math.cos(bang) * r * brad;
@@ -1663,7 +1755,11 @@ const TEL_PERIOD = 1 / 0.13;
 const telemetry: Effect = ({ ctx, w, h, p, t, beat }) => {
   const lanes = 5;
   const head = ((t * 0.13) % 1) * w;
-  const cols = [p.a1, p.line, p.a2, p.muted, p.a3];
+  // `faint`, never `line`, for a drawn channel: `--line` is the hairline
+  // border token and measures ~1.13:1 effective at this alpha — the same
+  // "one token documented as invisible" bug the sonar CSS had (2026-08-17),
+  // which left lane 2 effectively absent on every palette.
+  const cols = [p.a1, p.faint, p.a2, p.muted, p.a3];
 
   /*
    * Instrument furniture: ticks along the bottom of the top bank, one path.
@@ -1691,8 +1787,11 @@ const telemetry: Effect = ({ ctx, w, h, p, t, beat }) => {
     // one obvious vital sign and several things that are plainly not.
     const quiet = i === 1 || i === 3;
     const amp = h * 0.055 * TEL_AMP[i] * 3.1 * (quiet ? 0.7 + beat * 0.5 : 1);
-    const f1 = 0.004 + i * 0.0016;
-    const f2 = 0.011 + i * 0.0009;
+    // Cycles-per-viewport, like aurora's ribbons (2026-08-18): the old
+    // per-pixel constants gave a phone 0.25–0.65 cycles per lane — five
+    // near-flat lines. These restate the desk (1526px) look exactly.
+    const f1 = ((0.97 + i * 0.39) * REV) / w;
+    const f2 = ((2.67 + i * 0.22) * REV) / w;
     const speed = 0.8 + i * 0.36;
 
     ctx.strokeStyle = p.line;
