@@ -50,7 +50,12 @@ const SPECS: PresetSpec[] = [
     palette: "sodium",
     layout: "mosaic",
     fx: "constellation",
-    ornament: "orrery",
+    // "sonar", not the original "orrery": the four circle ornaments were
+    // withdrawn on 2026-08-17 (client: the HAL circles "need to go"), and a
+    // preset is a *menu*, not a wire — applying one must not hand back an
+    // ornament the client pulled. All three presets were repointed 2026-08-18;
+    // the share codes are derived, so nothing else moved.
+    ornament: "sonar",
     type: "allmono",
     grain: true,
     breathe: false,
@@ -63,7 +68,9 @@ const SPECS: PresetSpec[] = [
     palette: "coldopen",
     layout: "hud",
     fx: "scan",
-    ornament: "aperture",
+    // Was "aperture" — withdrawn; see Patch Bay's note. The sonar is the
+    // natural pairing here anyway: a scope in the slot over a sweep behind it.
+    ornament: "sonar",
     type: "allmono",
     grain: false,
     breathe: false,
@@ -76,7 +83,10 @@ const SPECS: PresetSpec[] = [
     palette: "anodised",
     layout: "cinematic",
     fx: "flow",
-    ornament: "lens",
+    // Was "lens" — withdrawn; see Patch Bay's note. "none" on purpose rather
+    // than a third sonar: this preset is the quiet reading look, and its note
+    // promises a headline over data, not an instrument.
+    ornament: "none",
     type: "mixed",
     grain: true,
     breathe: true,

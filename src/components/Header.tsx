@@ -33,9 +33,12 @@ export function Header() {
    * The pill row scrolls sideways on the narrow bands, and `useEdgeFade` is what
    * tells the reader so — on whichever edge is actually hiding something. See
    * the hook for why this is measured rather than driven off the band.
+   *
+   * A callback ref, because the nav is conditionally rendered (it stands down
+   * on Radial for visitors): the hook has to rebind when the element mounts
+   * later or is replaced, which a plain ref object cannot signal.
    */
-  const navRef = useRef<HTMLElement | null>(null);
-  useEdgeFade(navRef);
+  const navRef = useEdgeFade();
 
   const taps = useRef(0);
   const tapTimer = useRef<number | undefined>(undefined);

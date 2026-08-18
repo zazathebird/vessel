@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Dialog } from "./Dialog";
 import { useConfig } from "../config/ConfigContext";
 import { hasBeenGreeted, markGreeted } from "../config/persistence";
+import { isModalOpen } from "../hooks/useFocusTrap";
 import { calibrateOnce } from "../fx/perf";
 
 /**
@@ -50,7 +51,22 @@ export function Greeting() {
    */
   useEffect(() => {
     if (!calmBySystem && hasBeenGreeted()) return;
-    const id = window.setTimeout(() => setOpen(true), 1200);
+    let id = 0;
+    const tryOpen = () => {
+      // Never on top of an open modal (2026-08-18). The 1.2s timer could land
+      // while the command palette or a confirmation dialog was up; the
+      // greeting then stacked over it, and the collateral Escape both
+      // dismissed the greeting — permanently writing "seen it" (and, on the
+      // calm branch, a motion preference) for a dialog nobody read — and
+      // closed the layer beneath. Waiting costs nothing; the greeting has no
+      // deadline.
+      if (isModalOpen()) {
+        id = window.setTimeout(tryOpen, 1500);
+        return;
+      }
+      setOpen(true);
+    };
+    id = window.setTimeout(tryOpen, 1200);
     return () => window.clearTimeout(id);
   }, [calmBySystem]);
 

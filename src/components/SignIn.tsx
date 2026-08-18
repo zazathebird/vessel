@@ -64,6 +64,10 @@ function ChangePassword() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  // Bumped on submit so a revealed field drops back to hidden — see
+  // `hideSignal` in PasswordField, whose own doc names the rejected-submit
+  // case this covers.
+  const [conceal, setConceal] = useState(0);
 
   const ready = current.length > 0 && next.length >= MIN_PASSWORD_LENGTH && !busy;
 
@@ -73,6 +77,7 @@ function ChangePassword() {
 
     setBusy(true);
     setError(null);
+    setConceal((n) => n + 1);
     try {
       await changePassword(current, next);
       setCurrent("");
@@ -124,6 +129,7 @@ function ChangePassword() {
         }}
         autoComplete="new-password"
         hint={`At least ${MIN_PASSWORD_LENGTH} characters. Your recovery codes keep working — they are not tied to the password.`}
+        hideSignal={conceal}
       />
 
       {error ? (
@@ -167,6 +173,11 @@ export function SignIn() {
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Bumped on every submit that carries the password, so a revealed field
+  // collapses to dots at the moment the secret leaves the form. This is the
+  // page where rejections are routine — precisely the case `hideSignal`'s own
+  // doc names — and it was the one page not using it (2026-08-18).
+  const [conceal, setConceal] = useState(0);
 
   // Is there already a session? A signed-in visitor landing on a sign-in form
   // and having to guess whether it worked last time is the failure this avoids.
@@ -251,6 +262,7 @@ export function SignIn() {
 
     setBusy(true);
     setError(null);
+    setConceal((n) => n + 1);
     try {
       // Two round trips and a PBKDF2 run: on a slow phone this is seconds, not
       // milliseconds, which is why the button says what it is doing.
@@ -370,6 +382,7 @@ export function SignIn() {
 
     setBusy(true);
     setError(null);
+    setConceal((n) => n + 1);
     try {
       await stage.session.setPassword(password);
       setPassword("");
@@ -583,6 +596,7 @@ export function SignIn() {
             autoComplete="new-password"
             autoFocus
             hint={`At least ${MIN_PASSWORD_LENGTH} characters. Your remaining recovery codes keep working.`}
+            hideSignal={conceal}
           />
 
           {error ? (
@@ -725,6 +739,7 @@ export function SignIn() {
           onChange={setPassword}
           autoComplete="current-password"
           hint="It never leaves your browser."
+          hideSignal={conceal}
         />
 
         {error ? (

@@ -34,6 +34,23 @@ export function isModalOpen(): boolean {
   return modals > 0;
 }
 
+/**
+ * Is this trap the top of the stack — the one layer allowed to act?
+ *
+ * Exported for the Escape handlers (2026-08-18). Tab was already gated on the
+ * stack (line below in `useFocusTrap`), but Escape was not: both the dialog
+ * and the palette listen on `document` and call `stopPropagation()`, which
+ * stops the event reaching `window` but does **not** stop other listeners on
+ * the same node — that is `stopImmediatePropagation`, and relying on it would
+ * make correctness depend on registration order. So with two modal layers
+ * open, one Escape closed both, contradicting the "one Escape, one layer"
+ * guarantee both handlers state. Gating each handler on being the top layer
+ * is the same fix Tab already uses.
+ */
+export function isTopTrap(ref: RefObject<HTMLElement | null>): boolean {
+  return stack[stack.length - 1] === ref;
+}
+
 export function useFocusTrap(
   open: boolean,
   ref: RefObject<HTMLElement | null>,

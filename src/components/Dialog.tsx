@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import { createPortal } from "react-dom";
 
-import { useFocusTrap } from "../hooks/useFocusTrap";
+import { isTopTrap, useFocusTrap } from "../hooks/useFocusTrap";
 
 /**
  * The dialog primitive (SPEC-ACCOUNTS.md §10).
@@ -52,11 +52,14 @@ export function Dialog({ open, title, onClose, children }: DialogProps) {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      // One Escape, one layer. This listener sits on `document`, the operator
-      // routes' on `window`, so stopping propagation here is what keeps a
-      // dialog's Escape from also closing the panel beneath it. Swallowed even
+      // One Escape, one layer — enforced by the trap stack, not by
+      // propagation: `stopPropagation` shields the `window` routes but not
+      // other `document` listeners, so a second modal's handler would still
+      // fire on the same press. Only the top layer may act (same gate Tab
+      // uses); the stop still matters for the window half. Swallowed even
       // while busy (onClose is a no-op then): a busy dialog refusing to close
       // must not hand the keystroke to the layer below.
+      if (!isTopTrap(ref)) return;
       event.stopPropagation();
       onClose();
     };

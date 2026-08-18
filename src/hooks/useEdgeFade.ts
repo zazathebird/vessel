@@ -1,4 +1,4 @@
-import { useEffect, type RefObject } from "react";
+import { useEffect, useState } from "react";
 
 /**
  * Mark which edges of a horizontally scrolling element have content beyond
@@ -54,9 +54,20 @@ export function edgeState(
   return "both";
 }
 
-export function useEdgeFade(ref: RefObject<HTMLElement | null>) {
+/**
+ * Returns a *callback ref*, not an effect over a ref object (2026-08-18).
+ *
+ * The old signature took a `RefObject` and ran its effect once — but the
+ * header renders its `<nav>` conditionally (absent on Radial for visitors),
+ * so the element the effect captured could be null at mount and the effect
+ * never re-ran: a Radial-published site whose window narrowed to tablet got
+ * the nav back with no fade, no listeners, and the hard-sliced "GUE" symptom
+ * this hook exists to fix. A callback ref re-fires on every mount/unmount,
+ * so the observers always hold the *live* node and detach from a dead one.
+ */
+export function useEdgeFade(): (el: HTMLElement | null) => void {
+  const [el, setEl] = useState<HTMLElement | null>(null);
   useEffect(() => {
-    const el = ref.current;
     if (!el) return;
 
     let frame = 0;
@@ -93,5 +104,6 @@ export function useEdgeFade(ref: RefObject<HTMLElement | null>) {
       ro.disconnect();
       mo.disconnect();
     };
-  }, [ref]);
+  }, [el]);
+  return setEl;
 }

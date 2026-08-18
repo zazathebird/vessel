@@ -11,7 +11,7 @@ import { PRESETS } from "../data/presets";
 import { PALETTES } from "../data/palettes";
 import { FOOTER_NAV, NAV } from "../data/pageIds";
 import { isEditable } from "../hooks/useOperatorRoutes";
-import { isModalOpen, useFocusTrap } from "../hooks/useFocusTrap";
+import { isModalOpen, isTopTrap, useFocusTrap } from "../hooks/useFocusTrap";
 
 /**
  * The command palette (SPEC-ACCOUNTS.md §10) — the "proper commands" ask.
@@ -111,6 +111,9 @@ export function CommandPalette() {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      // Top-of-stack gate, as Dialog's handler explains: propagation does not
+      // protect one `document` listener from another, the stack does.
+      if (!isTopTrap(ref)) return;
       event.stopPropagation();
       setOpen(false);
     };
