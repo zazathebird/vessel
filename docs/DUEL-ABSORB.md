@@ -1,0 +1,237 @@
+# Absorbing the duel-cycle engine
+
+**Status: planned 2026-08-18, not started.** Client decisions taken; see *Decisions* below.
+
+`handoff_duel_engine/` holds a second, independently written duel engine
+(`duel-cycle-v2.html`, 1,905 lines) and a implementation brief (`BRIEF.md`, 350 lines). The client
+had it built to make the fights **procedurally generated rather than a fixed pool of sequences**,
+and to reimagine the VFX.
+
+This document is the plan for taking what is good in it into `src/fx/duel.ts` — the engine that
+ships — and the record of what was measured while deciding. It exists because the decision was
+*not* to adopt the file.
+
+---
+
+## Decisions (client, 2026-08-18)
+
+1. **Absorb the ideas into `src/fx/duel.ts`.** Not an embed, not a second engine, not a standalone
+   page.
+2. **Characters must be instantly identifiable, and unnamed anywhere a visitor can reach.** The
+   client's words: *"make the characters obvious and instantly identifiable, but do not name them on
+   pages that are not accessible only by me, to avoid any copyright or legal bullshit."* Names are
+   permitted **only on operator-gated surfaces**. See *The naming rule* below.
+3. **The site's audio rule wins.** No ambient bed, no loop, no timer; pitch from the palette; one
+   mute switch. The engine's six free-running oscillators are not coming.
+
+---
+
+## Why not adopt the file
+
+Three independent audits ran against it. The generator came out well and everything around it did
+not.
+
+**The generator is sound and is the thing worth having.** Stepped over 200,000 duels / 3.5M beats in
+Node:
+
+| Property | Result |
+|---|---|
+| `guard++ < 90` planner bound | Never binds. Max observed **42**, 2.1× headroom |
+| Deadlock / infinite loop | Not reachable — no conditional waits, every loop counted |
+| Invalid beats | **0** of 3,506,217 |
+| Fighter off-stage | **0**. Max \|x\| exactly `ARENA_HALF` |
+| Facing wrong at a beat boundary | **0** of 3,506,217 |
+| Unreachable modules | **None.** All 15 body modules + 6 finishers picked |
+
+**What blocks the file itself**, none of it fixable by tweaking:
+
+- **No seam.** One IIFE, zero exports, `document.getElementById` for 13 ids at module scope, its own
+  `window` resize listener, its own `requestAnimationFrame`. Not importable.
+- **Not steppable in Node**, which is the only method that has ever found a duel bug here — all
+  fourteen. It would inherit **zero** of the three duel gates in `scripts/check.ts`, and gate #1
+  (typecheck) cannot see an untyped JS blob inside HTML at all.
+- **Cannot be iframed.** `worker/index.ts` sends `frame-ancestors 'none'` *and*
+  `x-frame-options: DENY`. Same-origin framing is refused today.
+- **Global CSS reset** — `* { margin:0;padding:0 }`, `html, body { overflow:hidden }`, and a bare
+  `canvas { width:100%;height:100% }` that restyles every canvas on the page. Dropping its `<style>`
+  onto the homepage stops the homepage scrolling.
+- **`document` keydown on Space/s/m with no `isEditable` guard.** A visitor typing symptoms into
+  Contact would restart the fight on every `s` and **switch the audio on** at the first `m`. This is
+  the exact bug class `CLAUDE.md` already documents a guard for.
+- **Google Fonts `@import`** (line 8) against `default-src 'self'` with no `font-src` — and against
+  the *"no trackers · no cookies"* claim the footer makes.
+- **125 literal hex + 27 rgba**, against a rule with exactly one four-value carve-out
+  (`BLADE_COLORS`). The 13 arenas paint their own gradients, so the panel would not participate in
+  the palette bleed at all.
+- **Six oscillators running from context build**, a second mute switch that does not know about
+  `config.sound`, master gain 0.5 against the site's deliberate 0.09, and `ac.close()` never called.
+- **Calm.** `animation: none` does not stop a rAF loop. In calm the whole site goes still and this
+  would be the only moving thing on the page. Its own `prefers-reduced-motion` is read **once** at
+  load with no `change` listener, gates only shake/flash/hitstop, and line 1728 *disables*
+  `beat.slow` — so slow-motion beats play **faster** under reduced motion.
+- **Three simultaneous fights.** The one-fight-at-a-time guardrail keys on `fx`/`ornament` ids and
+  cannot see a third engine. The client has already reported that symptom once (2026-08-15).
+
+---
+
+## Measurements worth keeping
+
+Recorded here because they cost three agent-hours and would otherwise be lost.
+
+**On "completely random".** True at whole-fight scale, softer at phrase scale. Over 20,000 generated
+fights: zero repeated beat sequences, all 812 pairings reachable, mean 116.8 beats and 29.5s per
+fight. But the vocabulary is **96 beat atoms from 45 poses**, via 15 modules + 6 finishers, and
+**48.4% of module picks repeat within a single fight**. `mFlurry` — the most-picked module at 14% —
+**never randomises its strike order at all**: `STRIKES[i % STRIKES.length]` from `i=0`, so it is
+always down → across → up → thrust. The single most common 4-beat phrase is 1.33% of all windows.
+
+*Implication for our generator: randomising the module pool is not enough on its own. The strike
+order inside a module has to roll too, or the phrase-level repetition is audible even when no two
+fights are identical.*
+
+**Winner bias.** 54.3%, not 50% — three curated matchups pin `winner:"A"`. Our engine's fairness
+guarantee is measured at 0.09σ and the role coin consults nothing. Keep ours.
+
+**Two dead poses.** `guardLow` and `wounded` are defined and never emitted. This matters because
+`BRIEF.md`'s health-bar spec tells you to score damage from `wounded` — that rule would never match.
+
+**`MIN_SEP` is approximate.** The four-iteration relaxation closes half the gap per pass, so with a
+fighter pinned at the wall it converges to ~1/16 of the error, not zero: 108 of 20,000 fights dip
+under 138, worst 135.22. Cosmetically invisible; do not write a module that *asserts* the invariant.
+
+**Scale collapse on portrait.** `rigScale` is driven by height and `spaceScale` by width, from
+independent inputs, and `MIN_SEP` is in world units. Replaying 92,560 real pose/separation triples:
+
+| viewport | bodies overlapping |
+|---|---|
+| 1440×900 (design target) | 41% (mostly lunges — expected) |
+| 1100×480 | 11% |
+| 768×1024 tablet portrait | **88%** |
+| 390×844 phone portrait | **99.7%** |
+
+At 390×844 the fighters stand 46px apart while each is ~214px tall. *Our engine derives everything
+from one scale and does not have this, but any port of `spaceScale` would import it.*
+
+**Render cost.** Driven through a recording mock 2D context for 200,000 frames at 1440×900 DPR 2:
+**136.3 draw calls per frame, of which 94.9 carry a non-zero `shadowBlur`** (~5,700 shadowed draws a
+second). Canvas2D shadow is a separate blur pass and the most expensive primitive available. Sources
+are one shadowed fill *per particle per frame* — and the particle array is walked twice, once per
+filter pass — plus two shadowed strokes per blade. Particle count peaked at **137** against a cap of
+460, so the caps are effectively dead code; particles are not a count problem, each one is just
+expensive.
+
+*Implication: our blade already does three passes without shadow blur. Do not adopt shadow-blur
+glow. If bloom is wanted, it is a second additive stroke, not a shadow.*
+
+**Pause is inert.** `frame()` zeroes `dt` but always calls `render()`. A paused frame measured 124
+draw calls, 94 shadowed — identical to a playing frame.
+
+---
+
+## The naming rule
+
+The client's decision creates a clean, mechanical rule:
+
+> **A fighter has a public archetype name and an operator-only real name. The real name is rendered
+> only where `isOperator` is already true.**
+
+- **Public surfaces** — hero ornament, background effect, everything a visitor reaches — show the
+  archetype (`THE MASK`, `THE HERMIT`, `THE APPRENTICE`, `THE NEIGHBOUR`) or nothing at all.
+- **Operator surfaces** — the siteconfig panel's ornament picker, `/admin` — may show the real name,
+  because `isOperator` gates them and they are not public.
+- **The silhouettes are unchanged by this.** "Instantly identifiable" is the client's explicit
+  requirement and the cue sheet in `BRIEF.md` is the right approach; it is the *marks in text* that
+  are being withheld, which is the same trade the site already made when it renamed the weapon to
+  "lightsword" (`docs/DUEL.md`, *The naming and likeness constraint*).
+
+**One thing to put to the client before building this** (flagged, not assumed): the real names would
+still exist as strings in the public JS bundle even when never rendered, because the site ships one
+bundle. Display is the exposure that matters and this is almost certainly fine — but if they want it
+airtight the names have to move behind an operator-gated API response, which is a bigger change.
+
+---
+
+## Plan
+
+Ordered by dependency, then payoff. Each phase ships with its own gate, per the standing discipline
+in `CLAUDE.md` (*Checks — run them, and add to them*).
+
+### Phase 1 — the procedural generator
+
+The headline ask: *"completely random, not a set amount of looping duels."*
+
+Today `SEQUENCES` is 28 hand-authored entries. Replace the *selection* of a whole sequence with the
+*composition* of one from a weighted module pool, keeping `Sequence`/`Beat` as the unit so the
+director, `rolePush` equivalent, and every existing gate keep working.
+
+- Each of the 28 sequences becomes a **module**: a function `(ctx) => Beat[]` that rolls its own
+  internals (strike order, counts, timing jitter) rather than returning a fixed array. This is the
+  fix for the `mFlurry` finding above.
+- `chooseSequence` becomes `composeSequence`: pick 1–3 modules by weight for the current band and
+  pressure, concatenate with correct beat offsets, return one `Sequence`.
+- **The static gate cannot survive this**, so it is replaced by a stronger dynamic one: generate
+  200,000 sequences in the check suite and assert on every one — no reaction precedes its cause, no
+  contact inside a `hold` plateau, every module reachable, no beat past `length`, separation valid.
+  That is strictly better than the table check it replaces.
+- The fairness guarantee is untouched: modules name roles, never sides, and the role coin still
+  consults nothing.
+
+### Phase 2 — character identity
+
+The client's requirement is "obvious and instantly identifiable". `frontend-design` gets loaded for
+this phase — it is a standing instruction for visual work.
+
+- Add optional `head` / `torso` / `overlay` draw hooks and per-fighter `proportion` multipliers to
+  the fighter definition, consumed by `drawFighter`. The brief's structure is right.
+- Expand from 4 styles to a roster, each with one signature silhouette read. Keep the existing edge
+  pass over the new shapes or the dark ones vanish.
+- **Already done on our side, do not rebuild:** two-handed grip. `CLAUDE.md` deviation 9 —
+  *"Both hands are on the grip now unless an arm is pushing or balancing a kick."* The brief's
+  workstream 2 IK section is solving a problem this engine does not have.
+- Nametags: archetype only, and only if they read at ornament scale. Health bars stay
+  **ornament-only** (`docs/DUEL.md`) — they are wrong behind body copy and that is not reopened.
+
+### Phase 3 — new moves
+
+These map onto the existing `MOVES`/`SEQUENCES` model directly, and the machinery several of them
+need — `pass`, `windup`, `span`, the ground-pass separation exemption — landed on 2026-08-18.
+
+Rolls; more aerials (back handspring, wall-kick reversal, somersault over a low sweep, downward air
+strike); spins (spinning parries, double-spin combos); **thrown props** — the brief calls this the
+single most cinematic addition and it is right; **blasters** with deflection.
+
+Every new move gates itself to `0` weight when the geometry does not allow it, exactly as
+`leap_strike` and `flip_over` already do.
+
+### Phase 4 — VFX
+
+Directional sparks along the blade-contact normal rather than radial; scorch decals cooling
+white → orange → dark under the fighters, capped; real blade lighting (offset from blade midpoint to
+each limb, intensity by inverse distance) replacing the fixed-offset rim; directional shake; a 1–2
+frame silhouette flash on the struck fighter.
+
+**No shadow-blur glow** — see the render-cost measurement above.
+
+### Phase 5 — audio
+
+Layered clash (metallic transient + bandpassed noise body + sub thump), spark sizzle grains,
+differentiated body hits / landings / kicks, force whoomph.
+
+All of it inside `src/audio/engine.ts`, **pitch derived from the palette** so no voice holds a
+literal frequency, behind the single `chime` gate and the one `sound` toggle.
+
+**One question to settle before starting this phase, deliberately not assumed:** the site's rule is
+*"every voice is fired by a gesture."* A duel clash is fired by the *animation*. The rule's purpose
+— nothing plays uninvited, no `AudioContext` until a deliberate toggle — is satisfied as long as
+duel audio only sounds when `sound` is explicitly on. Its letter is not. That is a product decision
+and it is the client's, not this side's.
+
+---
+
+## Not taking
+
+The arenas and their 13 background gradients (the panel would leave the palette system); the
+visitor-facing PAUSE / SOUND / SKIP controls (*"visitors get the calm toggle and nothing else"*);
+on-screen winner text, title cards and fight labels (deviation 8 — *show the layout, do not caption
+it*); health bars behind body copy; Bebas Neue; the global CSS reset; the document keydown; the
+shadow-blur glow; predetermined winners.

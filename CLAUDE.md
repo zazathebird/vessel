@@ -24,6 +24,24 @@ The ones that apply here most often:
 - **`dataviz`**, **`artifact-design`**, **`artifact-diagramming`** — anything charted or published
   as an artifact.
 
+## Say when to clear — standing client instruction (2026-08-18)
+
+**Always tell the client when the best moment to `/clear` is, without being asked.** They should
+never have to guess whether the context is carrying its weight.
+
+Say it *unprompted* at the natural boundaries, which are the same ones every time:
+
+- **After a piece of work is committed, deployed and written down** — the docs are the handoff, so
+  the context has no unique information left in it and a fresh window costs nothing.
+- **Before starting a large build**, once the plan is agreed. Planning wants the old context;
+  implementing wants a clean one.
+- **Not in the middle of a measured investigation.** Numbers that have not been written into
+  `docs/DECISIONS.md` yet exist only in the context, and clearing throws them away — that is the one
+  moment clearing is actively expensive.
+
+The test is *"is anything in this context not yet on disk?"* If no, say so and recommend clearing.
+If yes, say what would be lost and write it down first.
+
 Judgement still applies: a skill that would not improve the result is not worth the tokens. The bar
 is *would this help*, not *is this strictly required*.
 

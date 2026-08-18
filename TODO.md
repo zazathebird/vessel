@@ -201,6 +201,20 @@ The original list, for the record:
   was unsigned), so the expanding rings were arguing with a fixed physics bug
   rather than merely duplicating the push's look.
 
+### B2. Absorb the duel-cycle engine — **planned 2026-08-18, `docs/DUEL-ABSORB.md`**
+
+The client had a second duel engine built (`handoff_duel_engine/`) to make the fights
+**procedurally generated rather than a fixed pool of sequences**, plus a VFX/audio reimagining.
+Three audits ran against it: the generator is sound (3.5M stepped beats, no deadlock, no invalid
+beat, no off-stage fighter, all modules reachable) and everything around it is not adoptable — no
+exports, not steppable in Node, unframeable under `frame-ancestors 'none'`, a global CSS reset, a
+document keydown with no `isEditable` guard, Google Fonts against the CSP, 125 literal colours, six
+free-running oscillators, and a rAF loop that keeps animating in calm.
+
+**Decided: absorb the ideas into `src/fx/duel.ts`.** Five phases — the procedural generator,
+character identity, new moves, VFX, audio. Names are operator-only; silhouettes stay instantly
+identifiable. The plan, the measurements and the *not taking* list are in `docs/DUEL-ABSORB.md`.
+
 ### C. Severing / dismemberment — **deferred by the client**
 
 Asked for ("cutting in half, dismembering"), then deprioritised ("if the
