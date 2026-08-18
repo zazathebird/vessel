@@ -1,5 +1,10 @@
 # Start here — handoff to Fable, 2026-08-17
 
+> **Superseded 2026-08-17 (later): everything §3 describes as "not committed" is
+> now committed**, reviewed, and fixed — see `git log` from c7fd2eb and the
+> "2026-08-17 (audit)" entry in `docs/DECISIONS.md`. §4's audit ran the same
+> day. This file stays as the record of the handoff, not as current state.
+
 Paste this file's path as your first instruction, or just read it. It is written to be the
 *whole* briefing, so you do not need the conversation it came from.
 
