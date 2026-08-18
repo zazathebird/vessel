@@ -3,7 +3,7 @@ import { useSession } from "../auth/SessionContext";
 import { FOOTER_NAV } from "../data/pageIds";
 
 export function Footer() {
-  const { config, go, clock, openDoor, signinShown } = useConfig();
+  const { config, go, clock, openDoor } = useConfig();
   // The account/admin pair is operator-only, and that is what makes it
   // compatible with the account pages being unlinked. The request was that
   // *visitors* find no standing way in; a signed-in operator having to
@@ -11,9 +11,25 @@ export function Footer() {
   // it is a trapdoor that locks from the inside. Signed out, `isOperator` is
   // false and the pair renders nothing at all.
   //
-  // `signinShown` is the one exception, added at the client's request
-  // (2026-08-13): five taps on the hero ornament reveal a sign-in link here
-  // for the rest of the visit. Findable, not advertised.
+  // **The sign-in link is now permanent** (2026-08-18, client: "I need a portal
+  // to the login page"). This reverses the 2026-08-13 arrangement, where it
+  // appeared only after five taps on the hero ornament — and it was reversed
+  // because that arrangement had a dead end in it, not merely because it was
+  // inconvenient.
+  //
+  // The ornament returns `null` on five layouts (`HIDES_ORNAMENT`: sidescroll,
+  // terminal, ledger, console, sheet), so on those the five-tap route does not
+  // exist. Two of them are exactly what the phone band collapses to —
+  // `PHONE_LAYOUTS` maps terminal→console and keeps console and sheet — and the
+  // live site rolls its layout every visit. So an operator on a phone that
+  // rolled Console or Sheet had no findable way in at all: the remaining routes
+  // are typing `whoami`/`login`/`admin`, which needs a hardware keyboard, and a
+  // 260px leftward drag. `CLAUDE.md` recorded the five taps as "the phone
+  // band's only findable route to sign-in", which was true and was the bug.
+  //
+  // The footer is the right home precisely because it is the one piece of
+  // chrome no layout hides — `App.tsx` renders it unconditionally and no
+  // stylesheet touches it — so this cannot repeat the ornament's failure.
   const { isOperator, me } = useSession();
 
   return (
@@ -32,10 +48,10 @@ export function Footer() {
             {item.label}
           </button>
         ))}
-        {signinShown && !isOperator ? (
+        {!isOperator ? (
           <button
             type="button"
-            className={`v-footer-link is-found${config.page === "signin" ? " is-active" : ""}`}
+            className={`v-footer-link${config.page === "signin" ? " is-active" : ""}`}
             aria-current={config.page === "signin" ? "page" : undefined}
             onClick={() => go("signin")}
           >

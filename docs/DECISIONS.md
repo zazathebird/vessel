@@ -14,6 +14,43 @@ file records what happened to the codebase.
 ---
 
 
+## 2026-08-18 (later still) — the sign-in portal, and the dead end it replaced
+
+**Client:** *"I need a portal to the login page."* Read as a feature request, it is a two-line
+change. It was a bug report.
+
+The sign-in link appeared only after **five taps on the hero ornament** (2026-08-13), and
+`Ornament.tsx` returns `null` for the five `HIDES_ORNAMENT` layouts — `sidescroll`, `terminal`,
+`ledger`, `console`, `sheet`. Two of those, **`console` and `sheet`, are exactly what
+`PHONE_LAYOUTS` collapses to**, and the live site publishes `mode: "visit"` and rolls its layout on
+every load. So an operator on a phone that rolled either had **no findable way in at all**: what
+remained was typing `whoami`/`login`/`admin`, which wants a hardware keyboard, and a 260px leftward
+drag. `CLAUDE.md` recorded the five taps as "the phone band's only findable route to sign-in" —
+which was true, and was the bug, sitting in the invariants file describing itself.
+
+The link is permanent now for anyone not signed in, and it lives in the **footer** for a structural
+reason rather than an aesthetic one: `App.tsx` renders the footer unconditionally and no stylesheet
+touches it, so it is the one piece of chrome no layout can hide. That property was incidental and is
+now load-bearing, so `npm run check` gained a gate — it fails if the link is re-gated behind a flag,
+if `App.tsx` stops rendering the footer unconditionally, or if any stylesheet gives `.v-footer` a
+`display: none`. Both halves verified by breaking them.
+
+Measured on the phone band across the layouts that mattered, including the two dead ones: the link
+renders on every one, at a **68×44px** target, meeting the documented 44px floor. From a real route,
+clicking it lands on `/signin` with the form and password field present.
+
+**The five-tap machinery is deleted, not disabled** (`signinShown`, `revealSignin`, and the tap
+counter in `Ornament.tsx`). With the link always visible it revealed something already on screen and
+toasted about it — a control that does nothing, which is what this codebase removes rather than
+keeps. The **logo's** five taps are untouched: those open the operator door, a different affordance
+for a different thing.
+
+This reverses a product decision, and the reversal is the client's own — *"the account pages are
+unlinked"* was theirs too. What is not negotiable either way is that the real account system stays
+clear of the operator door's theatre: the footer link navigates and never calls `openDoor`, exactly
+like every other account route.
+
+
 ## 2026-08-18 (later) — the ornament gets a station, and a doc sweep
 
 **Client:** *"as for first time, visitors always need to see something as the ornament. it can change

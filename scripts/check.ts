@@ -782,6 +782,49 @@ check("every station has a rule, and none of them touches Radial", () => {
   return `${PICKABLE_STATIONS.length - 1} station rules, all excluding Radial`;
 });
 
+// ---- 5d. The way in survives every layout ----------------------------------
+//
+// 2026-08-18, client: "I need a portal to the login page".
+//
+// The sign-in link used to appear only after five taps on the hero ornament —
+// and `Ornament.tsx` returns `null` on five layouts (`HIDES_ORNAMENT`), two of
+// which, `console` and `sheet`, are exactly what `PHONE_LAYOUTS` collapses to.
+// The live site rolls its layout every visit, so an operator on a phone that
+// rolled either had no findable way in at all: what was left was typing
+// `whoami`/`login`/`admin` (a hardware keyboard) and a 260px leftward drag.
+//
+// The fix put the link in the footer, which is the one piece of chrome no
+// layout hides. That property is now load-bearing rather than incidental, so it
+// gets a gate: a `display: none` on `.v-footer` behind some future layout would
+// silently restore the dead end, on the band least able to route around it.
+
+check("the sign-in portal survives every layout", () => {
+  const footer = readFileSync("src/components/Footer.tsx", "utf8");
+  must(/go\("signin"\)/.test(footer), "the footer no longer routes to signin");
+  // Not behind a reveal flag: the whole point is that it is always there.
+  must(
+    !/signinShown|revealSignin/.test(footer),
+    "the footer's sign-in link is gated behind a reveal flag again — it must be unconditional",
+  );
+
+  const app = readFileSync("src/App.tsx", "utf8");
+  must(/<Footer\s*\/>/.test(app), "App.tsx no longer renders <Footer /> unconditionally");
+
+  const dir = "src/styles";
+  const hidden: string[] = [];
+  for (const file of readdirSync(dir).filter((f) => f.endsWith(".css"))) {
+    const css = readFileSync(join(dir, file), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    for (const m of css.matchAll(/([^{}]*\.v-footer\b[^{}]*)\{([^{}]*)\}/g)) {
+      if (/display\s*:\s*none/.test(m[2])) hidden.push(`${file}: ${m[1].trim()}`);
+    }
+  }
+  must(
+    hidden.length === 0,
+    `a layout hides the footer, which is the only way in on the phone band: ${hidden.join(" / ")}`,
+  );
+  return "footer routes to signin unconditionally, and no layout hides it";
+});
+
 check("every route has copy, and the 404's page count is true", () => {
   for (const id of Object.keys(PATHS) as (keyof typeof PATHS)[]) {
     must(Boolean(PAGES[id]), `no copy for route ${id}`);

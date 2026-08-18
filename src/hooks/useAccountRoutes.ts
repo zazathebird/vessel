@@ -11,7 +11,7 @@ import { isEditable } from "./useOperatorRoutes";
  * deliberate choice while accounts were being built — there was nothing behind
  * an account yet — and settled into the site's shape: the way in is findable,
  * not advertised. Since 2026-08-13 (client request) there is one discoverable
- * affordance: five taps on the hero ornament (`Ornament.tsx` → `revealSignin`)
+ * affordance: a permanent `sign in` link in the footer (`Footer.tsx`)
  * reveal a quiet sign-in link in the footer for the rest of the visit. The
  * typed routes and the drag below still work and are the tellable versions —
  * and the keyboard-reachable ones, which is what lets the ornament stay a

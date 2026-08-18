@@ -174,14 +174,27 @@ every visitor at once.
   and appears when the answer arrives.
 - `src/hooks/useAccountRoutes.ts` — the unlinked routes to the account pages: type `whoami`,
   `login` or `admin`, or drag the page **left** past 260px, mirroring the door's rightward drag.
-  **These never call `openDoor`.** Since 2026-08-13 there is also one *findable* affordance
-  (client request): five taps on the hero ornament (`Ornament.tsx`) reveal a sign-in link in the
-  footer for the rest of the visit (`signinShown` in `ConfigContext`) — the account side's mirror
-  of the logo's five taps, and like every account route it navigates rather than unlocking
-  anything. Radial's orbit pills share the ornament's slot; their clicks are excluded from the
-  count. Since the mobile-parity pass (2026-08-13, client request) the ornament renders on the
-  phone band too — do not re-hide it there — and non-desk bands get a header `cmd` chip because
-  the command palette's only other route in is typing `cmd` on a hardware keyboard.
+  **These never call `openDoor`.** **The account pages are no longer unlinked** (2026-08-18,
+  client: *"I need a portal to the login page"*): the footer carries a permanent `sign in` link for
+  anyone not signed in. Like every account route it navigates rather than unlocking anything.
+
+  **It lives in the footer because that is the only chrome no layout hides, and that is now an
+  invariant with a gate on it.** The previous arrangement — five taps on the hero ornament, which
+  set `signinShown` — had a dead end: `Ornament.tsx` returns `null` for the five `HIDES_ORNAMENT`
+  layouts, and two of them (`console`, `sheet`) are exactly what `PHONE_LAYOUTS` collapses to. With
+  the live site rolling its layout every visit, an operator on a phone that rolled either had **no
+  findable way in at all** — what remained was typing `whoami`/`login`/`admin`, which wants a
+  hardware keyboard, and a 260px leftward drag. The old note here called the five taps "the phone
+  band's only findable route to sign-in", which was true and was the bug. `npm run check` now fails
+  if the link is re-gated behind a flag, if `App.tsx` stops rendering the footer unconditionally, or
+  if any stylesheet gives `.v-footer` a `display: none`.
+
+  The five-tap machinery is **deleted**, not disabled: with the link always visible it revealed
+  something already on screen. The *logo's* five taps are untouched — those open the operator door,
+  which is a different affordance for a different thing. Since the mobile-parity pass (2026-08-13,
+  client request) the ornament still renders on the phone band — do not re-hide it there — and
+  non-desk bands get a header `cmd` chip because the command palette's only other route in is
+  typing `cmd` on a hardware keyboard.
 - `src/hooks/useOperatorRoutes.ts` — the door's six routes, and arrow-key page cycling over `NAV`.
 
 Both keystroke hooks carry an `isEditable` guard: without it, typing in an account form pages the
@@ -575,7 +588,9 @@ All deliberate. Add to this list rather than silently diverging.
    and are gone from every menu but still resolve from stored config and share codes — the
    `FX`/`PICKABLE_FX` mechanism, applied to ornaments for the first time (`PICKABLE_ORNAMENTS`,
    plus `ROLLABLE_ORNAMENTS` = pickable minus "None", the same rule as `ROLLABLE_FX` and for the
-   extra reason that five taps on this slot are the phone band's only findable route to sign-in).
+   extra reason that a rolled empty hero slot is indistinguishable from a broken page — until
+   2026-08-18 the second reason was that five taps on this slot were the phone band's only findable
+   route to sign-in, which the footer's permanent link has since replaced).
    Offered today: None, the two **lightsword duels** from `docs/DUEL.md` (2026-08-13, the only
    canvas ornament — `src/components/DuelOrnament.tsx`), and **Sonar** (appended at index 7,
    2026-08-17, now `DEFAULT_ORNAMENT`) — a scope the site reads rather than a circle it admires:
@@ -900,9 +915,9 @@ All deliberate. Add to this list rather than silently diverging.
    `Ornament.tsx` refuses to render the second one, because a roll is only one of four ways config
    arrives (publish, share code and storage are the others, and a share code carries the effect and
    the ornament as independent fields). **The ornament yields, and it yields to `DEFAULT_ORNAMENT`
-   rather than to `null`**: five taps on this element reveal the footer's sign-in link, which on the
-   phone band is the only findable route to an account, so emptying the slot would remove it for a
-   reason the visitor could not see. Landscape is where it was noticed, not where it started —
+   rather than to `null`**: an empty hero slot is indistinguishable from a broken page, and on
+   Radial the slot is the navigation. (Until 2026-08-18 this also protected the five-tap sign-in
+   route; that route is gone and the footer's permanent link replaced it.) Landscape is where it was noticed, not where it started —
    measured at 844×420 the stage is 269px tall, the ornament a 240px slot 55px down, and the
    background fight's feet land at 215px, so the two collide; at 400×700 they are 200px apart and
    the background one is half the size.
