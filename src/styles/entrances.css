@@ -84,6 +84,43 @@
   animation-delay: calc(var(--i, 0) * var(--ent-stagger, 50ms));
 }
 
+/*
+ * Deck has a *second* animation and the rule above was eating it (2026-08-18).
+ *
+ * `.layout-deck .v-block` in layouts.css declares `v-rise, v-deck-depth` — the
+ * scroll-driven depth pass, the one that makes the card at the snap centre
+ * stand forward — deliberately as longhands so nothing would clobber it. But
+ * the base rule above is the `animation` **shorthand**, which resets every
+ * longhand it does not name: `animation-name`, and with it `animation-timeline`
+ * and `animation-range`. It is `:not()`-qualified, and `:not()` contributes its
+ * argument's specificity, so it lands at 0-3-0 against Deck's 0-2-0 and wins on
+ * specificity — import order never came into it. With `entrances` defaulting to
+ * true and published, Deck's signature effect was simply off, and it came back
+ * the moment you turned entrances off or enabled calm, which is exactly what
+ * makes that kind of bug survive a look.
+ *
+ * So Deck re-lists both animations at the entrance layer, as longhands. Inside
+ * `@supports` for the same reason layouts.css is: without `view()` support the
+ * timeline is dropped but the name would not be, leaving a second animation
+ * running on the document timeline.
+ *
+ * The comment in layouts.css said the longhands were there to protect
+ * `animation-delay` from the shorthand. That was true when written and is not
+ * the reason any more — the stagger moved to `--i` — so it now names the real
+ * constraint, which is this one.
+ */
+@supports (animation-timeline: view()) {
+  .has-entrances.layout-deck .v-block {
+    animation-name: v-ent, v-deck-depth;
+    animation-duration: var(--ent-dur, 0.5s), auto;
+    animation-timing-function: var(--ent-ease, cubic-bezier(0.2, 0.8, 0.2, 1)), linear;
+    animation-fill-mode: backwards, both;
+    animation-delay: calc(var(--i, 0) * var(--ent-stagger, 50ms)), 0s;
+    animation-timeline: auto, view(inline);
+    animation-range: normal, entry 4% exit 96%;
+  }
+}
+
 /* Cinematic: a film settle — the slow version of the rise, long stagger, so
    blocks resolve like a title sequence rather than a UI loading. */
 .has-entrances.layout-cinematic {

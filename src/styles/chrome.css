@@ -484,6 +484,19 @@
 
 .v-termbar-title {
   margin-left: 10px;
+  /*
+   * Declared so the typewriter can type (2026-08-18). `v-ent-type` in
+   * entrances.css is from-only — the house rule, and right for `translate`,
+   * `scale` and `opacity`, which all interpolate from their initial value. It
+   * is wrong for `clip-path`, whose initial value is `none`: an `inset()` does
+   * not interpolate *to* `none`, it flips **discretely** at 50% progress. So
+   * `steps(22, end)` produced no wipe at all — the title was fully clipped, i.e.
+   * invisible, for the first half of the 0.85s and then popped in, on every
+   * navigation in Terminal. Giving the landing state an explicit `inset()` puts
+   * both endpoints in the same shape family, which is what makes the steps
+   * quantise a real wipe. `npm run check` gates the pairing.
+   */
+  clip-path: inset(0 0 0 0);
 }
 
 /* No overflow rule: Terminal gives the stage `height: auto`, so this box has no
@@ -725,7 +738,12 @@
   border-right: 1px solid var(--line);
 }
 
-.band-phone.layout-sidescroll .v-hero,
+/* Tablet only: Side-scroll is absent from `PHONE_LAYOUTS`, so it collapses to
+   Stack there and `.band-phone.layout-sidescroll` can never be written to the
+   wrapper — `band` and the adapted `layout` come out of one memo in one render,
+   so they cannot even disagree mid-resize. A phone twin here was dead weight;
+   `npm run check` now refuses the pairing outright (see Ledger's note in
+   layouts.css). */
 .band-tablet.layout-sidescroll .v-hero {
   width: 84vw;
 }
@@ -1546,9 +1564,8 @@
   flex: 0 0 320px;
 }
 
-.band-phone.layout-sidescroll .v-block {
-  flex: 0 0 82vw;
-}
+/* No `.band-phone.layout-sidescroll` twin: Side-scroll collapses to Stack on
+   that band, so the pairing is unreachable — see the hero rule above. */
 
 .v-block {
   position: relative;

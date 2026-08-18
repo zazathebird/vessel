@@ -115,20 +115,25 @@
   border-color: color-mix(in oklab, var(--a1) 14%, var(--line));
 }
 
-.band-phone.layout-deck .v-block {
-  min-height: auto;
-}
-
 /*
  * Depth bound to travel. The cards physically move through the viewport, so the
  * one at the snap centre stands forward and its neighbours fall back — driven
  * by the browser from scroll position, with no JavaScript and no listener.
  *
  * Two animations on one element: the existing entrance keeps its own timeline
- * (`auto`) and the depth pass runs on a view timeline. The longhands are spelt
- * out rather than using the `animation` shorthand because the shorthand would
- * reset `animation-delay`, which ContentBlock writes to the style attribute for
- * the stagger.
+ * (`auto`) and the depth pass runs on a view timeline. **The longhands are spelt
+ * out because the `animation` shorthand resets every longhand it does not name
+ * — `animation-name`, `animation-timeline` and `animation-range` included — so
+ * writing this as a shorthand would silently drop the depth pass.** (The comment
+ * here used to say the longhands protected `animation-delay` from ContentBlock's
+ * style attribute; true when written, stale since the stagger moved to `--i`.)
+ *
+ * The longhands are not enough on their own, and that is the part worth
+ * knowing: `entrances.css` imports later and its base rule is a shorthand at
+ * 0-3-0 against this rule's 0-2-0, so it wins and resets the pair anyway. Deck
+ * therefore re-lists both animations at the entrance layer too. If you add a
+ * second animation to any other layout, it needs the same treatment — and
+ * `npm run check` now fails if it does not get it.
  *
  * `both` on the depth pass is required — a view-timeline animation must hold
  * its end states outside the range — and is safe here for the reason the
@@ -410,18 +415,15 @@
   scale: 1 1;
 }
 
-.band-phone.layout-ledger .v-block::after,
-.band-tablet.layout-ledger .v-block::after {
-  display: none;
-}
-
-/* Ledger collapses to Cinematic below 900px, so this only guards against a
-   share code or stored config landing mid-resize. */
-.band-phone.layout-ledger .v-block,
-.band-tablet.layout-ledger .v-block {
-  grid-template-columns: 1fr;
-  gap: 8px;
-}
+/*
+ * No `.band-*` overrides for Ledger, deliberately (2026-08-18): the layout
+ * class on the wrapper is the *adapted* layout, computed in the same render
+ * as the band, so `.band-phone.layout-ledger` can never appear in the DOM —
+ * Ledger collapses to Stack on phone and Cinematic on tablet before the
+ * class is written. Rules here previously claimed to "guard against a share
+ * code landing mid-resize", a state that is structurally impossible; they
+ * were dead weight inviting someone to rely on a guard that isn't there.
+ */
 
 /* Marginalia -------------------------------------------------------------- */
 
@@ -456,7 +458,8 @@
   box-shadow: none;
 }
 
-.band-phone.layout-marginalia .v-block,
+/* Tablet only: Marginalia survives that band and collapses to Stack on the
+   phone, so a `.band-phone` twin here could never match (see Ledger's note). */
 .band-tablet.layout-marginalia .v-block {
   padding: 0 0 24px;
   margin-left: 0;
