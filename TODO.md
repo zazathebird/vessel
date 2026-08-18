@@ -699,11 +699,17 @@ Found while building; none blocking. Reasoning in `CLAUDE.md` unless noted.
    hotmail address** — it has now been queried twice and answered.
 7. **Per-account subdomains: wanted at all?** If yes, an Origin allowlist must
    land first (`design/GUIDE-SUBDOMAINS.md`); if no, the guide can be closed.
-10. **Rolled visits are now two-thirds lightsword duels** (2026-08-17). Hiding
-   the four circles leaves the dice choosing among duel/duelholy/sonar, and the
-   live site publishes `mode: "visit"` — so the requested replacement (sonar)
-   is the *minority* outcome of a roll. If that reads wrong, the lever is
-   weighting or trimming `ROLLABLE_ORNAMENTS`, not un-hiding the circles.
+10. ~~**Rolled visits are now two-thirds lightsword duels**~~ — **signed off
+   2026-08-18, no change.** Hiding the four circles leaves the dice choosing
+   among duel/duelholy/sonar, and the live site publishes `mode: "visit"`, so
+   sonar is the *minority* outcome of a roll. Put to the client with the lever
+   named (weighting or trimming `ROLLABLE_ORNAMENTS`, never un-hiding the
+   circles); their answer was *"your call. I want random, but I do like the
+   lightsabre fight"*. Both halves of that are satisfied by the current
+   behaviour — the roll stays random and the outcome they like is the common
+   one — so the weighting stands as it is. **Do not "correct" the distribution
+   toward sonar on the strength of the 08-17 note above**: it read the split as
+   a possible defect, and the client has since read it as the feature.
 11. **A republish may be needed for the withdrawn circles to fully go**
    (2026-08-17). Hidden means unlisted, not invalid: if the currently published
    config names Lens/Valve/Aperture/Orrery, first-time visitors keep getting it
