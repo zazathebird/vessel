@@ -4,13 +4,14 @@ The single ordered backlog. `CLAUDE.md` explains *why* things are the way they
 are, and `docs/DECISIONS.md` records what was decided when; this file is only
 what is left to do.
 
-Last updated 2026-08-14 (later): **the animation audit, the duel rebuild, the
+Last updated 2026-08-18: **the animation audit, the duel rebuild, the
 phone scroll fix and the low-end performance work are all shipped.** New open
 items are in *This session's leftovers* immediately below. Previously:
 **SPEC-ACCOUNTS phase 2 is built and harness-proven**
 — machines, drives, the per-machine signalling Durable Object, the connect
 ceremony, the file protocol, and the `/share` + `/machines` pages. The spec
-grew §13 and §12 K–S; the harness is at **301**. Done items below are kept as
+grew §13 and §12 K–S; the harness **prints its own check count** (304 on 2026-08-18) —
+read the run, not this line. Done items below are kept as
 one-liners because their numbers are cross-referenced from `docs/DECISIONS.md`.
 
 ---
@@ -69,7 +70,7 @@ Two smaller things surfaced while measuring, neither fixed, neither urgent:
 
 ## 2026-08-17 — audit round two, and a gate so this stops recurring
 
-**`npm run check` is now the gate** (9 checks, ~40s; `check:fast` is 4s and runs after every edit
+**`npm run check` is now the gate** (19 gates and growing, ~5s; `check:fast` runs after every edit
 via the `PostToolUse` hook; the full pass is `predeploy`). Each gate exists because that exact
 failure shipped, and each was verified by deliberately breaking it. **When something gets past it,
 add a check** — that is the whole discipline.

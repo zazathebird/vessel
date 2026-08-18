@@ -14,6 +14,107 @@ file records what happened to the codebase.
 ---
 
 
+## 2026-08-18 (later) — the ornament gets a station, and a doc sweep
+
+**Client:** *"as for first time, visitors always need to see something as the ornament. it can change
+location on the page however, right side, left, middle, moving, bouncing, disappearing and
+reappearing. submarine sonar ping style, etc etc"*.
+
+**The first half was already true, and saying so mattered more than building anything.** The claim
+that a first-time visitor could get an empty hero slot — carried in this session's own notes and in
+TODO 11 — was wrong. `ConfigContext`'s roll gate checks `returning` only for the *time-of-day* mode;
+`mode: "visit"` rolls on **every** load, first visit included, and the dice draw from
+`ROLLABLE_ORNAMENTS`, which excludes `"none"` precisely so this cannot happen. `randomiser.ts` says
+it outright: *"a rolled empty ornament is a blank hero slot, and neither is distinguishable from the
+site being broken."* The published `ornament: "none"` is overridden on every load, so no republish
+was ever needed.
+
+### Station keeping, not decoration
+
+The rest is `src/data/stations.ts` — a new appended catalogue, `Config.station`, a seventh
+share-code field, both `PUBLISHED_KEYS` lists, a guardrail, a panel section and two gates.
+
+The framing is the client's own phrase. The slot is a scope, so this is **station keeping**: a
+contact holds a bearing, fades, and is re-acquired on the next sweep. "Make it bounce" is the
+direction that produced the four circle ornaments the client had pulled three weeks earlier, and the
+rule that survived that is deviation 7's — *a shape is allowed to be a circle if it depicts an
+instrument*. Three entries: `hold` (index 0, and exactly today's behaviour, so nothing changes for
+anyone who never sets it), `opposite`, `roam`.
+
+**Two things were built, measured, and thrown away before they shipped** — both of which looked
+right in the stylesheet and did nothing on the page:
+
+- **Auto margins.** Chosen because an auto margin can only consume *free* space and therefore cannot
+  produce the horizontal `.v-stage` scrollbar this file has recorded twice. It is also inert here:
+  `.v-hero-text` grows into all the free space, so at 1280 on Cinematic the slot measured
+  **left:0 / right:789 under `hold`, `port` *and* `starboard`** — three settings, one geometry.
+  Replaced with `order`, which relocates the slot within the flex hero and equally cannot overflow.
+- **The `port` station.** With `order`, `port` is `order: -1` — and the ornament is already the first
+  child on all eight layouts that show the slot, so it measured identically to `hold` **everywhere**.
+  A control that does nothing on every layout is worse than no control, so it was deleted from the
+  catalogue rather than shipped as a dead chip. Nothing was in circulation yet, so the wire format
+  was free to change; a day later it would not have been.
+
+`opposite` is named for what it does rather than for the nicer word. Measured at 1280: on the six row
+heroes it carries the slot **left:0 → left:789**; on Magazine and Marginalia, whose heroes are flex
+*columns*, it carries it **top:68 → top:498**. "Starboard" would have been false on two of eight.
+
+`roam` is the signature and the thing the client actually asked for: it fades to 0.12, moves while
+faded, and returns — visiting centre, −84px and +84px, which is the whole "right side, left, middle,
+moving, disappearing and reappearing" list in one behaviour. Its 14.4s cycle is three revolutions of
+the sonar beam's 4.8s sweep, so with the sonar in the slot the contact is re-acquired as the beam
+comes round. **It never fades to zero and never sets `pointer-events`**: five taps on this element
+reveal the footer's sign-in link, which on the phone band is the only findable route to an account.
+
+Verified in a browser rather than asserted — `getAnimations()` seeking, since rAF is parked here:
+
+| case | measured |
+|---|---|
+| cinematic `hold` | order 0, left 0, `v-drift` only |
+| cinematic `opposite` | order 1, **left 789** |
+| cinematic `roam` | **`v-drift` + `v-roam`** — the re-list works |
+| **radial** `roam` / `opposite` | order 0, left 0, drift only, **7 orbit pills intact** |
+| **calm** `roam` | animations **NONE**, back to centre |
+| **calm** `opposite` | animations NONE, **order 1, left 745** |
+
+Zero horizontal overflow at 1280/760/420/320, document and `.v-stage`, at all three bearings. That
+last table row is the design point: calm strips the motion and keeps the placement, because calm is
+a second full aesthetic rather than a degraded one.
+
+A guardrail refuses `roam` with either duel: a duel is the one ornament with a subject, and fading it
+twice a revolution loses the exchange. `Combination` gained `station` as a **required** field, per
+deviation 1 — which is the thing that makes a rule capable of matching at all.
+
+### The documentation sweep
+
+An audit of every markdown file against the code found the docs had drifted badly. The two worth
+naming, because both would have cost somebody real time:
+
+- **`docs/HANDOFF.md` told every fresh agent that "everything in `main` is deployed"** — inside the
+  paste-me session-start prompt. `hud-pass` is what production serves and `main` is the Pages
+  rollback, far behind. Highest-risk line in the repo.
+- **`docs/BREAK-GLASS.md`'s success criterion was the current failure signal.** It said
+  `{"ok":true,"tables":6}` means healthy; migration 0004 took the count to eight and the endpoint
+  asserts `ok: row?.n === 8`, so a `tables:6` response carries `ok:false`. In a runbook read during
+  an incident. It now says to read `ok`, which cannot drift.
+
+Also corrected: `README.md` (claimed "no CSP" — one ships report-only; claimed no webfonts or images
+— both are approved deviations; three-quarters of its "Not done" list was done), `CLAUDE.md` (bits 32
+and 64 described as free; fifteen routes; "the fifth stylesheet"; "no test suite for rendering", when
+six gates are exactly that), `TODO.md`, `docs/SECURITY-AUDIT.md` (also "No CSP", in the security
+doc), `design/GUIDE-SUBDOMAINS.md` (its headline open action was done, it cited a symbol that does
+not exist, and it still taught the retired verbatim-copy rule), `docs/DUEL.md` (its headline proof of
+the bench method was the one measurement from that session that was **retracted** — replaced with the
+correction, which is the better lesson), `docs/ACCOUNT-RECOVERY.md`, and the `verify-site` skill's
+own description, which advertised four environment traps against the six it documents.
+
+**`FABLE-START.md` was deleted.** It was already banner-marked superseded; everything durable in it
+had migrated to `CLAUDE.md`, `docs/AUDIT-BRIEF.md` or this file, and everything unique left in it was
+wrong — a stale gate count, a four-deploys-old version id, and a list of work described as
+uncommitted that shipped days ago. A superseded briefing at the repo root beside the current one is
+the "fresh agent reads the wrong file" failure both documents exist to prevent.
+
+
 ## 2026-08-18 — the interaction audit: five state bugs, four dead rules, two gates
 
 Five defects in things that hold state between renders — focus stacks, timers, refs, a reveal

@@ -243,9 +243,20 @@ single frame, by **bundling the real module with esbuild and stepping
 `advanceDuel` in Node over 90,000–400,000 frames**, measuring the state directly.
 Some of them were not subtle: `impulse: { at: 0 }` could never fire, so across
 13,591 frames of `knockdown` **0.0% were airborne** — nobody had ever been
-knocked down. Blocked strikes never drew their downstroke. The ornament camera
-showed both fighters on 31% of frames at the phone slot. None of that needed an
-eye; all of it needed a number.
+knocked down. Blocked strikes never drew their downstroke. The camera framed a
+corpse as though it were standing — `duelFocus` reported `BODY_W` for a fighter
+`drawFighter` lays on its side at nearly three times that width, so **76.4% of
+death-hold frames clipped a body**, during the two seconds the design nominates
+as the announcement. None of that needed an eye; all of it needed a number.
+
+**One measurement from that session was wrong, and it is kept here because it is
+the better lesson** (retracted 2026-08-17). It read: "the ornament camera showed
+both fighters on only 31% of frames at the phone slot." It was measured against
+`w = 190` — a call that does not exist. The ornament canvas is a fixed 700×700
+buffer that CSS scales down, and at the real 700 the fit never drops below 1.63,
+so neither camera floor has ever bound a frame. The `CAM_MIN` change it motivated
+was reverted. **Drive a bench with the parameters the call site actually uses**;
+fed the wrong constant, a bench confirms the bench.
 
 The technique generalises, and it is why `duelCamera` and `duelFocus` are
 exported and pure:

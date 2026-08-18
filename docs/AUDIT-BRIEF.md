@@ -7,8 +7,13 @@ memory of what came before.
 
 You are auditing **mcclevarty.ca**, a live personal site for an independent computer-repair
 operator. Repo: `/home/user/Downloads/claude/vessel-main`, branch `hud-pass`, which is what
-production serves. React 18 + Vite + TypeScript behind a Cloudflare Worker. Everything is committed,
-pushed and deployed; the live bundle is byte-identical to the local build.
+production serves — **not `main`**, which is the Pages rollback and is far behind. React 18 + Vite +
+TypeScript behind a Cloudflare Worker.
+
+**Establish the ground rather than trusting this paragraph**: run `git status` (work is often in
+flight), `git log origin/hud-pass..HEAD` for unpushed commits, and compare the served bundle hash
+against a local build. An earlier version of this file asserted "everything is committed, pushed and
+deployed" as a standing fact; it was a snapshot, and it was false the next time somebody read it.
 
 **Use as many subagents and skills as the work needs — that is explicitly authorised, and it is the
 single most important instruction here.** See *Why* below.
@@ -20,7 +25,8 @@ single most important instruction here.** See *Why* below.
 3. **`.claude/skills/verify-site/SKILL.md`** — six environment traps that will otherwise make you
    report the wrong thing. Read this before touching a browser. It is not optional and each trap has
    cost a session.
-4. Run **`npm run check`** (~40s). Nine gates. If it fails, that is your first finding.
+4. Run **`npm run check`** (~5s). It prints its own gate count and its own caveats. If it
+   fails, that is your first finding.
 
 ## Why you should not trust what you read
 
@@ -42,7 +48,8 @@ measurement, re-measure it. The code is heavily annotated and the annotations ar
 
 - Security review of the branch: clean, no findings. The branch touches one Worker file by two lines.
 - Correctness review of the canvas/effects layer: seven bugs, fixed.
-- Two duel audits: fourteen bugs, fixed. Fairness holds at ~1σ over 594 matches.
+- Two duel audits: fourteen bugs, fixed. The shipped gate re-checks fairness on every run and
+  prints the figure it measured — read that rather than a number quoted here.
 - WCAG 2.2 AA audit, then an independent verification of its fixes: three were incomplete and are now
   corrected.
 - Copy read-through of every content page.

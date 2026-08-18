@@ -67,7 +67,14 @@ npx wrangler d1 execute vessel --remote \
 curl -s https://mcclevarty.ca/api/health
 ```
 
-`{"ok":true,"tables":6}` means D1 is bound, migrated and reachable.
+**Read `ok`, not the table count.** `{"ok":true,…}` means D1 is bound, migrated and reachable.
+The endpoint asserts the expected number of tables itself (`worker/index.ts`: `ok: row?.n === 8`),
+so the count is diagnostic detail and `ok` is the verdict.
+
+> This line said `{"ok":true,"tables":6}` until 2026-08-18, which by then was a **contradiction**:
+> migration 0004 took the count to eight, so a `tables:6` response carries `ok:false`. A runbook
+> whose success criterion is the current failure signal is worse than one that says nothing, and
+> it is read at the worst possible moment. Hence keying on `ok`, which cannot drift.
 
 ## What this does not survive
 

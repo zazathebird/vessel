@@ -15,9 +15,11 @@ how to prove you have not broken anything.
 Paste this to begin:
 
 > Read `CLAUDE.md`, `TODO.md` and `docs/HANDOFF.md` before doing anything. The site is live at
-> `mcclevarty.ca`; everything in `main` is deployed. First prove the ground: kill stray
-> `wrangler dev` processes, run `npm run test:auth` against `npm run dev:worker`, and confirm
-> all 301 checks pass before anything else.
+> `mcclevarty.ca` and **`hud-pass` is the branch it serves, not `main`** — `main` is many
+> commits behind and exists as the Pages rollback. First prove the ground: run `npm run check`
+> (the gate, and `predeploy`), then kill stray `wrangler dev` processes, run
+> `npm run test:auth` against `npm run dev:worker`, and confirm the harness prints its own
+> check count with no failures.
 >
 > Then pick up `TODO.md` from the top. Phase 2 is built but **unverified by eye** — if I am
 > present, walk me through the two-tab test below first. Phase 3 (grants to others) must not
@@ -53,7 +55,7 @@ the other models") — best run as its own dedicated session with fresh context.
   operator-only), a dev-only effects bench at `fxlab.html`, the duel's **screensaver attract
   mode**, **interface sounds** (`src/audio/engine.ts` — synthesised, gesture-only, a `sound`
   chip beside `calm`), and **`/setup`**, the site's tenth content page, linked from the footer.
-- **The harness is at 301** and covers every route end to end, negatives included. It cannot
+- **The harness prints its own count (304 on 2026-08-18)** and covers every route end to end, negatives included. It cannot
   run `RTCPeerConnection` — the WebRTC hop itself and every phase-2 screen need the client's
   eye (the two-tab test above).
 - **Phase boundaries hold**: no `grants`/`invites` tables, no TURN (client spend decision),

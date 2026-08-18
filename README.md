@@ -4,8 +4,13 @@ A personal site for an independent computer repair operator. Deliberately over-d
 configurable visual toy wrapped around one genuinely useful page (Contact).
 
 React 18 + Vite + TypeScript, served by a Cloudflare Worker. No runtime dependencies beyond React —
-no CSS framework, no router library, no webfonts, no images. Every graphic is CSS or canvas. The
-routing, state, styling and authentication are all hand-rolled, deliberately.
+no CSS framework, no router library. The routing, state, styling and authentication are all
+hand-rolled, deliberately, and that rule is absolute.
+
+Two parts of the original "no assets" rule have been lifted by the client and are recorded as
+deviations in `CLAUDE.md`: **six self-hosted variable webfonts** (`public/fonts/`, 178KB, SIL OFL,
+because three of the five typesets collapsed to Arial on Windows) and **placeholder photographs**
+(`public/photos/`, public-domain, EXIF stripped). Every other graphic is still CSS or canvas.
 
 Live at [mcclevarty.ca](https://mcclevarty.ca); `mcclevarty.com` redirects to it.
 
@@ -18,7 +23,9 @@ npm run dev:worker   # full stack — Worker + API + local D1, on http://127.0.0
 npm run build        # typecheck + production build to dist/
 npm run typecheck    # types only, app and worker
 npm run test:auth    # auth end-to-end suite; needs dev:worker running
-npm run deploy       # build, strip dist/_redirects, publish the Worker
+npm run check        # THE GATE — every automatable invariant. Also runs as predeploy
+npm run check:fast   # the same without the duel simulation; runs after every edit
+npm run deploy       # check, build, strip dist/_redirects, publish the Worker
 npm run db:migrate   # apply migrations to local D1  (add :remote for production)
 ```
 
@@ -39,10 +46,12 @@ build. See *Deployment* below.
 | `src/hooks/` | Title scramble, pointer-driven motion systems, unlock routes, focus trap |
 | `src/auth/` | The browser half of authentication — PBKDF2, grant keys, key slots, flows |
 | `src/components/` | Sign-up, sign-in, administration, and the shared chrome |
-| `src/styles/` | Five stylesheets; `interaction.css` owns every hover, press and disabled state |
+| `src/styles/` | Seven stylesheets; `interaction.css` owns every hover, press and disabled state, `entrances.css` the per-layout arrivals |
 | `worker/` | The Worker: static assets, the account API, sessions, TOTP, rate limiting |
 | `migrations/` | D1 schema |
 | `scripts/auth-e2e.ts` | Auth suite — runs the real `src/auth` modules against a live Worker |
+| `scripts/check.ts` | **The gate.** Every automatable invariant; also `predeploy` |
+| `sitelab.html`, `fxlab.html` | Dev-only benches for the site and the effects. Never built into `dist/` |
 
 ## The documents
 
@@ -53,7 +62,12 @@ build. See *Deployment* below.
 | `CLAUDE.md` | Working notes — binding decisions, deliberate deviations, implementation traps. Invariants only |
 | `docs/DECISIONS.md` | Dated history: what was decided, when, and why. Where superseded notes stay true |
 | `docs/BREAK-GLASS.md` | The operator's recovery path when password, recovery codes and phone are all gone |
-| `docs/DUEL.md` | The lightsword duel — withdrawn from the picker, fully specified for the rebuild |
+| `docs/DUEL.md` | The lightsword duel — built, re-listed 2026-08-14, and audited twice |
+| `docs/AUDIT-BRIEF.md` | A cold-start brief for auditing the site |
+| `docs/SECURITY-AUDIT.md` | Standing security review notes |
+| `docs/FONTS.md` | The webfont ledger — subset ranges and byte counts |
+| `docs/PHOTOS.md` | The placeholder-photo ledger and its sources |
+| `docs/ACCOUNT-RECOVERY.md` | Recovery-code format and the flow |
 | `docs/pi-sharing-host.md` | **Phase 2.** Building the always-on Linux/Raspberry Pi host that will hold the sharing tab open. Paired with `scripts/pi-setup.sh` and `scripts/linux-drive-report.sh` |
 | `design/SPEC.md` | The design handoff. Authoritative on copy, tokens, layouts and motion |
 | `design/SPEC-ACCOUNTS.md` | The accounts and drive-access spec. Approved 2026-08-12; §12 is its decision log |
@@ -64,15 +78,16 @@ build. See *Deployment* below.
 ## Build status
 
 **The site is complete and live.** Every screen, layout, effect and interaction the spec describes is
-built: the shared chrome, all thirteen layouts, twelve canvas backgrounds, the siteconfig panel, the
-operator door and its six unlock routes, the screensaver, calm mode, the five motion systems, the
-responsive bands, and the accessibility pass.
+built: the shared chrome, **fourteen** layouts, **sixteen** canvas backgrounds, **twenty-five**
+palettes, the siteconfig panel, the operator door and its six unlock routes, the screensaver, calm
+mode, the motion systems, the responsive bands, the per-layout entrances, and the accessibility pass.
 
-Beyond the spec, at the client's request: the hero ornament is a setting rather than a fixture (five
-of them, `src/data/ornaments.ts`), and the Matrix rain was rebuilt to match the film. `CLAUDE.md`
-lists every deliberate deviation with its reasoning.
+Beyond the spec, at the client's request: the hero ornament is a setting rather than a fixture
+(**eight**, four of them withdrawn but still decodable, default `sonar`) with a **station** saying
+where it holds; the two lightsword duels are both an ornament and a background; and the Matrix rain
+was rebuilt. `CLAUDE.md` lists every deliberate deviation with its reasoning.
 
-### Accounts — phase 1, in progress
+### Accounts — phases 1 and 2 built
 
 Authentication works end to end and is deployed:
 
@@ -94,10 +109,10 @@ The account pages are **unlinked** at the client's request: reach them by typing
 
 ### Not done
 
-See **`TODO.md`** for the ordered list. The headlines: the auth harness re-implements `flows.ts`
-instead of driving it and has no coverage for recovery-with-2FA or `/admin`, the lightsword duel
-needs rebuilding (`docs/DUEL.md`), operator password reset and TOTP enrolment have no UI, edit mode
-needs a client decision on images, and photo slots are still placeholders.
+**See `TODO.md`** — it is the single ordered backlog and it is kept current. This section used to
+restate it and drifted into being three-quarters false, so it no longer tries: the harness now drives
+the real `flows.ts`, the duel is built and audited twice, and operator reset and TOTP enrolment both
+have UI. What genuinely remains is in `TODO.md`.
 
 ## Deployment
 
@@ -126,7 +141,9 @@ Give a fresh deploy a few seconds before testing routes; asset manifests propaga
 
 - HTTPS is forced and `Strict-Transport-Security`, `x-content-type-options`, `referrer-policy` and
   `x-frame-options` are on every response the Worker serves; `public/_headers` covers `/assets/*`,
-  which by design never reaches the Worker. There is deliberately **no CSP** — see `TODO.md` #12.
+  which by design never reaches the Worker. A nonced **CSP ships report-only** on every page
+  response — deliberately report-only as stage one, with violations logged and nothing blocked;
+  `CLAUDE.md` has the conditions for flipping it to enforcing.
 - A state-changing request whose `Origin` is present and is not ours is refused, as defence in
   depth behind the session cookie's `SameSite=Lax`.
 - Secrets (`AUTH_PEPPER`, `SESSION_SECRET`, `RATE_SALT_SEED`, `TOTP_ENC_KEY`) are Cloudflare secrets

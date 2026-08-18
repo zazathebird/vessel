@@ -1,15 +1,15 @@
 ---
 name: verify-site
-description: Drive and verify mcclevarty.ca in a real browser — any route, any of the fourteen layouts, any of the three bands, calm on or off. Use whenever a change needs to be SEEN rather than assumed, when checking the phone band, when a string must be confirmed in the live DOM, or when the site "looks broken/still/dead". Encodes four environment traps that have each cost a session.
+description: Drive and verify mcclevarty.ca in a real browser — any route, any of the fourteen layouts, any of the three bands, calm on or off. Use whenever a change needs to be SEEN rather than assumed, when checking the phone band, when a string must be confirmed in the live DOM, or when the site "looks broken/still/dead". Encodes six environment traps that have each cost a session.
 ---
 
 # Verifying this site in a browser
 
 The client's standing instruction is **never guess or assume — open the page, run the test.**
-This skill exists because doing that here is not obvious: four separate traps make the naive
+This skill exists because doing that here is not obvious: six separate traps make the naive
 approach silently report the wrong thing, and each has cost at least one session.
 
-## The four traps, first — they explain everything below
+## The six traps, first — they explain everything below
 
 1. **`resize_window` silently fails.** `innerWidth` stays 1536 no matter what. The phone band is
    therefore *not* reachable by resizing. Use an iframe (below).

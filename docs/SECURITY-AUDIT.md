@@ -265,7 +265,10 @@ braces, at zero Worker invocations. SSL/TLS → Edge Certificates.
 Checked during this audit and confirmed as documented decisions, listed so the next audit does not
 re-litigate them:
 
-- **No CSP** — TODO #12; the inlined site config needs a nonce plumbed through
+- **CSP ships report-only** (corrected 2026-08-18; this line read "No CSP" and was false). A
+  per-request nonce is minted in `worker/index.ts` and stamped on the inlined site-config script;
+  violations report to `/api/csp-report` and nothing is blocked. Flipping to enforcing is one header
+  rename, gated on the four surfaces listed in `CLAUDE.md`; the inlined site config needs a nonce plumbed through
   `worker/site-config.ts` first. Worth doing properly, not badly.
 - **Missing `Origin` allowed on state-changing requests** — same-origin GETs and the e2e harness
   omit it; `SameSite` + the present-and-wrong check carry the defence.

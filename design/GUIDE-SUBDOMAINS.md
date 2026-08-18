@@ -56,7 +56,9 @@ Nothing here is speculative; it is how the existing pages work.
 - **No literal colours.** Anything you add reads CSS custom properties from `src/theme.ts`. A
   hardcoded hex silently breaks the 0.9s palette bleed on that element only, which is easy to miss
   because it looks correct until someone changes palette.
-- **Copy is verbatim from the spec.** `CLAUDE.md` records exactly one approved copy correction. If
+- **Copy is **not** verbatim from the spec any more — the verbatim-only rule was retired 2026-08-15,
+when the client asked for the whole site to be understandable by a non-technical reader. Write for
+comprehension in the site's voice; `CLAUDE.md` *Copy changes* has the standard.** `CLAUDE.md` records exactly one approved copy correction. If
   you are writing genuinely new copy, that is a product decision, not an implementation one — the
   self-deprecating register is deliberate and load-bearing.
 
@@ -159,7 +161,8 @@ inventory is a spec change; this is arguably one.
 **3. Cookies. This is the subtle one.**
 
 The session cookie is `HttpOnly; Secure; SameSite=Lax; Path=/` with **no `Domain` attribute**
-(`setCookie` in `worker/session.ts`). That makes it host-only: set on `mcclevarty.ca`, it is **not
+(`sessionCookie` in `worker/session.ts` — and note the `__Host-` prefix *forbids* a `Domain`
+attribute, so the "obvious fix" below is impossible rather than merely unwise). That makes it host-only: set on `mcclevarty.ca`, it is **not
 sent** to `ada.mcclevarty.ca`. So a signed-in user arriving at a subdomain is anonymous there.
 
 The obvious fix — adding `Domain=.mcclevarty.ca` — is the wrong instinct. It sends every session
@@ -192,7 +195,7 @@ jobs in the zone:
 - `mail`, `mailroot8`, `mailadmin` — **your MX records point here.** A wildcard record does not
   override an explicit one, so existing mail keeps working, but a *handle* named `mail` would be
   confusing and should be blocked. **This was recommended here on 2026-08-12 and never actioned —
-  `mail` is still not in `RESERVED_HANDLES`.**
+  `mail` **is** in `RESERVED_HANDLES` as of the DNS-name reservation block (`worker/accounts.ts`).**
 - `_dmarc`, `_domainkey` — TXT records; underscore-prefixed, so the DNS-safe pattern excludes them
   automatically
 
@@ -206,7 +209,8 @@ authentication before interface, and that phases must not be collapsed. Subdomai
 DNS-safe as of `e65cbe5`, so the option stays open and costs nothing to keep open, and the CSRF gap
 that a same-site subdomain would have opened is closed as of `561e067`. Two things remain:
 
-1. **`mail` and the other DNS-significant names in `RESERVED_HANDLES`.** Still not done.
+1. **`mail` and the other DNS-significant names in `RESERVED_HANDLES`.** **Done** — `worker/accounts.ts` reserves sixteen DNS names, with a comment citing this file, and
+`www` is routed in `wrangler.toml`. Cite `RESERVED_HANDLES` rather than re-enumerating it here.
 2. **A decision on enumeration** (*2* above), taken knowingly rather than discovered.
 
 If you want to experiment while waiting, the cheapest satisfying thing is Part A — add a tenth page

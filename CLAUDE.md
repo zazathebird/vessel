@@ -17,7 +17,7 @@ from a skill skipped, and the client has had to ask three times in one session.
 The ones that apply here most often:
 
 - **`verify-site`** — any change that has to be *seen*: a layout, a band, a string in the live DOM,
-  "it looks broken". It encodes four environment traps that each cost a session, and guessing
+  "it looks broken". It encodes six environment traps that each cost a session, and guessing
   instead of running the bench is the failure mode it exists to prevent.
 - **`frontend-design`** — visual or graphic work on the site. Standing client instruction.
 - **`code-review`** / **`security-review`** — before a deploy that touches `worker/` or `src/auth`.
@@ -43,9 +43,10 @@ npm run deploy       # build, strip dist/_redirects, publish the Worker
 
 **Deploy with `npm run deploy`, never bare `wrangler deploy`** — see *Deployment*.
 
-The only tests are `scripts/auth-e2e.ts`, which drives the real `src/auth` modules against a live
-Worker and local D1 and prints its own check count on completion. There is still no test suite for
-the site's *rendering* — but two of the site's own pure modules are covered there because both are
+`npm run check` is the gate for everything automatable (see *Checks* below — several of its
+nineteen gates are purely about rendering). The only *end-to-end* tests are `scripts/auth-e2e.ts`, which drives the real `src/auth` modules against a live
+Worker and local D1 and prints its own check count on completion. There is still no test suite that *renders* the site in a browser — the check suite reasons about
+the stylesheets and the pure modules instead — but two of the site's own pure modules are covered there because both are
 **wire formats whose failures are silent**: `src/share/paths.ts` (§12 S) and, since 2026-08-14,
 `src/config/shareCode.ts`. A wrong share code is a *working* code pointing at the wrong palette, so
 nothing ever throws and nothing ever logs. If you append to `FX`, `LAYOUTS`, `PALETTES`, `TYPESETS`
@@ -188,7 +189,7 @@ site on arrow keys and opens the door on `sudo`.
 
 ### The interaction stylesheet
 
-`src/styles/interaction.css` is the fifth stylesheet and owns **every** hover, press and disabled
+`src/styles/interaction.css` is one of seven stylesheets and owns **every** hover, press and disabled
 state. It exists because the site had two requirements fighting over the same CSS properties: the
 palette bleed needs colour to cross-fade over 0.9s, and pointer feedback needs to land in ~140ms.
 Before it, all sixteen transitions in the codebase ran at 0.9s and there was not one `:hover`,
@@ -401,7 +402,7 @@ ones most likely to be "fixed" by accident:
   (deviation 8 below). Deliberate. If it needs to return it wants its own affordance rather than
   the whole readout coming back
 - **Routing**: the prototype swaps pages in place with no URL change. That is a prototype
-  limitation, not a design decision — **fifteen** real URLs are wired in `src/data/pageIds.ts`:
+  limitation, not a design decision — **sixteen** real URLs are wired in `src/data/pageIds.ts`:
   the spec's nine content pages plus `/setup` (2026-08-14, a footer page), `/signup`, `/signin`,
   `/admin`, and (phase 2) `/machines` and `/share`. The phase-2 pair follow the account pages'
   unlinked convention — typed routes (`machines`, `share`) and links from the `/signin` summary,
@@ -519,8 +520,13 @@ ones most likely to be "fixed" by accident:
 - **The toggle bitfield is where a new boolean goes, while bits remain.** `sound` took bit 16
   (2026-08-14) rather than a seventh share-code field: every code already in circulation has it
   clear, which decodes as off — the correct default — the field count does not change, so nothing
-  counting hyphens breaks, and base-36 still renders the whole bitfield (max 31) in one character.
-  Bits 32 and up are free. **Both `PUBLISHED_KEYS` lists must gain the field too** — the client's in
+  counting hyphens breaks. **Bit 32 is now `slots` and bit 64 is `entrances`** — the latter stored
+  *inverted*, because its default is on and every code already in circulation has the bit clear, so
+  clear has to decode to the default. That takes the bitfield past one base-36 character (max 127 →
+  `3J`), which is harmless by construction: nothing counts characters, only hyphens. Bits 128 and up
+  are free. **A non-boolean gets a field, not bits** — the station (2026-08-18) is one of three
+  values, and packing an enum into bits is how a catalogue gains an entry and overflows into its
+  neighbour. **Both `PUBLISHED_KEYS` lists must gain the field too** — the client's in
   `src/config/siteConfig.ts` and the Worker's in `worker/site-config.ts` are separate arrays and
   either one missing it silently drops the value on publish, so the operator sees a setting that
   never reached anybody else
@@ -583,7 +589,41 @@ All deliberate. Add to this list rather than silently diverging.
    has both homes the client asked for.
 
    Two consequences worth knowing: `SCOPES` now has six entries, not the spec's five; and share
-   codes are six fields, with five-field codes still decoding and simply leaving the ornament alone.
+   codes are **seven** fields since the station landed (2026-08-18), with five- and six-field codes
+   still decoding and simply leaving the later fields alone.
+
+   **The slot also has a *station* — where it holds, and whether it stays there**
+   (`src/data/stations.ts`, 2026-08-18, client: *"it can change location on the page however, right
+   side, left, middle, moving, bouncing, disappearing and reappearing. submarine sonar ping style"*).
+   Three entries, append-only like every other catalogue: `hold` (index 0 — the behaviour the slot
+   has always had, so nothing changes for anyone who never sets this), `opposite`, and `roam`.
+   Rolled and published like the layout; it rides the **ornament** scope rather than gaining a
+   seventh, because a station is *where the ornament is*, so pinning the ornament pins its position
+   too. Five things there are load-bearing:
+
+   - **Every station rule is `:not(.layout-radial)`.** Radial's slot is the dial, which is the only
+     primary navigation on that layout — a *look* may not move or fade the site's navigation.
+     `npm run check` fails on a station rule that omits the exclusion.
+   - **Placement is `order`, never a translate and never an auto margin.** `.v-stage`'s `overflow-x`
+     computes to `auto`, so anything hanging off the side scrolls the whole stage; `order` cannot
+     overflow because the flex row re-lays out. Auto margins were built first and were a **measured
+     no-op** — `.v-hero-text` grows into all the free space, so `hold`, `port` and `starboard` all
+     measured identically. A `port` station was deleted before shipping for the same reason: the
+     slot is the first child on every layout, so `order: -1` did nothing anywhere.
+   - **`opposite` is not a side.** On the six row heroes it moves the slot left:0 → left:789; on
+     Magazine and Marginalia, whose heroes are flex *columns*, it moves it top:68 → top:498. Hence
+     the name — "Starboard" was the nicer word and false on two of the eight layouts.
+   - **`roam` never fades to zero and never sets `pointer-events`.** Five taps on this element
+     reveal the footer's sign-in link, and on the phone band that is the *only* findable route to an
+     account, so the target may dim to 0.12 but must never stop being a target. Its 14.4s cycle is
+     three revolutions of the sonar beam's 4.8s sweep — **retime the beam and this wants retiming.**
+   - **Calm strips the motion and keeps the placement.** `roam` is scoped `:not(.is-calm)` so calm's
+     `animation: none` cannot be outranked; `opposite` deliberately survives calm, because calm
+     strips animation, not layout, and is a second full aesthetic rather than a degraded one.
+
+   A guardrail refuses `roam` with either duel ornament: a duel is the one ornament with a subject,
+   and fading it out twice a revolution loses the exchange you were watching. `Combination` gained
+   the field as **required**, per deviation 1 — that is what makes the rule capable of matching.
    The siteconfig panel therefore has an **Ornament** section the spec's list does not mention.
 
    **Radial's dial lives in this slot and is the only navigation on that layout** (2026-08-17,
@@ -1308,8 +1348,11 @@ input; the duel's fairness, sequence reachability and numerical stability over 3
 frames; the catalogue counts this file documents; that no stylesheet rule pairs a band with a
 layout that band never renders; that no preset offers a withdrawn effect or ornament; the edge
 fade's truth table including both 1px dead bands; that no scroll-driven animation is reset by the
-entrance layer and no from-only keyframe lands on a value it cannot interpolate to; and that every
-route has copy and the 404's page count is still true.
+entrance layer and no from-only keyframe lands on a value it cannot interpolate to; the ornament
+station's wire order, its five/six/seven-field abstain rule, that its `roam` guardrail actually
+bites and that no station rule touches Radial; that every layout owns an entrance; that the account
+form owns its width; that hidden ornaments still decode and an out-of-range field falls to the
+default; and that every route has copy and the 404's page count is still true.
 
 **Each gate is there because that exact failure shipped.** Verified by breaking each one
 deliberately and confirming it fails — including the QR bug that broke a real scan, which the suite

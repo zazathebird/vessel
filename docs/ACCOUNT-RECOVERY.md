@@ -54,7 +54,7 @@ shape and switches to the recovery flow itself (`looksLikeRecoveryCode`). It sig
 hands you a set-password screen, because `completeSignIn` mints a single-use `set-password` ticket
 on the recovery path only.
 
-They are Crockford base32 — digits and uppercase letters with `I` and `L` removed — chosen for
+They are Crockford base32 — digits and uppercase letters with `I`, `L`, `O` and `U` removed — chosen for
 transcription because they are meant to live on paper. Look wherever you put them at signup.
 
 ## 2. A passkey
