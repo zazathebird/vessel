@@ -212,6 +212,12 @@
   cursor: pointer;
   color: inherit;
   font: inherit;
+  /* Both routes on this lockup are repeated taps, and repeated taps on text
+     select it: two selects the word, three selects the line. Without this the
+     wordmark flashes a selection highlight on the way to /admin, and — worse —
+     a selection left standing suppresses the leftward-drag sign-in route, which
+     refuses to fire while `getSelection()` has anything in it. */
+  user-select: none;
 }
 
 .v-logo-mark {
@@ -2242,6 +2248,22 @@
   letter-spacing: 0.14em;
   cursor: default;
   padding: 0;
+}
+
+/* The clock's route to /share. `cursor: default` deliberately, matching the dot
+   above: a pointer cursor would advertise a hidden route on an element that is
+   otherwise just the time, and "no hints that hidden routes exist" is the
+   standing instruction. It stays selectable — one tap, so there is no repeated
+   click to select text by accident. */
+.v-clock {
+  cursor: default;
+  /* Measured at 420px the clock's own box is 345×**14** — a fine line of text
+     and a poor thumb target. The padding buys a 26px-tall hit area and the
+     equal negative margin gives the space straight back, so the footer lays out
+     to the pixel it always did. Vertical only: `.v-stage`'s `overflow-x`
+     computes to `auto`, so anything widened sideways can scroll the stage. */
+  padding: 6px 0;
+  margin: -6px 0;
 }
 
 /* Accounts -------------------------------------------------------------------

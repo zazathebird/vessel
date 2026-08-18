@@ -825,6 +825,73 @@ check("the sign-in portal survives every layout", () => {
   return "footer routes to signin unconditionally, and no layout hides it";
 });
 
+// The two pointer routes added 2026-08-18 at the client's request: three taps on
+// the wordmark to /admin, one on the footer clock to /share.
+//
+// Both are gated for the same reason the sign-in portal above is. These are
+// *silent* routes by design — no name, no role, no tab stop, no toast until they
+// fire — so every way they can break is invisible. Three specific ways, one gate
+// each:
+//
+//  1. The two tap counters share the lockup. They are on different elements
+//     because a single counter reaches three and navigates before the door's
+//     fifth tap can land; drop the `stopPropagation` on the glyph and the door
+//     route dies silently, since the glyph's taps would also advance admin's.
+//  2. The counts invert. Admin must stay *below* the door's five — the client
+//     asked for "more than 2 clicks", and at five-or-more they collide again.
+//  3. A layout hides the host. This is exactly how the ornament's five-tap
+//     sign-in route died: the element was absent on five layouts, two of which
+//     are what the phone band collapses to, and nothing said so.
+check("the wordmark and clock pointer routes still fire", () => {
+  const header = readFileSync("src/components/Header.tsx", "utf8");
+  must(/go\("admin"\)/.test(header), "the wordmark no longer routes to admin");
+  must(
+    /onClick=\{onMarkTap\}/.test(header) && /stopPropagation\(\)/.test(header),
+    "the glyph's door taps no longer stop propagation — they would also advance the admin counter, " +
+      "so the door's fifth tap becomes unreachable",
+  );
+
+  // The two thresholds, read out of the source rather than assumed. Admin fires
+  // first, so it has to be the smaller number, and above 2 per the client.
+  const adminAt = header.match(/adminTaps\.current >= (\d+)/);
+  const doorAt = header.match(/doorTaps\.current >= (\d+)/);
+  must(Boolean(adminAt && doorAt), "the tap thresholds are no longer readable in Header.tsx");
+  const admin = Number(adminAt![1]);
+  const door = Number(doorAt![1]);
+  must(admin > 2, `the admin route needs more than 2 taps (client request); it is ${admin}`);
+  must(
+    admin < door,
+    `the admin route (${admin} taps) must fire below the door's (${door}) — at or above it the ` +
+      "two gestures collide on one lockup again",
+  );
+
+  const footer = readFileSync("src/components/Footer.tsx", "utf8");
+  must(/go\("share"\)/.test(footer), "the footer clock no longer routes to share");
+  must(/className="v-clock"/.test(footer), "the clock lost its .v-clock hook");
+
+  // Neither host may be hidden, and neither may pick up a name that would
+  // announce it — the client's "no hints that hidden routes exist".
+  must(
+    !/aria-label=[^\n]*wordmark|aria-label=[^\n]*operator access/i.test(header),
+    "the wordmark has an aria-label again — it announces the hidden route to every screen reader",
+  );
+
+  const dir = "src/styles";
+  const hidden: string[] = [];
+  for (const file of readdirSync(dir).filter((f) => f.endsWith(".css"))) {
+    const css = readFileSync(join(dir, file), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    for (const m of css.matchAll(/([^{}]*\.(?:v-logo|v-clock|v-header)\b[^{}]*)\{([^{}]*)\}/g)) {
+      if (/display\s*:\s*none/.test(m[2])) hidden.push(`${file}: ${m[1].trim()}`);
+    }
+  }
+  must(hidden.length === 0, `a layout hides a pointer route's host: ${hidden.join(" / ")}`);
+
+  const app = readFileSync("src/App.tsx", "utf8");
+  must(/<Header\s*\/>/.test(app), "App.tsx no longer renders <Header /> unconditionally");
+
+  return `admin at ${admin} taps, door at ${door}, clock routes to share, no layout hides either host`;
+});
+
 check("every route has copy, and the 404's page count is true", () => {
   for (const id of Object.keys(PATHS) as (keyof typeof PATHS)[]) {
     must(Boolean(PAGES[id]), `no copy for route ${id}`);

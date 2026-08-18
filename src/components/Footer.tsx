@@ -3,7 +3,7 @@ import { useSession } from "../auth/SessionContext";
 import { FOOTER_NAV } from "../data/pageIds";
 
 export function Footer() {
-  const { config, go, clock, openDoor } = useConfig();
+  const { config, go, clock, openDoor, say } = useConfig();
   // The account/admin pair is operator-only, and that is what makes it
   // compatible with the account pages being unlinked. The request was that
   // *visitors* find no standing way in; a signed-in operator having to
@@ -103,7 +103,32 @@ export function Footer() {
         </span>
       </div>
 
-      <span>last fiddled with · aug 2026 · {clock}</span>
+      {/*
+        The clock is the way to /share (2026-08-18, client asked for a clickable
+        route and left the target to me).
+
+        **It is content that gained a gesture, not a control**, so it keeps
+        reading as plain text to a screen reader and gains no name, no role and
+        no place in the tab order — the footer `·` rule, for the same reason.
+        Typing `share` is still the tellable, keyboard-reachable version.
+
+        Why this element rather than something new: the meaning is real instead
+        of arbitrary. The clock is *this machine's* time and /share is "share
+        this machine" — it is the only thing already on the page that means the
+        computer you are sitting at. And the footer is the one piece of chrome no
+        layout hides, which is already an invariant with a `npm run check` gate
+        on it, so this route inherits a guarantee the ornament's deleted five-tap
+        route never had.
+
+        One tap, not three like the wordmark's, and the asymmetry is traffic
+        rather than taste: the wordmark is the most-clicked target on the page
+        and a stray click there had to stay inert. Almost nobody clicks a footer
+        clock by accident, and the cost if they do is a page explaining what
+        sharing is and offering sign-in.
+      */}
+      <span className="v-clock" onClick={() => { say("this machine, then"); go("share"); }}>
+        last fiddled with · aug 2026 · {clock}
+      </span>
     </footer>
   );
 }

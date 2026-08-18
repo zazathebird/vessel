@@ -24,16 +24,37 @@ import { isEditable } from "./useOperatorRoutes";
  * routes call `go("signin")` — a plain navigation to a real page — and nothing
  * here touches `openDoor`. The two sets of gestures are deliberately disjoint:
  *
- * | Gesture                | Goes to           |
- * |------------------------|-------------------|
- * | five taps on the logo  | door (theatre)    |
- * | the footer `·`         | door (theatre)    |
- * | konami, `sudo`, ⌘K     | door (theatre)    |
- * | drag **right**         | door (theatre)    |
- * | type `whoami`          | **sign-in**       |
- * | type `login`           | **sign-in**       |
- * | drag **left**          | **sign-in**       |
- * | the footer `sign in`   | **sign-in**       |
+ * | Gesture                    | Goes to           |
+ * |----------------------------|-------------------|
+ * | five taps on the logo glyph| door (theatre)    |
+ * | the footer `·`             | door (theatre)    |
+ * | konami, `sudo`, ⌘K         | door (theatre)    |
+ * | drag **right**             | door (theatre)    |
+ * | type `whoami`              | **sign-in**       |
+ * | type `login`               | **sign-in**       |
+ * | drag **left**              | **sign-in**       |
+ * | the footer `sign in`       | **sign-in**       |
+ * | **three taps on the logo** | `/admin`          |
+ * | **the footer clock**       | `/share`          |
+ *
+ * (Those two destinations are in backticks rather than bold on purpose. Bolding
+ * a path puts two asterisks immediately before its leading slash, which is the
+ * block-comment terminator — it ends this comment mid-table and drops the rest
+ * of the file into syntax errors. Cost one typecheck to find.)
+ *
+ * The last two are 2026-08-18, at the client's request, and they live in
+ * `Header.tsx` and `Footer.tsx` rather than here because they are attached to
+ * the elements they belong to — the same reason the logo and the footer `·`
+ * always have been. They obey this file's rule rather than the door's: both
+ * *navigate*, neither touches `openDoor`, and neither is a gate. `/admin` and
+ * `/share` each say what they are and offer sign-in when you are not entitled
+ * to them, so a stranger who finds one gets an explanation, not a wall.
+ *
+ * **The logo now carries two counters, and they are on different elements.**
+ * Three taps on the lockup goes to /admin; five on the 32×32 glyph opens the
+ * door. One element could not carry both — three fires first and navigates, so
+ * the fifth tap would be unreachable. `npm run check` gates the split, the two
+ * thresholds and their order.
  *
  * The mirrored drag is the pick of them: the door is a sideways pull one way
  * and the account is the same pull the other, which is the kind of symmetry
@@ -88,9 +109,14 @@ export function useAccountRoutes(): void {
       if (buffer.includes("whoami")) enter("who indeed");
       else if (buffer.includes("login")) enter("the front door, sort of");
       else if (buffer.includes("admin")) {
-        // Goes to the account page, not straight to administration: signed out,
-        // /admin has nothing to say, and sign-in is the step that was missing
-        // anyway. Signed in as an operator, the summary links straight on.
+        // **Straight to administration, and the comment here used to say the
+        // opposite** — "goes to the account page, not straight to
+        // administration", describing a `go("signin")` that this line has not
+        // been for some time. Corrected 2026-08-18 rather than the code changed
+        // to match it, because the code is right: `Admin.tsx` handles being
+        // reached by anyone, saying what the page is and offering sign-in, so
+        // there is no state in which this lands somebody nowhere. The wordmark's
+        // three taps go to the same place for the same reason.
         keys.current.length = 0;
         say("through the back");
         go("admin");

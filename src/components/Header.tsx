@@ -40,25 +40,85 @@ export function Header() {
    */
   const navRef = useEdgeFade();
 
-  const taps = useRef(0);
-  const tapTimer = useRef<number | undefined>(undefined);
+  /*
+   * Two tap counters on one lockup, and they are deliberately on *different*
+   * elements (2026-08-18, client: "my admin, click the mcclevarty.ca in the top
+   * left corner", "more than 2 clicks on desktop and mobile").
+   *
+   * They cannot share an element. The door's route is five taps and admin's is
+   * three, so a single counter reaches three first and navigates away — the
+   * door's fifth tap is unreachable by construction. That is the same trap the
+   * old comment here warned about when it said the five taps work *because* the
+   * logo has no other click action; giving the lockup a second gesture is
+   * exactly the case it named.
+   *
+   * So the split is by element and the sizes decided which way round:
+   *
+   * - **`/admin` is on the whole lockup** (`.v-logo`) — 32px tall and ~190px
+   *   wide, because `.v-logo-mark` sets the row's height. The wordmark span on
+   *   its own is a 13px font, so ~16px tall: fine for a mouse and a bad target
+   *   for a thumb, and this route was asked for on mobile as well as desktop.
+   * - **The door stays on the glyph** (`.v-logo-mark`, 32×32) and
+   *   `stopPropagation`s, so a tap there never also counts toward admin. It is
+   *   a decorative `aria-hidden` element, which is this codebase's established
+   *   host for a pointer-only route — the footer `·` is the same pattern for
+   *   the same reason, and is smaller than this.
+   *
+   * Neither counter announces itself. The door's "N more" countdown is kept and
+   * stays gated on `isOperator`; admin gets no countdown at all, because the
+   * moment it is most useful is signed *out* — when there is nobody to count
+   * down to, and a visitor being told they are three taps from something is the
+   * hint the client asked the site never to give.
+   */
+  const doorTaps = useRef(0);
+  const doorTimer = useRef<number | undefined>(undefined);
+  const adminTaps = useRef(0);
+  const adminTimer = useRef<number | undefined>(undefined);
+
+  /** Taps within this of each other count as one run. Shared by both routes. */
+  const TAP_WINDOW = 1400;
+
+  const onMarkTap = useCallback(
+    (event: React.MouseEvent) => {
+      // Without this the same tap lands on `.v-logo` underneath and advances
+      // the admin counter too — five taps on the glyph would open the door and
+      // have navigated to /admin two taps earlier.
+      event.stopPropagation();
+      doorTaps.current += 1;
+      window.clearTimeout(doorTimer.current);
+      if (doorTaps.current >= 5) {
+        doorTaps.current = 0;
+        openDoor("five taps");
+        return;
+      }
+      // The countdown is gated the way the door itself is: openDoor refuses
+      // non-operators, so teasing a visitor with "2 more" counts them down to
+      // silently nothing (review 2026-08-13).
+      if (doorTaps.current > 2 && isOperator) say(String(5 - doorTaps.current) + " more");
+      doorTimer.current = window.setTimeout(() => {
+        doorTaps.current = 0;
+      }, TAP_WINDOW);
+    },
+    [openDoor, say, isOperator],
+  );
 
   const onLogoTap = useCallback(() => {
-    taps.current += 1;
-    window.clearTimeout(tapTimer.current);
-    if (taps.current >= 5) {
-      taps.current = 0;
-      openDoor("five taps");
+    adminTaps.current += 1;
+    window.clearTimeout(adminTimer.current);
+    if (adminTaps.current >= 3) {
+      adminTaps.current = 0;
+      // Like every account route this *navigates* and never unlocks anything —
+      // `useAccountRoutes`'s rule, and the reason these gestures stay disjoint
+      // from the door's. Signed out, /admin says what it is and offers sign-in;
+      // signed in as anyone else it does the same. It is not a gate.
+      say("the corner office");
+      go("admin");
       return;
     }
-    // The countdown is gated the way the door itself is: openDoor refuses
-    // non-operators, so teasing a visitor with "2 more" counts them down to
-    // silently nothing (review 2026-08-13).
-    if (taps.current > 2 && isOperator) say(String(5 - taps.current) + " more");
-    tapTimer.current = window.setTimeout(() => {
-      taps.current = 0;
-    }, 1400);
-  }, [openDoor, say, isOperator]);
+    adminTimer.current = window.setTimeout(() => {
+      adminTaps.current = 0;
+    }, TAP_WINDOW);
+  }, [go, say]);
 
   return (
     <header className="v-header">
@@ -68,29 +128,31 @@ export function Header() {
 
       <div className="v-header-row">
         {/*
-          The wordmark, and the door's five-tap route — a pointer easter egg,
-          not a control.
+          The wordmark: three taps to /admin, five taps on the glyph to the
+          door. Both are pointer easter eggs, neither is a control.
 
           It was a `<button aria-label="mcclevarty.ca — tap for operator
           access">`, which is the same fault the footer dot had and in a worse
           place: the label named a hidden route to every screen reader on every
           page of the site, and "nothing on the site advertises the site — no
           hints that hidden routes exist" is the client's own instruction. It
-          was also a dead control, because tapping the logo does nothing at all
-          unless you are the operator and tap it five times, so a keyboard user
-          reached it, activated it, and got silence.
+          was also a dead control, because tapping the logo did nothing at all
+          unless you were the operator and tapped it five times, so a keyboard
+          user reached it, activated it, and got silence.
 
-          It stays deliberately inert rather than becoming a link home, and that
-          is the reason the five taps live here in the first place: the route
-          works *because* the logo has no other click action. Give it
-          navigation and taps one through five each navigate as well.
+          **It is still not a link home, and still has no accessible name of its
+          own.** Both of those stay true now that it navigates: a route that
+          takes three taps is not a control, and naming it would advertise it.
+          Keyboard users lose nothing — /admin is reachable by typing `admin`,
+          which is the tellable version, and the door has five other routes
+          including `sudo`.
 
-          The accessible name is now simply the wordmark text inside it, which
-          is what it always should have been. Keyboard users lose nothing — the
-          door has five other routes and typing `sudo` is the tellable one.
+          The header renders on every layout and every band — verified, and
+          gated in `npm run check` — so unlike the ornament's deleted five-tap
+          route this cannot develop a dead end on a layout that hides its host.
         */}
         <span className="v-logo" onClick={onLogoTap}>
-          <span className="v-logo-mark" aria-hidden="true">
+          <span className="v-logo-mark" aria-hidden="true" onClick={onMarkTap}>
             <span className="v-logo-ring a" />
             <span className="v-logo-ring b" />
             <span className="v-logo-dot" />
