@@ -213,6 +213,14 @@ Five CSS gotchas that have already bitten once each, all worth knowing before ed
 - **`band-*` and `layout-*` are on the same element.** `.band-phone .layout-stack` matches nothing;
   it has to be `.band-phone.layout-stack`. Every phone override was silently dead until this was
   found — and phones collapse almost everything to Stack, so it was the main phone path.
+
+  **The twin trap is a compound that is written correctly and still cannot match** (2026-08-18):
+  the `layout-*` class is the *adapted* layout, and `band` and `layout` come out of one `useMemo`
+  in one render, so they cannot disagree even mid-resize. If `adaptLayout(id, band) !== id`, that
+  pair never reaches the DOM. Four such rules were live — Deck, Ledger and Side-scroll on phone,
+  Ledger on tablet — and two of them claimed in a comment to guard against "a share code landing
+  mid-resize", a state that cannot occur, so anyone trusting that guard was trusting nothing.
+  `npm run check` now refuses the pairing outright, so this one cannot come back by hand.
 - **An animated `transform` beats a declared one — so centre with `translate`.** `.v-toast` set
   `transform: translateX(-50%)` next to `animation: v-rise … both`, and `v-rise` animates
   `transform`; with a forwards fill the centring never applied *at any point*, so every toast the
@@ -225,6 +233,22 @@ Five CSS gotchas that have already bitten once each, all worth knowing before ed
   the style attribute, so a forwards fill would leave `v-rise`'s `transform: translateY(0)` owning
   the card for ever and the cursor-lean tilt — which is written to `el.style.transform` — would
   never render. The stagger only needs the from-state held during the delay.
+- **The entrance layer's `animation` shorthand outranks every layout, and resets what it does not
+  name** (2026-08-18). `.has-entrances:not(.layout-console) .v-block` in `entrances.css` is
+  **0-3-0** — `:not()` contributes its argument's specificity — against a layout rule's 0-2-0, so
+  it wins on specificity and import order never enters into it. Being the shorthand, it also resets
+  `animation-name`, `animation-timeline` and `animation-range` together. Deck's `v-deck-depth`
+  view-timeline pass was declared as careful longhands in `layouts.css` and was switched off
+  anyway, for every visitor, since `entrances` defaults to true and is published — and it returned
+  whenever entrances were off or calm was on, which is what kept it hidden. **A layout with a
+  second animation must re-list both at the entrance layer**, not merely avoid the shorthand
+  itself. `npm run check` fails if a view- or scroll-timelined animation is not named there.
+- **A from-only keyframe lands on the element's own declared value, so the property has to
+  interpolate from its initial one.** True for `translate`, `scale`, `rotate` and `opacity`. **Not
+  true for `clip-path`**, whose initial value is `none`: an `inset()` flips to it *discretely at
+  50%* rather than interpolating, so the termbar's `steps(22, end)` typewriter drew no wipe at all
+  — the title was invisible for half its duration and then popped in. Elements animated this way
+  declare the landing shape (`.v-termbar-title { clip-path: inset(0 0 0 0) }`); gated.
 - **The chrome is a flex column, and Terminal is the one layout that opts out.** `.v-chrome` is
   `height: 100dvh` with `.v-stage` at `flex: 1; min-height: 0`, so the stage takes whatever the
   header actually leaves — it used to subtract a hardcoded `132px`, which drifted the moment a chip
@@ -486,6 +510,12 @@ ones most likely to be "fixed" by accident:
   indices the decoder will, so the two cannot disagree. They are operator-gated, like every other
   appearance control in the command palette; `.v-paste` is in the operator-only panel, so share
   codes are in practice operator-only too. Making them public is a product decision, not a fix.
+
+  **A preset is a menu, so it may never name a `hidden` entry** (2026-08-18). All three named
+  withdrawn circle ornaments for the whole time the withdrawal was in effect and nothing failed,
+  because nothing was *invalid* — `hidden` means unlisted, not broken, which is exactly right for
+  a stored config or a share code and exactly wrong for a button somebody presses now. The
+  `PICKABLE_*` rule applies to presets. `npm run check` decodes each preset's code and gates it.
 - **The toggle bitfield is where a new boolean goes, while bits remain.** `sound` took bit 16
   (2026-08-14) rather than a seventh share-code field: every code already in circulation has it
   clear, which decodes as off — the correct default — the field count does not change, so nothing
@@ -1275,8 +1305,11 @@ it was "does the thing it claims to do actually happen".
 What it covers: types; stylesheet brace balance; the QR encoder against the ISO Reed-Solomon worked
 example, both format copies agreeing on a published level-M value, and a round trip back to the
 input; the duel's fairness, sequence reachability and numerical stability over 360,000 stepped
-frames; the catalogue counts this file documents; and that every route has copy and the 404's page
-count is still true.
+frames; the catalogue counts this file documents; that no stylesheet rule pairs a band with a
+layout that band never renders; that no preset offers a withdrawn effect or ornament; the edge
+fade's truth table including both 1px dead bands; that no scroll-driven animation is reset by the
+entrance layer and no from-only keyframe lands on a value it cannot interpolate to; and that every
+route has copy and the 404's page count is still true.
 
 **Each gate is there because that exact failure shipped.** Verified by breaking each one
 deliberately and confirming it fails — including the QR bug that broke a real scan, which the suite

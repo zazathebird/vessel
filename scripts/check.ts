@@ -29,9 +29,14 @@ import { createDuel, advanceDuel } from "../src/fx/duel";
 import { PAGES } from "../src/data/pages";
 import { PATHS } from "../src/data/pageIds";
 import { LAYOUTS, FX, PICKABLE_FX, TYPESETS, SCOPES } from "../src/data/catalog";
+import type { LayoutId } from "../src/data/catalog";
 import { PALETTES } from "../src/data/palettes";
 import { DEFAULT_ORNAMENT, ORNAMENTS, PICKABLE_ORNAMENTS } from "../src/data/ornaments";
 import { decodeShareCode } from "../src/config/shareCode";
+import { adaptLayout } from "../src/config/bands";
+import { edgeState } from "../src/hooks/useEdgeFade";
+import type { Band } from "../src/config/bands";
+import { PRESETS } from "../src/data/presets";
 
 /**
  * `--fast` skips only the duel simulation, which is 360,000 stepped frames and
@@ -125,6 +130,209 @@ check("every layout owns an entrance", () => {
     "chrome.css no longer computes the block stagger from --i",
   );
   return `${LAYOUTS.length - 1} entrances + console's stream; keyframes stay from-only`;
+});
+
+// ---- 2a3. No stylesheet rule pairs a band with a layout it never renders ----
+//
+// `.band-*` and `.layout-*` sit on the *same* element, and CLAUDE.md's first CSS
+// gotcha is the descendant-combinator version of that trap. This is its twin and
+// it fails even more quietly: the selector is written correctly, it just names a
+// combination the app cannot produce. `band` and the adapted `layout` come out of
+// one `useMemo` in one render (`ConfigContext`), so they cannot disagree even
+// mid-resize — if `adaptLayout(id, band) !== id`, that class pair is *never*
+// written to the wrapper and the rule is dead.
+//
+// Four such rules were live on 2026-08-18 (Deck and Ledger on phone, Ledger on
+// tablet, Side-scroll on phone). Harmless in themselves, which is the problem:
+// two of them carried a comment claiming to "guard against a share code landing
+// mid-resize", a state that is structurally impossible, and a reader trusting
+// that guard would be relying on nothing. Removing them by eye is how three of
+// four got found; this is how the fourth did.
+//
+// Comments are stripped first — the surviving notes *name* the dead pairings in
+// prose, and a gate that trips on its own documentation is a gate people delete.
+
+check("no band pairs with a layout it never renders", () => {
+  const dir = "src/styles";
+  const ids = new Set(LAYOUTS.map((l) => l.id));
+  const bands: Band[] = ["phone", "tablet", "desk"];
+  const dead: string[] = [];
+  const unknown: string[] = [];
+  let pairs = 0;
+
+  for (const file of readdirSync(dir).filter((f) => f.endsWith(".css"))) {
+    const css = readFileSync(join(dir, file), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    // Both orders — the classes are unordered on the element, so a future rule
+    // could legitimately be written either way round.
+    const re = /\.band-([a-z]+)\.layout-([a-z]+)|\.layout-([a-z]+)\.band-([a-z]+)/g;
+    for (const m of css.matchAll(re)) {
+      const band = (m[1] ?? m[4]) as Band;
+      const layout = (m[2] ?? m[3]) as LayoutId;
+      if (!bands.includes(band)) {
+        unknown.push(`${file}: .band-${band} is not a band`);
+        continue;
+      }
+      if (!ids.has(layout)) {
+        unknown.push(`${file}: .layout-${layout} is not a layout`);
+        continue;
+      }
+      pairs += 1;
+      if (adaptLayout(layout, band) !== layout) {
+        dead.push(`${file}: .band-${band}.layout-${layout} (${band} renders ${adaptLayout(layout, band)})`);
+      }
+    }
+  }
+
+  must(unknown.length === 0, unknown.join("; "));
+  must(
+    dead.length === 0,
+    `unreachable band/layout rules — delete them or fix the selector: ${dead.join("; ")}`,
+  );
+  return `${pairs} band/layout pairings, all reachable`;
+});
+
+// ---- 2a5. Scroll-driven animations survive the entrance layer ---------------
+//
+// 2026-08-18. `entrances.css` imports after `layouts.css` and its base arrival
+// rule is the `animation` **shorthand**, which resets every longhand it does not
+// name — `animation-name`, and with it `animation-timeline` and
+// `animation-range`. It is `:not()`-qualified and `:not()` contributes its
+// argument's specificity, so it sits at 0-3-0 against a layout's 0-2-0 and wins
+// outright.
+//
+// Deck declares a second animation there: `v-deck-depth`, the view-timeline pass
+// that stands the centre card forward. With `entrances` defaulting to true and
+// published, it was simply switched off — and it came back the instant you
+// turned entrances off or enabled calm, which is what let it survive review.
+//
+// The rule this encodes: **any animation bound to a view/scroll timeline must
+// also be named at the entrance layer**, because the entrance layer outranks the
+// layout that declared it. Names are paired with timelines *by index*, so
+// `animation-name: v-ent, v-deck-depth` against `animation-timeline: auto,
+// view(inline)` correctly flags only the second one — the first is the entrance
+// and is expected to be replaced.
+
+check("scroll-driven animations survive the entrance layer", () => {
+  const dir = "src/styles";
+  const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "");
+  const entrances = strip(readFileSync(join(dir, "entrances.css"), "utf8"));
+
+  const entranceNames = new Set<string>();
+  for (const m of entrances.matchAll(/animation-name\s*:\s*([^;}]+)/g)) {
+    for (const n of m[1].split(",")) entranceNames.add(n.trim());
+  }
+
+  const timelined = new Map<string, string>();
+  for (const file of readdirSync(dir).filter((f) => f.endsWith(".css"))) {
+    const css = strip(readFileSync(join(dir, file), "utf8"));
+    for (const block of css.matchAll(/\{([^{}]*)\}/g)) {
+      const body = block[1];
+      const names = body.match(/animation-name\s*:\s*([^;}]+)/);
+      const lines = body.match(/animation-timeline\s*:\s*([^;}]+)/);
+      if (!names || !lines) continue;
+      const nameList = names[1].split(",").map((s) => s.trim());
+      const lineList = lines[1].split(",").map((s) => s.trim());
+      nameList.forEach((name, i) => {
+        const tl = lineList[i] ?? lineList[lineList.length - 1];
+        if (/\b(view|scroll)\s*\(/.test(tl)) timelined.set(name, file);
+      });
+    }
+  }
+
+  const dropped = [...timelined].filter(([name]) => !entranceNames.has(name));
+  must(
+    dropped.length === 0,
+    `the entrance layer's shorthand resets these scroll-driven animations — re-list them in ` +
+      `entrances.css: ${dropped.map(([n, f]) => `${n} (${f})`).join(", ")}`,
+  );
+  must(timelined.size > 0, "no scroll-driven animations found at all — has the selector changed?");
+  return `${timelined.size} scroll-driven animation(s), all re-listed at the entrance layer`;
+});
+
+// ---- 2a6. A from-only keyframe needs a landing value it can interpolate to ---
+//
+// 2026-08-18. `entrances.css`'s house rule is from-only keyframes, so the landing
+// state is whatever the element declares. That is exactly right for `translate`,
+// `scale`, `opacity` and `rotate`, whose initial values interpolate. It is wrong
+// for `clip-path`: its initial value is `none`, and an `inset()` does not
+// interpolate *to* `none` — it flips **discretely at 50% progress**. So the
+// termbar's `steps(22, end)` "typewriter" produced no wipe whatsoever; the title
+// was fully clipped, i.e. invisible, for the first half of its 0.85s and then
+// popped in, on every navigation in Terminal.
+//
+// The gate: if a from-only keyframe animates `clip-path`, the element it is
+// applied to must declare a `clip-path` of its own, so both endpoints are the
+// same shape family. Widen DISCRETE if another such property is ever animated.
+
+check("from-only keyframes land on an interpolable value", () => {
+  const dir = "src/styles";
+  const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "");
+  const entrances = strip(readFileSync(join(dir, "entrances.css"), "utf8"));
+  const every = readdirSync(dir)
+    .filter((f) => f.endsWith(".css"))
+    .map((f) => strip(readFileSync(join(dir, f), "utf8")))
+    .join("\n");
+  const DISCRETE = ["clip-path"];
+
+  const problems: string[] = [];
+  let pairs = 0;
+  for (const kf of entrances.matchAll(/@keyframes\s+([\w-]+)\s*\{((?:[^{}]|\{[^{}]*\})*)\}/g)) {
+    const [, name, body] = kf;
+    for (const prop of DISCRETE) {
+      if (!new RegExp(`\\b${prop}\\s*:`).test(body)) continue;
+      // Every rule that applies this keyframe, and the element it targets.
+      for (const rule of entrances.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+        if (!new RegExp(`animation[^;}]*\\b${name}\\b`).test(rule[2])) continue;
+        const target = rule[1].trim().split(/\s+/).pop() ?? "";
+        const cls = target.match(/\.[\w-]+$/)?.[0];
+        if (!cls) continue;
+        pairs += 1;
+        // A declaration of that property for that class, outside any @keyframes.
+        const declared = new RegExp(
+          `\\${cls}\\s*(,[^{}]*)?\\{[^{}]*\\b${prop}\\s*:`,
+        ).test(every);
+        if (!declared) {
+          problems.push(
+            `${name} animates ${prop} from-only but ${cls} declares no ${prop} — it will flip ` +
+              `discretely at 50%, not wipe`,
+          );
+        }
+      }
+    }
+  }
+  must(problems.length === 0, problems.join("; "));
+  return pairs > 0 ? `${pairs} discrete-property keyframe(s) land on a declared value` : "none animated";
+});
+
+// ---- 2a4. The edge fade's truth table ---------------------------------------
+//
+// `edgeState` is exported and pure for one stated reason — "the environment this
+// is built in cannot observe it… a function taking three numbers can be stepped
+// through every state in Node instead, which is the only way this logic gets
+// checked rather than assumed". Nothing was stepping it. This makes the doc true.
+//
+// The **1px dead band on all three comparisons** is the part worth pinning: sub-
+// pixel layout means a row that fits reports fractional slack rather than zero,
+// and a flick that lands at the end can stop a fraction short of it. Drop it from
+// any one comparison and the header shows a fade pointing at nothing — the exact
+// "affordance pointing at content that is not there" the hook's doc rejects.
+
+check("the edge fade's truth table holds, dead band included", () => {
+  const cases: [number, number, number, ReturnType<typeof edgeState>][] = [
+    [0, 100, 100, null],        // fits exactly — no attribute at all
+    [0, 101, 100, null],        // 1px of slack is noise, not content
+    [0, 100.4, 100, null],      // sub-pixel slack, the case the band exists for
+    [0, 200, 100, "end"],       // at the start, content to the right
+    [1, 200, 100, "end"],       // a pixel in is still "at the start"
+    [50, 200, 100, "both"],     // mid-row, hiding content on both sides
+    [99, 200, 100, "start"],    // a pixel short of the end is still "at the end"
+    [100, 200, 100, "start"],   // hard against the end
+  ];
+  for (const [left, sw, cw, want] of cases) {
+    const got = edgeState(left, sw, cw);
+    must(got === want, `edgeState(${left}, ${sw}, ${cw}) = ${got}, expected ${want}`);
+  }
+  return `${cases.length} states, both 1px dead bands`;
 });
 
 // ---- 2b. The account form is not sized by whatever contains it -------------
@@ -461,6 +669,31 @@ check("hidden ornaments still decode; out-of-range falls to the default", () => 
   const five = decodeShareCode("0-0-0-0-0");
   must(five !== null && !("ornament" in five), "a five-field code should leave the ornament alone");
   return "index 0 (hidden) resolves, out-of-range resolves to the default, five-field codes abstain";
+});
+
+check("no preset offers a withdrawn effect or ornament", () => {
+  // A preset is a *menu*, not a wire (CLAUDE.md: `FX` resolves, `PICKABLE_FX`
+  // offers). Withdrawing a catalogue entry with `hidden` correctly leaves old
+  // share codes and stored configs meaning what they meant — but a preset is
+  // neither: it is a button the operator presses *now*, so it must not hand back
+  // something the client had pulled. All three presets named withdrawn circle
+  // ornaments from 2026-08-17 until 2026-08-18, i.e. the whole time the
+  // withdrawal was in effect, and nothing failed because nothing was invalid.
+  //
+  // Decoded rather than read off the spec: the share code is the thing the panel
+  // actually applies, so this tests the derivation as well as the choice.
+  for (const preset of PRESETS) {
+    const config = decodeShareCode(preset.shareCode);
+    must(config !== null, `preset ${preset.id}: share code ${preset.shareCode} does not decode`);
+    const ornament = config?.ornament;
+    const fx = config?.fx;
+    must(
+      PICKABLE_ORNAMENTS.some((o) => o.id === ornament),
+      `preset ${preset.id} offers withdrawn ornament "${ornament}"`,
+    );
+    must(PICKABLE_FX.some((f) => f.id === fx), `preset ${preset.id} offers withdrawn effect "${fx}"`);
+  }
+  return `${PRESETS.length} presets decode to pickable entries`;
 });
 
 check("every route has copy, and the 404's page count is true", () => {

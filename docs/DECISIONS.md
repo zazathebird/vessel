@@ -14,6 +14,143 @@ file records what happened to the codebase.
 ---
 
 
+## 2026-08-18 — the interaction audit: five state bugs, four dead rules, two gates
+
+Five defects in things that hold state between renders — focus stacks, timers, refs, a reveal
+toggle — plus a class of stylesheet rule that cannot match. None of them threw, none showed in a
+typecheck, and the suite was green throughout. That is the pattern this file keeps recording.
+
+- **One Escape closed two layers.** `Dialog` and `CommandPalette` both listen on `document` and
+  both call `stopPropagation()`, and each carried a comment claiming that call was what delivered
+  the "one Escape, one layer" guarantee. It is not: `stopPropagation` stops the event reaching
+  *other nodes* — the `window` listener in `useOperatorRoutes` — but not other listeners on the
+  same node. That is `stopImmediatePropagation`, and relying on it would make correctness depend
+  on listener registration order, which is render order. So a dialog opened over the palette, and
+  one press closed both. `useFocusTrap` now exports `isTopTrap`, the same stack gate `Tab` has
+  used since the traps were written, and both handlers consult it before acting. The
+  `stopPropagation` calls stay — they are still what shields the `window` half. **This needed no
+  browser to establish**: two `document` listeners and the DOM's own propagation rules settle it.
+- **The greeting could stack on top of an open modal.** Its 1.2s timer fired unconditionally, so a
+  visitor who reached the command palette or a confirmation dialog inside that window got the
+  greeting portalled over it — and, before the fix above, one Escape dismissed both. The greeting
+  is the worst dialog for that to happen to, because dismissing it *writes*: `vessel.greeted.v1`
+  permanently, and on the `calmBySystem` branch a motion preference the visitor never read the
+  question for. It now waits, re-checking every 1.5s. Waiting costs nothing — the greeting has no
+  deadline — and the guard that makes it ask **regardless** of the greeting flag is untouched, so
+  the 2026-08-16 stuck-in-calm fix still holds.
+- **The header's edge fade died whenever the nav was conditionally rendered.** `useEdgeFade` took a
+  `RefObject` and ran its effect once. Since the 2026-08-17 stand-down the header's `<nav>` is
+  absent on Radial for visitors — so on a Radial-published site the effect captured `null`, and
+  nothing re-ran it when the window narrowed to tablet and Radial collapsed to Cinematic: the nav
+  came back with no observers, no listeners, and the hard-sliced "GUE" symptom the hook exists to
+  prevent. It returns a **callback ref** now, which React invokes on every mount and unmount, so
+  the observers always hold the live node and detach from a dead one.
+
+  **Verified in a browser, and the first two attempts could not have detected it** — which is the
+  question `docs/AUDIT-BRIEF.md` says to ask. Framed at 760px the nav *fits* (`slack: 0`), so the
+  absent attribute that proves a dead hook is also the correct answer for a live one. Narrowing to
+  600px made it overflow (`slack: 45`) but the attribute stayed absent — post-mount updates route
+  through `requestAnimationFrame`, which is parked here (trap 3). The decisive test avoids rAF
+  altogether: the hook's `measure()` runs **synchronously** on attach, so mount the nav *late* at
+  a width where it already overflows. Framed at 1280 on Radial the `<nav>` is genuinely absent;
+  jumping straight to 600 mounts it and it comes up carrying `data-fade="end"` against
+  `slack: 45`. Ordinary path re-checked at tablet 600 (`slack: 45`) and phone 420 (`slack: 209`),
+  both `"end"`.
+- **A revealed password stayed revealed through submit.** `PasswordField`'s `hideSignal` existed
+  for exactly this and `SignIn.tsx` was the one page not passing it — the page where rejection is
+  routine, so the secret sat on screen in plaintext after a failed attempt on a form people fill
+  in public. All three password flows on that page (sign-in, change, set) now bump it.
+- **All three presets offered withdrawn ornaments.** Patch Bay named `orrery`, Cold Open
+  `aperture`, Standing Wave `lens` — the four circle ornaments the client pulled on 2026-08-17.
+  Nothing was invalid, which is why nothing failed: `hidden` means *unlisted*, not *broken*, so
+  stored configs and share codes correctly keep resolving to them. But a preset is neither of
+  those. It is a button pressed now, so it is a **menu**, and the `PICKABLE_*` rule applies:
+  Patch Bay and Cold Open take `sonar`, and Standing Wave takes `none`, because its note promises
+  a headline over data rather than an instrument. The share codes are derived, so nothing else
+  moved.
+
+### Four stylesheet rules that could never match
+
+`.band-*` and `.layout-*` are on the same element, and `CLAUDE.md`'s first CSS gotcha is the
+descendant-combinator version of that trap. This is its twin, and it fails more quietly still: the
+selector is written *correctly* and simply names a combination the app cannot produce. `band` and
+the adapted `layout` come out of one `useMemo` in one render, so they cannot disagree even
+mid-resize — if `adaptLayout(id, band) !== id`, that pair is never written to the wrapper.
+
+Dead: `.band-phone.layout-deck`, `.band-phone.layout-ledger`, `.band-tablet.layout-ledger` and
+`.band-phone.layout-sidescroll` (Deck, Ledger and Side-scroll all collapse to Stack on the phone;
+Ledger collapses to Cinematic on the tablet). Harmless as CSS — but two of them carried a comment
+claiming to "guard against a share code landing mid-resize", a state that is structurally
+impossible, so a reader trusting that guard was relying on nothing.
+
+**Three of the four were found by eye and the fourth by the gate**, which is the argument for the
+gate. `npm run check` now parses every stylesheet, strips comments (the surviving notes name the
+dead pairings in prose, and a gate that trips on its own documentation gets deleted), and refuses
+any `.band-X.layout-Y` where `adaptLayout` proves Y is not what X renders. It also rejects a band
+or layout name that is not in the catalogue, so a typo'd selector — the failure this whole class
+starts from — stops being silent.
+
+### The entrance layer was eating other people's animations
+
+A `/code-review high` over the branch found two defects in the *committed* entrance system
+(`fde744d`, same day) that the interaction pass above had walked straight past. Both are the same
+shape: `entrances.css` imports after `layouts.css`, and its base arrival rule is the `animation`
+**shorthand**, which resets every longhand it does not name.
+
+- **Deck's depth pass was switched off, in production defaults.** `.layout-deck .v-block` declares
+  `animation-name: v-rise, v-deck-depth` as longhands — the second is the view-timeline animation
+  that stands the card at the snap centre forward, the layout's signature. The base entrance rule
+  is `.has-entrances:not(.layout-console) .v-block`, and **`:not()` contributes its argument's
+  specificity**, so it lands at 0-3-0 against Deck's 0-2-0 and wins on specificity; import order
+  never entered into it. The shorthand then reset `animation-name`, `animation-timeline` and
+  `animation-range` together, leaving `v-ent` alone. `entrances` defaults to true and is published,
+  so this was every visitor. **It came back the moment you turned entrances off or enabled calm** —
+  which is exactly why it survived being looked at. Deck now re-lists both animations as longhands
+  at the entrance layer, inside the same `@supports` guard.
+- **The termbar's typewriter could not type.** `v-ent-type` is from-only with
+  `clip-path: inset(0 100% 0 0)`, and `.v-termbar-title` declared no `clip-path`, so the landing
+  value was the initial `none`. An `inset()` does not interpolate *to* `none` — it flips
+  **discretely at 50% progress** — so `steps(22, end)` quantised nothing: the title was fully
+  clipped, i.e. invisible, for the first half of its 0.85s and then popped in, on every navigation
+  in Terminal. The house from-only rule is correct for `translate`, `scale`, `rotate` and
+  `opacity`, whose initial values interpolate; `clip-path` is the exception, and the title now
+  declares `inset(0 0 0 0)` so both endpoints share a shape family.
+
+The stale comment beside the first one has been corrected rather than deleted: it claimed the
+longhands existed to protect `animation-delay` from the shorthand, which was true when written and
+stopped being true when the stagger moved to `--i`. It now names the real constraint — and says
+that longhands alone are *not* sufficient, because the entrance layer outranks them anyway.
+
+### Five gates, each verified by breaking it
+
+`no band pairs with a layout it never renders`, `no preset offers a withdrawn effect or ornament`,
+`the edge fade's truth table holds, dead band included`, `scroll-driven animations survive the
+entrance layer`, and `from-only keyframes land on an interpolable value`.
+
+The fourth pairs each `animation-name` with its `animation-timeline` **by index**, so
+`v-ent, v-deck-depth` against `auto, view(inline)` flags only the second — the first is the
+entrance and is *meant* to be replaced. The fifth encodes the one property in play whose initial
+value cannot be interpolated to; widen its `DISCRETE` list if another is ever animated.
+
+The second decodes each preset's share
+code rather than reading its spec, so it tests the derivation as well as the choice. The third
+closes a gap this file should have caught earlier: `edgeState` was made exported-and-pure with a
+doc saying that stepping it in Node "is the only way this logic gets checked rather than assumed",
+and then nothing stepped it — the pattern was adopted and the payoff never collected. Eight states,
+including both 1px dead bands, which is the part that decides whether the header shows a fade
+pointing at nothing.
+
+Each confirmed to fail on the exact bug it was written for — `.band-phone.layout-deck (phone
+renders stack)`, `preset patchbay offers withdrawn ornament "lens"`, `edgeState(99, 200, 100) =
+both, expected start`, `re-list them in entrances.css: v-deck-depth (layouts.css)`, and
+`v-ent-type animates clip-path from-only but .v-termbar-title declares no clip-path` — and to pass
+once reverted. **17 checks.**
+
+**What these three cannot reach:** the `useEdgeFade` attachment bug itself. A gate can pin the pure
+decision; whether the hook is *wired to a live node* needs a DOM, and this suite has none. That one
+was settled in a browser (above) and is recorded here as browser-verified rather than gated.
+
+
 ## 2026-08-17 (audit) — the uncommitted dial/sonar work reviewed, four majors found and fixed
 
 The full-site audit began by putting the previous session's uncommitted work (the Radial dial
