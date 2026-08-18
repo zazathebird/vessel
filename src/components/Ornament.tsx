@@ -49,10 +49,15 @@ export function Ornament({ layout }: { layout: LayoutId }) {
    * the one place all four converge, so the rule is enforced here as well.
    *
    * **The substitution is the default ornament, never `null`.** Emptying the
-   * slot looks like the tidier answer and quietly breaks something else: the
-   * five taps that reveal the footer's sign-in link live on this element, and
-   * on the phone band that is the only findable route to an account. A visitor
-   * would lose it for a reason they could not see and did not cause.
+   * slot looks like the tidier answer and is not: an empty hero slot is
+   * indistinguishable from a broken page, and on Radial the slot *is* the
+   * navigation (see below), so a visitor would lose the page's only way off it
+   * for a reason they could not see and did not cause.
+   *
+   * Until 2026-08-18 this also protected the five-tap sign-in reveal, which was
+   * the phone band's only findable route to an account. That route is gone and
+   * the footer's permanent link replaced it, so the reason above is now the
+   * whole reason — and it still holds on its own.
    *
    * The ornament yields rather than the background because a missing ornament
    * is already ordinary here — five layouts hide the slot outright — whereas a
@@ -63,9 +68,10 @@ export function Ornament({ layout }: { layout: LayoutId }) {
   const ornament = duelFx && duelOrnament ? DEFAULT_ORNAMENT : config.ornament;
 
   // The phone band renders the ornament too (mobile parity, client request
-  // 2026-08-13) — it is the findable sign-in affordance and the duels' home,
-  // and hiding it left phones with neither. The layouts with no room for the
-  // slot still hide it, on every band.
+  // 2026-08-13) — it is the duels' home, and hiding it left phones without it.
+  // It was also the phone's findable sign-in affordance until 2026-08-18; the
+  // footer link is that now, and mobile parity is reason enough on its own. The
+  // layouts with no room for the slot still hide it, on every band.
   if (HIDES_ORNAMENT.includes(layout)) {
     return null;
   }

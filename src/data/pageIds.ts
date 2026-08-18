@@ -80,15 +80,18 @@ export const OPERATOR_NAV: { id: PageId; label: string }[] = [
  * `NAV` only, so adding a pill there would change the operator door's cycling as
  * a side effect (SPEC-ACCOUNTS.md §680).
  *
- * **The account pages are deliberately unlinked.** `/signin` and `/signup` are
- * real, routable pages, but nothing on the site points at them while accounts
- * are still being built: there is nothing behind an account yet, so a visible
- * link would be an invitation to sign up for nothing. They are reached by the
- * hidden routes in `useAccountRoutes` — type `whoami` or `login`, or drag the
- * page leftward — or by typing the URL.
+ * **The account pages are no longer unlinked** (2026-08-18, client: *"I need a
+ * portal to the login page"*). They were, for as long as there was nothing
+ * behind an account and a visible link would have been an invitation to sign up
+ * for nothing.
  *
- * Restoring the link is one entry in this array and nothing else, which is the
- * point: hiding it is a product decision about timing, not an architectural one.
+ * **The link is not in this array, and that is deliberate.** `Footer.tsx`
+ * renders it separately because it is conditional on the session — `sign in`
+ * signed out, `account` and `admin` signed in — and `FOOTER_NAV` is a static
+ * list of public pages that every visitor gets. Folding a session-dependent
+ * entry into it would mean this array could no longer be read as "what the
+ * footer shows", which is the one thing it is for. The typed routes and the
+ * leftward drag in `useAccountRoutes` still work and are unchanged.
  */
 export const FOOTER_NAV: { id: PageId; label: string }[] = [
   { id: "now", label: "Now" },

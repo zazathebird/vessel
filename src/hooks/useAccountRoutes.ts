@@ -7,15 +7,16 @@ import { isEditable } from "./useOperatorRoutes";
 /**
  * The hidden ways to the account pages.
  *
- * The site has no *standing* link to `/signin` or `/signup`. That began as a
- * deliberate choice while accounts were being built — there was nothing behind
- * an account yet — and settled into the site's shape: the way in is findable,
- * not advertised. Since 2026-08-13 (client request) there is one discoverable
- * affordance: a permanent `sign in` link in the footer (`Footer.tsx`)
- * reveal a quiet sign-in link in the footer for the rest of the visit. The
- * typed routes and the drag below still work and are the tellable versions —
- * and the keyboard-reachable ones, which is what lets the ornament stay a
- * decorative element rather than a button.
+ * **The site does have a standing link now, and these are no longer the only
+ * way in** (2026-08-18, client: *"I need a portal to the login page"*). The
+ * footer carries a permanent `sign in` link — see `Footer.tsx` for why it had
+ * to, which is that the route it replaced had a dead end on the phone band.
+ *
+ * These routes are kept anyway and are not redundant: they are the *tellable*
+ * ones. "Type `whoami`" is a thing an operator can be told once and remember,
+ * and it works from any page without hunting for a link. What changed is that
+ * they stopped being load-bearing — nobody is locked out if none of them is
+ * found.
  *
  * **These are not the operator door, and they must never become it.** `SPEC.md`
  * §Security fixes the door as theatre guarding a settings panel, and
@@ -32,7 +33,7 @@ import { isEditable } from "./useOperatorRoutes";
  * | type `whoami`          | **sign-in**       |
  * | type `login`           | **sign-in**       |
  * | drag **left**          | **sign-in**       |
- * | five taps, ornament    | **footer link**   |
+ * | the footer `sign in`   | **sign-in**       |
  *
  * The mirrored drag is the pick of them: the door is a sideways pull one way
  * and the account is the same pull the other, which is the kind of symmetry
@@ -124,7 +125,8 @@ export function useAccountRoutes(): void {
       // A finger is not a mouse (2026-08-14 phone audit): a mostly-horizontal
       // swipe over non-scrollable page never gets a pointercancel, so an
       // ordinary reading gesture would yank the visitor to /signin. Phones
-      // have their own deliberate route in — five taps on the ornament.
+      // have the footer's permanent `sign in` link instead, which is what the
+      // five-tap ornament route named here used to be (deleted 2026-08-18).
       if (event.pointerType === "touch") return;
       if (window.getSelection()?.toString()) return;
       // Leftward, where the door is rightward. `useOperatorRoutes` owns the

@@ -628,10 +628,18 @@ All deliberate. Add to this list rather than silently diverging.
    - **`opposite` is not a side.** On the six row heroes it moves the slot left:0 → left:789; on
      Magazine and Marginalia, whose heroes are flex *columns*, it moves it top:68 → top:498. Hence
      the name — "Starboard" was the nicer word and false on two of the eight layouts.
-   - **`roam` never fades to zero and never sets `pointer-events`.** Five taps on this element
-     reveal the footer's sign-in link, and on the phone band that is the *only* findable route to an
-     account, so the target may dim to 0.12 but must never stop being a target. Its 14.4s cycle is
+   - **`roam` never fades to zero and never sets `pointer-events`.** The floor is 0.12, and the
+     reason is now the *look* rather than a route: the slot dims, moves while dim, and comes back,
+     so a visitor reads one object relocating between pings. At zero it reads as an element
+     disappearing and a different one appearing, which is a page that broke. Its 14.4s cycle is
      three revolutions of the sonar beam's 4.8s sweep — **retime the beam and this wants retiming.**
+
+     **The reason it was originally written down is gone, and the rule survives it** (2026-08-18):
+     five taps on this element used to reveal the footer's sign-in link, the phone band's only
+     findable route to an account, so the slot had to stay a *target*. That machinery is deleted and
+     the footer's link is permanent, and the station rules exclude Radial — whose dial is the one
+     interactive thing this slot ever holds. So `pointer-events` now has no consumer and is belt and
+     braces. Keep both halves: the opacity floor is load-bearing on its own.
    - **Calm strips the motion and keeps the placement.** `roam` is scoped `:not(.is-calm)` so calm's
      `animation: none` cannot be outranked; `opposite` deliberately survives calm, because calm
      strips animation, not layout, and is a second full aesthetic rather than a degraded one.
