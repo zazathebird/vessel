@@ -34,6 +34,8 @@ import { PALETTES } from "../src/data/palettes";
 import { DEFAULT_ORNAMENT, ORNAMENTS, PICKABLE_ORNAMENTS } from "../src/data/ornaments";
 import { decodeShareCode } from "../src/config/shareCode";
 import { adaptLayout } from "../src/config/bands";
+import { DEFAULT_STATION, PICKABLE_STATIONS, STATIONS } from "../src/data/stations";
+import { isAllowed } from "../src/data/guardrails";
 import { edgeState } from "../src/hooks/useEdgeFade";
 import type { Band } from "../src/config/bands";
 import { PRESETS } from "../src/data/presets";
@@ -694,6 +696,90 @@ check("no preset offers a withdrawn effect or ornament", () => {
     must(PICKABLE_FX.some((f) => f.id === fx), `preset ${preset.id} offers withdrawn effect "${fx}"`);
   }
   return `${PRESETS.length} presets decode to pickable entries`;
+});
+
+// ---- 5c. The ornament's station -------------------------------------------
+//
+// New dimension, 2026-08-18. Three separate things here fail silently, which is
+// why it gets three assertions rather than a count.
+
+check("stations: wire order, decode, and the roam guardrail bites", () => {
+  // (a) The wire ORDER, not the count — a reorder passes every length check and
+  // silently repoints every code in circulation. Same gate the ornaments have.
+  const WIRE = "hold,opposite,roam";
+  must(
+    STATIONS.map((s) => s.id).join(",") === WIRE,
+    `station wire order changed: ${STATIONS.map((s) => s.id).join(",")}`,
+  );
+  must(STATIONS[0].id === DEFAULT_STATION, "index 0 must be the default — it is what every legacy code lands on");
+
+  // (b) Absent means abstain, not reset. Five-, six- and seven-field codes must
+  // all decode, and a six-field code handed out yesterday must still mean what
+  // it meant rather than quietly acquiring a station.
+  const six = decodeShareCode("0-0-0-0-0-7");
+  must(six !== null && !("station" in six), "a six-field code should leave the station alone");
+  const seven = decodeShareCode("0-0-0-0-0-7-1");
+  must(seven?.station === "opposite", `seven-field code decoded station as ${seven?.station}`);
+  const far = decodeShareCode("0-0-0-0-0-7-Z");
+  must(
+    far?.station === DEFAULT_STATION,
+    `out-of-range station decoded to ${far?.station}, expected ${DEFAULT_STATION}`,
+  );
+  must(decodeShareCode("0-0-0-0-0-7-2-9") === null, "an eight-field code should be refused");
+
+  // (c) The guardrail must actually bite. `CLAUDE.md` deviation 1 records the
+  // ornament being rolled for months while absent from `Combination`, so no
+  // rule could constrain it *however it was written* — nothing failed to
+  // compile, and the one bad pairing shipped to ~3.6% of visits. A rule that
+  // silently never matches is the failure mode of this whole file, so assert
+  // the behaviour rather than the wiring.
+  const base = {
+    palette: PALETTES[0].id,
+    layout: "cinematic" as const,
+    fx: "vessels" as const,
+    type: TYPESETS[0].id,
+    grain: false,
+  };
+  must(
+    !isAllowed({ ...base, ornament: "duel", station: "roam" }),
+    "roam + a duel ornament must be refused — a fading duel is a duel you cannot follow",
+  );
+  must(
+    !isAllowed({ ...base, ornament: "duelholy", station: "roam" }),
+    "roam + the second duel must be refused too",
+  );
+  must(
+    isAllowed({ ...base, ornament: "sonar", station: "roam" }),
+    "roam + sonar is the pairing this was built for and must be allowed",
+  );
+  must(
+    isAllowed({ ...base, ornament: "duel", station: "hold" }),
+    "a held duel must stay allowed — the rule is about roaming, not about duels",
+  );
+  return `${STATIONS.length} stations, order pinned, 5/6/7-field codes, guardrail bites`;
+});
+
+check("every station has a rule, and none of them touches Radial", () => {
+  // Radial's slot holds the dial, which since the header's nav row stood down
+  // is the page's ONLY primary navigation. A station moving or fading it would
+  // be a *look* relocating the navigation — the same class of error as calm
+  // dimming the dial to 50%, which shipped and had to be excepted by hand.
+  const css = readFileSync("src/styles/chrome.css", "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const missing = PICKABLE_STATIONS.filter((s) => s.id !== DEFAULT_STATION).map((s) => s.id).filter(
+    (id) => !css.includes(`.station-${id} .v-ornament`),
+  );
+  must(missing.length === 0, `no chrome.css rule for station(s): ${missing.join(", ")}`);
+
+  const unguarded: string[] = [];
+  for (const m of css.matchAll(/([^{}]*\.station-[\w-]+[^{}]*)\{/g)) {
+    const selector = m[1].trim();
+    if (!selector.includes(":not(.layout-radial)")) unguarded.push(selector);
+  }
+  must(
+    unguarded.length === 0,
+    `station rule(s) not excluded from Radial, where the slot is the only nav: ${unguarded.join(" / ")}`,
+  );
+  return `${PICKABLE_STATIONS.length - 1} station rules, all excluding Radial`;
 });
 
 check("every route has copy, and the 404's page count is true", () => {
