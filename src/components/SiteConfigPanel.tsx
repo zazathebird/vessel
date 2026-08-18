@@ -10,6 +10,7 @@ import { decodeShareCode, encodeShareCode } from "../config/shareCode";
 import { LAYOUTS, MODES, PICKABLE_FX, SCOPES, TYPESETS } from "../data/catalog";
 import type { ScopeId } from "../data/catalog";
 import { PICKABLE_ORNAMENTS } from "../data/ornaments";
+import { PICKABLE_STATIONS } from "../data/stations";
 import { PALETTES } from "../data/palettes";
 import { PRESETS } from "../data/presets";
 import { useFocusTrap } from "../hooks/useFocusTrap";
@@ -283,6 +284,34 @@ export function SiteConfigPanel() {
               }}
             >
               {ornament.label}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      {/*
+        Station sits directly under Ornament because it is a property *of* the
+        ornament — where it holds — rather than a peer of it, and the roll ties
+        the two to one scope for the same reason. Each chip carries its note as
+        a title: "Roam" alone does not say what it will do, and this is the one
+        section whose options are behaviours rather than appearances.
+      */}
+      <section className="v-panel-section">
+        <h2 className="v-panel-label">Station — {PICKABLE_STATIONS.length}</h2>
+        <div className="v-chip-row">
+          {PICKABLE_STATIONS.map((station) => (
+            <button
+              key={station.id}
+              type="button"
+              className={`chip${config.station === station.id ? " is-active" : ""}`}
+              aria-pressed={config.station === station.id}
+              title={station.note}
+              onClick={() => {
+                update({ station: station.id });
+                say(station.label);
+              }}
+            >
+              {station.label}
             </button>
           ))}
         </div>

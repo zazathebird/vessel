@@ -1,17 +1,27 @@
 import { FX, LAYOUTS, TYPESETS } from "../data/catalog";
 import { DEFAULT_ORNAMENT, ORNAMENTS } from "../data/ornaments";
+import { DEFAULT_STATION, STATIONS } from "../data/stations";
 import { PALETTES } from "../data/palettes";
 import type { Config } from "./types";
 
 /**
  * Share codes: base-36 fields joined by hyphens, uppercased.
- * palette · layout · effect · type · toggle bitfield · ornament.
+ * palette · layout · effect · type · toggle bitfield · ornament · station.
  * Bitfield: 1 grain, 2 breathing, 4 cursor glow, 8 calm, 16 sound, 32 slot labels.
  * e.g. "A-3-1-0-7-1".
  *
  * The ornament was added after codes were already in circulation, so it goes
  * last and is optional on the way in: a five-field code still decodes, and
  * leaves the ornament alone rather than silently resetting it.
+ *
+ * **The station (2026-08-18) took a seventh field, not a bit.** The bitfield is
+ * where a new *boolean* goes while bits remain, and 128 is free — but a station
+ * is one of four values, not a flag, and packing an enum into bits is how a
+ * catalogue gains a fifth entry and silently overflows into its neighbour. It
+ * follows the ornament's precedent exactly: appended last, optional on the way
+ * in, and **absent means abstain rather than reset** — so all three of the
+ * five-, six- and seven-field forms decode, and a six-field code handed out
+ * yesterday still means what it meant.
  *
  * **Sound took the free bit rather than a seventh field** (2026-08-14). The
  * bitfield had 1, 2, 4 and 8 in use and 16 spare, and a bit costs nothing that
@@ -62,7 +72,8 @@ export function encodeShareCode(config: Config): string {
     (config.slots ? SLOTS : 0) +
     (config.entrances ? 0 : ENTRANCES_OFF);
   const ornament = ORNAMENTS.findIndex((o) => o.id === config.ornament);
-  return [config.pal, layout, fx, config.type, bits, ornament]
+  const station = STATIONS.findIndex((s) => s.id === config.station);
+  return [config.pal, layout, fx, config.type, bits, ornament, station]
     .map((n) => Math.max(0, n).toString(36))
     .join("-")
     .toUpperCase();
@@ -84,12 +95,12 @@ export type SharedConfig = Pick<
   | "entrances"
   | "mode"
 > &
-  Partial<Pick<Config, "ornament">>;
+  Partial<Pick<Config, "ornament" | "station">>;
 
 /** Returns null for anything malformed — the caller toasts "that isn't a setup code". */
 export function decodeShareCode(input: string): SharedConfig | null {
   const parts = String(input ?? "").toLowerCase().trim().split("-");
-  if (parts.length !== 5 && parts.length !== 6) return null;
+  if (parts.length < 5 || parts.length > 7) return null;
 
   const numbers = parts.map((part) => {
     // parseInt would accept "3junk" as 3; a share code field is base-36 digits only.
@@ -98,8 +109,15 @@ export function decodeShareCode(input: string): SharedConfig | null {
   });
   if (numbers.some((n) => Number.isNaN(n))) return null;
 
-  const [pal, layout, fx, type, bits, ornament] = numbers;
+  const [pal, layout, fx, type, bits, ornament, station] = numbers;
   return {
+    // Same abstain-don't-reset rule as the ornament below, and the same
+    // out-of-range treatment: a field past the end resolves to DEFAULT_STATION
+    // rather than to index 0. They happen to be the same entry today (`hold` is
+    // both), which is exactly why this is written out — the ornament list was
+    // in that position too until its default moved and index 0 became hidden,
+    // and the fallback was then wrong for a day.
+    ...(station === undefined ? {} : { station: STATIONS[station]?.id ?? DEFAULT_STATION }),
     // Out of range falls back to DEFAULT_ORNAMENT, not to index 0: the head of
     // the list is Lens, which is withdrawn (hidden) — handing it out for a
     // malformed field would resurrect the exact ornament the client pulled.

@@ -221,6 +221,23 @@ export function themeClasses(config: Config, layout: LayoutId, band: Band): stri
     // Gated here, not in CSS: entrances.css can then assume calm is absent,
     // and the off state falls back to chrome.css's plain v-rise untouched.
     config.entrances && !config.calm ? "has-entrances" : null,
+    /*
+     * Where the hero ornament holds (2026-08-18).
+     *
+     * **Emitted on Radial too, and the CSS is what stands down there** — unlike
+     * the calm gates above, which are resolved here. Radial's slot is not an
+     * ornament on that layout, it is the dial, and the dial is the page's only
+     * primary navigation since the header's row stood down. Moving or fading
+     * the site's navigation is not a thing a *look* is allowed to do, so the
+     * exclusion belongs next to the rules it excludes, where the next person
+     * editing them will see it. Suppressing the class here instead would leave
+     * `.station-roam` looking universally applicable in the stylesheet.
+     *
+     * `hold` still emits a class rather than nothing: a station is a real
+     * position, so the default deserves a selector to hang off rather than
+     * being "the absence of the others".
+     */
+    `station-${config.station}`,
   ]
     .filter(Boolean)
     .join(" ");

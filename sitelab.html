@@ -46,6 +46,7 @@
 
       layout  a LayoutId          fx       an FxId           pal   0..24
       type    0..4                ornament an OrnamentId     calm  0|1
+      station hold|opposite|roam                           entrances 0|1
       grain/breathe/cursor/sound/slots  0|1
       path    the route to render, e.g. /contact  (uses the History API, so the
               app's own router sees it exactly as it would a real URL)
@@ -103,9 +104,9 @@
         if (window.__LAB_HARNESS__) return;
 
         var cfg = {};
-        var str = ["layout", "fx", "ornament", "mode"];
+        var str = ["layout", "fx", "ornament", "station", "mode"];
         var num = ["pal", "type"];
-        var bool = ["calm", "grain", "breathe", "cursor", "sound", "slots"];
+        var bool = ["calm", "grain", "breathe", "cursor", "sound", "slots", "entrances"];
         str.forEach(function (k) { if (q.has(k)) cfg[k] = q.get(k); });
         num.forEach(function (k) { if (q.has(k)) cfg[k] = Number(q.get(k)); });
         bool.forEach(function (k) { if (q.has(k)) cfg[k] = q.get(k) === "1"; });

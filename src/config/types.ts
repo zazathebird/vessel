@@ -2,6 +2,8 @@ import type { FxId, LayoutId, ModeId, ScopeId } from "../data/catalog";
 import type { OrnamentId } from "../data/ornaments";
 import { DEFAULT_ORNAMENT } from "../data/ornaments";
 import type { PageId } from "../data/pageIds";
+import type { StationId } from "../data/stations";
+import { DEFAULT_STATION } from "../data/stations";
 
 export type Scopes = Record<ScopeId, boolean>;
 
@@ -68,6 +70,18 @@ export interface Config {
    */
   entrances: boolean;
   /**
+   * Where the hero ornament holds, and whether it stays there (2026-08-18,
+   * client request). See `src/data/stations.ts` for the catalogue and the
+   * reasoning; `hold` is the default and is exactly the behaviour the slot has
+   * always had, so this field changes nothing until somebody sets it.
+   *
+   * Appearance, so published-only and rollable, like the layout and the
+   * ornament itself. It is **not** a seventh thing a visitor can set: the only
+   * two of those are calm and sound, and the test for a third is "can a visitor
+   * set it at all", which this fails by design.
+   */
+  station: StationId;
+  /**
    * Has the operator door been opened in this session. Not persisted and not
    * published, so it is false again after every reload — `loadConfig` reads the
    * published config only, and `unlocked` is not one of its keys. Nothing is
@@ -92,6 +106,7 @@ export const DEFAULT_CONFIG: Config = {
   sound: false, // a site that makes noise uninvited is a site people leave
   slots: false, // production notes are for the operator, not the visitor
   entrances: true, // each layout announces its own structure on arrival
+  station: DEFAULT_STATION, // centred, with the float the slot has always had
 
   unlocked: false,
 };

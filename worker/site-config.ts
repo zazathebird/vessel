@@ -45,6 +45,11 @@ const PUBLISHED_KEYS = [
   "sound",
   // Layout entrances (2026-08-18) — same kept-in-step rule as `sound` above.
   "entrances",
+  // Where the hero ornament holds (2026-08-18) — same kept-in-step rule. This
+  // one is an enum rather than a flag, so a drop here does not degrade to a
+  // sensible default the way a missing boolean does: the operator publishes
+  // "Roam" and every visitor gets "Hold" with nothing to indicate why.
+  "station",
 ] as const;
 
 /**

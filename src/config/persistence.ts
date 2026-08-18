@@ -1,6 +1,7 @@
 import { PALETTES } from "../data/palettes";
 import { FX, LAYOUTS, MODES, TYPESETS } from "../data/catalog";
 import { ORNAMENTS } from "../data/ornaments";
+import { STATIONS } from "../data/stations";
 import { PATHS } from "../data/pageIds";
 import type { PageId } from "../data/pageIds";
 import { DEFAULT_CONFIG } from "./types";
@@ -94,6 +95,7 @@ export function loadConfig(): Config {
     layout: oneOf(saved.layout, LAYOUTS.map((l) => l.id), DEFAULT_CONFIG.layout),
     fx: oneOf(saved.fx, FX.map((f) => f.id), DEFAULT_CONFIG.fx),
     ornament: oneOf(saved.ornament, ORNAMENTS.map((o) => o.id), DEFAULT_CONFIG.ornament),
+    station: oneOf(saved.station, STATIONS.map((s) => s.id), DEFAULT_CONFIG.station),
     type: index(saved.type, TYPESETS.length, DEFAULT_CONFIG.type),
     mode: oneOf(saved.mode, MODES.map((m) => m.id), DEFAULT_CONFIG.mode),
     scope,

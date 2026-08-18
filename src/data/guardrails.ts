@@ -13,6 +13,8 @@
 
 import type { FxId, LayoutId, TypeSetId } from "./catalog";
 import type { OrnamentId } from "./ornaments";
+import type { StationId } from "./stations";
+import { ROAM_EXCLUDES } from "./stations";
 import type { PaletteId } from "./palettes";
 
 export interface Guardrail {
@@ -36,6 +38,8 @@ export interface Guardrail {
    * one combination that genuinely does not work shipped.
    */
   ornament?: OrnamentId[];
+  /** Rule matches when the ornament's station is one of these. */
+  station?: StationId[];
 }
 
 export const GUARDRAILS: Guardrail[] = [
@@ -109,6 +113,18 @@ export const GUARDRAILS: Guardrail[] = [
    * Cross-pairings count: `duel` behind `duelholy` is still two fights.
    */
   { fx: ["duel", "duelholy"], ornament: ["duel", "duelholy"] },
+  /*
+   * A roaming duel is a duel you cannot follow (2026-08-18).
+   *
+   * `roam` fades the slot to 12% and re-acquires it at another bearing every
+   * few seconds. Every other ornament is an ambient instrument and loses
+   * nothing to that. A duel is the one with a *subject* — a match that resolves,
+   * and one that took three sessions of frame-by-frame measurement to make
+   * readable at all (`docs/DUEL.md`) — so interrupting it twice a revolution
+   * throws that away. Expressed as a rule rather than left to whoever picks,
+   * because the dice pick too.
+   */
+  { ornament: ROAM_EXCLUDES, station: ["roam"] },
 ];
 
 export interface Combination {
@@ -126,6 +142,8 @@ export interface Combination {
    * rather than a rule that silently never matches.
    */
   ornament: OrnamentId;
+  /** Required for the same reason `ornament` is — see above. */
+  station: StationId;
 }
 
 /** True when every clause the rule specifies matches the combination. */
@@ -136,6 +154,7 @@ function ruleMatches(rule: Guardrail, c: Combination): boolean {
   if (rule.type !== undefined && !rule.type.includes(c.type)) return false;
   if (rule.pal !== undefined && !rule.pal.includes(c.palette)) return false;
   if (rule.ornament !== undefined && !rule.ornament.includes(c.ornament)) return false;
+  if (rule.station !== undefined && !rule.station.includes(c.station)) return false;
   return true;
 }
 

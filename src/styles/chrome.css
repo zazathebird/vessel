@@ -982,6 +982,137 @@
   width: 180px;
 }
 
+/* Stations — where the ornament holds, and whether it stays there ------------
+ *
+ * Client, 2026-08-18: the ornament may "change location on the page… right
+ * side, left, middle, moving, bouncing, disappearing and reappearing.
+ * submarine sonar ping style". `src/data/stations.ts` has the catalogue and why
+ * it is framed as station keeping rather than as a bag of animations.
+ *
+ * Four rules govern everything below, each of them a scar in this file already:
+ *
+ * 1. **`:not(.layout-radial)` on every one of them.** The slot holds the dial
+ *    there, and since the header's nav row stood down the dial is the page's
+ *    only primary navigation. A *look* may not move or fade the navigation.
+ * 2. **Placement uses `order`, never a translate and never an auto margin.**
+ *    `.v-stage` scrolls vertically, so its `overflow-x` computes to `auto` and
+ *    anything hanging off the side gives the whole stage a horizontal scrollbar
+ *    — the hero's stage wash did exactly that for a measured 91px. `order`
+ *    cannot overflow, because the flex row simply re-lays out around it.
+ *
+ *    **Auto margins were tried first and are a no-op here** (measured
+ *    2026-08-18, before it shipped): `margin-inline: auto 0` can only consume
+ *    *free* space, and `.v-hero-text` grows to take all of it, so the ornament
+ *    measured identically at left:0 / right:789 under `hold`, `port` *and*
+ *    `starboard` on Cinematic at 1280. It looked correct in the stylesheet and
+ *    did nothing on the page — which is the failure this project's checks exist
+ *    to make loud, so the gate below asserts a *measured* offset rather than
+ *    the presence of a declaration.
+ *
+ *    **`order: 1` means "the far end of the hero", which is not always a
+ *    side.** Measured at 1280: on the six row heroes it carries the slot from
+ *    left:0 to left:789; on Magazine and Marginalia, whose heroes are flex
+ *    *columns*, it carries it from top:68 to top:498. That is why this station
+ *    is called "Opposite" and not "Starboard" — a nautical name would have been
+ *    the nicer word and false on two of the eight layouts that show the slot.
+ *
+ *    A `port` station was built alongside it and **deleted before it shipped**:
+ *    the ornament is the first child on every one of those layouts, so
+ *    `order: -1` measured identically to `hold` everywhere. A control that does
+ *    nothing on every layout is worse than no control.
+ * 3. **`roam` animates `translate`, not `transform`.** The slot's 9s `v-drift`
+ *    float animates `transform`, and the two compose independently only
+ *    because they are different properties — the rule interaction.css states
+ *    and the toast spent the site's whole life violating.
+ * 4. **Calm wins, so the animated station is scoped `:not(.is-calm)`.** Calm's
+ *    `animation: none` sits at 0-2-0 and these rules are higher, so without the
+ *    exclusion a station would keep animating in the mode every
+ *    prefers-reduced-motion visitor lands in. Placement is *not* motion, so
+ *    port and starboard deliberately survive calm — calm strips animation, not
+ *    layout, and it is a second full aesthetic rather than a degraded one.
+ */
+
+:not(.layout-radial).station-opposite .v-ornament {
+  order: 1;
+}
+
+/*
+ * Roam: fade out, re-acquire at a new bearing, fade back.
+ *
+ * 14.4s is three revolutions of the sonar beam's 4.8s sweep (see the sonar
+ * arithmetic further down this file) — so when the sonar is in the slot, the
+ * ornament is re-acquired exactly as the beam comes round, which is the whole
+ * conceit. It is a plain multiple rather than a shared variable because the
+ * beam's timing is written out in three places already and a fourth indirection
+ * would hide the relationship rather than express it. **Retime the beam and
+ * this wants retiming with it.**
+ *
+ * The floor is 0.12, never 0. Five taps on this element are what reveal the
+ * footer's sign-in link, and on the phone band that is the *only* findable
+ * route to an account — so the target may dim but must never stop being a
+ * target. Nothing here sets `pointer-events` for the same reason.
+ *
+ * Each move happens inside its own fade: position is held flat while visible,
+ * and both position and opacity change together across a 6% window (~0.9s) in
+ * which the slot is at 12%. Interpolating the translate *during* the dip is
+ * what makes it read as re-acquisition rather than as sliding.
+ */
+:not(.is-calm):not(.layout-radial).station-roam .v-ornament {
+  --throw: min(9vw, 84px);
+  /* Re-lists `v-drift` deliberately: this is the `animation` shorthand, which
+     resets every longhand it does not name — the exact way the entrance layer
+     silently switched off Deck's depth pass earlier today. */
+  animation:
+    v-drift 9s ease-in-out infinite,
+    v-roam 14.4s ease-in-out infinite;
+}
+
+@keyframes v-roam {
+  0%,
+  28% {
+    translate: 0 0;
+    opacity: 1;
+  }
+  30% {
+    translate: 0 0;
+    opacity: 0.12;
+  }
+  32% {
+    translate: calc(var(--throw) * -1) 0;
+    opacity: 0.12;
+  }
+  34%,
+  61% {
+    translate: calc(var(--throw) * -1) 0;
+    opacity: 1;
+  }
+  63% {
+    translate: calc(var(--throw) * -1) 0;
+    opacity: 0.12;
+  }
+  65% {
+    translate: var(--throw) 0;
+    opacity: 0.12;
+  }
+  67%,
+  94% {
+    translate: var(--throw) 0;
+    opacity: 1;
+  }
+  96% {
+    translate: var(--throw) 0;
+    opacity: 0.12;
+  }
+  98% {
+    translate: 0 0;
+    opacity: 0.12;
+  }
+  100% {
+    translate: 0 0;
+    opacity: 1;
+  }
+}
+
 /* The duel ornament's canvas fills the square slot; internal resolution is
    fixed (700×700, like FxCanvas's 1600×1000) and CSS stretches it. */
 .v-duelfight {

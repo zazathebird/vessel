@@ -1,5 +1,6 @@
 import { LAYOUTS, ROLLABLE_FX, TYPESETS } from "../data/catalog";
 import { ROLLABLE_ORNAMENTS } from "../data/ornaments";
+import { ROLLABLE_STATIONS } from "../data/stations";
 import { PALETTES } from "../data/palettes";
 import { isAllowed } from "../data/guardrails";
 import type { Config } from "./types";
@@ -7,7 +8,7 @@ import type { Config } from "./types";
 /** What a roll may change. Anything outside this set keeps its current value. */
 export type RollResult = Pick<
   Config,
-  "pal" | "layout" | "fx" | "ornament" | "type" | "grain" | "breathe" | "cursor"
+  "pal" | "layout" | "fx" | "ornament" | "station" | "type" | "grain" | "breathe" | "cursor"
 >;
 
 const MAX_ATTEMPTS = 60;
@@ -40,6 +41,12 @@ export function roll(config: Config): RollResult | null {
       // distinguishable from the site being broken.
       fx: scope.fx ? pick(ROLLABLE_FX).id : config.fx,
       ornament: scope.ornament ? pick(ROLLABLE_ORNAMENTS).id : config.ornament,
+      // Rides the ornament scope rather than gaining a seventh: a station is
+      // *where the ornament is*, so an operator who has pinned the ornament
+      // has pinned where it sits too. A scope of its own would let the dice
+      // move a deliberately-chosen ornament around the hero, which is not
+      // what unticking "ornament" asks for.
+      station: scope.ornament ? pick(ROLLABLE_STATIONS).id : config.station,
       type: scope.type ? pickIndex(TYPESETS.length) : config.type,
       grain: scope.toggles ? Math.random() > 0.35 : config.grain,
       breathe: scope.toggles ? Math.random() > 0.2 : config.breathe,
@@ -55,6 +62,7 @@ export function roll(config: Config): RollResult | null {
       // expressed as a rule until now. Every field of `RollResult` that a
       // guardrail could ever care about belongs in this object.
       ornament: candidate.ornament,
+      station: candidate.station,
       type: TYPESETS[candidate.type].id,
       grain: candidate.grain,
     });
