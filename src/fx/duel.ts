@@ -70,7 +70,13 @@ const BODY_W = 30;
 const BODY_H = 70;
 /** The feet line, exported so callers can pin it to a screen height. */
 export const FEET_Y = FLOOR_Y + BODY_H;
-const GRAVITY = 0.6;
+/**
+ * Exported because the somersault's tumble is timed from it: a projectile is in
+ * the air for `2·vy/g` frames, so the rotation window is derived rather than
+ * typed, and `scripts/check.ts` re-derives it to prove the figure is upright on
+ * the frame its feet arrive.
+ */
+export const GRAVITY = 0.6;
 const DECAY = 0.9;
 /*
  * Starting positions, and the band thresholds below, were retuned once the
@@ -214,6 +220,17 @@ interface Fighter {
    * `resolveContact`.
    */
   bounce: number;
+  /**
+   * How far a thrown blade flies before it turns round, in world units, fixed
+   * on the frame it leaves the hand.
+   *
+   * The same idea as `Move.span`, and there for the same reason: a fixed
+   * distance cannot cross a variable gap. A throw that always flew 170 units
+   * would sail past a close opponent and fall short of a distant one — and
+   * unlike a leap there is no body following it, so the error would not even
+   * read as effort.
+   */
+  throwReach: number;
 }
 
 interface Spark {
@@ -283,6 +300,7 @@ function makeFighter(x: number, facing: 1 | -1, style: FighterStyle): Fighter {
     land: 0,
     trail: [],
     bounce: 0,
+    throwReach: 0,
   };
 }
 
@@ -361,8 +379,72 @@ function bladeLocal(f: Fighter, flick: number): {
   };
 }
 
-/** The same geometry in world units, for the trail and for spark origins. */
+/** The frames of `blade_throw` the blade spends out of its owner's hand. */
+const THROW_OUT = 10;
+const THROW_BACK = 50;
+/** Revolutions the blade turns over the flight. */
+const THROW_SPIN = 3;
+
+/**
+ * Where a thrown blade is, in world units, or null if this fighter is holding
+ * theirs — which is every fighter on all but a few hundred frames in ten
+ * thousand.
+ *
+ * The flight is a sine out and back, so the blade decelerates into the turn and
+ * accelerates home without a single frame of it being scripted.
+ *
+ * **The sine reaching exactly zero at both ends is load-bearing, not tidiness.**
+ * `bladeWorld` switches between the held blade and this one on the frames the
+ * flight opens and closes, and the smear is built from the last six *world*
+ * positions — so a flight that began or ended anywhere but at the hand would
+ * drag a smear quad clean across the arena for six frames on the hand-off. A
+ * linear out-and-back would do it at both ends. Keep the envelope zero-valued at
+ * `q = 0` and `q = 1`.
+ *
+ * It is also **centred on the blade's middle rather than swung from a grip**: a
+ * thrown sword turns about its own balance point, and pivoting it about an end
+ * is the difference between a thrown blade and a blade being waved by an
+ * invisible arm.
+ *
+ * `f.throwReach` was fixed to the real gap when it left, so the turn happens at
+ * the opponent rather than at a constant the author guessed.
+ */
+function thrownBlade(f: Fighter): { hx: number; hy: number; tx: number; ty: number } | null {
+  if (f.move !== "blade_throw" || f.action === "dead") return null;
+  if (f.mf < THROW_OUT || f.mf > THROW_BACK) return null;
+  const q = (f.mf - THROW_OUT) / (THROW_BACK - THROW_OUT);
+  const reach = Math.sin(q * Math.PI) * f.throwReach;
+  const spin = q * TAU * THROW_SPIN;
+  // Chest height, rising a little at the far end of the flight so the arc has
+  // somewhere to be other than a straight horizontal line.
+  const cx = centre(f) + f.facing * (26 + reach);
+  const cy = f.y + 22 - Math.sin(q * Math.PI) * 9;
+  /*
+   * **Mirrored by `facing`, like every other piece of geometry here.** The
+   * flight offset above is mirrored and this was not, which had two costs: a
+   * left-facing thrower's sword tumbled the opposite way relative to its own
+   * travel — against the `scale(facing, 1)` the whole renderer is built on — and
+   * `tx`/`ty` came back as the *trailing* end, so the smear's `TRAIL_INNER` cut
+   * kept the wrong half of the blade for one of the two fighters.
+   */
+  const dx = f.facing * Math.cos(spin) * (BLADE_LEN / 2);
+  const dy = Math.sin(spin) * (BLADE_LEN / 2);
+  return { hx: cx - dx, hy: cy - dy, tx: cx + dx, ty: cy + dy };
+}
+
+/**
+ * The same geometry in world units, for the trail and for spark origins — or
+ * the thrown blade's, while it is in the air.
+ *
+ * Routing the throw through here rather than special-casing it at each site is
+ * what makes the move cost so little: the smear samples this, the blade-on-blade
+ * clash test measures this, and `resolveContact` places its burst at this. A
+ * thrown blade therefore trails, throws sparks off the opponent's guard and
+ * lands its blow with no code that knows a throw exists.
+ */
 function bladeWorld(f: Fighter): { hx: number; hy: number; tx: number; ty: number } {
+  const thrown = thrownBlade(f);
+  if (thrown) return thrown;
   const l = bladeLocal(f, 1);
   const cx = centre(f);
   return {
@@ -536,6 +618,10 @@ type MoveId =
   | "kick"
   | "leap_strike"
   | "spin_attack"
+  | "strike_level"
+  | "blade_throw"
+  | "duck"
+  | "overrun"
   | "parry_high"
   | "parry_cross"
   | "parry_low"
@@ -597,6 +683,40 @@ interface Move {
    * short.
    */
   knock?: number;
+  /**
+   * The frame the anticipation ends and the blade starts travelling — the entry
+   * point a `quick` beat starts the move on.
+   *
+   * A riposte is the same strike with its wind-up removed, not a different
+   * strike: the blade is already up, because it has just parried, and
+   * travelling back to a high guard before answering is exactly what makes a
+   * counter read as slow. Only the moves a sequence actually ripostes with need
+   * one.
+   *
+   * **It is a beat's property, never a runtime test.** "Enter quick if a parry
+   * ended within eight frames" is a condition, and a condition here would move
+   * the contact frame — so the reaction beats authored against it would be right
+   * on some runs and early on others, which is the one thing the director
+   * refuses to do. The sequence author places the beat inside a parry and marks
+   * it `quick`; the timing is then as fixed as every other beat's.
+   */
+  windup?: number;
+  /**
+   * This move passes *through* the opponent, so two things stand down for its
+   * duration: the body separation, and squaring up to face them.
+   *
+   * The facing half was a shipped defect rather than a new requirement.
+   * `stepFighter` re-derives `facing` from the two centres every frame, and a
+   * fighter somersaulting over its opponent crosses that line in mid-air — so
+   * the entire figure mirrored on a single frame near the top of the arc, on
+   * **172 somersaults out of the ~169 flown in 300,000 frames**, i.e. every one
+   * of them. It went unnoticed only because the figure had no rotation to
+   * contradict: a symmetrical stick figure mirrored about its own centre looks
+   * much like itself. Adding the tumble turned it into a visible flicker.
+   * Frozen, the turn happens where a turn belongs — on the landing frame, when
+   * the move ends and the next frame squares up again.
+   */
+  pass?: boolean;
 }
 
 /** Named blade angles. 0 is level and forward; negative is up. */
@@ -692,6 +812,16 @@ const MOVES: Record<MoveId, Move> = {
     contact: 16,
     power: 1,
     chan: "attacking",
+    /*
+     * **Deliberately no `windup`, and that is a finding rather than an
+     * omission.** This move loads by dropping the blade *down* to +1.2 and then
+     * sweeps up through it, so entering at the end of that load hands the spring
+     * a target 1.3 rad below a level parry: measured over 800,000 frames, all
+     * **207 of 207** quick ripostes tried here dipped before they rose, median
+     * peak dip 0.31 rad. That is a wind-up — a downward one — on the one move
+     * whose whole purpose is not to have one. A riposte wants a strike whose
+     * load sits near the parry's own angle; see `thrust`.
+     */
   },
   // A thrust reads through the *body*, not the blade — the blade barely
   // rotates, so there is almost no smear. It is the essential contrast against
@@ -709,6 +839,18 @@ const MOVES: Record<MoveId, Move> = {
     power: 1.05,
     chan: "attacking",
     impulse: { at: 12, vx: 2.4 },
+    /*
+     * 0.36 × 28: the point the arm stops loading and starts extending — and the
+     * reason this is the pool's riposte rather than the rising cut.
+     *
+     * A thrust loads at −0.35 and `parry_high` holds at −0.1, so entering here
+     * moves the blade about a fifth of a radian *up* and then straight out. The
+     * counter leaves from where the parry left it, which is what "the wind-up
+     * already happened, it was the parry" is supposed to mean. Its impulse at
+     * mf 12 also lands two frames into a quick entry, so the riposte carries a
+     * small lunge — free, and exactly right.
+     */
+    windup: 10,
   },
   kick: {
     frames: 20,
@@ -759,6 +901,143 @@ const MOVES: Record<MoveId, Move> = {
     contact: 32,
     power: 1.25,
     chan: "attacking",
+  },
+  /*
+   * The one strike that travels *across* rather than down, and the only one a
+   * duck can answer.
+   *
+   * Every other attack in the table is an arc that finishes in the floor, and
+   * you cannot duck under a descending blade — crouching puts your head where
+   * it is going. So `duck` needed something to duck under before it was worth
+   * building. The blade snaps up, then comes down to within a few degrees of
+   * level and **holds there** for seven frames while the body carries it
+   * forward, which is the window the crouch has to be inside.
+   *
+   * The hold is what makes it readable at 60px: a blade that passes through
+   * level on its way somewhere else is one frame of horizontal, and one frame
+   * is not an image.
+   */
+  strike_level: {
+    frames: 34,
+    blade: [
+      [0, GUARD_MID, "out"],
+      [0.26, -1.9, "out"],
+      [0.38, -1.9, "hold"],
+      [0.5, -0.12, "in"],
+      [0.72, -0.12, "hold"],
+      [1, GUARD_MID, "out"],
+    ],
+    // 0.5 × 34: the frame the blade arrives level, not a frame inside the
+    // travel. See `spin_attack` for what firing early costs.
+    contact: 17,
+    power: 1.1,
+    chan: "attacking",
+    impulse: { at: 15, vx: 2 },
+  },
+  /*
+   * The blade leaves the hand.
+   *
+   * The silhouette losing its brightest element is the largest single read
+   * available here and nothing else in the set does it — every other move
+   * rearranges the same parts. The flight is deliberately a long out-and-back
+   * rather than a straight line: a blade that goes and returns is one object the
+   * eye tracks for a second, where a blade that vanishes and reappears is two
+   * events.
+   *
+   * The geometry is in `thrownBlade`, and the reason it is routed through
+   * `bladeWorld` rather than drawn as a special case is that everything else in
+   * the fight then follows it for free — the smear, the blade-on-blade sparks,
+   * and the point `resolveContact` places the burst at all read the same
+   * segment they always did.
+   */
+  blade_throw: {
+    frames: 64,
+    blade: [
+      [0, GUARD_MID, "out"],
+      [0.1, -1.5, "out"],
+      [0.17, -1.5, "hold"],
+      [0.8, -0.3, "out"],
+      [1, GUARD_MID, "out"],
+    ],
+    // Mid-flight, where `thrownBlade` puts it at full reach — which is where the
+    // opponent is, because the reach is sized to the gap when it leaves.
+    contact: 30,
+    power: 1.15,
+    chan: "attacking",
+  },
+  /*
+   * Under the sweep. A crouch is a whole-body change with no new parts drawn,
+   * which is the only kind of pose that survives at this size.
+   */
+  duck: {
+    frames: 26,
+    blade: [[0, GUARD_LOW, "out"], [0.25, 0.6, "out"], [0.62, 0.6, "hold"], [1, GUARD_MID, "out"]],
+    contact: -1,
+    power: 0,
+    chan: "neutral",
+  },
+  /*
+   * The charge that swaps the sides.
+   *
+   * Both fighters run it on the same beat and both are moving, which is why the
+   * span is *negative*: `span` is added to the whole gap, and each fighter only
+   * has to cover about half of it before they meet. At the leash distance each
+   * travels ~110 units and the pair end ~70 apart with the sides exchanged —
+   * inside sword range, facing each other, which is the position the next
+   * sequence wants.
+   *
+   * The blade sweeps through level *during* the pass rather than being held
+   * there, and that is load-bearing rather than decorative: the blade-on-blade
+   * shower tests the sum of both blades' angular speeds against a floor, so two
+   * blades held still would cross in silence.
+   *
+   * **The sweep is timed against the measured crossing, and the first attempt
+   * was authored against the wrong event.** Sweeping from 0.34 to 0.62 of the
+   * move — frames 16 to 29 — reads as "through the middle" and produced sparks
+   * on **3 frames in 65 runs**. Two things were wrong with it. The bodies pass
+   * at mf 14–18 (separation falls 140 → 3 → back out), so a sweep starting at
+   * 16 has barely begun; and the blades cross far earlier than the bodies do,
+   * because a guard puts the tip 77 units forward and the pair start the charge
+   * ~140 apart — they are already overlapping on frame one. The one burst that
+   * did fire went off at mf 2 with almost no angular speed behind it and set the
+   * 30-frame cooldown, which then swallowed the real crossing.
+   *
+   * **There is no moment of crossing to aim at, and that is the real finding.**
+   * Sweeping 8 → 22 instead was still wrong: measured, the blades are *already*
+   * overlapped on frame one of the charge — a guard puts the tip 77 units
+   * forward and the leash holds the pair at ~142, so the two swords share 12
+   * units of space before either fighter has moved. They never meet; they are
+   * never apart. The bodies do have a crossing, at mf 14–18, but by then the
+   * blades are long past each other.
+   *
+   * So the sweep starts on frame **one**, where the contact actually is. That
+   * takes the shower from 3 spark frames in 65 runs to 62 in 68 — about one
+   * burst per charge, thrown as the two blades drag across each other at the
+   * start of the run.
+   *
+   * **The body crossing is silent, and it should be.** An earlier draft of this
+   * comment predicted a second burst there, on the reasoning that a hard first
+   * burst takes the 16-frame cooldown rather than the 30-frame one and would
+   * come off it right at mf 17. It does not reproduce: measured, every burst
+   * lands in mf 1–10 and none at the pass. The reason is the same geometry as
+   * above — by the time the *bodies* are 4 units apart the *blades* are a long
+   * way past each other, so there is nothing there to strike sparks off. Making
+   * one happen anyway would be re-introducing the "proximity is not contact"
+   * bug that the force floor exists to kill.
+   */
+  overrun: {
+    frames: 46,
+    blade: [
+      [0, -0.6, "out"],
+      [0.3, 0.6, "inout"],
+      [1, GUARD_MID, "out"],
+    ],
+    contact: -1,
+    power: 0,
+    chan: "attacking",
+    impulse: { at: 6, vx: 6.5 },
+    span: -40,
+    pass: true,
   },
   /*
    * The three parries are chosen for where the bright bar lands on the body,
@@ -889,6 +1168,8 @@ const MOVES: Record<MoveId, Move> = {
     impulse: { at: 7, vx: 10.5, vy: -13.2 },
     // Past them, not onto them — the somersault's whole job is to swap sides.
     span: 40,
+    // And passing through them means not turning round halfway. See `pass`.
+    pass: true,
   },
   // The only move where the target closes distance involuntarily. Rings that
   // converge inward plus a body travelling the wrong way is a clear read even
@@ -954,6 +1235,17 @@ interface Beat {
   at: number;
   outcome?: "hit" | "miss" | "blocked";
   power?: number;
+  /**
+   * Enter the move at its `windup` frame instead of at zero — a riposte, with
+   * the anticipation cut off.
+   *
+   * The beat's own `at` is unchanged, so **the contact frame moves earlier by
+   * exactly `windup`** and the sequence's reaction beat has to be placed against
+   * the shortened time. That is deliberate: the alternative is deciding it at
+   * runtime, which would make one beat's timing depend on the previous beat's,
+   * and nothing else in this pool does.
+   */
+  quick?: boolean;
 }
 
 interface Sequence {
@@ -1392,9 +1684,186 @@ const SEQUENCES: Sequence[] = [
       { who: "DEF", move: "guard", at: 92 },
     ],
   },
+  {
+    /*
+     * The duck, and the only sweep in the pool that can be ducked.
+     *
+     * The two are one idea and neither works alone: every other attack here
+     * finishes in the floor, and crouching under a descending blade puts your
+     * head where it is going. `strike_level` holds its blade level from frame 17
+     * to 24 and the crouch is deepest at 19, so the sweep genuinely passes over
+     * the head rather than the two merely happening at once — measured in local
+     * units the blade runs at y 1–8 while the ducked head sits at 22.
+     *
+     * Rising straight out of the crouch into the counter is the payoff, and it
+     * is why the answer is `strike_rising` rather than any other strike.
+     */
+    id: "under-the-sweep",
+    weight: 8,
+    range: "close",
+    length: 108,
+    beats: [
+      { who: "ATT", move: "strike_level", at: 0, outcome: "miss" },
+      { who: "DEF", move: "duck", at: 6 },
+      { who: "DEF", move: "strike_rising", at: 30, outcome: "hit", power: 0.9 },
+      // Contact 16 after the beat at 30.
+      { who: "ATT", move: "stagger", at: 46 },
+      { who: "DEF", move: "guard", at: 68 },
+    ],
+  },
+  {
+    /*
+     * The charge that swaps the sides — the one exchange that ends with the
+     * arena rearranged rather than restored.
+     *
+     * A long fight reads as more static than it is because the pair spend it
+     * oscillating about one axis: the somersault is the only other move that
+     * crosses, and it belongs to whoever is dodging. This one is mutual, it is
+     * on the ground where it can be seen, and the blades cross in the middle of
+     * it — see `overrun`'s note on why the blade sweeps through the pass instead
+     * of being held.
+     *
+     * No damage, deliberately. It is a spacing move that happens to be thrilling,
+     * and the pool needs its quiet entries to stay under a third.
+     */
+    id: "the-overrun",
+    weight: 6,
+    range: "mid",
+    length: 96,
+    beats: [
+      { who: "ATT", move: "overrun", at: 0 },
+      { who: "DEF", move: "overrun", at: 0 },
+      { who: "ATT", move: "guard", at: 52 },
+      { who: "DEF", move: "guard", at: 52 },
+    ],
+  },
+  {
+    /*
+     * The riposte, with the wind-up cut out — see `Move.windup`.
+     *
+     * `wall-of-parries` and `riposte-chain` both already answer a block with a
+     * strike, and both answer it *slowly*, because the counter starts at frame
+     * zero and spends twelve frames lifting a blade that is already lifted. Here
+     * the rising cut enters at its own `windup`, so it lands **four frames**
+     * after the beat instead of sixteen, out of the parry's own angle.
+     *
+     * The timing is the whole exercise and it is all fixed. The parry arrives at
+     * 21 and holds through the block at 22; the counter leaves at 28, still
+     * inside that hold; it lands at 32, which is where the stagger is written —
+     * a reaction may never precede its cause. And 32 leaves the attacker's
+     * deferred recoil (26, four frames after the block) six frames to play
+     * before the stagger takes the body, which is the window `resolveContact`
+     * says is eaten in 28.7% of blocks. Here it is not.
+     *
+     * **The counter is a thrust and not the rising cut it was first written
+     * with**, because a riposte has to leave from the parry's own angle and
+     * `strike_rising` loads by dropping the blade — see the note on its missing
+     * `windup`. Both are four frames from beat to contact, so nothing else in
+     * this sequence moved.
+     */
+    id: "riposte-instant",
+    weight: 6,
+    range: "close",
+    length: 112,
+    beats: [
+      { who: "ATT", move: "strike_overhead", at: 0, outcome: "blocked" },
+      { who: "DEF", move: "parry_high", at: 16 },
+      { who: "DEF", move: "thrust", at: 28, outcome: "hit", power: 0.95, quick: true },
+      { who: "ATT", move: "stagger", at: 32 },
+      { who: "DEF", move: "guard", at: 62 },
+      { who: "ATT", move: "backstep", at: 66 },
+    ],
+  },
+  {
+    /*
+     * Giving ground — and the sequence that made `retreat` a move again.
+     *
+     * `retreat` had never been used by anything. The pool reaches for `backstep`
+     * every time somebody withdraws, and a backstep is a 26-frame hop with an
+     * impulse behind it: a flinch. `retreat` is a 34-frame *walk* backwards at a
+     * deliberately uncommitted top speed, which is a different thing to watch —
+     * one fighter yielding ground under pressure while still facing the person
+     * pushing them. Nothing in the pool had that image.
+     *
+     * The gate in `scripts/check.ts` found it; the move had been dead for the
+     * whole life of the director without anything failing, because an
+     * unreachable move costs nothing and shows nothing.
+     *
+     * It ends in a counter rather than in quiet, deliberately: the pool's
+     * zero-damage share is held under a third, and a withdrawal that draws the
+     * attacker onto a thrust is what a withdrawal is *for*.
+     */
+    id: "give-ground",
+    weight: 6,
+    range: "close",
+    length: 130,
+    beats: [
+      { who: "ATT", move: "strike_diagonal", at: 0, outcome: "miss" },
+      { who: "DEF", move: "retreat", at: 4 },
+      { who: "ATT", move: "advance", at: 34 },
+      { who: "DEF", move: "thrust", at: 46, outcome: "hit", power: 0.85 },
+      // Contact 14 after the beat at 46.
+      { who: "ATT", move: "stagger", at: 60 },
+      { who: "DEF", move: "backstep", at: 96 },
+      { who: "ATT", move: "guard", at: 100 },
+    ],
+  },
+  {
+    /*
+     * The blade leaves the hand.
+     *
+     * Rare on purpose — weight 4, the floor of the pool. It is the largest read
+     * in the set precisely because the silhouette loses its brightest element,
+     * and a thing that happens often is not a surprise. The defender simply
+     * guards: there is no answer to a sword arriving on its own, and inventing
+     * one would need a move whose whole content is "the thing that only happens
+     * here".
+     */
+    id: "the-throw",
+    weight: 4,
+    range: "mid",
+    length: 116,
+    beats: [
+      { who: "ATT", move: "blade_throw", at: 0, outcome: "hit", power: 0.95 },
+      { who: "DEF", move: "guard", at: 0 },
+      // Contact 30 — the far end of the flight, where the blade turns round.
+      { who: "DEF", move: "stagger", at: 30 },
+      { who: "DEF", move: "backstep", at: 66 },
+      { who: "ATT", move: "guard", at: 70 },
+    ],
+  },
 ];
 
 const TOTAL_WEIGHT = SEQUENCES.reduce((n, s) => n + s.weight, 0);
+
+/**
+ * The two tables, for `scripts/check.ts` and nothing else.
+ *
+ * Most of what can go wrong in here is **arithmetic in data** rather than logic
+ * anyone could see reading the file — a contact frame inside a `hold` plateau, a
+ * reaction scheduled before the blow that causes it, a move nothing reaches.
+ * Every one of those is decidable by looking at the numbers, and none of them is
+ * reliably catchable by stepping the fight, because they present as a fight that
+ * runs perfectly well and looks slightly wrong.
+ *
+ * Exported rather than re-declared in the checker for the same reason
+ * `duelCamera` is: a checker holding its own copy of the tables only ever
+ * confirms its own copy.
+ */
+export const DUEL_TABLES: {
+  moves: Readonly<Record<string, Move>>;
+  sequences: readonly Sequence[];
+} = { moves: MOVES, sequences: SEQUENCES };
+
+/**
+ * A pass that never leaves the floor, and so cannot be excused by the airborne
+ * test — see the body-separation note in `step`. Module scope rather than a
+ * closure in the step: this is asked twice a frame, for ever.
+ */
+function isGroundPass(f: Fighter): boolean {
+  const m = MOVES[f.move];
+  return m.pass === true && !m.impulse?.vy;
+}
 
 /** Sample the move's blade curve at frame `mf`. */
 function bladeCurve(m: Move, mf: number): number {
@@ -1413,11 +1882,23 @@ function bladeCurve(m: Move, mf: number): number {
   return a0 + (a1 - a0) * e;
 }
 
-/** Give a fighter a move, from frame zero. */
-function setMove(f: Fighter, id: MoveId, outcome?: Beat["outcome"], power = 1): void {
+/** Give a fighter a move, from frame zero — or from its `windup`, if quick. */
+function setMove(
+  f: Fighter,
+  id: MoveId,
+  outcome?: Beat["outcome"],
+  power = 1,
+  quick = false,
+): void {
   if (f.action === "dead") return;
   f.move = id;
-  f.mf = 0;
+  /*
+   * A quick entry starts the move at the frame its blade stops loading, which
+   * is what a riposte is: the wind-up already happened, it was the parry. The
+   * blade spring is not reset with it, so the strike leaves from wherever the
+   * parry left the blade rather than from a guard it never returned to.
+   */
+  f.mf = quick ? (MOVES[id].windup ?? 0) : 0;
   f.outcome = outcome;
   f.beatPower = power;
   f.action = MOVES[id].chan;
@@ -1493,7 +1974,7 @@ function runDirector(st: DuelState): void {
     st.dir.next += 1;
     const att = st.dir.att === "a" ? st.a : st.b;
     const def = st.dir.att === "a" ? st.b : st.a;
-    setMove(b.who === "ATT" ? att : def, b.move, b.outcome, b.power ?? 1);
+    setMove(b.who === "ATT" ? att : def, b.move, b.outcome, b.power ?? 1, b.quick);
   }
   if (st.dir.f >= seq.length) st.dir.seq = null;
 }
@@ -1607,13 +2088,37 @@ function stepFighter(st: DuelState, f: Fighter, foe: Fighter): void {
   f.flash = Math.max(0, f.flash - 1 / 12);
   if (f.action === "dead") return;
 
-  // Always square up — a fighter who somersaults over the other turns to face
-  // them again for free, which is why `flip_over` needs no bookkeeping.
-  f.facing = centre(foe) >= centre(f) ? 1 : -1;
+  /*
+   * Square up — except while passing through them.
+   *
+   * A fighter who crosses the opponent's centre line turns to face them again
+   * for free, which is why the pass moves need no bookkeeping. What they *do*
+   * need is for that turn not to happen halfway through the pass: this line
+   * fired on the frame the centres crossed, so the whole figure mirrored in
+   * mid-somersault on **every flip measured** (172 of ~169 over 300,000
+   * frames). Held for the duration of a `pass` move, the turn lands on the
+   * frame the move ends — which is the landing.
+   */
+  if (!MOVES[f.move].pass) f.facing = centre(foe) >= centre(f) ? 1 : -1;
 
   if (foe.action === "dead") {
-    // Victory: hold the field. One flourish, then the guard.
-    if (f.move !== "flourish" && f.move !== "guard") setMove(f, "flourish");
+    /*
+     * Victory: hold the field. One flourish, then the guard.
+     *
+     * **Not while the sword is still in the air.** `thrownBlade` is keyed on the
+     * move, so switching to `flourish` here made a blade in flight vanish from
+     * where it was and reappear in the winner's fist — a ~200-unit teleport on
+     * the death frame, which is the *first* frame of the two-second hold the
+     * design nominates as the announcement. Measured over 600,000 frames it hit
+     * **11 of 104 throws (10.6%)**: exactly the throws that won the match, i.e.
+     * the ones most worth looking at.
+     *
+     * Waiting costs 20 frames and is also simply true — you cannot salute with a
+     * sword you have not caught yet. The blade returns to the hand at mf 50 and
+     * the flourish takes over there, well inside the 200-frame hold.
+     */
+    const inFlight = thrownBlade(f) !== null;
+    if (!inFlight && f.move !== "flourish" && f.move !== "guard") setMove(f, "flourish");
     f.drive = 0;
   }
 
@@ -1629,6 +2134,25 @@ function stepFighter(st: DuelState, f: Fighter, foe: Fighter): void {
     }
     f.vx += f.facing * vx;
     if (m.impulse.vy) f.vy = m.impulse.vy;
+  }
+
+  // The blade leaves the hand knowing how far it has to go — see `throwReach`.
+  // Sized here rather than at the beat because the gap on the frame of release
+  // is the one that matters, and the wind-up is ten frames long.
+  if (f.move === "blade_throw" && f.mf === THROW_OUT) {
+    /*
+     * Far enough to bite, not far enough to leave the picture.
+     *
+     * The blade's *centre* sits 26 units ahead of the thrower plus this reach,
+     * and it is 58 long, so its tip lands `reach + 55` from the thrower's
+     * centre. A first attempt at `gap + 18` was generous by about 88 units: it
+     * flew clean through the opponent and out the far side, and `duelFocus`
+     * frames the two bodies and deliberately ignores blade tips — so in the
+     * ornament slot the subject of the move would have spent its apex outside
+     * the frame. `gap - 40` puts the tip ~15 units past the opponent's centre,
+     * which is a hit by any reading and still inside the box the camera fits.
+     */
+    f.throwReach = Math.max(60, Math.abs(centre(foe) - centre(f)) - 40);
   }
 
   if (m.contact >= 0 && !f.struck && f.mf >= m.contact) {
@@ -1880,7 +2404,29 @@ function step(st: DuelState): void {
    * silhouettes are standing on the same line.
    */
   if (st.a.action !== "dead" && st.b.action !== "dead") {
-    const grounded = st.a.y >= FLOOR_Y - 0.5 && st.b.y >= FLOOR_Y - 0.5;
+    /*
+     * **Airborne pairs are exempt, and so are ground passes — but a `pass` move
+     * on its own is not enough, and assuming it was cost a measurement.**
+     *
+     * The airborne test has always been what lets the somersault cross: the
+     * jumper is over the opponent's head, so there is nothing to resolve.
+     * `overrun` needs the identical licence without ever leaving the floor, so
+     * it has to be named some other way.
+     *
+     * Naming it "any `pass` move" is the version that does not work. `flip_over`
+     * is only airborne for 83% of its 54 frames, so exempting it wholesale hands
+     * the last nine frames — after it has landed, on top of somebody — a licence
+     * it does not need, and the measured minimum grounded separation went from
+     * **15.79 units to 4.39**: two figures standing inside each other for a
+     * ninth of a second and then popping apart when the move ends.
+     *
+     * A **ground pass is a pass with no vertical impulse**, which is exactly the
+     * distinction and needs no second flag to state. The somersault keeps its
+     * exemption from the air, where it earns it, and gets separated the moment
+     * its feet are down.
+     */
+    const passing = isGroundPass(st.a) || isGroundPass(st.b);
+    const grounded = st.a.y >= FLOOR_Y - 0.5 && st.b.y >= FLOOR_Y - 0.5 && !passing;
     const gap = centre(st.b) - centre(st.a);
     // Narrower than BODY_W: the drawn figure is shoulders and hips, not the
     // full 30-unit box, so clearing the box would hold them apart visibly
@@ -2182,6 +2728,8 @@ function drawFighter(
   const dead = f.action === "dead";
   const bodyAlpha = 0.85 * v.dim;
   const cxFeet = BODY_H;
+  /** Non-null only while this fighter's blade is in the air. */
+  const thrown = thrownBlade(f);
 
   // The blade's smear, in world units and behind everything: its geometry
   // belongs to the last few frames rather than this one, so it cannot live
@@ -2259,6 +2807,58 @@ function drawFighter(
     const p = Math.min(1, f.mf / MOVES.spin_attack.frames);
     const turn = Math.cos(p * Math.PI);
     ctx.scale(Math.max(0.12, turn * turn * 0.86 + 0.14), 1);
+  } else if (f.move === "flip_over") {
+    /*
+     * **The somersault somersaults** (TODO B). Its own comment described "a
+     * still blade under a tumbling body" and there was no tumble: the figure
+     * floated over upright with its legs tucked, and the only `ctx.rotate` in
+     * the renderer was the death tip-over. It is the most recognisable move in
+     * the genre and it was a hop.
+     *
+     * Three things here are derived rather than typed, which is the point:
+     *
+     * The window comes out of the move's **own impulse**. A projectile launched
+     * at `vy` under a constant gravity is in the air for `2·vy/g` frames, so the
+     * rotation starts on the frame the impulse fires and ends on the frame the
+     * feet arrive. Retune the jump and the tumble retimes itself; write 44 here
+     * instead and the next person to touch `impulse` lands a fighter mid-turn.
+     *
+     * The turn is **exactly one revolution and exactly linear**, so the figure
+     * is upright at take-off and upright again at touchdown with no ease
+     * needed — a somersault has constant angular velocity, and the steps at
+     * either end are the kick into it and the stop on landing. Anything smoothed
+     * here reads as floating, which is the complaint this move started with.
+     *
+     * It rotates about the **body's middle**, not the feet: a tumbling figure
+     * turns about its own mass, and about the feet it is a pole vault.
+     *
+     * Positive is forward — the head goes the way the body is travelling —
+     * because this is inside the `scale(facing, 1)` mirror, so "forward" is
+     * already whichever way the fighter faces. The mirror is also why the
+     * facing freeze in `stepFighter` matters more here than anywhere: without
+     * it the whole figure flips inside out on the frame it crosses the
+     * opponent, which is the one frame everybody is looking at.
+     */
+    const m = MOVES.flip_over;
+    const at = m.impulse?.at ?? 0;
+    const flight = (2 * Math.abs(m.impulse?.vy ?? 0)) / GRAVITY;
+    const p = Math.max(0, Math.min(1, (f.mf - at) / flight));
+    ctx.translate(0, BODY_H / 2);
+    ctx.rotate(p * TAU);
+    ctx.translate(0, -BODY_H / 2);
+  } else if (f.move === "duck") {
+    /*
+     * The crouch. A whole-body compression about the feet, widening a little as
+     * it drops, because that is what a body does and because at 60px tall a
+     * pose made of new parts is a smudge while a change of proportion is
+     * legible. It rises and falls on a sine so the deepest point sits in the
+     * middle of the move, which is where `strike_level` holds its blade.
+     */
+    const p = Math.min(1, f.mf / MOVES.duck.frames);
+    const crouch = Math.sin(Math.PI * p) * 0.34;
+    ctx.translate(0, cxFeet);
+    ctx.scale(1 + crouch * 0.2, 1 - crouch);
+    ctx.translate(0, -cxFeet);
   }
 
   /** Travel, in local units: positive is forward whichever way the figure faces. */
@@ -2382,6 +2982,11 @@ function drawFighter(
     // Thrown out for balance, which is what a kick actually needs.
     offHandX = -22;
     offHandY = 12;
+  } else if (thrown) {
+    // Nothing to hold. Down at the side, so the two arms disagree and the
+    // extended one reads as the one doing something.
+    offHandX = -8;
+    offHandY = 28;
   }
   ctx.globalAlpha = bodyAlpha * 0.85;
   ctx.strokeStyle = v.ink;
@@ -2390,7 +2995,12 @@ function drawFighter(
   // ---- the sword arm ------------------------------------------------------
   if (!dead) {
     ctx.globalAlpha = bodyAlpha;
-    limb(SHOULDER_X + lean, shY, g.hx, g.hy, UPPER_ARM, FOREARM, -1, 5);
+    // An empty hand held out toward the blade it has just thrown, rather than
+    // clutching a grip that is fifty units away. It is the same arm; only the
+    // target changes.
+    const handX = thrown ? 26 : g.hx;
+    const handY = thrown ? 10 : g.hy;
+    limb(SHOULDER_X + lean, shY, handX, handY, UPPER_ARM, FOREARM, -1, 5);
   }
 
   /*
@@ -2478,7 +3088,7 @@ function drawFighter(
   // The ~1.5% length wobble in `flick` is what makes it look *held* rather than
   // drawn, and the hand it hangs from is solved from the blade's own angle, so
   // the tip travels through space instead of pivoting around the torso.
-  if (!dead) {
+  if (!dead && !thrown) {
     // Three passes — widest and faintest first — so the glow falls away from a
     // bright core without a gradient.
     ctx.strokeStyle = blade;
@@ -2506,6 +3116,34 @@ function drawFighter(
   }
 
   ctx.restore();
+
+  /*
+   * ---- the blade, when it is not in a hand ---------------------------------
+   *
+   * Drawn out here in world units because that is where it is: a thrown blade
+   * has left the body transform along with the hand that was holding it, and
+   * running it through the mirror and the crouch would tie a free-flying object
+   * to the pose of the person who let go of it.
+   *
+   * Same three passes as the held blade — faint glow, mid, bright core — so it
+   * is recognisably the same sword, and lit a little hotter because a blade
+   * alone against the background has nothing next to it to be brighter than.
+   */
+  if (thrown) {
+    for (const [style, width, alpha] of [
+      [blade, 10, 0.22],
+      [blade, 4.5, 0.55],
+      [v.core, 1.8, 1],
+    ] as const) {
+      ctx.strokeStyle = style;
+      ctx.lineWidth = width;
+      ctx.globalAlpha = alpha * v.dim;
+      ctx.beginPath();
+      ctx.moveTo(thrown.hx, thrown.hy);
+      ctx.lineTo(thrown.tx, thrown.ty);
+      ctx.stroke();
+    }
+  }
 
   // The health bar is drawn outside the body transform: inside it, the mirror
   // would fill it from the wrong end and the landing squash would bounce it.

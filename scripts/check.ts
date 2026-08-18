@@ -25,7 +25,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 import { qrMatrix } from "../src/auth/qr";
-import { createDuel, advanceDuel } from "../src/fx/duel";
+import { createDuel, advanceDuel, DUEL_TABLES, GRAVITY } from "../src/fx/duel";
 import { PAGES } from "../src/data/pages";
 import { PATHS } from "../src/data/pageIds";
 import { LAYOUTS, FX, PICKABLE_FX, TYPESETS, SCOPES } from "../src/data/catalog";
@@ -607,11 +607,149 @@ if (!FAST) check("duel: fairness, reachability, stability", () => {
   must(nan === 0, `${nan} non-finite frames`);
   must(n > 100, `only ${n} matches — the fight may be stalling`);
   must(sigma < 3, `side bias ${sigma.toFixed(2)} sigma over ${n} matches`);
-  // `close-in` is deliberately the only `far` sequence and the leash makes that
-  // band rare, so it is exempt; everything else must be reachable.
-  const missing = [...seen].length;
-  must(missing >= 22, `only ${missing} of 23 sequences fired`);
-  return `${n} matches, ${sigma.toFixed(2)}σ, ${missing}/23 sequences, no NaN`;
+  // Nothing is ranged `far` any more — the leash keeps the fight out of that
+  // band entirely — so every sequence in the pool must actually be reachable.
+  const total = DUEL_TABLES.sequences.length;
+  const fired = seen.size;
+  must(fired === total, `only ${fired} of ${total} sequences fired`);
+  return `${n} matches, ${sigma.toFixed(2)}σ, ${fired}/${total} sequences, no NaN`;
+});
+
+/*
+ * The move tables are arithmetic in data, and that is where this effect's bugs
+ * live: a contact frame parked inside a `hold` plateau so the blow lands nine
+ * frames before the sword arrives, a reaction scheduled before its own cause, a
+ * move nothing in the pool reaches. Each of those shipped once. None of them is
+ * visible reading the file and none reliably fails a stepped simulation, because
+ * the fight runs perfectly well and merely looks wrong.
+ */
+check("duel: the move tables are arithmetically sound", () => {
+  const { moves, sequences } = DUEL_TABLES;
+
+  // Reaction moves exist only as the consequence of a scripted blow.
+  const REACTIONS = new Set(["stagger", "knockdown", "stumble_in", "recoil"]);
+  // Reached by the engine rather than by a beat: the idle, the victory pose, the
+  // deferred bounce off a block, and the corpse.
+  const ENGINE = new Set(["guard", "flourish", "recoil", "dead"]);
+
+  /** The frame a beat's blow actually lands, counting a skipped wind-up. */
+  const contactOf = (b: (typeof sequences)[number]["beats"][number]): number => {
+    const m = moves[b.move];
+    return b.at + m.contact - (b.quick ? (m.windup ?? 0) : 0);
+  };
+
+  for (const s of sequences) {
+    for (const b of s.beats) {
+      const m = moves[b.move];
+      must(m !== undefined, `${s.id} names an unknown move ${b.move}`);
+      // A quick entry with no wind-up to skip is a beat that thinks it is a
+      // riposte and is not — it would run at full length and land late.
+      must(
+        !b.quick || m.windup !== undefined,
+        `${s.id}: ${b.move} is entered quick but declares no windup`,
+      );
+      must(
+        m.windup === undefined || m.windup < m.contact,
+        `${b.move}: windup ${m.windup} is not before contact ${m.contact}`,
+      );
+      /*
+       * **Contact must be a frame the blade has arrived on.** `spin_attack`
+       * fired at 23, inside a plateau that parks the blade overhead until 28 and
+       * swings at 32, so the damage, the sparks and the knockdown all landed
+       * with the sword still up and it swept through empty air nine frames
+       * later. Four of six attacks were early against their own tables.
+       *
+       * **Blade attacks only.** The force moves land their contact with the
+       * outstretched *hand* — the rings are drawn off `offHand`, not off the
+       * sword — and `force_hold` parks its blade overhead for the whole lift on
+       * purpose, so its contact is inside a plateau and correctly so. This gate
+       * caught it on the first run, which is the right outcome for a rule stated
+       * one notch too wide: the invariant was always about the blade arriving.
+       */
+      if (m.contact >= 0 && m.chan === "attacking") {
+        const t = m.contact / m.frames;
+        const held = m.blade.some(
+          (k, i) => i + 1 < m.blade.length && m.blade[i + 1][2] === "hold" && t > k[0] && t < m.blade[i + 1][0],
+        );
+        must(!held, `${b.move}: contact ${m.contact} lands inside a hold plateau`);
+      }
+    }
+
+    /*
+     * A damage reaction may never precede its cause. A *parry* may, and several
+     * deliberately do — a block that arrives after the blow is not a block — so
+     * only the reactions are tested.
+     */
+    const contacts = s.beats.filter((b) => b.outcome === "hit").map(contactOf);
+    for (const b of s.beats) {
+      if (!REACTIONS.has(b.move)) continue;
+      must(
+        contacts.some((c) => c <= b.at),
+        `${s.id}: ${b.move} at ${b.at} precedes every blow that could cause it`,
+      );
+    }
+  }
+
+  // A move nothing reaches is a move that does not exist. `docs/DECISIONS.md`
+  // 2026-08-17: an unreachable sequence is exactly what this suite was built for.
+  const reached = new Set<string>(ENGINE);
+  for (const s of sequences) for (const b of s.beats) reached.add(b.move);
+  const orphans = Object.keys(moves).filter((id) => !reached.has(id));
+  must(orphans.length === 0, `unreachable move(s): ${orphans.join(", ")}`);
+
+  return `${Object.keys(moves).length} moves, ${sequences.length} sequences, contacts and reactions ordered`;
+});
+
+/*
+ * The two moves that cross the opponent, and the two things that has to not do.
+ *
+ * Both were shipped defects found by stepping the module: `stepFighter`
+ * re-derives `facing` from the two centres every frame, so a fighter crossing
+ * that line mirrored *the entire figure* on one frame in mid-somersault — on
+ * every flip flown, 147–157 of them per 300,000 frames. It was invisible while
+ * the figure had no rotation to contradict, and a flicker the moment it did.
+ * And the tumble is timed from the jump's own impulse so the feet arrive on the
+ * frame the revolution completes; typing that window as a constant instead is
+ * how a later retune of `impulse` lands somebody mid-turn.
+ */
+if (!FAST) check("duel: a pass crosses without mirroring, and lands upright", () => {
+  const { moves } = DUEL_TABLES;
+  const passes = Object.entries(moves).filter(([, m]) => m.pass);
+  must(passes.length >= 2, `only ${passes.length} pass move(s) — expected the flip and the charge`);
+
+  const flip = moves.flip_over;
+  const at = flip.impulse?.at ?? 0;
+  const vy = Math.abs(flip.impulse?.vy ?? 0);
+  must(vy > 0, "flip_over has no vertical impulse to derive its tumble from");
+  /** The frame the revolution completes, from the ballistic flight time. */
+  const upright = Math.round(at + (2 * vy) / GRAVITY);
+
+  const st = createDuel("hooded", "caped");
+  // Fighters are created standing, so this is the floor — read rather than
+  // re-declared, so the checker cannot hold a stale copy of it.
+  const FLOOR = st.a.y;
+  let mirrored = 0;
+  let landings = 0;
+  let offBy = 0;
+  let prev = { a: { ...st.a }, b: { ...st.b } };
+  for (let i = 0; i < 120_000; i += 1) {
+    advanceDuel(st, 1);
+    for (const k of ["a", "b"] as const) {
+      const f = st[k];
+      const was = prev[k];
+      if (was.move === f.move && moves[f.move]?.pass && f.facing !== was.facing) mirrored += 1;
+      // The frame the feet arrive during a somersault.
+      if (f.move === "flip_over" && was.move === "flip_over" && was.y < FLOOR - 0.5 && f.y >= FLOOR - 0.5) {
+        landings += 1;
+        if (Math.abs(f.mf - upright) > 1) offBy += 1;
+      }
+    }
+    prev = { a: { ...st.a }, b: { ...st.b } };
+  }
+  must(mirrored === 0, `${mirrored} mid-pass mirror(s) — facing turned while crossing`);
+  must(landings > 20, `only ${landings} somersaults in 120,000 frames — is the move reachable?`);
+  must(offBy === 0, `${offBy} of ${landings} somersaults landed mid-revolution (window ends ${upright})`);
+  return `${landings} somersaults, none mirrored, all upright at ${upright}`;
 });
 
 

@@ -14,6 +14,152 @@ file records what happened to the codebase.
 ---
 
 
+## 2026-08-18 (last) — the duel's remaining choreography, and the defects found building it
+
+`TODO.md`'s section B — the moves designed but never built. Four were outstanding: `duck`,
+`overrun`, a riposte with the wind-up skipped, and `blade_throw`; plus the standing note that
+**`flip_over` did not flip**. All five are in, along with a sixth that the new checks turned up.
+
+**The somersault now somersaults, and its timing is derived rather than typed.** The move's own
+comment described "a still blade under a tumbling body" and there was no tumble — the figure
+floated over upright with its legs tucked, and the only `ctx.rotate` in the renderer was the death
+tip-over. The rotation window comes out of the move's **own impulse**: a projectile launched at
+`vy` under a constant gravity is airborne for `2·vy/g` frames, so the turn starts on the impulse
+frame and completes on the frame the feet arrive. Measured over 171 somersaults the landing frame
+matched the end of the revolution with a **median offset of 0 frames and a range of 0 to 0**.
+Writing `44` there instead would have been correct on the day and wrong the first time anybody
+retuned the jump, which is why `scripts/check.ts` now re-derives the same number and fails if a
+fighter lands mid-turn.
+
+The turn is exactly one revolution and exactly **linear**. A somersault has constant angular
+velocity; the steps at either end are the kick into it and the stop on landing, and easing them
+reads as floating — which is the complaint the move started life with.
+
+**The mirror in mid-air was a shipped defect, and it is why the tumble could not simply be added.**
+`stepFighter` re-derives `facing` from the two centres every frame, so a fighter crossing the
+opponent's centre line mirrored *the entire figure* on one frame near the top of the arc. Measured
+across three seeded 300,000-frame runs: **147, 147 and 157 mirror events against ~169 somersaults
+flown** — every single one. It had gone unnoticed for the life of the move because a symmetrical
+stick figure mirrored about its own centre looks much like itself; put a rotation under it and it is
+a flicker. Moves now declare `pass`, and facing is held for their duration, so the turn happens on
+the landing frame where a turn belongs. Same seeds after the fix: **0, 0, 0**.
+
+**The separation exemption is a *ground* pass, not any pass, and the first version measured worse.**
+Airborne pairs have always been exempt from the body separation — that is what lets the somersault
+cross. `overrun` needs the same licence without ever leaving the floor, and the obvious way to say
+so is "exempt any `pass` move". That is wrong: `flip_over` is airborne for only 83% of its 54
+frames, so exempting it wholesale hands its last nine frames — after it has landed, on top of
+somebody — a licence it does not need. Minimum grounded separation fell from **15.79 units to
+4.39**. A ground pass is precisely a pass with no vertical impulse, which needs no second flag to
+state; with that, the same three seeds give 0.72/0.62/0.64% interpenetration against a baseline of
+0.73/0.89/0.74%, and the minimum back at 13.00.
+
+**`overrun`'s sparks were authored against an event that does not exist.** The intent was a shower
+as the two blades cross mid-charge. Timing the blade sweep to the middle of the move produced
+**3 spark frames in 65 runs**. Two things were wrong, and only measurement separated them: the
+bodies pass at mf 14–18 (separation falls 140 → 3 → out again), but the *blades* never meet there,
+because a guard puts the tip 77 units forward and the leash holds the pair at ~142 — the two swords
+already share 12 units of space on frame one. They are never apart, so there is no crossing to aim
+at. The one burst that did fire went off at mf 2 with almost no angular speed behind it and set the
+30-frame cooldown, which then swallowed everything else. Sweeping from frame one instead gives
+**62 spark frames in 68 runs**, about one burst per charge, where the contact actually is.
+
+A prediction made in that same comment — that a hard opening burst would take the 16-frame cooldown
+and throw a second burst at the body crossing — **did not reproduce, and the comment now says so.**
+Every burst lands in mf 1–10. Forcing one at the pass would be re-introducing the "proximity is not
+contact" bug the force floor exists to kill.
+
+**The riposte is scheduled, not reactive.** `Move.windup` names the frame a strike stops loading
+and starts travelling; a beat marked `quick` enters there, so the counter leaves the parry's own
+blade angle and lands **four frames** after its beat instead of sixteen. It is a property of the
+*beat* and never a runtime test: "enter quick if a parry ended within eight frames" is a condition,
+and a condition would move the contact frame, so the reaction beat authored against it would be
+right on some runs and early on others. Nothing else in this pool works that way and this does not
+either.
+
+**`blade_throw` is routed through `bladeWorld`, and that is the whole reason it was cheap.** While
+the blade is out of the hand `bladeWorld` returns the flying segment, so the smear, the
+blade-on-blade spark test and `resolveContact`'s burst placement all follow it with no code that
+knows a throw exists. Driven through a recording mock 2D context over 400,000 frames: on all 2,758
+flight frames the drawn blade is more than 60 units from the thrower's chest, and the only frames it
+is within 45 are the launch and the catch, which is the blade leaving and returning to the hand.
+
+Its reach is sized to the gap at release, like `Move.span` and for the same reason. The first value,
+`gap + 18`, overshot by about 88 units — it flew clean through the opponent and out the far side,
+and since `duelFocus` frames the two bodies and deliberately ignores blade tips, the subject of the
+move would have spent its apex outside the ornament's frame. `gap - 40` puts the tip ~15 units past
+the opponent's centre: a hit by any reading, and inside the box. Max drawn distance 253.6 → **189.3**.
+
+**Three new gates, each verified by deliberately breaking it**, and two of them found pre-existing
+defects on their first run:
+
+- *The move tables are arithmetically sound.* A contact frame may not land inside a `hold` plateau;
+  a damage reaction may not precede its cause; a `quick` beat must name a move with a `windup`; and
+  every move must be reachable from some sequence. It fired immediately on **`force_hold`**, whose
+  contact is inside its blade's hold — correctly, as it turns out, because a force move lands its
+  contact with the outstretched *hand* and parks its blade overhead on purpose. The rule was stated
+  one notch too wide and is now scoped to blade attacks. It then fired on **`retreat`: a move no
+  sequence had ever used.** `backstep` had quietly replaced it everywhere, and an unreachable move
+  costs nothing and shows nothing, so it had been dead for the entire life of the director.
+- *A pass crosses without mirroring, and lands upright.* The two defects above, gated.
+- The reachability check now demands **all** sequences fire rather than all-but-one. Nothing is
+  ranged `far` any more, so the old exemption for `close-in` had already been made obsolete by the
+  2026-08-17 re-ranging and was quietly excusing a real failure.
+
+`retreat` was given a sequence rather than deleted. It is a 34-frame *walk* backwards at an
+uncommitted top speed, where `backstep` is a 26-frame hop with an impulse — one fighter yielding
+ground while still facing the person pushing them, which is an image the pool did not have.
+`give-ground` ends in a counter rather than in quiet, because the pool's zero-damage share is held
+under a third and a withdrawal that draws the attacker onto a thrust is what a withdrawal is *for*.
+
+The pool is **28 sequences and 31 moves**, all reachable, fairness unchanged at 0.09σ over 123
+matches.
+
+### The review pass, and four things it caught
+
+Reviewed before committing, on the principle this file already records — *almost every real defect
+was found by someone other than the author*. It held again: four findings, all real, all fixed
+before the work landed. Two of them were **claims in my own new comments that measurement did not
+support**, which is the same failure mode the 2026-08-17 adversarial re-review found.
+
+- **A killing throw teleported the blade back into the winner's fist.** `stepFighter`'s victory
+  branch sets `flourish` the moment the opponent dies, and `thrownBlade` is keyed on the move — so a
+  blade still in the air vanished from the opponent's chest and reappeared in the thrower's hand,
+  ~200 world units, on the death frame. That is the *first* frame of the two-second hold the design
+  nominates as the announcement, and it hit **11 of 104 throws (10.6%)** — precisely the throws that
+  won a match. The flourish now waits for the catch, which costs 20 frames of a 200-frame hold and
+  is also just true: you cannot salute with a sword you have not caught. Measured after: **0 of 140.**
+- **The riposte still wound up — downward, on 207 of 207 runs.** `strike_rising` loads by dropping
+  the blade to +1.2 and sweeping up through it, so entering at the end of that load handed the
+  spring a target 1.3 rad *below* a level parry: median peak dip **0.31 rad**, on the one move whose
+  entire purpose is not to have a wind-up. The comment claiming it "rises straight out of the parry"
+  was simply false. A riposte needs a strike whose load sits near the parry's own angle, and
+  `thrust` does — it loads at −0.35 against `parry_high`'s −0.1. Both are four frames from beat to
+  contact, so nothing else in the sequence moved. After: **64.2%** show any dip at all, median
+  **0.078 rad**, worst 0.145 — and that residue is not a wind-up, it is the thrust extending to
+  −0.05, which is 0.05 below where the parry was holding. `strike_rising` now carries a comment
+  saying why it deliberately has no `windup`, so the next person does not re-add one.
+- **The thrown blade's tumble was not mirrored by `facing`.** The flight offset was, the spin was
+  not, in a renderer built entirely on `scale(facing, 1)`. A left-facing thrower's sword therefore
+  turned the wrong way relative to its own travel, and `tx`/`ty` came back as the *trailing* end —
+  so `TRAIL_INNER` kept the wrong half of the blade for the smear on one of the two fighters.
+- **`CLAUDE.md` still said `close-in` was "deliberately kept far".** The 2026-08-17 re-ranging moved
+  it to `mid` and updated `scripts/check.ts` but not the invariants file, so this change corrected
+  one copy of a stale claim and left the other contradicting it. Nothing is ranged `far`; the band
+  holds 0.07% of frames and zero of 3,232 picks, and a far pick would fall through to the `any` pool
+  where `disengage` is the only candidate.
+
+The review also cleared, by measurement rather than by reading: the ground-pass separation rule (156
+overrun completions, **zero** grounded overlap at move end), the somersault's derived window against
+the discrete Euler integration, the thrown blade's hand-off frames (**0** smear discontinuities),
+that the clash test genuinely fires off the flying blade (3,134 of 4,656 flight frames clear the
+force floor), that the blade never leaves the arena, and the new sequences' beat arithmetic.
+
+**Still needs an eye, and no bench can settle it:** whether the tumble reads at ornament scale,
+whether one burst per charge is enough for the overrun, and whether the thrown blade is legible or
+merely brief.
+
+
 ## 2026-08-18 (later still) — the sign-in portal, and the dead end it replaced
 
 **Client:** *"I need a portal to the login page."* Read as a feature request, it is a two-line

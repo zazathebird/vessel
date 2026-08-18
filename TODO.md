@@ -139,10 +139,25 @@ overlap more than they used to, 41.5% of frames against 21.7%. The spurious
 sparks that came off that are gone; the visual crossing is not. Undoing it costs
 the contact quality, so it wants a look before anyone trades it back.
 
-### B. Duel choreography — the moves designed but not yet built
+### B. ~~Duel choreography — the moves designed but not yet built~~ — **done 2026-08-18**
 
-The director and its 23 sequences are in. Still on the design sheet and worth
-having, roughly in payoff order:
+**Everything on the sheet is built. 28 sequences, 31 moves, all reachable and
+gated.** `CLAUDE.md` deviation 9 has the four load-bearing rules;
+`docs/DECISIONS.md` 2026-08-18 (last) has the measurements.
+
+Three defects surfaced while building it, none of them visible by reading the
+code: a somersaulting fighter **mirrored the entire figure** on the frame it
+crossed the opponent (147/147/157 events against ~169 flips, on three seeded
+runs — i.e. every one); **`retreat` had never been used by any sequence** and had
+been dead for the life of the director; and `overrun`'s sparks were authored
+against a blade crossing that does not happen, because the two guards already
+overlap before the charge starts. The first two now have gates.
+
+**What still wants an eye** — no bench can settle these: whether the tumble reads
+at ornament scale, whether one spark burst per charge is enough for the overrun,
+and whether the thrown blade is legible or merely brief.
+
+The original list, for the record:
 
 - ~~**The blade lock's visuals.**~~ **Built 2026-08-14 (later).** The press has
   the sustained shower at the true crossing, the two-frequency judder that the
@@ -153,16 +168,28 @@ having, roughly in payoff order:
   the director. Two prerequisites had to be fixed first and are the reason it
   looked like nothing: the blades were never touching, and `bladeGap` could not
   have told you where they touched if they were.
-- **`duck` and `overrun`.** A crouch under a horizontal sweep, and a charge
-  that carries both fighters past each other and swaps the sides. `overrun` is
-  the only move that changes the arena's geometry, which is why a long fight
-  currently reads as more static than it is.
-- **Riposte with the wind-up skipped.** Scheduled, not a new move: an attack
-  beginning within 8 frames of a parry, entered from the parry's own blade
-  angle. The missing wind-up is exactly what makes a riposte *feel* fast.
-- **`blade_throw`.** The thrown blade leaves the hand for ~40 frames. The
-  silhouette losing its brightest element is an enormous read and nothing else
-  in the set does it. Needs renderer support for a detached blade.
+- ~~**`duck` and `overrun`.**~~ **Built 2026-08-18.** The duck needed something
+  to duck under first — every other attack in the table finishes in the floor,
+  and crouching under a descending blade puts your head where it is going — so
+  `strike_level` came with it, holding its blade level for seven frames while
+  the body carries it forward. `overrun` is a mutual charge on the ground, and
+  it needed the body separation to stand down: that is a **ground pass**, a pass
+  with no vertical impulse, and *not* "any pass move", which measured worse
+  because it also licensed the nine frames after a somersault lands.
+- ~~**Riposte with the wind-up skipped.**~~ **Built 2026-08-18** as
+  `Move.windup` + a `quick` beat, and it is a property of the **beat**, never
+  the runtime test the note here proposed. "Enter quick if a parry ended within
+  8 frames" is a condition, and a condition moves the contact frame — so the
+  reaction beat authored against it would be right on some runs and early on
+  others, which is the one thing the director refuses to do. Lands four frames
+  after its beat instead of sixteen.
+- ~~**`blade_throw`.**~~ **Built 2026-08-18**, and it cost almost nothing
+  because it is routed through `bladeWorld`: while the blade is out of the hand
+  that function returns the flying segment, so the smear, the blade-on-blade
+  spark test and the burst placement all follow it with no code that knows a
+  throw exists. Reach is sized to the gap at release — `gap - 40`, because
+  `duelFocus` ignores blade tips and an overshooting throw spends its apex
+  outside the ornament's frame.
 - ~~**`spin_attack`'s body flatten.**~~ **Built 2026-08-16.** Squared rather
   than signed, because the blade is drawn inside the same transform and a signed
   cosine would mirror the sword to the fighter's other side halfway through and
@@ -205,10 +232,12 @@ right now the figures are three times bigger.
 
 Two follow-ons it surfaced, neither urgent:
 
-- **`flip_over` does not flip.** Its own comment describes "a still blade under
-  a tumbling body"; the body floats over upright with its legs tucked, and the
-  only `ctx.rotate` in the renderer is the death tip-over. Now that the camera
-  keeps the whole jump in frame, this is the most visible thing missing from it.
+- ~~**`flip_over` does not flip.**~~ **Fixed 2026-08-18.** One linear revolution
+  about the body's middle, over a window derived from the move's own impulse —
+  `2·vy/g` — so the feet arrive on the frame the turn completes: measured over
+  171 landings at a median offset of **0 frames, range 0 to 0**. Adding it
+  exposed the mid-air mirror described in section B, which had to be fixed
+  first: without that, the figure turns inside out at the top of the arc.
 - The camera is the only place on the site where the frame moves on its own. If
   that ever reads as too much, `CAM_PAN` / `CAM_ZOOM_*` are the dials, and
   clamping `CAM_MIN` and `CAM_MAX` together makes it a static crop again.

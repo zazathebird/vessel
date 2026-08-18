@@ -44,7 +44,7 @@ npm run deploy       # build, strip dist/_redirects, publish the Worker
 **Deploy with `npm run deploy`, never bare `wrangler deploy`** — see *Deployment*.
 
 `npm run check` is the gate for everything automatable (see *Checks* below — several of its
-nineteen gates are purely about rendering). The only *end-to-end* tests are `scripts/auth-e2e.ts`, which drives the real `src/auth` modules against a live
+twenty-three gates are purely about rendering). The only *end-to-end* tests are `scripts/auth-e2e.ts`, which drives the real `src/auth` modules against a live
 Worker and local D1 and prints its own check count on completion. There is still no test suite that *renders* the site in a browser — the check suite reasons about
 the stylesheets and the pure modules instead — but two of the site's own pure modules are covered there because both are
 **wire formats whose failures are silent**: `src/share/paths.ts` (§12 S) and, since 2026-08-14,
@@ -902,6 +902,69 @@ All deliberate. Add to this list rather than silently diverging.
    drew identical outward rings, so a pull looked like a push — which mattered
    more once `force_pull` was fixed to actually pull.
 
+   **The choreography sheet is finished** (2026-08-18). `duck` + `strike_level`,
+   `overrun`, the skipped-wind-up riposte and `blade_throw` are all built, the
+   somersault actually somersaults, and `retreat` — which no sequence had ever
+   used — got one. **28 sequences, 31 moves, every one reachable and gated.**
+   Four rules there are load-bearing:
+
+   - **The somersault's tumble is derived from its own impulse, never typed.**
+     Flight time is `2·vy/g`, so the rotation starts on the impulse frame and
+     completes on the frame the feet arrive — measured over 171 landings at a
+     median offset of **0 frames, range 0 to 0**. It is one revolution and
+     linear, because a somersault has constant angular velocity and easing it
+     reads as floating. `npm run check` re-derives the window and fails if a
+     retuned jump lands somebody mid-turn.
+   - **A move that crosses the opponent declares `pass`, and facing is frozen
+     for its duration.** `stepFighter` re-derives `facing` every frame, so a
+     somersaulting fighter mirrored the *entire figure* on one frame at the top
+     of the arc — measured at **147/147/157 events against ~169 flips** on three
+     seeded runs, i.e. every one. Invisible until the tumble was added, then a
+     flicker. Gated.
+   - **The separation exemption is a *ground* pass — a pass with no vertical
+     impulse — not any pass.** `flip_over` is airborne for only 83% of its 54
+     frames, so exempting it wholesale licenses the nine frames after it lands on
+     top of somebody: minimum grounded separation fell **15.79 → 4.39**. The
+     airborne test already covers the somersault where it earns it.
+   - **A `quick` beat is a riposte, and it is a property of the beat, never a
+     runtime test.** `Move.windup` names the frame a strike stops loading; a
+     quick entry starts there, so the counter leaves the parry's own blade angle
+     and lands four frames after its beat instead of sixteen. Deciding it at
+     runtime would move the contact frame, and the reaction beat authored against
+     it would then be right on some runs and early on others.
+
+     **Only a strike whose load sits near the parry's angle may carry a
+     `windup`.** `strike_rising` loads by dropping the blade to +1.2, so entering
+     it from a level parry dipped the counter 0.31 rad *downward* first — a
+     wind-up, on the move that exists not to have one, on **207 of 207** runs.
+     `thrust` loads at −0.35 against `parry_high`'s −0.1 and is the pool's
+     riposte for that reason. `strike_rising` carries a comment saying why it has
+     no `windup`; do not add one.
+
+   Two more, both about the thrown blade: **the victory flourish waits for the
+   catch** (setting it while the blade was in the air teleported the sword ~200
+   units back into the winner's fist on the death frame, on 10.6% of throws —
+   which are exactly the throws that win a match), and **its tumble is mirrored
+   by `facing`** like every other piece of geometry here, or `tx` comes back as
+   the trailing end and the smear keeps the wrong half of the blade.
+
+   `blade_throw` costs almost nothing because it is routed through `bladeWorld`:
+   while the blade is out of the hand that function returns the flying segment,
+   so the smear, the blade-on-blade spark test and the burst placement all follow
+   it with no code that knows a throw exists. Its reach is sized to the gap at
+   release for the same reason `Move.span` exists — and it is `gap - 40`, not
+   `gap + 18`, because `duelFocus` frames the two bodies and ignores blade tips,
+   so an overshooting throw spends its apex outside the ornament's frame.
+
+   **`overrun`'s blades never "meet", and that is geometry rather than tuning.**
+   A guard puts the tip 77 units forward and the leash holds the pair at ~142, so
+   the two swords already overlap on frame one of a charge; the *bodies* cross at
+   mf 14–18, by which time the blades are long past each other. Timing the sweep
+   to the body crossing gave **3 spark frames in 65 runs**; sweeping from frame
+   one gives **62 in 68**. Do not chase a second burst at the pass — there is no
+   contact there, and manufacturing one is the "proximity is not contact" bug the
+   force floor exists to kill.
+
    **Deliberately not taken:** the loser's blade vanishes on a single frame at
    death. The fix risks a lit sword lying on the ground for two seconds, and that
    is a judgement that wants an eye rather than a measurement.
@@ -910,8 +973,15 @@ All deliberate. Add to this list rather than silently diverging.
    150) because working knock-back genuinely widens the fight — with impulses
    live and the old distance, close-range time *fell* to 35%. And tightening the
    leash empties the far bracket, which silently starved all five `far`
-   sequences to **zero picks**; four were re-ranged to `mid` and `close-in`
-   deliberately kept far so something sensible still answers that band. **If you
+   sequences to **zero picks**; four were re-ranged to `mid`. **`close-in` went
+   with them on 2026-08-17 and this paragraph did not** — it said the sequence
+   was "deliberately kept far so something sensible still answers that band",
+   which stopped being true the day it was re-ranged and was corrected here on
+   2026-08-18. **Nothing is ranged `far` today.** The band still exists in
+   `chooseSequence` and the fight does not decide anything in it: measured, past
+   `MID` is 0.07% of frames and **zero** of 3,232 picks, because the leash pulls
+   the pair back inside `MID` long before a sequence ends. A far pick would fall
+   through to the `any` pool, where `disengage` is the only candidate. **If you
    move the leash again, re-check the sequence distribution** — the ranges and
    the leash are coupled, and the failure is invisible.
 
@@ -1368,7 +1438,9 @@ it was "does the thing it claims to do actually happen".
 What it covers: types; stylesheet brace balance; the QR encoder against the ISO Reed-Solomon worked
 example, both format copies agreeing on a published level-M value, and a round trip back to the
 input; the duel's fairness, sequence reachability and numerical stability over 360,000 stepped
-frames; the catalogue counts this file documents; that no stylesheet rule pairs a band with a
+frames, that its move tables are arithmetically sound (no contact frame inside a `hold` plateau, no
+damage reaction before its cause, no move nothing reaches), and that a pass move crosses without
+mirroring the figure and lands it upright; the catalogue counts this file documents; that no stylesheet rule pairs a band with a
 layout that band never renders; that no preset offers a withdrawn effect or ornament; the edge
 fade's truth table including both 1px dead bands; that no scroll-driven animation is reset by the
 entrance layer and no from-only keyframe lands on a value it cannot interpolate to; the ornament

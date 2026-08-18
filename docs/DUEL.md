@@ -20,6 +20,18 @@
 > caller clamps the delta), the health-bar split between ornament and
 > background, and the naming/likeness constraint.
 >
+> **Revised again 2026-08-18.** The choreography sheet is finished: `duck` (with
+> `strike_level`, the one sweep that can be ducked), `overrun`, the
+> skipped-wind-up riposte and `blade_throw` are all built, `flip_over` actually
+> rotates, and `retreat` — a move no sequence had ever used — got one. **28
+> sequences, 31 moves, all reachable and gated.** Three defects surfaced while
+> building it, all measured rather than seen: a somersaulting fighter mirrored
+> the whole figure on the frame it crossed the opponent (every flip, ~169 per
+> 300,000 frames), `retreat` had been dead for the life of the director, and
+> `overrun`'s sparks were authored against a blade crossing that does not exist.
+> `CLAUDE.md` deviation 9 has the rules and `docs/DECISIONS.md` 2026-08-18 (last)
+> the numbers.
+>
 > **Revised again 2026-08-16.** Ten more shipped bugs, found by measurement
 > rather than by eye after the client said the fight "seems a little off" — the
 > headline being that no fighter had ever actually been knocked down and that
