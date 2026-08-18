@@ -7,21 +7,17 @@ import { EmailReveal } from "./EmailReveal";
  * column) is entirely CSS — see `.v-block` and its `.layout-*` overrides —
  * this component only ever renders structure and copy.
  */
-export function ContentBlock({
-  block,
-  index,
-  staggerMs = 50,
-}: {
-  block: PageBlock;
-  index: number;
-  /** Console streams blocks in at 160ms intervals so arrival reads as printed output. */
-  staggerMs?: number;
-}) {
+export function ContentBlock({ block, index }: { block: PageBlock; index: number }) {
   const { config } = useConfig();
   return (
     <article
       className={`v-block${block.loud ? " is-loud" : ""}`}
-      style={{ animationDelay: `${(index * staggerMs) / 1000}s` }}
+      // The block writes its index, not a delay: the stagger *rhythm* belongs
+      // to the layout (chrome.css's base 50ms, Console's 160ms stream, each
+      // entrance in entrances.css), and an inline animation-delay would beat
+      // every one of those rules. `--i` is the same shape as Radial's dial
+      // pills — position states a fact, CSS decides what it means.
+      style={{ "--i": index } as React.CSSProperties}
     >
       <div className="v-block-head">
         <span className="v-kicker">

@@ -218,6 +218,9 @@ export function themeClasses(config: Config, layout: LayoutId, band: Band): stri
     config.grain && !config.calm ? "has-grain" : null,
     config.breathe && !config.calm ? "has-breathe" : null,
     config.cursor && !config.calm ? "has-cursor" : null,
+    // Gated here, not in CSS: entrances.css can then assume calm is absent,
+    // and the off state falls back to chrome.css's plain v-rise untouched.
+    config.entrances && !config.calm ? "has-entrances" : null,
   ]
     .filter(Boolean)
     .join(" ");

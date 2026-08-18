@@ -42,17 +42,25 @@
   border-radius: var(--radius);
   background: color-mix(in oklab, var(--surface) 94%, transparent);
   box-shadow: 0 40px 90px rgba(0, 0, 0, 0.55);
-  animation: v-dialog-in 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation: v-over-in 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+  --over-from: 0 14px;
+  --over-scale: 0.98;
 }
 
-@keyframes v-dialog-in {
+/*
+ * The one slide-over arrival (TODO 11's shared primitive, 2026-08-18). The
+ * dialog, the command palette and the panel each used to own an identical
+ * 0.34s keyframe differing only in its from-state; this is that from-state as
+ * two tokens. From-only, `translate`/`scale` rather than `transform`, for the
+ * reasons entrances.css writes down. **The operator door keeps `v-door-in`
+ * deliberately** — its perspective tilt is the door's theatre, not a
+ * duplicate of this.
+ */
+@keyframes v-over-in {
   from {
     opacity: 0;
-    transform: translateY(14px) scale(0.98);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
+    translate: var(--over-from, 0 14px);
+    scale: var(--over-scale, 1);
   }
 }
 
@@ -115,7 +123,9 @@
   border-radius: var(--radius);
   background: color-mix(in oklab, var(--surface) 94%, transparent);
   box-shadow: 0 40px 90px rgba(0, 0, 0, 0.55);
-  animation: v-dialog-in 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation: v-over-in 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+  --over-from: 0 14px;
+  --over-scale: 0.98;
   overflow: hidden;
 }
 
@@ -174,18 +184,10 @@
   background: color-mix(in oklab, var(--surface) 94%, transparent);
   backdrop-filter: blur(22px);
   box-shadow: -40px 0 90px rgba(0, 0, 0, 0.55);
-  animation: v-panel-in 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) both;
-}
-
-@keyframes v-panel-in {
-  from {
-    opacity: 0;
-    transform: translateX(24px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
+  /* The shared slide-over primitive — see v-over-in above. The panel arrives
+     from the edge it lives on. */
+  animation: v-over-in 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+  --over-from: 24px 0;
 }
 
 .v-panel-head {

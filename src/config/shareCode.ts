@@ -17,8 +17,9 @@ import type { Config } from "./types";
  * bitfield had 1, 2, 4 and 8 in use and 16 spare, and a bit costs nothing that
  * a field costs: every code already in circulation has bit 16 clear, which
  * decodes as sound off — the correct default, and the one a visitor would want.
- * The field count does not change, so nothing that counts hyphens breaks, and
- * base-36 still renders the whole bitfield (max 31) in one character.
+ * The field count does not change, so nothing that counts hyphens breaks. The
+ * bitfield has since outgrown one base-36 character (max 127 with bit 64) —
+ * fine, because nothing counts characters, only hyphens.
  */
 
 const GRAIN = 1;
@@ -35,6 +36,19 @@ const SOUND = 16;
  * have had to be stored inverted for the same reason.
  */
 const SLOTS = 32;
+/**
+ * Layout entrances (2026-08-18) — **stored inverted: the bit set means
+ * entrances OFF.** The default is on, and every code already in circulation
+ * has bit 64 clear, so a clear bit has to decode to the default the way it
+ * always has. `sound` and `slots` got away with the plain reading only
+ * because their defaults are off.
+ *
+ * This bit takes the bitfield past one base-36 character (max 127 → "3J").
+ * Harmless by construction: nothing counts characters, only hyphens, and
+ * `parseInt(..., 36)` reads multi-digit fields exactly as it reads the
+ * palette index.
+ */
+const ENTRANCES_OFF = 64;
 
 export function encodeShareCode(config: Config): string {
   const layout = LAYOUTS.findIndex((l) => l.id === config.layout);
@@ -45,7 +59,8 @@ export function encodeShareCode(config: Config): string {
     (config.cursor ? CURSOR : 0) +
     (config.calm ? CALM : 0) +
     (config.sound ? SOUND : 0) +
-    (config.slots ? SLOTS : 0);
+    (config.slots ? SLOTS : 0) +
+    (config.entrances ? 0 : ENTRANCES_OFF);
   const ornament = ORNAMENTS.findIndex((o) => o.id === config.ornament);
   return [config.pal, layout, fx, config.type, bits, ornament]
     .map((n) => Math.max(0, n).toString(36))
@@ -66,6 +81,7 @@ export type SharedConfig = Pick<
   | "calm"
   | "sound"
   | "slots"
+  | "entrances"
   | "mode"
 > &
   Partial<Pick<Config, "ornament">>;
@@ -100,6 +116,7 @@ export function decodeShareCode(input: string): SharedConfig | null {
     calm: !!(bits & CALM),
     sound: !!(bits & SOUND),
     slots: !!(bits & SLOTS),
+    entrances: !(bits & ENTRANCES_OFF),
     mode: "static",
   };
 }

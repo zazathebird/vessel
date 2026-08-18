@@ -1590,6 +1590,11 @@
    * there is nothing to fill forwards to.
    */
   animation: v-rise 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+  /* The stagger: ContentBlock writes `--i` (its index) to the style attribute
+     and the delay is computed here, so a layout can own its own rhythm —
+     Console's 160ms stream below, every entrance in entrances.css — without
+     fighting an inline animation-delay that would beat them all. */
+  animation-delay: calc(var(--i, 0) * 50ms);
   transition: background-color 0.9s ease, color 0.9s ease, border-color 0.9s ease,
     box-shadow 0.9s ease, transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
   transform-style: preserve-3d;
@@ -1620,6 +1625,9 @@
   -webkit-backdrop-filter: none;
   box-shadow: inset 11px 0 22px -12px color-mix(in oklab, var(--a1) 80%, transparent);
   animation: v-rise 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+  /* Console streams its blocks in one at a time, so arrival reads as output
+     being printed rather than as a grid settling. */
+  animation-delay: calc(var(--i, 0) * 160ms);
 }
 
 /*

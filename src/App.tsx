@@ -71,10 +71,6 @@ export default function App() {
       ? "v-dive 0.62s cubic-bezier(0.6,0,0.3,1) both"
       : `${nav % 2 ? "v-iris-a" : "v-iris-b"} 0.5s cubic-bezier(0.2,0.8,0.2,1) both`;
 
-  // Console streams its blocks in one at a time, so arrival reads as output
-  // being printed rather than as a grid settling.
-  const staggerMs = layout === "console" ? 160 : 50;
-
   const grid = useMemo(
     () => (
       <div className="v-grid">
@@ -83,7 +79,7 @@ export default function App() {
           // duplicate key would let React reconcile the two together. Including
           // the kicker still changes every key across a page change, which is
           // what remounts the cards and replays their staggered entrance.
-          <ContentBlock key={`${block.kicker}-${i}`} block={block} index={i} staggerMs={staggerMs} />
+          <ContentBlock key={`${block.kicker}-${i}`} block={block} index={i} />
         ))}
         {/* Console's prompt: the line the log is still writing to. Rendered
             always and shown by CSS on that one layout, so the grid memo does
@@ -93,7 +89,7 @@ export default function App() {
         </div>
       </div>
     ),
-    [page, staggerMs],
+    [page],
   );
 
   // The two account pages render a form where the block grid would go.
@@ -154,7 +150,10 @@ export default function App() {
         <main id="main" tabIndex={-1} ref={stageRef} className="v-stage" style={{ animation: stageAnimation }}>
           {layout === "terminal" ? (
             <>
-              <div className="v-termbar" aria-hidden="true">
+              {/* Keyed by page so the bar remounts on navigation and the
+                  entrance typewriter retypes the new path — the title is the
+                  one element here whose text changes per page. */}
+              <div key={config.page} className="v-termbar" aria-hidden="true">
                 <span className="v-termbar-dot" style={{ background: "var(--a3)" }} />
                 <span className="v-termbar-dot" style={{ background: "var(--a2)" }} />
                 <span className="v-termbar-dot" style={{ background: "var(--a1)" }} />

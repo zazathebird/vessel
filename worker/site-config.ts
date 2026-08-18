@@ -43,6 +43,8 @@ const PUBLISHED_KEYS = [
   // is silently dropped on publish, so the operator's own browser would show a
   // setting that never reached anybody else.
   "sound",
+  // Layout entrances (2026-08-18) — same kept-in-step rule as `sound` above.
+  "entrances",
 ] as const;
 
 /**

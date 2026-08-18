@@ -105,6 +105,10 @@ export function loadConfig(): Config {
     // Appearance, so published-only: it is the operator's note to themselves,
     // not a preference a visitor can express.
     slots: bool(saved.slots, DEFAULT_CONFIG.slots),
+    // Appearance too — the entrance motion belongs to the published look, and
+    // a visitor who wants stillness has calm, which strips entrances with
+    // everything else.
+    entrances: bool(saved.entrances, DEFAULT_CONFIG.entrances),
     unlocked: bool(saved.unlocked, DEFAULT_CONFIG.unlocked),
   };
 }

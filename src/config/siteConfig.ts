@@ -55,6 +55,7 @@ export const PUBLISHED_KEYS = [
   "cursor",
   "sound",
   "slots",
+  "entrances",
 ] as const;
 
 /** Narrow a full config down to the slice that gets published. */

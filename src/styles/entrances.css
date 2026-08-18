@@ -1,0 +1,217 @@
+/*
+ * The seventh stylesheet: layout entrances (TODO 11, approach confirmed
+ * 2026-08-14, built 2026-08-18).
+ *
+ * Every archetype's blocks arrive in a way derived from its own structure, so
+ * the motion says *which archetype you are in* rather than decorating: Ledger's
+ * rows rule in from the margin, Deck's cards are dealt, Split's halves meet,
+ * the HUD's planes arrive by depth. One keyframe carries all of it — `v-ent`
+ * reads its from-state from custom properties, and each layout sets tokens
+ * rather than owning an animation. That is the same shape as `--panel-shift`:
+ * a layout states its intent, one place resolves it.
+ *
+ * The rules of this file, each load-bearing:
+ *
+ *  - **From-only keyframes, no `to` block, ever.** The resolved state is the
+ *    element's own declared style — which is not zero everywhere: Split's even
+ *    blocks declare `translate: 0 14px` and the HUD's parallax *is* a declared
+ *    `translate`. A hardcoded `to { translate: 0 0 }` would animate to the
+ *    wrong place and pop on release. Omitting `to` makes the browser resolve
+ *    the landing to the truth.
+ *  - **`translate` / `scale` / `rotate` / `opacity` only, never `transform`.**
+ *    The house rule (interaction.css): `transform` belongs to the cursor-lean
+ *    that useMotionSystems writes to the style attribute. These compose with
+ *    it; `transform` would fight it. All four are compositor-only, which is
+ *    the client's requirement ("as long as the site doesn't lag") in property
+ *    form.
+ *  - **`backwards` fill, never `both`** — chrome.css documents why: an
+ *    animated declaration outranks the style attribute forever under a
+ *    forwards fill. The stagger only needs the from-state held during the
+ *    delay.
+ *  - **Gated on `.has-entrances`**, which themeClasses emits only when the
+ *    Entrances toggle is on *and* calm is off. Toggle off falls back to
+ *    chrome.css's plain `v-rise` — today's site, unchanged. Calm strips all of
+ *    it, as calm strips everything.
+ *  - **The stagger is `--i`,** the block index ContentBlock writes to its own
+ *    style attribute, times a per-layout `--ent-stagger`. Console keeps its
+ *    own stream (excluded below) because its 160ms print *is* its entrance
+ *    and predates this file.
+ */
+
+/* The one arrival. Missing `to` = the element's declared style, see above. */
+@keyframes v-ent {
+  from {
+    opacity: 0;
+    translate: var(--ent-from, 0 18px);
+    scale: var(--ent-scale, 1);
+    rotate: var(--ent-rot, 0deg);
+  }
+}
+
+/*
+ * Terminal's variant: no motion at all, a two-phase pop. A terminal does not
+ * ease — output is absent and then printed. Held dark for the first half so a
+ * streamed sequence reads as lines being written, not cards fading.
+ */
+@keyframes v-ent-print {
+  0%,
+  49.9% {
+    opacity: 0;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* The termbar title types itself. `steps()` over a clip wipe — the same
+   mechanism as Console's kicker wipe, quantised so it reads as keystrokes.
+   One short mono string in a fixed cell: no reflow, no resample, which is
+   what keeps this on the right side of the scramble trap. */
+@keyframes v-ent-type {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+}
+
+/*
+ * The base arrival. `:not(.layout-console)` rather than cascade order, so the
+ * exclusion is stated where it applies: Console already streams its blocks in
+ * chrome.css and its kicker wipe inherits that delay — replacing its animation
+ * here would orphan the wipe.
+ */
+.has-entrances:not(.layout-console) .v-block {
+  animation: v-ent var(--ent-dur, 0.5s) var(--ent-ease, cubic-bezier(0.2, 0.8, 0.2, 1)) backwards;
+  animation-delay: calc(var(--i, 0) * var(--ent-stagger, 50ms));
+}
+
+/* Cinematic: a film settle — the slow version of the rise, long stagger, so
+   blocks resolve like a title sequence rather than a UI loading. */
+.has-entrances.layout-cinematic {
+  --ent-dur: 0.7s;
+  --ent-stagger: 110ms;
+}
+
+/* Magazine: print does not move, it appears. Pure fade, editorial restraint. */
+.has-entrances.layout-magazine {
+  --ent-from: 0 0;
+  --ent-dur: 0.65s;
+  --ent-stagger: 70ms;
+}
+
+/* Deck: cards dealt onto the table, alternating hands. The rotation lands on
+   the declared 0deg, so the deal squares itself as it arrives. */
+.has-entrances.layout-deck {
+  --ent-dur: 0.55s;
+  --ent-stagger: 80ms;
+}
+.has-entrances.layout-deck .v-block:nth-child(odd) {
+  --ent-from: 26px 30px;
+  --ent-rot: 2.4deg;
+}
+.has-entrances.layout-deck .v-block:nth-child(even) {
+  --ent-from: -26px 30px;
+  --ent-rot: -2.4deg;
+}
+
+/* Split: the halves meet. Odd from the left, even from the right — even blocks
+   land on their declared `translate: 0 14px` further plane, by construction. */
+.has-entrances.layout-split {
+  --ent-dur: 0.55s;
+  --ent-stagger: 60ms;
+}
+.has-entrances.layout-split .v-block:nth-child(odd) {
+  --ent-from: -26px 0;
+}
+.has-entrances.layout-split .v-block:nth-child(even) {
+  --ent-from: 26px 0;
+}
+
+/* Radial: everything blooms outward from the hub the dial already owns. */
+.has-entrances.layout-radial {
+  --ent-from: 0 0;
+  --ent-scale: 0.92;
+  --ent-stagger: 50ms;
+}
+
+/* Side-scroll: the filmstrip arrives from the direction it scrolls. */
+.has-entrances.layout-sidescroll {
+  --ent-from: 34px 0;
+  --ent-dur: 0.6s;
+  --ent-stagger: 70ms;
+}
+
+/* Mosaic: tiles pop into the grid, quick and small — a wall being tiled, not
+   a hand of cards. */
+.has-entrances.layout-mosaic {
+  --ent-from: 0 0;
+  --ent-scale: 0.94;
+  --ent-dur: 0.45s;
+  --ent-stagger: 45ms;
+}
+
+/* Ledger: rows rule in from the margin, tight rhythm — entries being posted. */
+.has-entrances.layout-ledger {
+  --ent-from: -26px 0;
+  --ent-dur: 0.45s;
+  --ent-stagger: 55ms;
+}
+
+/* Stack keeps the house rise at the house rhythm — it is the collapse target
+   for every layout on the phone band, so its entrance is the baseline the
+   others are variations on. Defaults, stated for the record. */
+.has-entrances.layout-stack {
+  --ent-dur: 0.5s;
+  --ent-stagger: 50ms;
+}
+
+/* Marginalia: annotations settle onto the page, soft and slight. */
+.has-entrances.layout-marginalia {
+  --ent-from: 0 10px;
+  --ent-dur: 0.6s;
+  --ent-stagger: 65ms;
+}
+
+/* Contact sheet: frames develop across the grid, fastest rhythm on the site —
+   a sheet is scanned, not read. */
+.has-entrances.layout-sheet {
+  --ent-from: 0 0;
+  --ent-scale: 0.96;
+  --ent-dur: 0.4s;
+  --ent-stagger: 35ms;
+}
+
+/*
+ * HUD: the planes arrive by depth. Far plane first from slightly behind
+ * (scale < 1), near plane last from slightly in front (scale > 1) — the same
+ * z-order the layout's occlusion already draws, so the boot sequence states
+ * the structure. The per-plane delay is added on top of the index stagger;
+ * these selectors mirror layouts.css's own 3n pattern.
+ */
+.has-entrances.layout-hud {
+  --ent-from: 0 0;
+  --ent-dur: 0.55s;
+  --ent-stagger: 60ms;
+}
+.has-entrances.layout-hud .v-block:nth-child(3n + 3) {
+  --ent-scale: 0.965;
+}
+.has-entrances.layout-hud .v-block:nth-child(3n + 2) {
+  --ent-scale: 0.982;
+  animation-delay: calc(var(--i, 0) * var(--ent-stagger, 60ms) + 90ms);
+}
+.has-entrances.layout-hud .v-block:nth-child(3n + 1) {
+  --ent-scale: 1.045;
+  animation-delay: calc(var(--i, 0) * var(--ent-stagger, 60ms) + 180ms);
+}
+
+/* Terminal: output is printed, not eased — and the termbar types its title.
+   The print override must follow the base arrival rule: same specificity,
+   later wins, and both live in this file on purpose. */
+.has-entrances.layout-terminal .v-block {
+  animation-name: v-ent-print;
+  --ent-dur: 0.24s;
+  --ent-stagger: 90ms;
+}
+.has-entrances .v-termbar-title {
+  animation: v-ent-type 0.85s steps(22, end) 0.1s backwards;
+}

@@ -10,6 +10,7 @@ import "./styles/fonts.css";
 import "./styles/base.css";
 import "./styles/chrome.css";
 import "./styles/layouts.css";
+import "./styles/entrances.css";
 import "./styles/overlays.css";
 import "./styles/interaction.css";
 

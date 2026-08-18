@@ -334,6 +334,14 @@ export function SiteConfigPanel() {
           </button>
           <button
             type="button"
+            className={`chip${config.entrances ? " is-active" : ""}`}
+            aria-pressed={config.entrances}
+            onClick={() => update({ entrances: !config.entrances })}
+          >
+            Entrances
+          </button>
+          <button
+            type="button"
             className={`chip${config.sound ? " is-active" : ""}`}
             aria-pressed={config.sound}
             onClick={() => {

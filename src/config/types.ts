@@ -54,6 +54,20 @@ export interface Config {
    */
   slots: boolean;
   /**
+   * Layout entrance animations (TODO 11, built 2026-08-18). Each archetype's
+   * blocks arrive in a way derived from its own structure — Ledger's rows rule
+   * in from the margin, Deck's cards are dealt, the HUD's planes arrive by
+   * depth. See `src/styles/entrances.css` for the system and its rules.
+   *
+   * **On by default, and the share-code bit is stored inverted because of it**
+   * (bit 64 set means entrances *off* — see shareCode.ts): every code already
+   * in circulation has the bit clear, and clear has to decode to the default.
+   * Appearance, so published-only, like every toggle here except calm and
+   * sound. Off falls back to the plain rise the site always had; calm strips
+   * entrances along with everything else.
+   */
+  entrances: boolean;
+  /**
    * Has the operator door been opened in this session. Not persisted and not
    * published, so it is false again after every reload — `loadConfig` reads the
    * published config only, and `unlocked` is not one of its keys. Nothing is
@@ -77,6 +91,7 @@ export const DEFAULT_CONFIG: Config = {
   cursor: true,
   sound: false, // a site that makes noise uninvited is a site people leave
   slots: false, // production notes are for the operator, not the visitor
+  entrances: true, // each layout announces its own structure on arrival
 
   unlocked: false,
 };

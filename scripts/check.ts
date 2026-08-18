@@ -90,6 +90,43 @@ check("css braces balance", () => {
   return `${readdirSync(dir).filter((f) => f.endsWith(".css")).length} stylesheets balanced`;
 });
 
+// ---- 2a2. Every layout owns an entrance -------------------------------------
+//
+// The entrance system (entrances.css, 2026-08-18) is one keyframe driven by
+// per-layout tokens, so "a layout was added and forgotten here" fails silently:
+// the new layout just plays the generic default and nobody notices. This gate
+// makes the omission loud. Console is the documented exception — its 160ms
+// stream in chrome.css *is* its entrance, and replacing it would orphan the
+// kicker wipe that inherits its delay.
+//
+// The `to`-block assertion is structural: Split's even blocks and the HUD's
+// parallax *declare* `translate`, so an entrance keyframe with a hardcoded
+// `to` state would animate to the wrong place and pop on release. From-only
+// keyframes resolve the landing to the element's own declared style, and that
+// rule holding is what this file's correctness rests on.
+
+check("every layout owns an entrance", () => {
+  const css = readFileSync("src/styles/entrances.css", "utf8");
+  const missing = LAYOUTS.map((l) => l.id).filter(
+    (id) => id !== "console" && !css.includes(`.has-entrances.layout-${id}`),
+  );
+  must(missing.length === 0, `no entrance rule for: ${missing.join(", ")}`);
+  must(
+    /\.has-entrances:not\(\.layout-console\)\s+\.v-block/.test(css),
+    "the base arrival rule is gone or renamed",
+  );
+  must(
+    !/(^|\s)to\s*\{/m.test(css),
+    "entrances.css has a `to` block — from-only is the rule (declared translate would pop on release)",
+  );
+  const chrome = readFileSync("src/styles/chrome.css", "utf8");
+  must(
+    /animation-delay:\s*calc\(var\(--i/.test(chrome),
+    "chrome.css no longer computes the block stagger from --i",
+  );
+  return `${LAYOUTS.length - 1} entrances + console's stream; keyframes stay from-only`;
+});
+
 // ---- 2b. The account form is not sized by whatever contains it -------------
 //
 // 2026-08-17, client: "there is an issue with creating a profile… the current
