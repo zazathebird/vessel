@@ -24,23 +24,61 @@ The ones that apply here most often:
 - **`dataviz`**, **`artifact-design`**, **`artifact-diagramming`** — anything charted or published
   as an artifact.
 
-## Say when to clear — standing client instruction (2026-08-18)
+## Say when to clear — standing client instruction (2026-08-18, refined 2026-08-19)
 
-**Always tell the client when the best moment to `/clear` is, without being asked.** They should
-never have to guess whether the context is carrying its weight.
+**Tell the client when the best moment to `/clear` is, without being asked — but only when there
+is actually something to gain.** They should never have to guess whether the context is carrying
+its weight, and equally should not be prompted to clear a context that costs nothing to keep.
 
-Say it *unprompted* at the natural boundaries, which are the same ones every time:
+**Two gates, and both must pass.** The 2026-08-18 version had only the first, so it fired at every
+boundary whether or not clearing bought anything, and the client asked why the prompts were so
+frequent.
+
+1. **Is it safe?** — *"is anything in this context not yet on disk?"* If yes, say what would be
+   lost and write it down first. This is the original test and it is unchanged.
+2. **Is it worth it?** — clearing is not free: a fresh window re-reads this file and re-derives
+   where everything lives. If the session is short and clean, **say nothing and carry on.**
+
+**Gate 2 is about volume, and volume is not the only reason to clear.** Two things make a context
+worth dropping and only one of them scales with size:
+
+- **Volume** — long session, many large file reads, several subagent reports. Hold off when this
+  is small. This is the half the client added.
+- **Contamination** — the context carries a superseded plan, a disproved theory of a bug, a dead
+  end that was argued at length. This damages the next piece of work *regardless of size*: a short
+  context that spent its whole length on a wrong theory is worse to carry forward than a long
+  clean one. **Still flag this one even when the session is small**, and say which it is, because
+  "this is short but it is pointing the wrong way" is a different recommendation from "this is
+  getting long".
+
+The boundaries where the question is worth asking at all are the same ones as before:
 
 - **After a piece of work is committed, deployed and written down** — the docs are the handoff, so
-  the context has no unique information left in it and a fresh window costs nothing.
+  the context has no unique information left in it. Now: recommend clearing *if* it is also long or
+  contaminated; otherwise stay quiet.
 - **Before starting a large build**, once the plan is agreed. Planning wants the old context;
-  implementing wants a clean one.
+  implementing wants a clean one. A long exploratory plan is worth clearing after; a five-message
+  one is not.
 - **Not in the middle of a measured investigation.** Numbers that have not been written into
   `docs/DECISIONS.md` yet exist only in the context, and clearing throws them away — that is the one
-  moment clearing is actively expensive.
+  moment clearing is actively expensive. Unchanged, and it overrides both gates.
 
-The test is *"is anything in this context not yet on disk?"* If no, say so and recommend clearing.
-If yes, say what would be lost and write it down first.
+**Calibration caveat: there is no context meter in the prompt.** "Is this small" is an estimate
+from how much has been read and how long the conversation has run, not a reading — so prefer
+holding off when it is genuinely ambiguous. The cost of a missed recommendation is one slightly
+long window; the cost of a needless one is thrown-away orientation and a re-read of this file.
+
+**The judgement is delegated — say it as a directive, not as an option** (2026-08-19, client:
+*"lets clear whenever you feel i should clear, your call when to do so"*). When both gates pass,
+write **"clear now"** plus one line of reason (which of volume or contamination, and confirmation
+that everything is on disk). Do **not** lay out the trade-off for the client to weigh: presenting
+it as a decision hands back exactly the judgement they delegated, which is the failure mode this
+instruction exists to fix. The one line of reason stays because they still need to know whether
+anything was at risk — that is information, not a request for a ruling.
+
+**`/clear` cannot be executed from here.** It is a client-side CLI command with no tool behind it,
+so the call is the model's and the keystroke is the client's. Never claim to have cleared, and
+never wait for a clear to "take effect" before continuing — carry on until the next window opens.
 
 Judgement still applies: a skill that would not improve the result is not worth the tokens. The bar
 is *would this help*, not *is this strictly required*.
