@@ -142,18 +142,35 @@
         // Widths sit inside each band rather than on its edge: PHONE_MAX is 560
         // and TABLET_MAX 900, so 420/760 are comfortably within, and a desk cell
         // is the narrowest thing that is still unambiguously desk.
+        //
+        // THE LANDSCAPE ENTRIES ARE NOT A FOURTH AND FIFTH BAND, and reading them
+        // as one is the trap they exist to expose. The band is computed from
+        // *width* alone, so a phone held sideways is 844 wide and therefore lands
+        // in band-TABLET (560-899) — it never renders `band-phone` at all. What is
+        // actually distinctive about landscape is the **height**: 420px against
+        // the 860 the portrait cell gets. `.v-chrome` is `height: 100dvh` with the
+        // stage taking what the header leaves, so every short-viewport question —
+        // does the stage collapse, does the hero still fit, does Terminal's
+        // document-scroll opt-out still behave — lives here and nowhere else.
         const SIZE = {
           phone: [420, 860],
           tablet: [760, 1024],
           desk: [1280, 820],
+          "phone-land": [844, 420],
+          "tablet-land": [1024, 760],
         };
-        const [w, h] = SIZE[band] || SIZE.desk;
+        const [dw, dh] = SIZE[band] || SIZE.desk;
+        // Explicit overrides, because the interesting failures on this site have
+        // been at specific measured viewports (600px nav, 417x857 snap) rather
+        // than at whichever round number a size table happens to carry.
+        const w = Number(q.get("w")) || dw;
+        const h = Number(q.get("h")) || dh;
 
         // Everything except the harness's own controls is passed straight
         // through, so `?all=1&pal=24&calm=1&path=/scams` means what it reads as.
         const passthrough = new URLSearchParams();
         for (const [k, v] of q) {
-          if (k !== "all" && k !== "band" && k !== "_f" && k !== "layout") passthrough.set(k, v);
+          if (!["all", "band", "_f", "layout", "w", "h"].includes(k)) passthrough.set(k, v);
         }
         passthrough.set("_f", "1");
 
