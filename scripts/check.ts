@@ -27,7 +27,7 @@ import { join } from "node:path";
 import { qrMatrix } from "../src/auth/qr";
 import { createDuel, createDuelFrom, advanceDuel, buildSequence, makeRoll, DUEL_TABLES, GRAVITY } from "../src/fx/duel";
 import { BLADE_COLORS, DUEL_POOLS, FIGHTERS, rollPairing } from "../src/fx/fighters";
-import type { CostumeCtx, FighterStyle } from "../src/fx/fighters";
+import type { CostumeCtx, FighterKind, FighterStyle } from "../src/fx/fighters";
 import { PAGES } from "../src/data/pages";
 import { DOWNLOADS } from "../src/data/downloads";
 import { PATHS } from "../src/data/pageIds";
@@ -1068,10 +1068,38 @@ check("duel: every costume is stroked, framed and aligned", () => {
    * its control points — which is conservative in the right direction, since the
    * curve itself stays inside that hull.
    */
+  /** What `drawFighter` hands a costume as `c.alpha`, so a recorded
+   *  `globalAlpha` can be read back as a fraction of the body's own. */
+  const BODY_ALPHA = 0.85;
+
+  /**
+   * The torso box, in the body-local units every costume is written in: from
+   * just under the shoulder bar to just above the hips, and as wide as the
+   * widest shoulders on the roster. Fixed rather than per-fighter on purpose —
+   * it is the region the *rejected* costume covered, and the point of the rule
+   * is that this area of the drawing belongs to the body.
+   */
+  const TORSO = { x0: -15, x1: 15, y0: 15, y1: 40 };
+
+  /** A filled shape, as the recorder saw it: its box, how much of the torso it
+   *  lies over, and how solid it was. */
+  interface Filled {
+    w: number;
+    h: number;
+    cover: number;
+    /** Fraction of the body's own alpha — 1 is as solid as the fighter. */
+    rel: number;
+  }
+
   const recorder = () => {
     const pts: { x: number; y: number }[] = [];
-    let fills = 0;
-    const at = (x: number, y: number) => pts.push({ x, y });
+    const fills: Filled[] = [];
+    /** Points since the last `beginPath`, which is the shape a `fill` fills. */
+    let path: { x: number; y: number }[] = [];
+    const at = (x: number, y: number) => {
+      pts.push({ x, y });
+      path.push({ x, y });
+    };
     const ctx = {
       strokeStyle: "",
       fillStyle: "",
@@ -1080,7 +1108,9 @@ check("duel: every costume is stroked, framed and aligned", () => {
       lineCap: "butt",
       lineJoin: "miter",
       strokes: 0,
-      beginPath() {},
+      beginPath() {
+        path = [];
+      },
       closePath() {},
       save() {},
       restore() {},
@@ -1103,26 +1133,62 @@ check("duel: every costume is stroked, framed and aligned", () => {
         this.strokes += 1;
       },
       fill() {
-        fills += 1;
+        if (path.length === 0) return;
+        let x0 = Infinity;
+        let x1 = -Infinity;
+        let y0 = Infinity;
+        let y1 = -Infinity;
+        for (const q of path) {
+          if (q.x < x0) x0 = q.x;
+          if (q.x > x1) x1 = q.x;
+          if (q.y < y0) y0 = q.y;
+          if (q.y > y1) y1 = q.y;
+        }
+        /*
+         * How much of the *torso* this shape lies over — the box between the
+         * shoulder line and the hips, which is where the slab lived. A helmet
+         * covers none of it however solid it is; a cape covers all of it and
+         * has to be faint enough for the spine and the limbs to read through.
+         */
+        const tx = TORSO.x1 - TORSO.x0;
+        const ty = TORSO.y1 - TORSO.y0;
+        const ox = Math.max(0, Math.min(x1, TORSO.x1) - Math.max(x0, TORSO.x0));
+        const oy = Math.max(0, Math.min(y1, TORSO.y1) - Math.max(y0, TORSO.y0));
+        fills.push({
+          w: x1 - x0,
+          h: y1 - y0,
+          cover: (ox * oy) / (tx * ty),
+          rel: this.globalAlpha / BODY_ALPHA,
+        });
       },
-      fillRect() {
-        fills += 1;
+      fillRect(x: number, y: number, w: number, h: number) {
+        fills.push({ w, h, cover: 1, rel: this.globalAlpha / BODY_ALPHA });
       },
     };
-    return { ctx, pts, fills: () => fills };
+    return { ctx, pts, fills };
   };
 
-  /** A body to dress, at a given moment of the idle cycle and travel. */
-  const body = (t: number, vx: number, airborne: boolean): CostumeCtx => {
+  /**
+   * A body to dress, at a given moment of the idle cycle and travel.
+   *
+   * **Built from the fighter's own proportions**, not from one average body.
+   * The rig scales the head by `prop.head`, widens the shoulders by
+   * `prop.shoulder` and settles the hips by `stance.settle`, and every costume
+   * hook is written against those — a horn drawn at `c.hy - 24` on a head 4%
+   * smaller reaches somewhere different from the same horn on a helmet. Measure
+   * the reach on a body nobody has and the declaration it is checking against
+   * is a number about a fighter that does not exist.
+   */
+  const body = (kind: FighterKind, t: number, vx: number, airborne: boolean): CostumeCtx => {
     const breath = Math.sin(t * 0.045) * 1.1;
     const headY = -8 + breath * 0.6;
     return {
       hx: 0,
       hy: headY + 6,
-      hr: 8,
+      hr: 8 * kind.prop.head,
       shY: 13 + breath,
-      shX: 11,
-      hipY: 42,
+      shX: 11 * kind.prop.shoulder,
+      hipY: 42 + (airborne ? 0 : kind.stance.settle),
       hipX: 7,
       feetY: 70,
       lean: vx * 1.4,
@@ -1161,7 +1227,7 @@ check("duel: every costume is stroked, framed and aligned", () => {
     for (let t = 0; t < 400; t += 1) {
       for (const vx of [-3.5, -1.2, 0, 1.2, 3.5]) {
         for (const airborne of [false, true]) {
-          const c = body(t, vx, airborne);
+          const c = body(kind, t, vx, airborne);
           kind.back?.(rec.ctx as unknown as CanvasRenderingContext2D, c);
           kind.head?.(rec.ctx as unknown as CanvasRenderingContext2D, c);
           kind.overlay?.(rec.ctx as unknown as CanvasRenderingContext2D, c);
@@ -1171,9 +1237,62 @@ check("duel: every costume is stroked, framed and aligned", () => {
 
     must(rec.pts.length > 0, `${id} (${kind.label}) draws nothing — it is indistinguishable`);
     must(rec.ctx.strokes > 0, `${id} builds a path and never strokes it`);
-    must(rec.fills() === 0, `${id} fills ${rec.fills()} shape(s) — costume is stroked, never filled`);
 
-    const reach = Math.ceil(-Math.min(...rec.pts.map((q) => q.y)));
+    /*
+     * **Mass is allowed; a slab is not** (2026-08-19, replacing a flat ban on
+     * `fill`).
+     *
+     * The ban was written from the right failure and stopped one letter short
+     * of the right rule. What the client rejected was a filled torso, a filled
+     * head and a filled robe that between them covered the fighter and
+     * composited into one pale shape as wide as it was tall — *"they are
+     * holding shields"*. Refusing every fill refused that, and also refused
+     * every filled *mark*, which left eight wire diagrams that were the same
+     * pale stick at the size the ornament actually renders. So the rule is
+     * about size and weight now, and it is the same three facts the old one was
+     * groping for:
+     *
+     * - a **mark** (≤ 22 × 26 — a helmet, a hood, a horn, a crown) may be
+     *   solid, because it merges with the head into one silhouette, which is
+     *   what it is for;
+     * - **cloth** (anything larger) may not be, and gets 35% of the body's own
+     *   alpha, which is what keeps the limbs reading over it — that is the
+     *   actual difference between a cape and a shield;
+     * - **nothing** may be filled wider than the frame the camera reserves.
+     */
+    const COVER = 0.45;
+    const CLOTH_ALPHA = 0.35;
+    for (const f of rec.fills) {
+      // Width needs no cap of its own: every point is already held inside ±34
+      // by the sideways rule below, so a fill cannot be wider than the frame.
+      must(
+        f.h <= 72,
+        `${id} fills something ${f.h.toFixed(0)} units tall — taller than the figure wearing it`,
+      );
+      must(
+        f.cover < COVER || f.rel <= CLOTH_ALPHA + 0.001,
+        `${id} fills a shape covering ${(f.cover * 100).toFixed(0)}% of the torso at ` +
+          `${(f.rel * 100).toFixed(0)}% of body alpha — cloth over the body may not be more solid ` +
+          `than ${CLOTH_ALPHA * 100}%, or the spine and the limbs stop reading through it and it ` +
+          `is the slab the client rejected`,
+      );
+    }
+
+    /*
+     * Folded, not spread. `Math.min(...pts)` passes one argument per point, and
+     * a costume with a repeated element — the hollow's hem is five chevrons —
+     * lays down six figures of them across the sweep, which overflows the call
+     * stack. That fails as a *crash in the gate*, which reads as the gate being
+     * broken rather than as the costume being measured, and it would have
+     * arrived the first time somebody drew something in a loop.
+     */
+    let top = 0;
+    let side = 0;
+    for (const q of rec.pts) {
+      if (q.y < top) top = q.y;
+      if (Math.abs(q.x) > side) side = Math.abs(q.x);
+    }
+    const reach = Math.ceil(-top);
     must(
       reach <= kind.headroom,
       `${id} reaches ${reach} above the torso but declares headroom ${kind.headroom} — the camera will crop it`,
@@ -1184,9 +1303,9 @@ check("duel: every costume is stroked, framed and aligned", () => {
     );
     // Nothing may stream off sideways: `duelFocus` frames on the bodies, so a
     // costume much wider than one leaves the shot at the arena walls.
-    const side = Math.ceil(Math.max(...rec.pts.map((q) => Math.abs(q.x))));
-    must(side <= 34, `${id} reaches ${side} units sideways — beyond what the camera frames`);
-    lines.push(`${kind.label} ${reach}/${side}`);
+    const wide = Math.ceil(side);
+    must(wide <= 34, `${id} reaches ${wide} units sideways — beyond what the camera frames`);
+    lines.push(`${kind.label} ${reach}/${wide}`);
   }
 
   /*

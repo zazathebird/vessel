@@ -3277,6 +3277,23 @@ function drawFighter(
   // reading as a slab of colour rather than as a swing.
   const smear = Math.min(0.13, Math.abs(f.bladeV) * 0.34);
   if (!dead && f.trail.length > 2 && smear > 0.012) {
+    /*
+     * **Additive, because a sword's trail is light and not cloth.**
+     *
+     * Drawn normally, a 13%-alpha red fan over a near-black arena composites to
+     * dark maroon — a *darker* shape than the background it is on. Every swing
+     * therefore dragged a translucent flag behind it, which is exactly what it
+     * looked like: a sheet of coloured plastic on the end of the sword. Under
+     * `lighter` the same fan only ever adds, so it reads as the afterimage of
+     * something bright, it cannot darken the effect drawn behind it in the
+     * background presentation, and where the fan crosses itself at the turn of
+     * a swing the overlap brightens instead of muddying.
+     *
+     * Restored immediately: this is the only composite operation in the file
+     * and leaving it set would tint everything drawn after it.
+     */
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
     ctx.fillStyle = blade;
     ctx.globalAlpha = smear;
     ctx.beginPath();
@@ -3299,6 +3316,7 @@ function drawFighter(
     // One path, one fill: filling per-quad would stack alpha everywhere the
     // smear crosses itself at the turn of a swing.
     ctx.fill();
+    ctx.restore();
   }
 
   ctx.save();
@@ -3469,8 +3487,25 @@ function drawFighter(
    */
   const lw = (n: number) => n * kind.prop.weight;
   const shX = SHOULDER_X * kind.prop.shoulder;
+  const hr = 8 * kind.prop.head;
 
-  const hipY = TORSO_H;
+  /*
+   * The stance settles the hips and nothing else.
+   *
+   * The feet stay on the floor and the shoulder line does not move, so a low
+   * guard is drawn by bending the knees — `joint` has fixed bones, so shortening
+   * the hip-to-foot distance *is* the bend — and by shortening the spine. That
+   * containment is deliberate: `bladeLocal` hangs the grip off the shoulder, so
+   * a stance that moved the shoulders would hand this fighter a blade whose
+   * drawn length disagreed with the one `bladeGap` and every contact frame in
+   * `MOVES` are working from. Same reason `prop` has no height multiplier.
+   *
+   * It is suppressed while airborne and while dead, where the pose is the
+   * move's rather than the character's.
+   */
+  const stance = kind.stance;
+  const settle = airborne || dead ? 0 : stance.settle;
+  const hipY = TORSO_H + settle;
   const shY = SHOULDER_Y + breath;
   const neckX = lean * 0.9 + kind.prop.hunch;
 
@@ -3513,7 +3548,7 @@ function drawFighter(
   const costume: CostumeCtx = {
     hx: neckX,
     hy: headY + 6,
-    hr: 8,
+    hr,
     shY,
     shX,
     hipY,
@@ -3562,8 +3597,19 @@ function drawFighter(
   for (let i = 0; i < 2; i += 1) {
     const front = i === 0;
     const hipX = front ? HIP_X : -HIP_X;
-    let footX = front ? 4 + brace : -4 - brace;
-    let footY = BODY_H;
+    /*
+     * **The feet used to stand inside the hips**, at ±4 against a hip at ±7,
+     * which is not a guard — it is a person standing to attention, and with the
+     * knees bent by the crouch it came out as a duck-footed squat on all eight
+     * fighters at once. The stance's own spread puts them outside the hips and
+     * makes the base of the figure say something about who is standing on it:
+     * the mask plants at 14, the apprentice lunges at 16, the saint stands
+     * nearly closed at 6.
+     */
+    let footX = front ? stance.spread + brace : -stance.spread - brace;
+    // The back heel, lifted. A raised heel is the whole difference between a
+    // stance that has arrived and one that is about to leave.
+    let footY = BODY_H - (front ? 0 : stance.heel);
     if (airborne) {
       footX = front ? 8 : -10;
       footY = BODY_H - 15;
@@ -3593,12 +3639,43 @@ function drawFighter(
   ctx.lineTo(shX + lean, shY);
   ctx.stroke();
 
+  /*
+   * Torso mass, for the two fighters whose character is that they are built
+   * heavily: the two *edges* of a chest, from the shoulder bar down to the
+   * hips, and nothing between them.
+   *
+   * This is the shape the client rejected in 2026-08-14 — with the difference
+   * that made it rejected removed. What read as *"they are holding shields"*
+   * was a **filled** quad: a pale slab as wide as the figure was tall, which
+   * swallowed the spine and both arms into one silhouette. Two strokes with the
+   * spine still visible between them is a ribcage, and it is the only way this
+   * rig can say *heavy* about a body rather than about a line width. It is
+   * spent on two fighters out of eight on purpose: the light ones keep the
+   * plain stick, and that contrast is what makes the heavy ones read heavy.
+   */
+  if (kind.prop.build > 0) {
+    ctx.globalAlpha = bodyAlpha * (0.55 + kind.prop.build * 0.3);
+    ctx.lineWidth = lw(3.2);
+    ctx.beginPath();
+    for (const s of [-1, 1]) {
+      ctx.moveTo(s * (shX - 1.5) + lean, shY + 1);
+      ctx.quadraticCurveTo(
+        s * (shX - 1) * kind.prop.build + lean * 0.5,
+        (shY + hipY) / 2,
+        s * (HIP_X + 1),
+        hipY - 2,
+      );
+    }
+    ctx.stroke();
+    ctx.globalAlpha = bodyAlpha;
+  }
+
   // A hollow costume has no head: the point of an empty cowl is that there is
   // nothing inside it, and a disc drawn under the hood makes it a hat.
   if (!kind.hollow) {
     ctx.fillStyle = v.ink;
     ctx.beginPath();
-    ctx.arc(neckX, headY + 6, 8, 0, TAU);
+    ctx.arc(neckX, headY + 6, hr, 0, TAU);
     ctx.fill();
   }
 
@@ -3694,13 +3771,22 @@ function drawFighter(
   if (!dead && !thrown) {
     // Three passes — widest and faintest first — so the glow falls away from a
     // bright core without a gradient.
+    //
+    // The outer pass is **additive**, which is the bloom `docs/DUEL-ABSORB.md`
+    // signs off on: *"if bloom is wanted, it is a second additive stroke, not a
+    // shadow"*. Canvas shadow-blur is a separate blur pass and the reference
+    // engine spends ~5,700 shadowed draws a second on it; this costs one stroke
+    // and, unlike the shadow, cannot darken anything behind the blade.
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
     ctx.strokeStyle = blade;
-    ctx.globalAlpha = 0.18;
-    ctx.lineWidth = 9;
+    ctx.globalAlpha = 0.22;
+    ctx.lineWidth = 11;
     ctx.beginPath();
     ctx.moveTo(g.hx, g.hy);
     ctx.lineTo(g.tx, g.ty);
     ctx.stroke();
+    ctx.restore();
 
     ctx.globalAlpha = 0.5;
     ctx.lineWidth = 4;

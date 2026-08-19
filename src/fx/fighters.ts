@@ -25,12 +25,33 @@
  *
  * ## The two rules every costume obeys
  *
- * **Stroked, never filled.** The version the client rejected in 2026-08-14 drew
- * a filled torso quad, a filled head block and a filled robe behind them, which
- * composited into one pale slab about as wide as the figure was tall — read,
- * correctly, as *"they are holding shields"*. Every mark here is a stroke, and
- * `npm run check` fails on a costume hook that calls `fill` at all. Mass is
- * conveyed by outline and by stroke weight; that is the whole vocabulary.
+ * **Mass is allowed; a slab is not** (2026-08-19). This rule used to read
+ * *"stroked, never filled"*, and the gate refused a costume hook that called
+ * `fill` at all. That was the right rule for the wrong reason, and it cost the
+ * roster a year of legibility: what the client rejected in 2026-08-14 was not
+ * *filling* — it was a filled torso quad, a filled head block and a filled robe
+ * that between them covered the whole figure, composited into one pale slab as
+ * wide as the fighter was tall, read (correctly) as *"they are holding
+ * shields"*. Banning the fill banned the slab, and also banned every filled
+ * *mark*: a hood, a helmet, a horn, a wing. What was left was eight wire
+ * diagrams that at the phone slot's ~61px figure were the same pale stick with
+ * a thread on top — which is the state the client called out.
+ *
+ * So the rule is now about **where the fill lands**, which is the fact the old
+ * one was reaching for, and `npm run check` enforces it by driving every hook
+ * and measuring each filled path against the torso:
+ *
+ * - A shape covering **less than 45% of the torso box** may be as solid as it
+ *   likes. That is a helmet, a hood, a horn, a crown, a pauldron, a wing —
+ *   things that merge into one silhouette with the part of the body they sit
+ *   on, which is exactly what they should do.
+ * - A shape covering **more** is cloth over the body, and gets at most **35% of
+ *   the body's own alpha**, so the spine and both limbs always read through it.
+ *   That is the whole difference between a cape and a shield.
+ * - Nothing may be filled **taller than the figure wearing it**, and the
+ *   sideways rule already holds every point inside what the camera frames.
+ *
+ * The `solid` helper is the only way a mass is drawn.
  *
  * **Everything declares its reach.** `headroom` is how far above the torso
  * origin the costume actually goes, and `duelFocus` frames on it, so a wing or
@@ -128,6 +149,39 @@ export interface CostumeCtx {
 
 export type Costume = (ctx: CanvasRenderingContext2D, c: CostumeCtx) => void;
 
+/**
+ * How a fighter *stands* — the half of recognition that is not a mark.
+ *
+ * Eight costumes on eight identical bodies in one identical guard was the state
+ * this roster shipped in, and at the size the ornament renders (~61px on a
+ * phone) a head mark of six units is two pixels: the figures were the same
+ * drawing eight times. A duellist is recognisable standing still, from the
+ * width of the stance and the height of the hips, and those survive being small
+ * in a way a mark never does.
+ *
+ * **None of this reaches the simulation.** The hips move, the feet move, the
+ * shoulders do not — `bladeLocal` hangs the grip off the shoulder line, so a
+ * stance that moved it would hand the fighter a sword whose drawn length
+ * disagreed with the one `bladeGap` and every contact frame in `MOVES` are
+ * using. That is the "proximity is not contact" bug class, and it is why
+ * `prop` has no height multiplier either.
+ */
+export interface Stance {
+  /**
+   * Hips lowered, in local units. The feet stay on the floor and the shoulders
+   * stay where they are, so this bends the knees and shortens the spine: a
+   * settled master sits into a low guard, a proud one stands over it.
+   */
+  settle: number;
+  /**
+   * Half the distance between the feet. The rig's old value was 4, which put
+   * both feet inside the hips and read as a squat rather than as a guard.
+   */
+  spread: number;
+  /** Back heel lifted — the tell of a stance about to move forward. */
+  heel: number;
+}
+
 export interface FighterKind {
   /** The public archetype. Deliberately never rendered — see the file note. */
   label: string;
@@ -150,7 +204,25 @@ export interface FighterKind {
     weight: number;
     /** Forward offset of the neck and head, in local units. */
     hunch: number;
+    /**
+     * Head radius multiplier. A helmet is a bigger skull and a hood is a
+     * smaller one, and at this size the head is a quarter of the silhouette's
+     * width — it is the cheapest proportion there is.
+     */
+    head: number;
+    /**
+     * Torso mass, 0–1: the two edges of a chest, stroked from the shoulder bar
+     * down to the hips. **Stroked, and only two lines** — the version the
+     * client rejected filled this shape, and a filled torso next to a filled
+     * robe is the slab that read as a shield. Two edges around a visible spine
+     * read as a ribcage. Reserved for the fighters whose whole character is
+     * that they are built heavily; a light fighter sets 0 and keeps the plain
+     * stick, which is what makes the heavy ones look heavy.
+     */
+    build: number;
   };
+  /** How the fighter stands when it is not doing anything else. */
+  stance: Stance;
   /** World units the costume reaches above the torso origin. Gated. */
   headroom: number;
   /** Suppress the head disc — for a cowl that is meant to be empty. */
@@ -172,6 +244,43 @@ function ink(ctx: CanvasRenderingContext2D, c: CostumeCtx, width: number, alpha 
 }
 
 /**
+ * Close the current path as a **mass**: filled, then outlined in the same ink.
+ *
+ * This is the primitive the roster was missing, and it is the difference
+ * between a character and a wire diagram of one. An outline says where a shape
+ * ends; a mass says the shape is *there*, and at the size these render — a
+ * ~61px figure on a phone — an outline three units wide is a pale thread that
+ * washes into the body behind it while a filled hood is a black-and-white
+ * silhouette you can read across a room.
+ *
+ * **Fill and edge are the same ink on purpose.** The reference engine rims its
+ * marks in a separate dark colour, which it can do because it owns its arena's
+ * background; this canvas is transparent over whatever the site's palette is
+ * doing, so there is no second colour to rim with that would not be a literal.
+ * Same-ink means a mark laid over the body *merges* with it into one
+ * silhouette, which is what a helmet or a hood should do anyway, and marks that
+ * need to stay separate are held apart by alpha instead — cloth behind the body
+ * is drawn faint enough for the body to read over it.
+ *
+ * The gate that used to refuse every fill now bounds them: see `Costume`.
+ */
+function solid(
+  ctx: CanvasRenderingContext2D,
+  c: CostumeCtx,
+  fill: number,
+  edge = 2.4,
+  edgeAlpha = 1,
+): void {
+  ctx.fillStyle = c.ink;
+  ctx.globalAlpha = c.alpha * fill;
+  ctx.fill();
+  ctx.strokeStyle = c.ink;
+  ctx.globalAlpha = c.alpha * edgeAlpha;
+  ctx.lineWidth = c.lw(edge);
+  ctx.stroke();
+}
+
+/**
  * The roster.
  *
  * Each entry is **one read**, chosen to survive the size these actually render
@@ -190,29 +299,77 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
   hooded: {
     label: "The Hermit",
     side: "good",
-    prop: { shoulder: 1, weight: 1, hunch: 0 },
-    headroom: 18,
+    prop: { shoulder: 1.02, weight: 1.06, hunch: 1.4, head: 0.92, build: 0 },
+    // Sat into a wide, low guard: the oldest fighter here, and the only one who
+    // has nothing to prove by standing tall.
+    // Narrower than the fighting stances: a robe reads as a column, and a wide
+    // stance under it pokes both legs out through the hem, which turned the
+    // first version of this figure into somebody kneeling in a tent.
+    stance: { settle: 3.5, spread: 9, heel: 0 },
+    headroom: 17,
     head: (ctx, c) => {
-      ink(ctx, c, 3);
-      ctx.moveTo(-10, c.hy + 6);
-      ctx.lineTo(1, c.hy - 15);
-      ctx.lineTo(10, c.hy + 4);
-      ctx.stroke();
+      /*
+       * A deep cowl, not a hat. The version before this was three straight
+       * lines making a triangle that floated above the skull and touched
+       * nothing — at 61px it read as a party hat balanced on a ball. This one
+       * starts on the shoulders, rises past the crown and falls to the other
+       * shoulder as one outline, so the head sits *inside* it.
+       */
+      /*
+       * The cowl is a **mass**, and it swallows the head disc: hood and skull
+       * become one peaked silhouette, which is what a hood does and is the
+       * only kind of detail this canvas can carry. There is no interior line
+       * here on purpose — one ink over a transparent canvas has no second
+       * colour to draw a face in shadow *with*, so anything inside the outline
+       * is noise at desk size and invisible at phone size. Everything that
+       * distinguishes these eight is the edge of the shape.
+       *
+       * Seated on the skull, clearing it by four units. Taller and it stops
+       * being a hood and starts being a mitre, which is what the stroked
+       * version drew.
+       */
+      const r = c.hr;
+      ctx.beginPath();
+      ctx.moveTo(-r - 4, c.hy + 13);
+      ctx.quadraticCurveTo(-r - 5, c.hy - 9, 0, c.hy - 13);
+      ctx.quadraticCurveTo(r + 5, c.hy - 8, r + 3, c.hy + 11);
+      // Back along the jaw, low enough to leave the shoulders clear.
+      ctx.quadraticCurveTo(0, c.hy + 17, -r - 4, c.hy + 13);
+      ctx.closePath();
+      solid(ctx, c, 0.92, 2.6);
     },
     back: (ctx, c) => {
-      // A robe reaching the shins, drawn as its own two edges rather than as a
+      // A robe to the ankles, drawn as its own two edges rather than as a
       // shape: the near edge swings with travel, the far one lags, and the hem
       // between them is what says "cloth" at 60px.
-      const sway = Math.sin(c.t * 0.031 + c.phase) * 1.4 - c.vx * 1.9;
-      ink(ctx, c, 2.6, 0.9);
-      ctx.moveTo(-c.hipX - 2, c.hipY - 6);
-      ctx.quadraticCurveTo(-12, c.hipY + 10, -11 + sway, c.feetY - 9);
-      ctx.moveTo(c.hipX + 2, c.hipY - 6);
-      ctx.quadraticCurveTo(11, c.hipY + 10, 9 + sway * 0.6, c.feetY - 11);
+      /*
+       * The robe is cloth, so it is filled *faintly* and the legs read over it
+       * — that is the whole of the rule that replaced "never fill": the limbs
+       * must always win. At 0.3 of the body's alpha it is a shade rather than a
+       * shape, which is what turns the lower half of this fighter into a column
+       * instead of two sticks with wires either side of them.
+       */
+      const sway = Math.sin(c.t * 0.031 + c.phase) * 1.6 - c.vx * 2.1;
+      ctx.beginPath();
+      ctx.moveTo(-c.hipX - 3, c.hipY - 11);
+      ctx.quadraticCurveTo(-13, c.hipY + 12, -13 + sway, c.feetY - 3);
+      ctx.quadraticCurveTo(-1 + sway, c.feetY + 3, 11 + sway * 0.6, c.feetY - 5);
+      ctx.quadraticCurveTo(12, c.hipY + 12, c.hipX + 3, c.hipY - 11);
+      ctx.closePath();
+      solid(ctx, c, 0.3, 2.6, 0.85);
+    },
+    overlay: (ctx, c) => {
+      // The sash, and the end of it hanging past the knee. A belt is the one
+      // mark that says a robe is *worn* rather than draped, and the hanging
+      // tail is a second, moving line in a costume that is otherwise still.
+      const sway = Math.sin(c.t * 0.031 + c.phase) * 1.4 - c.vx * 1.6;
+      ink(ctx, c, 2.6, 0.85);
+      ctx.moveTo(-c.hipX - 2, c.hipY - 8);
+      ctx.quadraticCurveTo(0, c.hipY - 5, c.hipX + 2, c.hipY - 9);
       ctx.stroke();
-      ink(ctx, c, 2.2, 0.75);
-      ctx.moveTo(-11 + sway, c.feetY - 9);
-      ctx.quadraticCurveTo(-1 + sway, c.feetY - 4, 9 + sway * 0.6, c.feetY - 11);
+      ink(ctx, c, 2.2, 0.7);
+      ctx.moveTo(-3, c.hipY - 6);
+      ctx.quadraticCurveTo(-6 + sway * 0.5, c.hipY + 7, -5 + sway, c.hipY + 18);
       ctx.stroke();
     },
   },
@@ -226,26 +383,57 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
   maned: {
     label: "The Apprentice",
     side: "good",
-    prop: { shoulder: 0.96, weight: 0.94, hunch: 0 },
-    headroom: 10,
+    prop: { shoulder: 0.94, weight: 0.9, hunch: 0, head: 0.94, build: 0 },
+    // The long lunge, with the back heel already off the floor: the youngest
+    // fighter on the roster stands like someone about to move first.
+    stance: { settle: -1, spread: 16, heel: 4 },
+    headroom: 16,
     head: (ctx, c) => {
-      ink(ctx, c, 2.8);
-      // Past the jaw and onto the shoulders. Stopping at the jaw made two small
-      // lobes that read as ears; the length is what makes it hair.
-      ctx.moveTo(-c.hr + 3, c.hy - c.hr + 1);
-      ctx.quadraticCurveTo(-c.hr - 6, c.hy + 3, -c.hr - 3, c.hy + 17);
-      ctx.moveTo(c.hr - 2, c.hy - c.hr + 2);
-      ctx.quadraticCurveTo(c.hr + 5, c.hy + 4, c.hr + 1, c.hy + 15);
+      /*
+       * Hair as a mass hanging off the back of the skull and past the jaw, not
+       * as two curved wires either side of it. The wires read as ears at desk
+       * size and as nothing at all on a phone; the mass reads as a head with a
+       * heavy shape behind it, which is the same information the silhouette
+       * would carry in a film.
+       *
+       * It is drawn from the brow, over the crown and down the back, so the
+       * front of the face stays the plain head disc — a fringe over the brow
+       * would take the one bit of this figure that says *young*.
+       */
+      const r = c.hr;
+      ctx.beginPath();
+      ctx.moveTo(r - 2, c.hy - r - 1);
+      ctx.quadraticCurveTo(-1, c.hy - r - 5, -r - 5, c.hy - r + 4);
+      ctx.quadraticCurveTo(-r - 9, c.hy + 6, -r - 4, c.hy + 19);
+      ctx.quadraticCurveTo(-r + 2, c.hy + 12, -r + 1, c.hy + 2);
+      ctx.quadraticCurveTo(-r + 2, c.hy - r + 3, r - 2, c.hy - r - 1);
+      ctx.closePath();
+      solid(ctx, c, 0.9, 2.4);
+      /*
+       * The braid. It is the one mark on this fighter that is unmistakably a
+       * *choice* rather than an accident of the body, it trails behind on its
+       * own delay, and it is what separates this silhouette from the hood's at
+       * a glance — the two share a pool, so they have to be separable while
+       * moving rather than only in a line-up.
+       */
+      const lag = Math.sin(c.t * 0.043 + c.phase) * 2.2 - c.vx * 2.6;
+      ink(ctx, c, 2.2, 0.85);
+      ctx.moveTo(-r - 2, c.hy + 8);
+      ctx.quadraticCurveTo(-r - 8 + lag * 0.5, c.hy + 20, -r - 6 + lag, c.hy + 32);
       ctx.stroke();
     },
     back: (ctx, c) => {
-      const sway = Math.sin(c.t * 0.037 + c.phase) * 1.6;
-      ink(ctx, c, 2.4, 0.9);
-      ctx.moveTo(-c.hipX, c.hipY - 2);
-      ctx.quadraticCurveTo(-13, c.hipY + 14, -13 - c.vx * 2.4 + sway, c.feetY - 12);
-      ctx.moveTo(c.hipX, c.hipY - 2);
-      ctx.quadraticCurveTo(11, c.hipY + 13, 10 - c.vx * 1.2 + sway, c.feetY - 14);
-      ctx.stroke();
+      // A short tunic, split up the middle so one panel leads and the other
+      // trails. Short, because a floor-length robe on the fighter whose whole
+      // read is *speed* would be arguing with the stance.
+      const sway = Math.sin(c.t * 0.037 + c.phase) * 1.8;
+      ctx.beginPath();
+      ctx.moveTo(-c.hipX - 1, c.hipY - 8);
+      ctx.quadraticCurveTo(-14, c.hipY + 10, -15 - c.vx * 2.4 + sway, c.feetY - 16);
+      ctx.quadraticCurveTo(-1, c.feetY - 11, 12 - c.vx * 1.2 + sway, c.feetY - 18);
+      ctx.quadraticCurveTo(12, c.hipY + 9, c.hipX + 1, c.hipY - 8);
+      ctx.closePath();
+      solid(ctx, c, 0.28, 2.4, 0.9);
     },
   },
 
@@ -258,35 +446,68 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
   haloed: {
     label: "The Saint",
     side: "good",
-    prop: { shoulder: 1, weight: 1.02, hunch: 0 },
-    headroom: 21,
+    prop: { shoulder: 1.02, weight: 1.06, hunch: -0.8, head: 1, build: 0.35 },
+    // Upright, feet nearly together, knees straight. The only fighter here who
+    // stands as though the fight were beneath them, which is the character.
+    stance: { settle: -2.5, spread: 6, heel: 0 },
+    headroom: 26,
     head: (ctx, c) => {
-      ink(ctx, c, 2.6, 0.95);
-      ctx.moveTo(-4, c.hy + 4);
-      ctx.lineTo(0, c.hy + 13);
-      ctx.lineTo(4, c.hy + 4);
-      ctx.stroke();
+      // The beard: a wedge of mass under the skull, so the head reads as a
+      // shape rather than as a disc balanced on a stick — and so this fighter
+      // is the *old* one in a pool where the other is winged and weightless.
+      ctx.beginPath();
+      ctx.moveTo(-c.hr + 1, c.hy + 3);
+      ctx.quadraticCurveTo(-4, c.hy + 18, 0, c.hy + 21);
+      ctx.quadraticCurveTo(4, c.hy + 17, c.hr - 1, c.hy + 2);
+      ctx.quadraticCurveTo(0, c.hy + 9, -c.hr + 1, c.hy + 3);
+      ctx.closePath();
+      solid(ctx, c, 0.85, 2.4);
+      /*
+       * The halo — the one costume mark drawn in a blade colour rather than in
+       * ink, because it is light and not cloth. Two rings now: the ellipse
+       * overhead and a fainter, wider one a little above it, which is what
+       * turns a hoop into a source. It keeps the slow bob it has had since the
+       * mark was one line.
+       */
       const bob = Math.sin(c.t * 0.04 + c.phase) * 1.6;
       ctx.strokeStyle = c.blade;
-      ctx.globalAlpha = 0.9 * c.dim;
-      ctx.lineWidth = c.lw(2);
+      ctx.globalAlpha = 0.92 * c.dim;
+      ctx.lineWidth = c.lw(2.2);
       ctx.beginPath();
-      ctx.ellipse(0, c.hy - 12 + bob, 12, 4, 0, 0, Math.PI * 2);
+      ctx.ellipse(0, c.hy - 14 + bob, 13, 4.4, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 0.3 * c.dim;
+      ctx.lineWidth = c.lw(1.6);
+      ctx.beginPath();
+      ctx.ellipse(0, c.hy - 16 + bob, 17, 5.6, 0, 0, Math.PI * 2);
       ctx.stroke();
     },
     back: (ctx, c) => {
-      // Full length and simple, because the halo is already carrying the read
+      // Full length and straight, because the halo is already carrying the read
       // and a busy robe under it would be two signatures fighting.
       const sway = Math.sin(c.t * 0.028 + c.phase) * 1.2 - c.vx * 1.4;
-      // From the hips, not the shoulders: run to the shoulders and the two
-      // edges plus the legs read as a box the fighter is standing in.
-      ink(ctx, c, 2.6, 0.85);
-      ctx.moveTo(-c.hipX - 3, c.hipY - 6);
-      ctx.quadraticCurveTo(-14, c.hipY + 14, -13 + sway, c.feetY - 3);
-      ctx.moveTo(c.hipX + 3, c.hipY - 6);
-      ctx.quadraticCurveTo(13, c.hipY + 14, 12 + sway * 0.6, c.feetY - 4);
-      ctx.moveTo(-13 + sway, c.feetY - 3);
-      ctx.quadraticCurveTo(0 + sway, c.feetY + 2, 12 + sway * 0.6, c.feetY - 4);
+      // From the hips, not the shoulders: run it to the shoulders and the robe
+      // plus the legs read as a box the fighter is standing in.
+      ctx.beginPath();
+      ctx.moveTo(-c.hipX - 3, c.hipY - 8);
+      ctx.quadraticCurveTo(-15, c.hipY + 14, -14 + sway, c.feetY - 1);
+      ctx.quadraticCurveTo(0 + sway, c.feetY + 4, 13 + sway * 0.6, c.feetY - 2);
+      ctx.quadraticCurveTo(14, c.hipY + 14, c.hipX + 3, c.hipY - 8);
+      ctx.closePath();
+      solid(ctx, c, 0.3, 2.8, 0.85);
+    },
+    overlay: (ctx, c) => {
+      /*
+       * A collar, and deliberately *not* the pair of vertical bands that were
+       * here first. Those ran shoulder-to-waist alongside two robe edges and a
+       * spine, and five parallel verticals on one figure came out as a ladder —
+       * the fighter read as wrapped rather than as robed. One horizontal mark
+       * across the top of a vertical costume does the same job of saying
+       * "vestment" and cannot stripe anything.
+       */
+      ink(ctx, c, 2.6, 0.8);
+      ctx.moveTo(-c.shX + 1, c.shY + 3);
+      ctx.quadraticCurveTo(0, c.shY + 9, c.shX - 1, c.shY + 3);
       ctx.stroke();
     },
   },
@@ -302,8 +523,12 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
   winged: {
     label: "The Seraph",
     side: "good",
-    prop: { shoulder: 1.04, weight: 1, hunch: 0 },
-    headroom: 19,
+    prop: { shoulder: 1.06, weight: 0.98, hunch: 0, head: 0.94, build: 0 },
+    // Weight on the front foot with the back heel lifted, knees nearly
+    // straight: poised rather than braced, which is the only stance a figure
+    // with wings can stand in without looking like it is being blown over.
+    stance: { settle: -3, spread: 8, heel: 5 },
+    headroom: 25,
     back: (ctx, c) => {
       const beat = Math.sin(c.t * 0.026 + c.phase) * 2.4;
       /*
@@ -314,16 +539,45 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
        * open strokes cannot close, and a fan is what the eye reads as a wing.
        */
       const wing = (dx: number, alpha: number, lift: number) => {
+        /*
+         * The span is capped by what the camera frames, not by the drawing: the
+         * gate refuses anything past 34 units off the centre line, because
+         * `duelFocus` measures the *bodies* and a wing wider than that leaves
+         * the shot at the arena walls. So the fan grows upward rather than
+         * outward — which is the better wing anyway.
+         */
+        /*
+         * **Three feathers, not four, and each one heavy.** Four thin strokes
+         * from one root came out as a bundle of straw — at 61px a fan needs
+         * *fewer* elements with more space between them, because the gaps are
+         * what the eye reads as separate feathers. Their tips also run in a
+         * curve rather than a fan of equal lengths: the leading one is short
+         * and low, the trailing one long and high, which is a wing rather than
+         * a whisk.
+         *
+         * The span is capped by what the camera frames, not by the drawing: the
+         * gate refuses anything past 34 units off the centre line, because
+         * `duelFocus` measures the *bodies* and a wing wider than that leaves
+         * the shot at the arena walls. So it grows upward rather than outward,
+         * which is the better wing anyway.
+         */
+        const root = { x: dx + 2, y: c.shY + 4 };
         const tips: [number, number][] = [
-          [dx - 18, c.shY - 3],
-          [dx - 16, c.shY - 18 - lift],
-          [dx - 7, c.shY - 28 - lift],
+          [dx - 18, c.shY + 3],
+          [dx - 17, c.shY - 17 - lift],
+          [dx - 6, c.shY - 34 - lift],
         ];
         tips.forEach(([tx, ty], i) => {
-          ink(ctx, c, 2.4 - i * 0.2, alpha);
-          ctx.moveTo(dx + 2, c.shY + 3);
-          ctx.quadraticCurveTo(dx - 10, c.shY - 4 - i * 5, tx, ty);
-          ctx.stroke();
+          // Each feather is a **mass**: out along its own curve and back on a
+          // tighter one, so it has a width that tapers to the tip. Three
+          // strokes from a point were a bundle of straw, which is what a wing
+          // drawn in wire always is.
+          ctx.beginPath();
+          ctx.moveTo(root.x, root.y);
+          ctx.quadraticCurveTo(dx - 13, c.shY + 1 - i * 9, tx, ty);
+          ctx.quadraticCurveTo(dx - 4, c.shY - 2 - i * 8, root.x, root.y);
+          ctx.closePath();
+          solid(ctx, c, 0.55 * alpha, 2.4 - i * 0.2, alpha);
         });
       };
       // Far wing first, dimmer and forward of the near one: two identical
@@ -342,8 +596,11 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
   caped: {
     label: "The Mask",
     side: "evil",
-    prop: { shoulder: 1.2, weight: 1.18, hunch: 0 },
-    headroom: 14,
+    prop: { shoulder: 1.36, weight: 1.34, hunch: 0.6, head: 1.16, build: 1 },
+    // Planted: the widest feet on the roster, hips low, nothing about it
+    // suggesting movement. Heaviness is a stance before it is a stroke width.
+    stance: { settle: 4, spread: 14, heel: 0 },
+    headroom: 18,
     head: (ctx, c) => {
       /*
        * The helmet has to be visibly *bigger* than the skull under it, or it
@@ -351,18 +608,35 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
        * `hr + 3` with two short cheek drops, so the dome, the cheeks and the
        * flange make one continuous outline around the head disc.
        */
+      /*
+       * The helmet is one mass — dome, cheeks and the flare of the jaw flanges
+       * in a single closed path — and it is drawn visibly *bigger* than the
+       * skull under it, which is the difference between a helmet and a slightly
+       * thicker head. The flanges are the read: a dome alone is a bald man, and
+       * the widening at the jaw is the only part of this shape that no other
+       * fighter on the roster has.
+       */
       const r = c.hr + 3;
-      ink(ctx, c, 3);
-      ctx.arc(0, c.hy, r, Math.PI * 0.97, Math.PI * 2.03);
-      ctx.stroke();
-      ink(ctx, c, 2.8);
-      ctx.moveTo(-r, c.hy - 1);
-      ctx.lineTo(-r + 1, c.hy + 4);
-      ctx.lineTo(-r - 4, c.hy + 11);
-      ctx.moveTo(r, c.hy - 1);
-      ctx.lineTo(r - 1, c.hy + 4);
-      ctx.lineTo(r + 4, c.hy + 11);
-      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-r, c.hy + 1);
+      ctx.quadraticCurveTo(-r, c.hy - r - 3, 0, c.hy - r - 2);
+      ctx.quadraticCurveTo(r, c.hy - r - 3, r, c.hy + 1);
+      ctx.lineTo(r + 5, c.hy + 14);
+      ctx.quadraticCurveTo(0, c.hy + 10, -r - 5, c.hy + 14);
+      ctx.closePath();
+      solid(ctx, c, 0.94, 2.8);
+    },
+    overlay: (ctx, c) => {
+      // The mantle: a plate over each shoulder, filled. High square shoulders
+      // are the whole of this silhouette's top half, and the shoulder-width
+      // multiplier alone cannot say *armour* — it only says wide.
+      ctx.beginPath();
+      ctx.moveTo(-c.shX - 6, c.shY + 8);
+      ctx.quadraticCurveTo(-c.shX - 4, c.shY - 6, 0, c.shY - 7);
+      ctx.quadraticCurveTo(c.shX + 4, c.shY - 6, c.shX + 6, c.shY + 8);
+      ctx.quadraticCurveTo(0, c.shY + 2, -c.shX - 6, c.shY + 8);
+      ctx.closePath();
+      solid(ctx, c, 0.8, 2.6, 0.9);
     },
     back: (ctx, c) => {
       /*
@@ -377,16 +651,19 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
       // shoulders. The version before this ran one edge from the front
       // shoulder across the body to the same hem, which drew a narrow panel
       // down the figure's side — a plank, not a cape.
-      ink(ctx, c, 2.8, 0.95);
+      //
+      // Filled, faintly. This is the biggest shape any costume here draws and
+      // therefore the one that would become the slab if it were solid: at 0.26
+      // of the body's alpha the legs and the spine read straight through it and
+      // what it adds is *bulk behind the shoulders*, which is the whole point
+      // of a cape at this size.
+      ctx.beginPath();
       ctx.moveTo(-c.shX - 2, c.shY - 5);
       ctx.quadraticCurveTo(trail - 7, c.shY + 26, trail - 14, drop);
-      ctx.moveTo(-1, c.shY - 6);
-      ctx.quadraticCurveTo(trail * 0.4, c.shY + 24, trail + 7, drop - 5);
-      ctx.stroke();
-      ink(ctx, c, 2.4, 0.8);
-      ctx.moveTo(trail - 14, drop);
-      ctx.quadraticCurveTo(trail - 3, drop + 5, trail + 7, drop - 5);
-      ctx.stroke();
+      ctx.quadraticCurveTo(trail - 3, drop + 6, trail + 7, drop - 5);
+      ctx.quadraticCurveTo(trail * 0.4, c.shY + 24, -1, c.shY - 6);
+      ctx.closePath();
+      solid(ctx, c, 0.26, 2.8, 0.95);
     },
   },
 
@@ -398,15 +675,43 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
   horned: {
     label: "The Devil",
     side: "evil",
-    prop: { shoulder: 1.06, weight: 1.05, hunch: 0 },
-    headroom: 26,
+    prop: { shoulder: 1.12, weight: 1.1, hunch: 3.4, head: 0.96, build: 0.5 },
+    // The deepest crouch here, wide and forward-leaning: an animal stance, and
+    // the one that most obviously is not a swordsman's.
+    stance: { settle: 4.5, spread: 13, heel: 2 },
+    headroom: 23,
     head: (ctx, c) => {
-      ink(ctx, c, 2.8);
-      ctx.moveTo(-5, c.hy - 5);
-      ctx.quadraticCurveTo(-12, c.hy - 13, -13, c.hy - 22);
-      ctx.moveTo(4, c.hy - 7);
-      ctx.quadraticCurveTo(-2, c.hy - 15, -3, c.hy - 23);
-      ctx.stroke();
+      /*
+       * Horns, and they are the read, so they are drawn at the scale of the
+       * head rather than as an ornament on it: out past the width of the
+       * shoulders before they turn up. Two thin ticks vanished at 61px, which
+       * is what the old pair were.
+       */
+      /*
+       * They go **out before they go up**. Two horns rising off the crown side
+       * by side are a rabbit, which is exactly what the first pair drew; a ram
+       * leaves the temples sideways, turns at the width of the shoulders and
+       * only then rises. The near one is longer and the far one shorter and
+       * dimmer, so the pair reads as depth rather than as one flat mark.
+       */
+      const horn = (root: number, out: number, up: number, thick: number, a: number) => {
+        // Each horn is a mass that tapers: out along the top edge, back along
+        // the underside. A tapering shape is what makes it a horn rather than a
+        // wire, and the taper is the only cue at this size that says which end
+        // is the tip.
+        ctx.beginPath();
+        ctx.moveTo(root, c.hy - 5);
+        ctx.quadraticCurveTo(out, c.hy - 1, out - 1, c.hy - up);
+        ctx.quadraticCurveTo(out + thick, c.hy + 1, root, c.hy + thick * 0.4);
+        ctx.closePath();
+        solid(ctx, c, 0.85 * a, 2.2, a);
+      };
+      // The far one is dimmer, not thinner or shorter: at 0.5 alpha and half
+      // the reach it dropped out of the silhouette entirely on a phone and the
+      // fighter grew a single scythe. Depth is worth about 25% of alpha here
+      // and no more.
+      horn(-3, -18, 20, 5, 1);
+      horn(3, -12, 17, 4.4, 0.75);
     },
     back: (ctx, c) => {
       const lash = Math.sin(c.t * 0.055 + c.phase) * 3 - c.vx * 1.4;
@@ -416,13 +721,14 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
       ctx.moveTo(-2, c.hipY + 3);
       ctx.quadraticCurveTo(-17, c.hipY + 7, tipX, tipY);
       ctx.stroke();
-      // The spade, two strokes: without it the tail is a wire and reads as an
-      // error in the cape of whoever it is fighting.
-      ink(ctx, c, 2, 0.9);
-      ctx.moveTo(tipX + 5, tipY + 3);
-      ctx.lineTo(tipX - 1, tipY - 1);
-      ctx.lineTo(tipX + 4, tipY - 4);
-      ctx.stroke();
+      // The spade, filled: without it the tail is a wire and reads as an error
+      // in the cape of whoever it is fighting.
+      ctx.beginPath();
+      ctx.moveTo(tipX + 6, tipY + 4);
+      ctx.lineTo(tipX - 2, tipY - 1);
+      ctx.lineTo(tipX + 5, tipY - 5);
+      ctx.closePath();
+      solid(ctx, c, 0.85, 2, 0.9);
     },
   },
 
@@ -434,18 +740,65 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
   crowned: {
     label: "The Crown",
     side: "evil",
-    prop: { shoulder: 1.14, weight: 1.16, hunch: 0 },
-    headroom: 17,
+    prop: { shoulder: 1.3, weight: 1.26, hunch: 0, head: 1.04, build: 0.85 },
+    // Stands over the fight rather than in it: knees straight, feet apart but
+    // square. The heavy build without the low hips is what separates this from
+    // the mask, which is the other heavy in the roster.
+    stance: { settle: -2, spread: 10, heel: 0 },
+    headroom: 26,
     head: (ctx, c) => {
-      ink(ctx, c, 2.4);
-      for (let i = 0; i < 5; i += 1) {
-        const a = Math.PI * 1.12 + (i * Math.PI * 0.76) / 4;
-        const x = Math.cos(a);
-        const y = Math.sin(a);
-        ctx.moveTo(x * (c.hr - 1), c.hy + y * (c.hr - 1));
-        ctx.lineTo(x * (c.hr + 6), c.hy + y * (c.hr + 6));
+      // Taller points, and a band under them. The band is what makes it a
+      // crown rather than a starburst — the old five spokes radiated straight
+      // out of the skull with nothing holding them, and read as a sun.
+      /*
+       * **One shape, not five spokes.** Five lines radiating out of a skull is
+       * a sun, which is what this fighter has read as since the day it was
+       * drawn. A crown is a band with points *on* it, so it is drawn as a
+       * single closed path — up a point, down into the valley, up the next —
+       * and filled. The middle point is the tallest, because a crown has a
+       * front.
+       */
+      const n = 5;
+      const inner = c.hr + 1;
+      const band = c.hr + 3.5;
+      ctx.beginPath();
+      ctx.moveTo(-inner - 1, c.hy - 1);
+      for (let i = 0; i < n; i += 1) {
+        const a = Math.PI * 1.08 + (i * Math.PI * 0.84) / (n - 1);
+        const mid = Math.PI * 1.08 + ((i + 0.5) * Math.PI * 0.84) / (n - 1);
+        const len = i === 2 ? 15 : 10 - Math.abs(i - 2) * 1.5;
+        ctx.lineTo(Math.cos(a) * (c.hr + len), c.hy + Math.sin(a) * (c.hr + len));
+        if (i < n - 1) {
+          ctx.lineTo(Math.cos(mid) * band, c.hy + Math.sin(mid) * band);
+        }
       }
-      ctx.stroke();
+      ctx.lineTo(inner + 1, c.hy - 1);
+      // The band itself, closing the shape under the points.
+      ctx.quadraticCurveTo(0, c.hy - inner + 1, -inner - 1, c.hy - 1);
+      ctx.closePath();
+      solid(ctx, c, 0.9, 2.4);
+    },
+    overlay: (ctx, c) => {
+      // Pauldrons — a squared plate on each shoulder, drawn as three strokes
+      // apiece. The only fighter with nothing hanging off the torso, so the
+      // whole silhouette is *shape*: a wide flat top over a straight body.
+      /*
+       * Two plates, and they must not meet. The first pair ran level from
+       * shoulder to shoulder across a thin body and read as one plank laid over
+       * the figure — a yoke, not armour. They are angled *down* and away now,
+       * with the shoulder bar visible between them: the outer corner sits below
+       * the inner one, which is what a pauldron does and what stops the pair
+       * being one horizontal.
+       */
+      for (const s of [-1, 1]) {
+        ctx.beginPath();
+        ctx.moveTo(s * (c.shX + 7), c.shY + 12);
+        ctx.lineTo(s * (c.shX + 8), c.shY - 1);
+        ctx.quadraticCurveTo(s * (c.shX + 2), c.shY - 7, s * (c.shX - 3), c.shY - 4);
+        ctx.lineTo(s * (c.shX - 1), c.shY + 8);
+        ctx.closePath();
+        solid(ctx, c, 0.75, 2.4, 0.9);
+      }
     },
   },
 
@@ -459,30 +812,84 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
   cowled: {
     label: "The Hollow",
     side: "evil",
-    prop: { shoulder: 1.02, weight: 1.06, hunch: 3.2 },
-    headroom: 20,
+    prop: { shoulder: 1, weight: 1.02, hunch: 4.6, head: 1, build: 0 },
+    // Hunched over a narrow base, hips low: the silhouette of something that
+    // does not stand up straight. `hunch` carries the cowl forward past the
+    // chest, which is the half of it that reads in a line-up.
+    stance: { settle: 5, spread: 8, heel: 0 },
+    headroom: 23,
     hollow: true,
     head: (ctx, c) => {
-      ink(ctx, c, 3);
-      ctx.moveTo(-9, c.hy + 12);
-      ctx.quadraticCurveTo(-12, c.hy - 6, 0, c.hy - 17);
-      ctx.quadraticCurveTo(11, c.hy - 5, 8, c.hy + 11);
+      // Taller and narrower than the hermit's, and empty. An empty hood is
+      // unmistakable at any size; the hermit's peak sits on a visible head, so
+      // the two never read as the same mark even though both are cloth.
+      ink(ctx, c, 3.2);
+      ctx.moveTo(-10, c.hy + 14);
+      ctx.quadraticCurveTo(-13, c.hy - 7, -1, c.hy - 20);
+      ctx.quadraticCurveTo(12, c.hy - 6, 9, c.hy + 13);
       ctx.stroke();
       // The mouth of the hood, faint: it closes the shape without putting a
       // face in it, and at 60px it is the difference between an empty cowl and
       // a missing head.
-      ink(ctx, c, 2, 0.45);
-      ctx.moveTo(-8, c.hy + 10);
-      ctx.quadraticCurveTo(0, c.hy + 4, 7, c.hy + 9);
+      ink(ctx, c, 2.2, 0.45);
+      ctx.moveTo(-9, c.hy + 12);
+      ctx.quadraticCurveTo(0, c.hy + 5, 8, c.hy + 11);
       ctx.stroke();
     },
+    back: (ctx, c) => {
+      /*
+       * A hem in tatters. Every other robe on the roster closes with one smooth
+       * curve; this one closes with five points, which is the same silhouette
+       * information — where the cloth ends — carrying a second fact about who
+       * is wearing it. It is also the cheapest possible difference from the
+       * hermit, whose robe is otherwise the same shape.
+       */
+      /*
+       * One path: down the back edge, across a hem torn into three points, and
+       * up the front. Filled faintly like every other robe, so the hem's
+       * points are read as the *shape ending raggedly* rather than as three
+       * separate chevrons lying on the floor — which is what they looked like
+       * when the hem was a stroke drawn under a separate robe.
+       *
+       * Three points, not five: five at this scale is a row of small teeth and
+       * reads as a texture, and texture is the one thing that does not survive
+       * being 61px tall.
+       */
+      const sway = Math.sin(c.t * 0.034 + c.phase) * 1.5 - c.vx * 2;
+      const left = -14 + sway;
+      const right = 12 + sway * 0.6;
+      ctx.beginPath();
+      ctx.moveTo(-c.hipX - 3, c.hipY - 10);
+      ctx.quadraticCurveTo(-15, c.hipY + 12, left, c.feetY - 6);
+      for (let i = 0; i < 3; i += 1) {
+        const step = (right - left) / 3;
+        const x = left + step * i;
+        ctx.lineTo(x + step * 0.5, c.feetY + 3 - (i % 2) * 3);
+        ctx.lineTo(x + step, c.feetY - 7 - i);
+      }
+      ctx.quadraticCurveTo(13, c.hipY + 11, c.hipX + 3, c.hipY - 10);
+      ctx.closePath();
+      solid(ctx, c, 0.28, 2.6, 0.88);
+    },
     overlay: (ctx, c) => {
-      // One wide sleeve, on the off arm, drooping from the elbow past the hand.
-      // The sword arm keeps its line — a sleeve on the arm doing the work would
-      // hide the one silhouette the fight is actually about.
-      ink(ctx, c, 2.4, 0.8);
-      ctx.moveTo(c.offElbow.x - 4, c.offElbow.y - 1);
-      ctx.quadraticCurveTo(c.offElbow.x - 4, c.offElbow.y + 13, c.offHand.x - 1, c.offHand.y + 4);
+      // Both sleeves, wide and drooping past the hands. On the off arm it is a
+      // shape; on the sword arm it is deliberately shorter, because a sleeve
+      // over the hand doing the work would hide the one silhouette the fight is
+      // actually about.
+      ctx.beginPath();
+      ctx.moveTo(c.offElbow.x - 5, c.offElbow.y - 2);
+      ctx.quadraticCurveTo(c.offElbow.x - 6, c.offElbow.y + 15, c.offHand.x - 1, c.offHand.y + 6);
+      ctx.quadraticCurveTo(c.offElbow.x + 3, c.offElbow.y + 8, c.offElbow.x - 5, c.offElbow.y - 2);
+      ctx.closePath();
+      // 0.3, not 0.4: both hands are on the grip in front of the chest, so this
+      // sleeve lands *over the torso* — the gate measured it covering 56% of it
+      // — and cloth over the body is held faint enough for the spine and both
+      // arms to read through. It is the same rule the cape obeys, arriving
+      // somewhere nobody would think to look for it.
+      solid(ctx, c, 0.3, 2.4, 0.8);
+      ink(ctx, c, 2.4, 0.6);
+      ctx.moveTo(c.elbow.x - 3, c.elbow.y + 1);
+      ctx.quadraticCurveTo(c.elbow.x - 2, c.elbow.y + 10, c.elbow.x + 5, c.elbow.y + 8);
       ctx.stroke();
     },
   },

@@ -276,6 +276,31 @@ alone.
 site ever shows them in. Stills are what this environment can produce and they are not the same
 question.
 
+### Phase 2b — the costumes get bodies — **shipped 2026-08-19**
+
+Client, on the live site: *"the swordfights still arent the fixed ones… keep going with the engine
+and the grpahical overhaul of all the charcters."* The deploy was checked first and was current to
+the byte, so this was about how the fighters look, not about what had shipped.
+
+Phase 2 delivered the hooks and the pools and left the roster reading as one drawing eight times,
+because it inherited two constraints that were each half right:
+
+- **"Stroked, never filled" was replaced with a rule about where the fill lands.** The ban was
+  written from the 2026-08-14 slab and also banned every filled *mark* — a hood, a helmet, a horn,
+  a wing — which at the phone slot's 61px figure is the whole of a costume. Now: under 45% torso
+  coverage may be solid, more than that is cloth at ≤35% of body alpha. Bounds measured, not
+  guessed; a first attempt at box limits refused a hood and a crown that are plainly not slabs.
+- **A fighter had no stance.** `settle` / `spread` / `heel` on `FighterKind`, moving the hips and
+  the feet and never the shoulders. The old foot spread put both feet inside the hips on all eight.
+
+`scripts/duel-shot.mjs` is the tool this needed and the reason it got done: the real module through
+headless Chrome, pixels out via `toDataURL`, a **contact sheet** of all eight side by side at desk
+and phone size. Six costumes were rebuilt on sight across three rounds. `docs/DECISIONS.md`
+2026-08-19 has the full list, the two gate bugs found while changing the gate, and the reasoning
+about why interior detail is worthless on this canvas.
+
+**Still open, unchanged from phase 2:** whether they read *while moving*.
+
 ### Phase 3 — new moves
 
 These map onto the existing `MOVES`/`SEQUENCES` model directly, and the machinery several of them
@@ -290,7 +315,13 @@ Every new move gates itself to `0` weight when the geometry does not allow it, e
 
 ### Phase 4 — VFX
 
-Directional sparks along the blade-contact normal rather than radial; scorch decals cooling
+**The blade's bloom shipped 2026-08-19**, ahead of the rest of this phase, because it was one line
+of composite state and the smear was actively reading wrong: drawn normally, a 13%-alpha fan over a
+near-black arena is *darker* than the background, so a swing dragged a translucent sheet behind it.
+The smear and the blade's outer pass are additive now — the second-additive-stroke bloom this
+section already specifies, not a shadow.
+
+Still to do: directional sparks along the blade-contact normal rather than radial; scorch decals cooling
 white → orange → dark under the fighters, capped; real blade lighting (offset from blade midpoint to
 each limb, intensity by inverse distance) replacing the fixed-offset rim; directional shake; a 1–2
 frame silhouette flash on the struck fighter.

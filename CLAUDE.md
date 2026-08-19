@@ -740,10 +740,45 @@ All deliberate. Add to this list rather than silently diverging.
    every ~52s — two fighters who never change are still a loop at the scale anybody watches at.
    Five things there are load-bearing:
 
-   - **Costumes are stroked, never filled.** The version the client rejected drew a filled torso
-     quad, a filled head block and a filled robe, which composited into one pale slab about as wide
-     as the figure was tall — *"they are holding shields"*. Mass is outline and stroke weight, and
-     that is the whole vocabulary. Gated: a hook that calls `fill` at all fails the suite.
+   - **Mass is allowed; a slab is not** (2026-08-19, replacing *"stroked, never filled"*). The rule
+     used to ban `fill` outright and the gate failed a hook that called it at all. That banned the
+     thing the client rejected — a filled torso quad, a filled head block and a filled robe that
+     between them covered the figure and composited into one pale slab as wide as it was tall,
+     *"they are holding shields"* — and it also banned every filled **mark**: a hood, a helmet, a
+     horn, a wing. What was left was eight wire diagrams which at the phone slot's ~61px figure were
+     the same pale stick with a thread on top, and the client said so: *"the swordfights still
+     arent the fixed ones."* The rule is now about **where the fill lands**, measured by the gate
+     against the torso box: a shape covering **under 45% of the torso** may be solid (it merges
+     into one silhouette with the part of the body it sits on, which is what a helmet is for); a
+     shape covering more is cloth and gets at most **35% of the body's own alpha**, so the spine
+     and both limbs read through it. That last number is the actual difference between a cape and a
+     shield, and it is what the old rule was reaching for. Nothing may be filled taller than the
+     figure; the sideways rule already holds every point inside what the camera frames. `solid()`
+     in `fighters.ts` is the only way a mass is drawn.
+
+     Two consequences worth knowing. **There is no second colour to rim with** — the reference
+     engine outlines its filled marks in a dark edge because it owns its arena's background, and
+     this canvas is transparent over whatever the palette is doing, so a rim would be a literal
+     colour. Fill and edge are the same ink, marks merge with the body on purpose, and marks that
+     must stay apart are held apart by alpha. And **interior detail is therefore worthless**: one
+     ink over transparency cannot draw a face inside a hood or a grille inside a helmet, so
+     everything distinguishing these eight is the *edge of the shape*. Brow lines, chest straps and
+     stoles were tried and deleted — noise at desk size, invisible at phone size.
+   - **A fighter has a `stance`, and it moves the hips and the feet only** (2026-08-19). Eight
+     costumes on eight identical bodies in one identical guard is what made the roster read as one
+     drawing eight times; `settle` (hips lowered, so the knees bend and the spine shortens),
+     `spread` (half the distance between the feet — it was a flat 4, which put both feet *inside*
+     the hips and read as a squat) and `heel` carry as much recognition as any mark, and unlike a
+     mark they survive being 61px tall. **The shoulders may never move**: `bladeLocal` hangs the
+     grip off the shoulder line, so a stance that moved it would hand the fighter a sword whose
+     drawn length disagreed with the one `bladeGap` and every contact frame in `MOVES` use — the
+     same reason `prop` has no height multiplier. Suppressed while airborne and while dead, where
+     the pose belongs to the move rather than to the character.
+   - **`prop` also carries `head` and `build`.** The head radius is a quarter of the silhouette's
+     width and the cheapest proportion available. `build` draws the two *edges* of a chest from the
+     shoulder bar to the hips — the rejected shape with the fill removed, which is a ribcage rather
+     than a slab — and it is spent on two fighters out of eight on purpose: the light ones keep the
+     plain stick, and that contrast is what makes the heavy ones look heavy.
    - **`proportion` is `shoulder` / `weight` / `hunch`, and there is deliberately no height
      multiplier.** The blade is drawn inside the same transform as the body and its length feeds
      `bladeGap`, the clash test and every contact frame in `MOVES` — a vertically scaled figure
@@ -1594,8 +1629,9 @@ frames, that **224,000 procedurally generated sequences** are every one arithmet
 in order, none past the length, no contact frame inside a `hold` plateau, no damage reaction before
 its cause, no recovery scheduled while a thrown blade is still in the air, no move nothing reaches,
 and every module that declares `hits` landing one on every roll), and that a pass move crosses
-without mirroring the figure and lands it upright; that every duel costume is stroked rather than
-filled, declares its reach tightly enough for the camera to frame it, and sits in a pool that puts
+without mirroring the figure and lands it upright; that no duel costume fills a shape that covers
+the torso without being faint enough to read through, that each one
+declares its reach tightly enough for the camera to frame it, and sits in a pool that puts
 one alignment against the other, and that a pooled fight really does rotate its fighters while a
 pinned pairing does not; the catalogue counts this file documents; that no stylesheet rule pairs a band with a
 layout that band never renders; that no preset offers a withdrawn effect or ornament; the edge

@@ -14,7 +14,127 @@ file records what happened to the codebase.
 ---
 
 
-## 2026-08-18 (latest) — the duel has a cast, and the costumes are gated
+## 2026-08-19 (latest) — the fighters get bodies, and the no-fill rule is replaced
+
+Client, having looked at the live site: *"ok the swordfights still arent the fixed ones. pleas
+emake sure they are either all fixed and deployed, or keep going with the engine and the grpahical
+overhaul of all the charcters."*
+
+**The first half of that was checked before anything was changed, and the answer was that nothing
+was missing.** The live bundle already contained the phase-1 and phase-2 work — the eight-fighter
+roster, `duelholy`, `blade_throw`, `overrun` — and a local `npm run build` produced
+`index-CrQwOc01.js`, the exact hash `mcclevarty.ca` was serving. So there was no undeployed fix
+sitting in the tree, and the report was not about a stale deploy: it was about how the fighters
+*look*. That made it the second half of the request.
+
+**What the client was comparing against.** `handoff_duel_engine/duel-cycle-v2.html` runs standalone
+in a browser and got its costume pass on 2026-08-19: filled masses, each with a dark rim. The
+site's roster was eight *stroked* figures. Side by side, the site's are wire diagrams.
+
+### Seeing it at all, which is most of the work
+
+Animation cannot be watched here — the tab reports `document.hidden`, so `rAF` parks and a
+screenshot returns a stale frame. `scripts/duel-shot.mjs` is the tool that came out of this and it
+is worth keeping: it bundles the **real** `src/fx/duel.ts`, drives it through headless Chrome with
+explicit `advanceDuel` calls, pulls the pixels out with `toDataURL` and POSTs them back to a local
+server to be written as PNGs. `sheet` draws one guard per fighter side by side at both the desk and
+phone slot sizes; `strip` samples an exchange every seven frames.
+
+**The contact sheet is the tool, and one duel is not.** *"Can you tell them apart at a glance, in a
+row"* cannot be asked of a single fight, because in a single fight you are never comparing. Every
+problem below was found on the sheet, and three rounds of it were needed.
+
+### The rule that was wrong
+
+`fighters.ts` said **stroked, never filled**, and `npm run check` failed a costume hook that called
+`fill` at all. It was written from a real failure — the version the client rejected on 2026-08-14
+drew a filled torso quad, a filled head block and a filled robe, which composited into one pale
+slab as wide as the figure was tall (*"they are holding shields"*) — and it stopped one letter
+short of the right rule. Banning the fill banned the slab **and every filled mark**: a hood, a
+helmet, a horn, a wing. At the ~61px figure the phone slot renders, a three-unit outline is a pale
+thread, so all eight came out as the same stick with something faint on top. The rule was
+protecting a lesson that had been learned and costing the thing the lesson was for.
+
+It is now about **where the fill lands**, and the gate measures it: a filled shape covering under
+45% of the torso box may be solid; one covering more is cloth and gets at most 35% of the body's
+own alpha, so the spine and both limbs read through it. That number is the actual difference
+between a cape and a shield. The bounds were **measured, not guessed** — a first attempt used
+22×26 box limits, and driving the roster showed those refusing a hood (25×30) and a crown (30×22)
+that are obviously not slabs, while allowing nothing that mattered. Coverage is the property that
+separates the two cases; box size never was.
+
+Two things fell out of it that are worth carrying anywhere else on this canvas:
+
+- **There is no second colour to rim with.** The reference engine outlines its filled marks in a
+  dark edge, which it can do because it owns its arena's background. This canvas is transparent
+  over the palette, so a rim would be a literal colour and the site has exactly one of those
+  (the blades). Fill and edge are the same ink; marks merge with the body on purpose, and marks
+  that must stay apart are held apart by alpha.
+- **Interior detail is therefore worthless.** Nothing can draw a face inside a hood or a grille
+  inside a helmet, so *the silhouette is the whole character*. A brow line, a chest strap and a
+  stole were each drawn, looked at, and deleted: noise at desk size, invisible at phone size. The
+  stole was the clearest — two vertical bands next to two robe edges and a spine made five
+  parallel verticals, and the saint read as wrapped rather than robed.
+
+### Bodies, not just marks
+
+`prop` gained `head` and `build`, and `FighterKind` gained a `stance` — `settle` (hips lowered, so
+the knees bend and the spine shortens), `spread` (half the distance between the feet) and `heel`.
+**The old spread was a flat 4 against a hip at 7**: both feet stood *inside* the hips on every
+fighter, which is not a guard, and with the knees bent it came out as a duck-footed squat. The
+stance moves the hips and the feet and **never the shoulders**, because `bladeLocal` hangs the grip
+off the shoulder line — the same containment that keeps `prop` from having a height multiplier, and
+for the same reason: a figure whose drawn blade disagreed with `bladeGap` is the "proximity is not
+contact" bug class bought for nothing.
+
+`build` draws the two *edges* of a chest from the shoulder bar to the hips. That is the rejected
+shape with the fill taken out, which is a ribcage rather than a slab, and it is given to two
+fighters out of eight deliberately: the contrast with the six plain sticks is what makes the two
+heavies read heavy.
+
+### Four costumes were rebuilt on sight, and two more after that
+
+The sheet is what caught them. The hood was three straight lines making a triangle that floated
+above the skull touching nothing — a party hat on a ball; it is a mass seated on the head now. The
+wings were four thin strokes from one root and read as a bundle of straw — three heavier feathers
+with gaps between them read as a wing, because at this size the *gaps* are what separate the
+feathers. The horns rose side by side off the crown and read as a rabbit; they leave the temples
+sideways and turn up at shoulder width now. The crown was five spokes radiating out of a skull —
+a sun — and is one closed path, a band with points on it. Then, on the next sheet: the crown's
+pauldrons ran level from shoulder to shoulder across a thin body and read as one plank laid over
+the figure, so they angle down and away with the shoulder bar visible between them; and the devil's
+far horn at half alpha and half reach dropped out of the silhouette entirely on a phone, leaving
+one scythe, so depth there is worth about 25% of alpha and no more.
+
+### Two gate bugs found while changing the gate
+
+- **`Math.min(...pts)` overflows the call stack.** The reach check spread one argument per recorded
+  point, and the hollow's hem is a loop of chevrons: six figures of points across the sweep, and the
+  gate died with `RangeError` rather than a verdict. It folds now. This would have arrived the first
+  time anybody drew something in a loop, and it reads as the gate being broken rather than as the
+  costume being wrong.
+- **The synthetic body was nobody's.** It hardcoded `hr: 8`, `shX: 11`, `hipY: 42` while the rig
+  scales all three per fighter, so the reach it measured — and therefore the `headroom` the camera
+  reserves — was a number about a figure that does not exist. It is built from each fighter's own
+  `prop` and `stance` now.
+
+### One VFX change, which is phase 4's first piece
+
+The blade smear was drawn normally: a 13%-alpha red fan over a near-black arena composites to dark
+maroon, i.e. a *darker* shape than the background, so every swing dragged what looked like a sheet
+of coloured plastic behind it. It and the blade's outer glow pass are **additive** now, which is
+the bloom `docs/DUEL-ABSORB.md` signs off on (*"if bloom is wanted, it is a second additive stroke,
+not a shadow"* — the reference engine spends ~5,700 shadowed draws a second on the alternative).
+Under `lighter` the fan can only add, so it reads as an afterimage of something bright, it cannot
+darken the effect behind it in the background presentation, and where it crosses itself at the turn
+of a swing it brightens instead of muddying. The composite op is restored immediately; it is the
+only one in the file.
+
+**What still wants an eye, and no bench can settle it:** whether the costumes read *while moving*,
+which is the only state the site ever shows them in. Stills and seven-frame strips are what this
+environment can produce and they are not the same question.
+
+## 2026-08-18 — the duel has a cast, and the costumes are gated
 
 Phase 2 of `docs/DUEL-ABSORB.md`, the same day as phase 1 below. Client: *"make the characters
 obvious and instantly identifiable, but do not name them on pages that are not accessible only by
