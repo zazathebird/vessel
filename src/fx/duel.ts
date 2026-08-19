@@ -259,7 +259,12 @@ export interface DuelState {
     f: number;
     next: number;
     att: "a" | "b";
-    /** Sequences elapsed this match; drives the anti-stall rail. */
+    /**
+     * Modules still owed to the current phrase before the role coin is thrown
+     * again. Rolled with the coin, so it consults nothing either.
+     */
+    chain: number;
+    /** Modules elapsed this match; drives the anti-stall rail. */
     pressure: number;
   };
   matches: number;
@@ -311,7 +316,7 @@ export function createDuel(left: FighterStyle, right: FighterStyle): DuelState {
     sparks: [],
     clash: 0,
     hitStop: 0,
-    dir: { seq: null, f: 0, next: 0, att: "a", pressure: 0 },
+    dir: { seq: null, f: 0, next: 0, att: "a", chain: 0, pressure: 0 },
     matches: 0,
     over: 0,
     acc: 0,
@@ -1226,9 +1231,9 @@ const MOVES: Record<MoveId, Move> = {
   dead: { frames: 1, blade: [[0, 0, "hold"]], contact: -1, power: 0, chan: "dead" },
 };
 
-type Role = "ATT" | "DEF";
+export type Role = "ATT" | "DEF";
 
-interface Beat {
+export interface Beat {
   who: Role;
   move: MoveId;
   /** Frames from the start of the sequence. */
@@ -1248,16 +1253,68 @@ interface Beat {
   quick?: boolean;
 }
 
-interface Sequence {
+/**
+ * One built module: the concrete thing the director runs.
+ *
+ * `weight` and `range` used to live here, because a sequence *was* a pool entry.
+ * They belong to the `Module` that builds this now — by the time the director
+ * holds one of these the choosing is over, and the only things left that matter
+ * are what happens and for how long.
+ */
+export interface Sequence {
+  /** The module that built it. `scripts/check.ts` counts these for reachability. */
   id: string;
-  weight: number;
-  range: "close" | "mid" | "far" | "any";
-  /** Total frames including the trailing rest. Fixed — never conditional. */
+  /**
+   * Total frames including the trailing rest. **Fixed the moment it is built,
+   * never conditional** — the match-reset loop has no timeout, so a length that
+   * could wait on something would hang the effect.
+   */
   length: number;
+  /** Ascending by `at`; `runDirector` stops at the first beat not yet due. */
   beats: Beat[];
 }
 
-/** Centre-to-centre bands the sequence pool is filtered by. */
+/*
+ * The pool, and why it is a pool of *builders* rather than a pool of tables.
+ *
+ * Every entry here used to be a fixed array of beats. Twenty-eight of them, and
+ * the director picked one whole. That is what the client asked to change:
+ * *"completely random, not a set amount of looping duels."*
+ *
+ * A module is `(roll) => { beats, length }`. It rolls its own strikes, its own
+ * counts and its own timing, and — this is the part that matters — it derives
+ * every reaction frame from the move table rather than from a typed number. So
+ * swapping a diagonal cut for an overhead moves the block, the counter, the
+ * stagger and the trailing rest with it, and cannot desynchronise them.
+ *
+ * **Rolling the pool is not enough on its own.** The reference engine the client
+ * had built rolls its module order and never repeats a fight — and its
+ * most-picked module runs `STRIKES[i % STRIKES.length]` from `i = 0`, so every
+ * flurry it has ever drawn was down, across, up, thrust, in that order. Measured
+ * over 20,000 of its fights the vocabulary came to 96 beat atoms and 48.4% of
+ * module picks repeated inside a single fight. Phrase-level repetition is
+ * audible even when no two fights are identical, which is why the rolls here are
+ * *inside* the modules and not only over them. `docs/DUEL-ABSORB.md` has the
+ * numbers.
+ *
+ * What has not changed, and must not:
+ *
+ * - **Beats name roles, never sides.** The role coin consults nothing — not
+ *   health, not position, not who won the last exchange. An early lucky roll
+ *   cannot compound, because nothing carries forward.
+ * - **Nothing waits on a condition.** A module's `length` is fixed the moment it
+ *   is built and the director advances unconditionally. Every loop in here is
+ *   counted; there is no `do…while` on a roll and no beat that blocks. The
+ *   match-reset loop has no timeout, so a module that could hang would hang the
+ *   effect.
+ * - **The mix.** Roughly a fifth of the weight deals no damage at all
+ *   (`probe`, `standoff`, `close-in`, `step-in`, `the-overrun`), and that is
+ *   deliberate: without silence the strikes have nothing to be loud against. It
+ *   is also kept under a third, because zero-damage modules are the one thing
+ *   that can stretch a match indefinitely.
+ */
+
+/** Centre-to-centre bands the module pool is filtered by. */
 const CLOSE = 132;
 const MID = 245;
 /**
@@ -1280,409 +1337,737 @@ const MID = 245;
  * up, so more of them land in air. Just *outside* sword range is the right
  * place to stand — it leaves a band the pair can hold each other at without
  * being dragged in, which is what measuring an opponent looks like, and the
- * sequences then close the last stretch themselves.
+ * modules then close the last stretch themselves.
  */
 const LEASH = 150;
 
-/*
- * The pool. Beats name roles, never sides — see the fairness note above.
+type Band = "close" | "mid" | "far";
+
+/**
+ * A module's source of randomness, injectable so `scripts/check.ts` can generate
+ * hundreds of thousands of sequences from a seed and assert on every one.
  *
- * The mix matters as much as the contents. Roughly a fifth of the weight is
- * sequences that deal no damage at all (`probe`, `standoff`, `disengage`), and
- * that is deliberate: without silence the strikes have nothing to be loud
- * against. It is also kept under a third, because zero-damage sequences are the
- * one thing that can stretch a match indefinitely.
+ * The old pool was a table, so the checker read it. A generator cannot be read —
+ * it has to be *run*, and run enough times to visit its corners. That gate is
+ * strictly stronger than the table check it replaced: it re-derives every
+ * contact frame from the move table for every roll, where the table check could
+ * only confirm the numbers somebody had typed.
  */
-const SEQUENCES: Sequence[] = [
+export interface Roll {
+  /** Uniform in [0, 1). */
+  f(): number;
+  /** Integer in [lo, hi], inclusive both ends. */
+  i(lo: number, hi: number): number;
+  /** Uniform in [lo, hi). */
+  n(lo: number, hi: number): number;
+  /** One of the list. */
+  of<T>(xs: readonly T[]): T;
+}
+
+/**
+ * Wrap a plain `() => number` as a `Roll`.
+ *
+ * Exported so `scripts/check.ts` can drive a module's `build` directly from a
+ * seed. It needs the raw output rather than `buildSequence`'s, because
+ * `buildSequence` sorts the beats — and *whether the builder emitted them in
+ * order* is one of the things being gated.
+ */
+export function makeRoll(rng: () => number): Roll {
+  return {
+    f: rng,
+    i: (lo, hi) => lo + Math.floor(rng() * (hi - lo + 1)),
+    n: (lo, hi) => lo + rng() * (hi - lo),
+    of: <T,>(xs: readonly T[]): T => xs[Math.floor(rng() * xs.length)],
+  };
+}
+
+export interface Module {
+  id: string;
+  weight: number;
+  /** The band this module can be entered from. */
+  range: Band | "any";
+  /**
+   * It contains a landed blow. The anti-stall rail keeps only these, so a module
+   * whose beats can roll away their only `hit` must declare `false`.
+   */
+  hits: boolean;
+  build(r: Roll): { beats: Beat[]; length: number };
+}
+
+/** The frame a beat's blow lands, counting a skipped wind-up. */
+function lands(move: MoveId, at: number, quick = false): number {
+  const m = MOVES[move];
+  return at + m.contact - (quick ? (m.windup ?? 0) : 0);
+}
+
+/** The frame a beat's move finishes, counting a skipped wind-up. */
+function ends(move: MoveId, at: number, quick = false): number {
+  const m = MOVES[move];
+  return at + m.frames - (quick ? (m.windup ?? 0) : 0);
+}
+
+/** The three interchangeable blade arcs. Same reach, same channel, different read. */
+const CUTS = ["strike_overhead", "strike_diagonal", "strike_rising"] as const;
+type Cut = (typeof CUTS)[number];
+
+/**
+ * Which parry answers which strike.
+ *
+ * A block is a *reaction to a specific strike* — that is the whole reason
+ * outcomes come from the script rather than from a coin per swing — so the
+ * moment a module rolls its opener it has to roll the answer with it. Typed
+ * pairs are how the old pool did it and they were correct; this is the same
+ * table, made total so a rolled opener always has one.
+ */
+const PARRY_FOR: Record<Cut | "thrust" | "strike_level", MoveId> = {
+  strike_overhead: "parry_high",
+  strike_diagonal: "parry_cross",
+  strike_rising: "parry_low",
+  strike_level: "parry_low",
+  thrust: "parry_low",
+};
+
+const other = (who: Role): Role => (who === "ATT" ? "DEF" : "ATT");
+
+/**
+ * The next cut in a run, never the one just thrown.
+ *
+ * Written as an offset rather than as "re-roll until it differs" on purpose: a
+ * rejection loop is a loop whose length depends on a roll, and nothing in this
+ * director is allowed to wait on a condition. This is O(1) and still uniform
+ * over the two remaining arcs.
+ */
+function cutAfter(r: Roll, prev: Cut | null): Cut {
+  if (prev === null) return r.of(CUTS);
+  const i = CUTS.indexOf(prev);
+  return CUTS[(i + 1 + r.i(0, CUTS.length - 2)) % CUTS.length];
+}
+
+const MODULES: Module[] = [
   {
-    // Pure closing. Both roles advance, and because `facing` always points at
-    // the opponent, "advance" closes for whoever performs it — so this cannot
-    // favour a side or drift the pair off toward one wall.
+    /*
+     * Pure closing. Both roles advance, and because `facing` always points at
+     * the opponent, "advance" closes for whoever performs it — so this cannot
+     * favour a side or drift the pair off toward one wall.
+     */
     id: "close-in",
     weight: 22,
     range: "mid",
-    length: 108,
-    beats: [
-      { who: "ATT", move: "advance", at: 0 },
-      { who: "DEF", move: "advance", at: 0 },
-      { who: "ATT", move: "advance", at: 56 },
-      { who: "DEF", move: "circle", at: 56 },
-    ],
+    hits: false,
+    build(r) {
+      const second = r.i(50, 62);
+      return {
+        beats: [
+          { who: "ATT", move: "advance", at: 0 },
+          { who: "DEF", move: r.of(["advance", "advance", "circle"] as const), at: 0 },
+          { who: "ATT", move: "advance", at: second },
+          { who: "DEF", move: r.of(["circle", "advance", "guard"] as const), at: second },
+        ],
+        length: ends("advance", second) + r.i(0, 18),
+      };
+    },
   },
   {
+    /*
+     * The length is derived, not typed, and that fixes a bug the fixed table
+     * shipped: `advance` is 54 frames and the last beat used to start at 58
+     * against a length of 84, so the module ended 28 frames inside its own
+     * closing move. At weight 13 that was among the most frequently seen things
+     * in the fight. Every `length` in this pool is now the last beat's own end
+     * plus a rolled rest, so an overrun cannot be typed by hand.
+     */
     id: "step-in",
     weight: 13,
     range: "mid",
-        // 112, not 84: `advance` is 54 frames and the last beat starts at 58, so
-    // the sequence used to end 28 frames inside its own closing move, cutting
-    // it off with no stillness after it. At weight 13 this is among the most
-    // frequently seen things in the fight, and the only overrun big enough to
-    // read — `disengage`, `pushed`, `the-lock` and `close-in` overrun by 14
-    // frames or fewer.
-    length: 112,
-    beats: [
-      { who: "ATT", move: "advance", at: 0 },
-      { who: "DEF", move: "guard", at: 0 },
-      { who: "ATT", move: "guard", at: 58 },
-      { who: "DEF", move: "advance", at: 58 },
-    ],
+    hits: false,
+    build(r) {
+      const second = r.i(54, 64);
+      const hold = r.of(["guard", "guard", "circle"] as const);
+      return {
+        beats: [
+          { who: "ATT", move: "advance", at: 0 },
+          { who: "DEF", move: hold, at: 0 },
+          { who: "ATT", move: r.of(["guard", "circle"] as const), at: second },
+          { who: "DEF", move: "advance", at: second },
+        ],
+        length: ends("advance", second) + r.i(0, 16),
+      };
+    },
   },
   {
     id: "probe",
     weight: 10,
     range: "mid",
-    length: 96,
-    beats: [
-      { who: "ATT", move: "advance", at: 0 },
-      { who: "DEF", move: "circle", at: 0 },
-      { who: "ATT", move: "thrust", at: 18, outcome: "miss" },
-      { who: "DEF", move: "backstep", at: 24 },
-      { who: "ATT", move: "guard", at: 52 },
-      { who: "DEF", move: "guard", at: 52 },
-    ],
+    hits: false,
+    build(r) {
+      const jab = r.of(["thrust", "strike_level"] as const);
+      const at = r.i(14, 22);
+      const evade = lands(jab, at) - r.i(2, 8);
+      const rest = ends(jab, at) + r.i(4, 16);
+      return {
+        beats: [
+          { who: "ATT", move: "advance", at: 0 },
+          { who: "DEF", move: "circle", at: 0 },
+          { who: "ATT", move: jab, at, outcome: "miss" },
+          { who: "DEF", move: r.of(["backstep", "retreat"] as const), at: evade },
+          { who: "ATT", move: "guard", at: rest },
+          { who: "DEF", move: "guard", at: rest },
+        ],
+        length: rest + MOVES.guard.frames + r.i(2, 18),
+      };
+    },
   },
   {
     id: "cut-and-catch",
     weight: 12,
     range: "close",
-    length: 104,
-    beats: [
-      { who: "ATT", move: "strike_diagonal", at: 0, outcome: "blocked" },
-      { who: "DEF", move: "parry_cross", at: 8 },
-      { who: "DEF", move: "strike_rising", at: 34, outcome: "hit", power: 0.85 },
-      { who: "ATT", move: "stagger", at: 50 },
-      { who: "DEF", move: "guard", at: 68 },
-    ],
+    hits: true,
+    build(r) {
+      const opener = r.of(CUTS);
+      const counter = r.of(["strike_rising", "thrust", "strike_diagonal"] as const);
+      const parry = lands(opener, 0) - r.i(8, 12);
+      const at = ends(opener, 0) + r.i(-4, 8);
+      const hit = lands(counter, at);
+      const guard = hit + r.i(16, 26);
+      return {
+        beats: [
+          { who: "ATT", move: opener, at: 0, outcome: "blocked" },
+          { who: "DEF", move: PARRY_FOR[opener], at: parry },
+          { who: "DEF", move: counter, at, outcome: "hit", power: r.n(0.78, 0.95) },
+          { who: "ATT", move: "stagger", at: hit },
+          { who: "DEF", move: "guard", at: guard },
+        ],
+        length: guard + MOVES.guard.frames + r.i(4, 22),
+      };
+    },
   },
   {
     id: "overhead-denied",
     weight: 12,
     range: "close",
-    length: 118,
-    beats: [
-      { who: "ATT", move: "strike_overhead", at: 0, outcome: "blocked" },
-      { who: "DEF", move: "parry_high", at: 11 },
-      { who: "DEF", move: "thrust", at: 26, outcome: "miss" },
-      { who: "ATT", move: "backstep", at: 40 },
-      { who: "ATT", move: "guard", at: 70 },
-      { who: "DEF", move: "guard", at: 70 },
-    ],
+    hits: false,
+    build(r) {
+      const opener = r.of(["strike_overhead", "strike_diagonal"] as const);
+      const block = lands(opener, 0) - r.i(9, 13);
+      const riposte = ends(opener, 0) - r.i(2, 10);
+      const evade = lands("thrust", riposte) - r.i(0, 6);
+      const rest = ends("thrust", riposte) + r.i(6, 18);
+      return {
+        beats: [
+          { who: "ATT", move: opener, at: 0, outcome: "blocked" },
+          { who: "DEF", move: PARRY_FOR[opener], at: block },
+          { who: "DEF", move: "thrust", at: riposte, outcome: "miss" },
+          { who: "ATT", move: "backstep", at: evade },
+          { who: "ATT", move: "guard", at: rest },
+          { who: "DEF", move: "guard", at: rest },
+        ],
+        length: rest + MOVES.guard.frames + r.i(4, 20),
+      };
+    },
   },
   {
     /*
-     * **Re-ranged far → mid on 2026-08-16, with the leash.** These four are the
-     * gap-closers — leaps, a shove, a pull — and they were authored for a band
-     * the fight no longer visits: once the leash engages just outside sword
-     * range the far bracket is 0.2% of frames, and all four went to *zero*
-     * picks. They also read better from mid, because `leap_strike` carries 42
-     * units of travel and was being asked to cross 245.
-     *
-     * **`close-in` joined them on 2026-08-17, correcting a claim made here a
-     * day earlier.** It was left at `far` "so something sensible answers the
-     * far band on the rare occasions it happens" — and measured over 1,200,000
-     * frames, it never happens: the far bracket holds 0.21% of frames and
-     * *zero* of 9,487 sequence decisions, because `LEASH` (150) pulls the pair
-     * back inside `MID` (245) long before a sequence ends. So the pool's single
-     * largest entry, weight 22 of ~172, had quietly become unreachable — the
-     * same "declared weights describing a fight nobody has seen" failure the
-     * pressure-rail fix called out, arrived at from the other side. Nothing is
-     * `far` now, and that is honest: the band exists in `chooseSequence` but
-     * the leash means the fight does not decide anything there.
+     * The gap-closers were authored `far` and re-ranged to `mid` on 2026-08-16
+     * with the leash. Once the leash engages just outside sword range the far
+     * bracket is 0.2% of frames, and all four went to *zero* picks. They also
+     * read better from mid: `leap_strike` carries 42 units of travel and was
+     * being asked to cross 245. **Nothing is ranged `far` today** — the band
+     * exists in `chooseSequence` and the leash means the fight does not decide
+     * anything in it.
      */
     id: "close-the-gap",
     weight: 10,
     range: "mid",
-    length: 110,
-    beats: [
-      { who: "ATT", move: "leap_strike", at: 0, outcome: "hit" },
-      // Lands at 36 now, not 34.
-      { who: "DEF", move: "stagger", at: 36 },
-      { who: "ATT", move: "guard", at: 64 },
-    ],
+    hits: true,
+    build(r) {
+      const hit = lands("leap_strike", 0);
+      const guard = hit + MOVES.stagger.frames - r.i(2, 10);
+      const beats: Beat[] = [
+        { who: "ATT", move: "leap_strike", at: 0, outcome: "hit", power: r.n(0.9, 1.1) },
+        { who: "DEF", move: "stagger", at: hit },
+        { who: "ATT", move: "guard", at: guard },
+      ];
+      // Half the time the struck fighter gives ground rather than standing it
+      // off. Cheap, and this is one of the thinnest modules in the pool by
+      // distinct forms — a three-beat exchange has very little else to roll.
+      const away = r.f() < 0.5 ? 0 : guard + r.i(2, 12);
+      if (away) beats.push({ who: "DEF", move: r.of(["backstep", "retreat"] as const), at: away });
+      return {
+        beats,
+        length: Math.max(guard + MOVES.guard.frames, away + MOVES.retreat.frames) + r.i(8, 28),
+      };
+    },
   },
   {
     id: "leap-evaded",
     weight: 7,
     range: "mid",
-    length: 116,
-    beats: [
-      { who: "ATT", move: "leap_strike", at: 0, outcome: "miss" },
-      { who: "DEF", move: "backstep", at: 20 },
-      { who: "DEF", move: "strike_rising", at: 48, outcome: "hit", power: 0.9 },
-      { who: "ATT", move: "stagger", at: 64 },
-      { who: "DEF", move: "guard", at: 90 },
-    ],
+    hits: true,
+    build(r) {
+      const dodge = r.i(16, 24);
+      const cut = r.of(["strike_rising", "strike_diagonal"] as const);
+      const at = ends("leap_strike", 0) - r.i(0, 8);
+      const hit = lands(cut, at);
+      const guard = hit + r.i(22, 32);
+      return {
+        beats: [
+          { who: "ATT", move: "leap_strike", at: 0, outcome: "miss" },
+          { who: "DEF", move: "backstep", at: dodge },
+          { who: "DEF", move: cut, at, outcome: "hit", power: r.n(0.82, 0.98) },
+          { who: "ATT", move: "stagger", at: hit },
+          { who: "DEF", move: "guard", at: guard },
+        ],
+        length: guard + MOVES.guard.frames + r.i(4, 20),
+      };
+    },
   },
   {
     id: "pushed",
     weight: 9,
     range: "mid",
-    length: 122,
-    beats: [
-      { who: "ATT", move: "force_push", at: 0, outcome: "hit" },
-      { who: "DEF", move: "knockdown", at: 19 },
-      { who: "ATT", move: "advance", at: 78 },
-      { who: "DEF", move: "guard", at: 78 },
-    ],
+    hits: true,
+    build(r) {
+      const hit = lands("force_push", 0);
+      const down = hit + r.i(0, 3);
+      const follow = down + MOVES.knockdown.frames + r.i(0, 12);
+      return {
+        beats: [
+          { who: "ATT", move: "force_push", at: 0, outcome: "hit", power: r.n(0.9, 1.1) },
+          { who: "DEF", move: "knockdown", at: down },
+          { who: "ATT", move: "advance", at: follow },
+        ],
+        length: ends("advance", follow) - r.i(2, 14),
+      };
+    },
   },
   {
+    /*
+     * Both land, a few frames apart. Two impacts that close together read as one
+     * event with a stutter in it, which is the point.
+     *
+     * The flinches are ordered after *both* contacts rather than after each
+     * fighter's own wound: staggering the defender at its own contact would cut
+     * its strike before that strike lands, and then it is not a trade. Derived
+     * from `max` of the two, so rolling the two arcs cannot break it — that
+     * ordering was typed by hand until 2026-08-18 and had already been wrong
+     * once.
+     */
     id: "trade",
     weight: 8,
     range: "close",
-    length: 92,
-    beats: [
-      // Both land, six frames apart. Two impacts that close together read as
-      // one event with a stutter in it, which is the point.
-      { who: "ATT", move: "strike_rising", at: 0, outcome: "hit", power: 0.7 },
-      { who: "DEF", move: "strike_diagonal", at: 4, outcome: "hit", power: 0.7 },
-      /*
-       * **Both blows land and both fighters now flinch** (2026-08-16). They
-       * landed on frames 16 and 23 and the only reactions in the sequence were
-       * backsteps at 40 — 24 and 17 frames later, and a backstep is a decision,
-       * not a flinch. So the one sequence in the pool whose whole idea is that
-       * neither fighter defends had two swords connect and nobody react to
-       * either, which reads as both attacks missing.
-       *
-       * Ordered after *both* contacts rather than after each fighter's own
-       * wound: staggering the defender at 17 would cut its strike before that
-       * strike lands, and then it is not a trade.
-       */
-      { who: "DEF", move: "stagger", at: 24 },
-      { who: "ATT", move: "stagger", at: 25 },
-      { who: "ATT", move: "backstep", at: 62 },
-      { who: "DEF", move: "backstep", at: 62 },
-    ],
+    hits: true,
+    build(r) {
+      const first = r.of(CUTS);
+      const second = cutAfter(r, first);
+      const off = r.i(2, 7);
+      const both = Math.max(lands(first, 0), lands(second, off)) + r.i(1, 3);
+      const back = both + MOVES.stagger.frames + r.i(2, 10);
+      return {
+        beats: [
+          { who: "ATT", move: first, at: 0, outcome: "hit", power: r.n(0.62, 0.78) },
+          { who: "DEF", move: second, at: off, outcome: "hit", power: r.n(0.62, 0.78) },
+          { who: "DEF", move: "stagger", at: both },
+          { who: "ATT", move: "stagger", at: both + 1 },
+          { who: "ATT", move: "backstep", at: back },
+          { who: "DEF", move: "backstep", at: back },
+        ],
+        length: back + MOVES.backstep.frames + r.i(4, 20),
+      };
+    },
   },
   {
     id: "standoff",
     weight: 8,
     range: "mid",
-    length: 150,
-    beats: [
-      { who: "ATT", move: "circle", at: 0 },
-      { who: "DEF", move: "circle", at: 0 },
-      { who: "ATT", move: "flourish", at: 60 },
-      { who: "DEF", move: "guard", at: 60 },
-      { who: "ATT", move: "guard", at: 96 },
-      { who: "DEF", move: "guard", at: 96 },
-    ],
+    hits: false,
+    build(r) {
+      const show = r.i(50, 70);
+      const settle = show + MOVES.flourish.frames + r.i(2, 12);
+      return {
+        beats: [
+          { who: "ATT", move: "circle", at: 0 },
+          { who: "DEF", move: "circle", at: 0 },
+          { who: "ATT", move: "flourish", at: show },
+          { who: "DEF", move: "guard", at: show },
+          { who: "ATT", move: "guard", at: settle },
+          { who: "DEF", move: "guard", at: settle },
+        ],
+        length: settle + MOVES.guard.frames + r.i(10, 32),
+      };
+    },
   },
   {
     id: "two-blades-one-breath",
     weight: 7,
     range: "close",
-    length: 84,
-    beats: [
-      { who: "ATT", move: "thrust", at: 0, outcome: "blocked" },
-      { who: "DEF", move: "parry_low", at: 6 },
-      { who: "ATT", move: "strike_rising", at: 22, outcome: "hit", power: 0.8 },
-      { who: "DEF", move: "stagger", at: 38 },
-    ],
+    hits: true,
+    build(r) {
+      const opener = r.of(["thrust", "strike_level", "strike_rising"] as const);
+      const parry = lands(opener, 0) - r.i(6, 10);
+      const second = ends(opener, 0) - r.i(2, 10);
+      const hit = lands("strike_rising", second);
+      return {
+        beats: [
+          { who: "ATT", move: opener, at: 0, outcome: "blocked" },
+          { who: "DEF", move: PARRY_FOR[opener], at: parry },
+          { who: "ATT", move: "strike_rising", at: second, outcome: "hit", power: r.n(0.74, 0.9) },
+          { who: "DEF", move: "stagger", at: hit },
+        ],
+        length: hit + MOVES.stagger.frames + r.i(4, 22),
+      };
+    },
   },
   {
+    /*
+     * The only `any`-range module, and the pool's answer to a band nothing else
+     * covers. Its trailing `circle` is a drift and the length deliberately cuts
+     * it short: nobody can see a drift end early.
+     */
     id: "disengage",
     weight: 9,
     range: "any",
-    length: 88,
-    beats: [
-      { who: "ATT", move: "strike_diagonal", at: 0, outcome: "miss" },
-      { who: "DEF", move: "backstep", at: 4 },
-      { who: "DEF", move: "force_push", at: 22, outcome: "hit", power: 0.6 },
-      { who: "ATT", move: "stagger", at: 40 },
-      { who: "ATT", move: "circle", at: 56 },
-    ],
+    hits: true,
+    build(r) {
+      const opener = r.of(CUTS);
+      const back = r.i(3, 8);
+      const push = r.i(20, 28);
+      const hit = lands("force_push", push);
+      const away = hit + MOVES.stagger.frames - r.i(6, 16);
+      return {
+        beats: [
+          { who: "ATT", move: opener, at: 0, outcome: "miss" },
+          { who: "DEF", move: "backstep", at: back },
+          { who: "DEF", move: "force_push", at: push, outcome: "hit", power: r.n(0.52, 0.68) },
+          { who: "ATT", move: "stagger", at: hit },
+          { who: "ATT", move: "circle", at: away },
+        ],
+        length: ends("circle", away) - r.i(10, 26),
+      };
+    },
   },
   {
+    /*
+     * The only sustained moment where both blades touch. Everything else in the
+     * fight is motion; this one's value is pressure.
+     *
+     * `power` is the press: 1 drives, 0 gives ground. It is not a damage
+     * multiplier — `lock` has no contact frame — it is how the script tells the
+     * press who wins it, through the channel `setMove` already carries. The
+     * outcome is fixed the frame the lock starts and *nothing* consults a
+     * condition to find it: the winner is whoever the role coin made ATT, and
+     * ATT is who breaks through. So the grind can lean the right way for a
+     * second and a half before the blow lands, which is the whole image.
+     *
+     * The lock starts one frame *after* the block resolves, derived rather than
+     * typed: `setMove` clears `struck`, so a lock starting on the same frame
+     * would silently delete the block that opens the module.
+     */
     id: "the-lock",
     weight: 5,
     range: "close",
-    length: 176,
-    beats: [
-      { who: "ATT", move: "strike_overhead", at: 0, outcome: "blocked" },
-      { who: "DEF", move: "parry_high", at: 11 },
-      /*
-       * The only sustained moment where both blades touch. Everything else in
-       * the fight is motion; this one's value is pressure.
-       *
-       * `power` is the press: 1 drives, 0 gives ground. It is not a damage
-       * multiplier here — `lock` has no contact frame — it is how the script
-       * tells the press who wins it, through the channel `setMove` already
-       * carries. That matters because the outcome is then fixed at frame 22
-       * and *nothing* consults a condition to find it: the winner is whoever
-       * the role coin made ATT, and ATT is who breaks through at 116 below.
-       * So the grind can lean the right way for a second and a half before the
-       * blow lands, which is the whole point of the image.
-       */
-      // 23, not 22: the overhead above now resolves its block *on* frame 22,
-      // and `setMove` clears `struck`, so a lock starting on the same frame
-      // would silently delete the block that opens the whole sequence.
-      { who: "ATT", move: "lock", at: 23, power: 1 },
-      { who: "DEF", move: "lock", at: 23, power: 0 },
-      // The press breaks: the winner drives through and the loser is thrown off.
-      { who: "ATT", move: "strike_diagonal", at: 116, outcome: "hit", power: 0.8 },
-      // Lands at 135 now (116 + 19), so the stagger cannot stay on 134.
-      { who: "DEF", move: "stagger", at: 135 },
-      { who: "ATT", move: "guard", at: 158 },
-    ],
+    hits: true,
+    build(r) {
+      const opener = r.of(["strike_overhead", "strike_diagonal"] as const);
+      const lockAt = lands(opener, 0) + 1;
+      const breakAt = lockAt + MOVES.lock.frames + r.i(1, 6);
+      const brk = r.of(CUTS);
+      const hit = lands(brk, breakAt);
+      const guard = hit + r.i(20, 30);
+      return {
+        beats: [
+          { who: "ATT", move: opener, at: 0, outcome: "blocked" },
+          { who: "DEF", move: PARRY_FOR[opener], at: lands(opener, 0) - r.i(9, 13) },
+          { who: "ATT", move: "lock", at: lockAt, power: 1 },
+          { who: "DEF", move: "lock", at: lockAt, power: 0 },
+          { who: "ATT", move: brk, at: breakAt, outcome: "hit", power: r.n(0.74, 0.9) },
+          { who: "DEF", move: "stagger", at: hit },
+          { who: "ATT", move: "guard", at: guard },
+        ],
+        length: guard + MOVES.guard.frames + r.i(0, 18),
+      };
+    },
   },
   {
+    /*
+     * The chain, and the module that rolls its own length.
+     *
+     * Two or three blocked exchanges trading the initiative back and forth, then
+     * one that lands. The count, every arc and every interval roll — this is the
+     * module the reference engine's `mFlurry` should have been, and the reason
+     * the rolls live inside modules rather than only over them.
+     */
     id: "riposte-chain",
     weight: 6,
     range: "close",
-    length: 140,
-    beats: [
-      { who: "ATT", move: "strike_diagonal", at: 0, outcome: "blocked" },
-      { who: "DEF", move: "parry_cross", at: 8 },
-      { who: "DEF", move: "strike_rising", at: 22, outcome: "blocked" },
-      { who: "ATT", move: "parry_low", at: 30 },
-      { who: "ATT", move: "thrust", at: 44, outcome: "hit", power: 0.9 },
-      { who: "DEF", move: "stagger", at: 60 },
-      { who: "ATT", move: "guard", at: 96 },
-    ],
+    hits: true,
+    build(r) {
+      const beats: Beat[] = [];
+      const n = r.i(2, 3);
+      let at = 0;
+      let who: Role = "ATT";
+      let prev: Cut | null = null;
+      for (let i = 0; i < n; i += 1) {
+        const cut = cutAfter(r, prev);
+        prev = cut;
+        const c = lands(cut, at);
+        beats.push({ who, move: cut, at, outcome: "blocked" });
+        beats.push({ who: other(who), move: PARRY_FOR[cut], at: c - r.i(6, 11) });
+        at = c + r.i(4, 10);
+        who = other(who);
+      }
+      const last = r.of(["thrust", "strike_rising", "strike_diagonal"] as const);
+      const hit = lands(last, at);
+      const guard = hit + r.i(28, 40);
+      beats.push({ who, move: last, at, outcome: "hit", power: r.n(0.82, 0.98) });
+      beats.push({ who: other(who), move: "stagger", at: hit });
+      beats.push({ who, move: "guard", at: guard });
+      return { beats, length: guard + MOVES.guard.frames + r.i(2, 20) };
+    },
   },
   {
+    /*
+     * A fighter on the ground does not parry; it rises and guards. There was a
+     * `parry_high` here once, answering a strike that whiffed twelve frames
+     * earlier while the defender was still lying down.
+     */
     id: "ground-and-rise",
     weight: 4,
     range: "close",
-    length: 148,
-    beats: [
-      { who: "ATT", move: "kick", at: 0, outcome: "hit" },
-      { who: "DEF", move: "knockdown", at: 10 },
+    hits: true,
+    build(r) {
+      const hit = lands("kick", 0);
+      const down = hit + r.i(1, 3);
       // The overhead misses into the floor beside the fallen fighter, which
       // `resolveContact` turns into a burst of sparks off the ground.
-      { who: "ATT", move: "strike_overhead", at: 32, outcome: "miss" },
-      // There was a `parry_high` here, at 70. The strike it was answering
-      // whiffed at 54, and the defender is in `knockdown` until 66 — so it
-      // parried nothing, sixteen frames late, while lying down and getting up.
-      // A fighter on the ground does not parry; it rises and guards, below.
-      { who: "ATT", move: "guard", at: 96 },
-      { who: "DEF", move: "guard", at: 96 },
-    ],
+      const stomp = down + r.i(18, 28);
+      const rise = down + MOVES.knockdown.frames + r.i(20, 34);
+      return {
+        beats: [
+          { who: "ATT", move: "kick", at: 0, outcome: "hit", power: r.n(0.9, 1.1) },
+          { who: "DEF", move: "knockdown", at: down },
+          { who: "ATT", move: r.of(["strike_overhead", "strike_diagonal"] as const), at: stomp, outcome: "miss" },
+          { who: "ATT", move: "guard", at: rise },
+          { who: "DEF", move: "guard", at: rise },
+        ],
+        length: rise + MOVES.guard.frames + r.i(10, 30),
+      };
+    },
   },
   {
+    /*
+     * 1.7 seconds of nothing, then the biggest single blow in the pool. The
+     * contrast *is* the module — it should not get tightened in tuning.
+     */
     id: "the-long-wind",
     weight: 5,
     range: "mid",
-        // 182: the closing `knockdown` starts at 126 and runs 56 frames, so at 176
-    // the fighter was cut out of the last six frames of getting up and popped
-    // into whatever the next sequence assigned. `disengage` still overruns by
-    // 14, deliberately left: its last beat is `circle`, a drift, and nobody can
-    // see a drift end early.
-    length: 182,
-    beats: [
-      // 1.7 seconds of nothing, then the biggest single blow in the pool. The
-      // contrast *is* the sequence — it should not get tightened in tuning.
-      { who: "ATT", move: "guard", at: 0 },
-      { who: "DEF", move: "guard", at: 0 },
-      { who: "ATT", move: "advance", at: 44 },
-      { who: "DEF", move: "guard", at: 58 },
-      { who: "ATT", move: "strike_overhead", at: 104, outcome: "hit", power: 1.5 },
-      { who: "DEF", move: "knockdown", at: 126 },
-    ],
+    hits: true,
+    build(r) {
+      const walk = r.i(38, 52);
+      const set = walk + r.i(10, 20);
+      const big = r.of(["strike_overhead", "spin_attack"] as const);
+      const at = ends("advance", walk) + r.i(0, 12);
+      const hit = lands(big, at);
+      return {
+        beats: [
+          { who: "ATT", move: "guard", at: 0 },
+          { who: "DEF", move: "guard", at: 0 },
+          { who: "ATT", move: "advance", at: walk },
+          { who: "DEF", move: "guard", at: set },
+          { who: "ATT", move: big, at, outcome: "hit", power: r.n(1.35, 1.6) },
+          { who: "DEF", move: "knockdown", at: hit },
+        ],
+        length: hit + MOVES.knockdown.frames + r.i(0, 16),
+      };
+    },
   },
   {
+    /*
+     * A regular beat, established two to four times and then broken. The eye
+     * hears that as a rhythm even though there is no sound — so the *interval*
+     * rolls once and then holds, where every other module's intervals roll per
+     * beat. Breaking that would take the module's only idea away from it.
+     */
     id: "wall-of-parries",
     weight: 5,
     range: "close",
-    length: 138,
-    beats: [
-      // A regular 22-frame beat, established three times and then broken. The
-      // eye hears that as a rhythm even though there is no sound.
-      { who: "ATT", move: "strike_overhead", at: 0, outcome: "blocked" },
-      { who: "DEF", move: "parry_high", at: 9 },
-      { who: "ATT", move: "strike_diagonal", at: 24, outcome: "blocked" },
-      { who: "DEF", move: "parry_cross", at: 32 },
-      { who: "ATT", move: "strike_rising", at: 48, outcome: "blocked" },
-      { who: "DEF", move: "parry_low", at: 56 },
-      { who: "ATT", move: "strike_overhead", at: 72, outcome: "hit" },
-      { who: "DEF", move: "stagger", at: 94 },
-    ],
+    hits: true,
+    build(r) {
+      const step = r.i(22, 28);
+      const n = r.i(2, 4);
+      const beats: Beat[] = [];
+      let prev: Cut | null = null;
+      for (let i = 0; i < n; i += 1) {
+        const cut = cutAfter(r, prev);
+        prev = cut;
+        const at = i * step;
+        beats.push({ who: "ATT", move: cut, at, outcome: "blocked" });
+        beats.push({ who: "DEF", move: PARRY_FOR[cut], at: lands(cut, at) - r.i(6, 11) });
+      }
+      const last = cutAfter(r, prev);
+      const at = n * step;
+      const hit = lands(last, at);
+      beats.push({ who: "ATT", move: last, at, outcome: "hit", power: r.n(0.92, 1.08) });
+      beats.push({ who: "DEF", move: "stagger", at: hit });
+      return { beats, length: hit + MOVES.stagger.frames + r.i(4, 20) };
+    },
   },
   {
     id: "spin-through",
     weight: 3,
     range: "close",
-    length: 122,
-    beats: [
-      { who: "ATT", move: "spin_attack", at: 0, outcome: "miss" },
-      { who: "DEF", move: "backstep", at: 20 },
-      { who: "DEF", move: "strike_rising", at: 42, outcome: "hit", power: 1.2 },
-      { who: "ATT", move: "stagger", at: 58 },
-      { who: "DEF", move: "guard", at: 94 },
-    ],
+    hits: true,
+    build(r) {
+      const dodge = r.i(16, 24);
+      const cut = r.of(["strike_rising", "strike_diagonal", "thrust"] as const);
+      const at = ends("spin_attack", 0) + r.i(0, 8);
+      const hit = lands(cut, at);
+      const guard = hit + r.i(30, 42);
+      return {
+        beats: [
+          { who: "ATT", move: "spin_attack", at: 0, outcome: "miss" },
+          { who: "DEF", move: "backstep", at: dodge },
+          { who: "DEF", move: cut, at, outcome: "hit", power: r.n(1.1, 1.3) },
+          { who: "ATT", move: "stagger", at: hit },
+          { who: "DEF", move: "guard", at: guard },
+        ],
+        length: guard + MOVES.guard.frames + r.i(0, 18),
+      };
+    },
   },
   {
+    /*
+     * Somersaults the strike and lands behind. The sides swap — `flip_over` is
+     * one of the two `pass` moves, so the counter cannot be scheduled until it
+     * has landed, which is why `at` is derived from the flip's own end rather
+     * than typed.
+     */
     id: "over-the-top",
     weight: 7,
     range: "close",
-    length: 134,
-    beats: [
-      { who: "ATT", move: "strike_diagonal", at: 0, outcome: "miss" },
-      // Somersaults the strike and lands behind. The sides swap.
-      { who: "DEF", move: "flip_over", at: 6 },
-      { who: "DEF", move: "strike_rising", at: 62, outcome: "hit", power: 0.95 },
-      { who: "ATT", move: "stagger", at: 78 },
-      { who: "DEF", move: "guard", at: 108 },
-    ],
+    hits: true,
+    build(r) {
+      const opener = r.of(CUTS);
+      const flip = r.i(4, 10);
+      const cut = r.of(["strike_rising", "strike_diagonal"] as const);
+      const at = ends("flip_over", flip) + r.i(1, 8);
+      const hit = lands(cut, at);
+      const guard = hit + r.i(26, 36);
+      return {
+        beats: [
+          { who: "ATT", move: opener, at: 0, outcome: "miss" },
+          { who: "DEF", move: "flip_over", at: flip },
+          { who: "DEF", move: cut, at, outcome: "hit", power: r.n(0.88, 1.02) },
+          { who: "ATT", move: "stagger", at: hit },
+          { who: "DEF", move: "guard", at: guard },
+        ],
+        length: guard + MOVES.guard.frames + r.i(0, 18),
+      };
+    },
   },
   {
     id: "flip-and-press",
     weight: 5,
     range: "mid",
-    length: 150,
-    beats: [
-      { who: "ATT", move: "flip_over", at: 0 },
-      { who: "DEF", move: "guard", at: 0 },
-      { who: "ATT", move: "strike_overhead", at: 58, outcome: "blocked" },
-      { who: "DEF", move: "parry_high", at: 68 },
-      { who: "ATT", move: "kick", at: 86, outcome: "hit" },
-      { who: "DEF", move: "stagger", at: 98 },
-      { who: "ATT", move: "guard", at: 126 },
-    ],
+    hits: true,
+    build(r) {
+      const cut = r.of(["strike_overhead", "strike_diagonal"] as const);
+      const at = ends("flip_over", 0) + r.i(2, 10);
+      const parry = lands(cut, at) - r.i(9, 13);
+      const kick = ends(cut, at) - r.i(0, 10);
+      const hit = lands("kick", kick);
+      const guard = hit + r.i(24, 34);
+      return {
+        beats: [
+          { who: "ATT", move: "flip_over", at: 0 },
+          { who: "DEF", move: "guard", at: 0 },
+          { who: "ATT", move: cut, at, outcome: "blocked" },
+          { who: "DEF", move: PARRY_FOR[cut], at: parry },
+          { who: "ATT", move: "kick", at: kick, outcome: "hit", power: r.n(0.9, 1.1) },
+          { who: "DEF", move: "stagger", at: hit },
+          { who: "ATT", move: "guard", at: guard },
+        ],
+        length: guard + MOVES.guard.frames + r.i(0, 18),
+      };
+    },
   },
   {
+    /*
+     * The pull is the setup and the thrust is the payoff — the biggest thrust in
+     * the pool. `force_pull`'s `knock` is signed negative for exactly this: it
+     * spent two days throwing its victim *away*, and this module delivered its
+     * payoff at a median of 280 units.
+     */
     id: "pull-and-punish",
     weight: 5,
     range: "mid",
-    length: 138,
-    beats: [
-      { who: "ATT", move: "force_pull", at: 0, outcome: "hit", power: 0.35 },
-      { who: "DEF", move: "stumble_in", at: 16 },
-      // The payoff for the setup: the biggest thrust in the pool.
-      { who: "ATT", move: "thrust", at: 34, outcome: "hit", power: 1.15 },
-      { who: "DEF", move: "stagger", at: 50 },
-      { who: "DEF", move: "backstep", at: 84 },
-      { who: "ATT", move: "guard", at: 110 },
-    ],
+    hits: true,
+    build(r) {
+      const pull = lands("force_pull", 0);
+      const stum = pull + r.i(1, 3);
+      const jab = r.of(["thrust", "strike_rising", "strike_overhead"] as const);
+      const at = stum + MOVES.stumble_in.frames - r.i(8, 16);
+      const hit = lands(jab, at);
+      const back = hit + MOVES.stagger.frames + r.i(0, 8);
+      const guard = back + r.i(20, 32);
+      return {
+        beats: [
+          { who: "ATT", move: "force_pull", at: 0, outcome: "hit", power: r.n(0.3, 0.42) },
+          { who: "DEF", move: "stumble_in", at: stum },
+          { who: "ATT", move: jab, at, outcome: "hit", power: r.n(1.05, 1.25) },
+          { who: "DEF", move: "stagger", at: hit },
+          { who: "DEF", move: "backstep", at: back },
+          { who: "ATT", move: "guard", at: guard },
+        ],
+        length: guard + MOVES.guard.frames + r.i(0, 18),
+      };
+    },
   },
   {
     id: "held-and-struck",
     weight: 3,
     range: "mid",
-    length: 164,
-    beats: [
-      { who: "ATT", move: "force_hold", at: 0 },
-      { who: "DEF", move: "held", at: 14 },
-      { who: "ATT", move: "advance", at: 44 },
-      { who: "ATT", move: "strike_overhead", at: 74, outcome: "hit", power: 1.3 },
-      { who: "DEF", move: "knockdown", at: 96 },
-      { who: "ATT", move: "flourish", at: 120 },
-    ],
+    hits: true,
+    build(r) {
+      const grab = lands("force_hold", 0) + r.i(0, 3);
+      const walk = grab + r.i(26, 36);
+      const big = r.of(["strike_overhead", "strike_diagonal"] as const);
+      const at = walk + r.i(26, 36);
+      const hit = lands(big, at);
+      const flour = hit + r.i(20, 30);
+      return {
+        beats: [
+          { who: "ATT", move: "force_hold", at: 0 },
+          { who: "DEF", move: "held", at: grab },
+          { who: "ATT", move: "advance", at: walk },
+          { who: "ATT", move: big, at, outcome: "hit", power: r.n(1.2, 1.4) },
+          { who: "DEF", move: "knockdown", at: hit },
+          { who: "ATT", move: "flourish", at: flour },
+        ],
+        length: flour + MOVES.flourish.frames + r.i(4, 24),
+      };
+    },
   },
   {
     id: "spin-connects",
     weight: 3,
     range: "close",
-    length: 118,
-    beats: [
-      { who: "ATT", move: "spin_attack", at: 0, outcome: "hit", power: 1.25 },
-      // Two frames after the blow lands, as authored — the landing moved from
-      // 23 to 32 when `spin_attack`'s contact was corrected. A damage reaction
-      // may never precede its own cause; a *parry* may, and several do.
-      { who: "DEF", move: "knockdown", at: 34 },
-      { who: "ATT", move: "flourish", at: 60 },
-      { who: "DEF", move: "guard", at: 92 },
-    ],
+    hits: true,
+    build(r) {
+      const hit = lands("spin_attack", 0);
+      const down = hit + r.i(1, 4);
+      const flour = down + r.i(22, 32);
+      const guard = flour + MOVES.flourish.frames + r.i(0, 8);
+      return {
+        beats: [
+          { who: "ATT", move: "spin_attack", at: 0, outcome: "hit", power: r.n(1.15, 1.35) },
+          { who: "DEF", move: "knockdown", at: down },
+          { who: "ATT", move: "flourish", at: flour },
+          { who: "DEF", move: "guard", at: guard },
+        ],
+        length: guard + MOVES.guard.frames + r.i(0, 18),
+      };
+    },
   },
   {
     /*
@@ -1695,21 +2080,32 @@ const SEQUENCES: Sequence[] = [
      * the head rather than the two merely happening at once — measured in local
      * units the blade runs at y 1–8 while the ducked head sits at 22.
      *
-     * Rising straight out of the crouch into the counter is the payoff, and it
-     * is why the answer is `strike_rising` rather than any other strike.
+     * **Neither the moves nor the six-frame offset roll**, and that is the
+     * exception in this pool rather than an oversight: the pairing is a measured
+     * fit between two specific blade curves, so rolling either arc or sliding
+     * the crouch would put the head back in the sword's path. What rolls is the
+     * counter and the rest. Rising straight out of the crouch into the counter
+     * is the payoff, and it is why the answer is `strike_rising`.
      */
     id: "under-the-sweep",
     weight: 8,
     range: "close",
-    length: 108,
-    beats: [
-      { who: "ATT", move: "strike_level", at: 0, outcome: "miss" },
-      { who: "DEF", move: "duck", at: 6 },
-      { who: "DEF", move: "strike_rising", at: 30, outcome: "hit", power: 0.9 },
-      // Contact 16 after the beat at 30.
-      { who: "ATT", move: "stagger", at: 46 },
-      { who: "DEF", move: "guard", at: 68 },
-    ],
+    hits: true,
+    build(r) {
+      const at = r.i(26, 34);
+      const hit = lands("strike_rising", at);
+      const guard = hit + r.i(18, 28);
+      return {
+        beats: [
+          { who: "ATT", move: "strike_level", at: 0, outcome: "miss" },
+          { who: "DEF", move: "duck", at: 6 },
+          { who: "DEF", move: "strike_rising", at, outcome: "hit", power: r.n(0.82, 0.98) },
+          { who: "ATT", move: "stagger", at: hit },
+          { who: "DEF", move: "guard", at: guard },
+        ],
+        length: guard + MOVES.guard.frames + r.i(0, 18),
+      };
+    },
   },
   {
     /*
@@ -1719,9 +2115,9 @@ const SEQUENCES: Sequence[] = [
      * A long fight reads as more static than it is because the pair spend it
      * oscillating about one axis: the somersault is the only other move that
      * crosses, and it belongs to whoever is dodging. This one is mutual, it is
-     * on the ground where it can be seen, and the blades cross in the middle of
-     * it — see `overrun`'s note on why the blade sweeps through the pass instead
-     * of being held.
+     * on the ground where it can be seen, and the blades cross at the start of
+     * it — see `overrun`'s note on why the blade sweeps from frame one instead
+     * of being timed to the pass.
      *
      * No damage, deliberately. It is a spacing move that happens to be thrilling,
      * and the pool needs its quiet entries to stay under a third.
@@ -1729,65 +2125,78 @@ const SEQUENCES: Sequence[] = [
     id: "the-overrun",
     weight: 6,
     range: "mid",
-    length: 96,
-    beats: [
-      { who: "ATT", move: "overrun", at: 0 },
-      { who: "DEF", move: "overrun", at: 0 },
-      { who: "ATT", move: "guard", at: 52 },
-      { who: "DEF", move: "guard", at: 52 },
-    ],
+    hits: false,
+    build(r) {
+      const settle = MOVES.overrun.frames + r.i(2, 12);
+      // They do not turn round in unison: whoever recovers second is the one
+      // who was still carrying the charge, and a frame or two of that is the
+      // difference between two figures and two halves of one animation.
+      const lag = r.i(0, 6);
+      return {
+        beats: [
+          { who: "ATT", move: "overrun", at: 0 },
+          { who: "DEF", move: "overrun", at: 0 },
+          { who: "ATT", move: r.of(["guard", "guard", "circle"] as const), at: settle },
+          { who: "DEF", move: r.of(["guard", "circle"] as const), at: settle + lag },
+        ],
+        length: settle + lag + MOVES.circle.frames + r.i(4, 22),
+      };
+    },
   },
   {
     /*
      * The riposte, with the wind-up cut out — see `Move.windup`.
      *
-     * `wall-of-parries` and `riposte-chain` both already answer a block with a
-     * strike, and both answer it *slowly*, because the counter starts at frame
-     * zero and spends twelve frames lifting a blade that is already lifted. Here
-     * the rising cut enters at its own `windup`, so it lands **four frames**
-     * after the beat instead of sixteen, out of the parry's own angle.
+     * `wall-of-parries` and `riposte-chain` both answer a block with a strike,
+     * and both answer it *slowly*, because the counter starts at frame zero and
+     * spends twelve frames lifting a blade that is already lifted. Here the
+     * thrust enters at its own `windup`, so it lands **four frames** after the
+     * beat instead of sixteen, out of the parry's own angle.
      *
-     * The timing is the whole exercise and it is all fixed. The parry arrives at
-     * 21 and holds through the block at 22; the counter leaves at 28, still
-     * inside that hold; it lands at 32, which is where the stagger is written —
-     * a reaction may never precede its cause. And 32 leaves the attacker's
-     * deferred recoil (26, four frames after the block) six frames to play
-     * before the stagger takes the body, which is the window `resolveContact`
-     * says is eaten in 28.7% of blocks. Here it is not.
+     * **The timing is the whole exercise and it is all fixed** — this module and
+     * `under-the-sweep` are the two that roll almost nothing, for the same kind
+     * of reason. The parry arrives at 21 and holds through the block at 22; the
+     * counter leaves at 28, still inside that hold; it lands at 32, which is
+     * where the stagger is written. And 32 leaves the attacker's deferred recoil
+     * (26, four frames after the block) six frames to play before the stagger
+     * takes the body — the window `resolveContact` says is eaten in 28.7% of
+     * blocks. Here it is not. Rolling any of those five numbers closes that
+     * window on some rolls and not others.
      *
-     * **The counter is a thrust and not the rising cut it was first written
-     * with**, because a riposte has to leave from the parry's own angle and
-     * `strike_rising` loads by dropping the blade — see the note on its missing
-     * `windup`. Both are four frames from beat to contact, so nothing else in
-     * this sequence moved.
+     * **The counter is a thrust and not a rising cut**, because a riposte has to
+     * leave from the parry's own angle and `strike_rising` loads by *dropping*
+     * the blade — see the note on its missing `windup`.
      */
     id: "riposte-instant",
     weight: 6,
     range: "close",
-    length: 112,
-    beats: [
-      { who: "ATT", move: "strike_overhead", at: 0, outcome: "blocked" },
-      { who: "DEF", move: "parry_high", at: 16 },
-      { who: "DEF", move: "thrust", at: 28, outcome: "hit", power: 0.95, quick: true },
-      { who: "ATT", move: "stagger", at: 32 },
-      { who: "DEF", move: "guard", at: 62 },
-      { who: "ATT", move: "backstep", at: 66 },
-    ],
+    hits: true,
+    build(r) {
+      const guard = r.i(58, 68);
+      const back = guard + r.i(2, 8);
+      return {
+        beats: [
+          { who: "ATT", move: "strike_overhead", at: 0, outcome: "blocked" },
+          { who: "DEF", move: "parry_high", at: 16 },
+          { who: "DEF", move: "thrust", at: 28, outcome: "hit", power: r.n(0.9, 1.0), quick: true },
+          { who: "ATT", move: "stagger", at: 32 },
+          { who: "DEF", move: "guard", at: guard },
+          { who: "ATT", move: "backstep", at: back },
+        ],
+        length: back + MOVES.backstep.frames + r.i(6, 24),
+      };
+    },
   },
   {
     /*
-     * Giving ground — and the sequence that made `retreat` a move again.
+     * Giving ground — and the module that made `retreat` a move again.
      *
      * `retreat` had never been used by anything. The pool reaches for `backstep`
      * every time somebody withdraws, and a backstep is a 26-frame hop with an
      * impulse behind it: a flinch. `retreat` is a 34-frame *walk* backwards at a
      * deliberately uncommitted top speed, which is a different thing to watch —
      * one fighter yielding ground under pressure while still facing the person
-     * pushing them. Nothing in the pool had that image.
-     *
-     * The gate in `scripts/check.ts` found it; the move had been dead for the
-     * whole life of the director without anything failing, because an
-     * unreachable move costs nothing and shows nothing.
+     * pushing them.
      *
      * It ends in a counter rather than in quiet, deliberately: the pool's
      * zero-damage share is held under a third, and a withdrawal that draws the
@@ -1796,64 +2205,118 @@ const SEQUENCES: Sequence[] = [
     id: "give-ground",
     weight: 6,
     range: "close",
-    length: 130,
-    beats: [
-      { who: "ATT", move: "strike_diagonal", at: 0, outcome: "miss" },
-      { who: "DEF", move: "retreat", at: 4 },
-      { who: "ATT", move: "advance", at: 34 },
-      { who: "DEF", move: "thrust", at: 46, outcome: "hit", power: 0.85 },
-      // Contact 14 after the beat at 46.
-      { who: "ATT", move: "stagger", at: 60 },
-      { who: "DEF", move: "backstep", at: 96 },
-      { who: "ATT", move: "guard", at: 100 },
-    ],
+    hits: true,
+    build(r) {
+      const opener = r.of(CUTS);
+      const yielded = r.i(3, 8);
+      const chase = ends("retreat", yielded) - r.i(2, 10);
+      const jab = r.of(["thrust", "strike_rising"] as const);
+      const at = chase + r.i(8, 18);
+      const hit = lands(jab, at);
+      const back = hit + MOVES.stagger.frames + r.i(2, 10);
+      const guard = back + r.i(2, 8);
+      return {
+        beats: [
+          { who: "ATT", move: opener, at: 0, outcome: "miss" },
+          { who: "DEF", move: "retreat", at: yielded },
+          { who: "ATT", move: "advance", at: chase },
+          { who: "DEF", move: jab, at, outcome: "hit", power: r.n(0.78, 0.92) },
+          { who: "ATT", move: "stagger", at: hit },
+          { who: "DEF", move: "backstep", at: back },
+          { who: "ATT", move: "guard", at: guard },
+        ],
+        length: guard + MOVES.guard.frames + r.i(0, 18),
+      };
+    },
   },
   {
     /*
      * The blade leaves the hand.
      *
-     * Rare on purpose — weight 4, the floor of the pool. It is the largest read
-     * in the set precisely because the silhouette loses its brightest element,
-     * and a thing that happens often is not a surprise. The defender simply
-     * guards: there is no answer to a sword arriving on its own, and inventing
-     * one would need a move whose whole content is "the thing that only happens
-     * here".
+     * Rare on purpose — the floor of the pool. It is the largest read in the set
+     * precisely because the silhouette loses its brightest element, and a thing
+     * that happens often is not a surprise. The defender simply guards: there is
+     * no answer to a sword arriving on its own, and inventing one would need a
+     * move whose whole content is "the thing that only happens here".
+     *
+     * The thrower's own recovery may not start before the blade is back in the
+     * hand — `bladeWorld` returns the flying segment for the whole flight, so a
+     * guard scheduled inside it would take the hand to a rest pose while the
+     * sword was still 200 units downrange. Floored against the move's length
+     * rather than trusted to the roll.
      */
     id: "the-throw",
     weight: 4,
     range: "mid",
-    length: 116,
-    beats: [
-      { who: "ATT", move: "blade_throw", at: 0, outcome: "hit", power: 0.95 },
-      { who: "DEF", move: "guard", at: 0 },
-      // Contact 30 — the far end of the flight, where the blade turns round.
-      { who: "DEF", move: "stagger", at: 30 },
-      { who: "DEF", move: "backstep", at: 66 },
-      { who: "ATT", move: "guard", at: 70 },
-    ],
+    hits: true,
+    build(r) {
+      const hit = lands("blade_throw", 0);
+      const back = hit + MOVES.stagger.frames + r.i(0, 8);
+      const guard = Math.max(back, MOVES.blade_throw.frames + r.i(2, 10));
+      return {
+        beats: [
+          { who: "ATT", move: "blade_throw", at: 0, outcome: "hit", power: r.n(0.88, 1.02) },
+          { who: "DEF", move: "guard", at: 0 },
+          { who: "DEF", move: "stagger", at: hit },
+          { who: "DEF", move: "backstep", at: back },
+          { who: "ATT", move: "guard", at: guard },
+        ],
+        length: guard + MOVES.guard.frames + r.i(8, 28),
+      };
+    },
   },
 ];
 
-const TOTAL_WEIGHT = SEQUENCES.reduce((n, s) => n + s.weight, 0);
+const TOTAL_WEIGHT = MODULES.reduce((n, m) => n + m.weight, 0);
 
 /**
- * The two tables, for `scripts/check.ts` and nothing else.
+ * Build one module into a concrete sequence.
+ *
+ * Exported because the check suite has to generate hundreds of thousands of
+ * these from a seed. A checker holding its own copy of a generator only ever
+ * confirms its own copy — the same reason `duelCamera` is exported.
+ *
+ * The beats are sorted here rather than in each builder. `runDirector` walks the
+ * array in order and stops at the first beat whose frame has not arrived, so an
+ * out-of-order beat stalls every beat behind it — a builder that rolls its way
+ * into one would produce a fight that runs perfectly well and is silently
+ * wrong. The sort makes that safe at runtime; `scripts/check.ts` still asserts
+ * that builders emit them in order, so the mistake is caught rather than
+ * papered over. `Array.prototype.sort` is stable, so beats sharing a frame keep
+ * the order they were authored in — which `the-lock` depends on.
+ */
+export function buildSequence(module: Module, rng: () => number = Math.random): Sequence {
+  const built = module.build(makeRoll(rng));
+  const beats = built.beats.slice().sort((x, y) => x.at - y.at);
+  return { id: module.id, length: built.length, beats };
+}
+
+/**
+ * The move table and the module pool, for `scripts/check.ts` and nothing else.
  *
  * Most of what can go wrong in here is **arithmetic in data** rather than logic
  * anyone could see reading the file — a contact frame inside a `hold` plateau, a
  * reaction scheduled before the blow that causes it, a move nothing reaches.
- * Every one of those is decidable by looking at the numbers, and none of them is
- * reliably catchable by stepping the fight, because they present as a fight that
- * runs perfectly well and looks slightly wrong.
+ * Every one of those is decidable from the numbers, and none of them is reliably
+ * catchable by stepping the fight, because they present as a fight that runs
+ * perfectly well and looks slightly wrong.
+ *
+ * **The second half is now a generator rather than a table, and the gate had to
+ * change shape with it.** A table can be read; a generator has to be *run*, and
+ * run enough times to visit its corners — so the checker builds every module
+ * tens of thousands of times from a seed and asserts on every result. That is
+ * strictly stronger than what it replaced: the old gate could only confirm the
+ * numbers somebody had typed, and this one re-derives every contact frame from
+ * the move table for every roll.
  *
  * Exported rather than re-declared in the checker for the same reason
- * `duelCamera` is: a checker holding its own copy of the tables only ever
- * confirms its own copy.
+ * `duelCamera` is: a checker holding its own copy only ever confirms its own
+ * copy.
  */
 export const DUEL_TABLES: {
   moves: Readonly<Record<string, Move>>;
-  sequences: readonly Sequence[];
-} = { moves: MOVES, sequences: SEQUENCES };
+  modules: readonly Module[];
+} = { moves: MOVES, modules: MODULES };
 
 /**
  * A pass that never leaves the floor, and so cannot be excused by the airborne
@@ -1908,16 +2371,20 @@ function setMove(
 }
 
 /**
- * Pick the next sequence for the current spacing, and roll the roles.
+ * Pick the next module for the current spacing, build it, and roll the roles.
  *
  * The role coin consults nothing at all — not health, not who won the last
  * exchange, not position. That is the whole guarantee: an early lucky roll can
  * never compound into a decided match, because nothing carries forward.
+ *
+ * The *module* is chosen by weight and band and then **built**, and the build is
+ * where the fight stops looping: two picks of `riposte-chain` are two different
+ * exchanges, not the same one twice.
  */
 function chooseSequence(st: DuelState): void {
   const dist = Math.abs(centre(st.a) - centre(st.b));
-  const band = dist <= CLOSE ? "close" : dist <= MID ? "mid" : "far";
-  let pool = SEQUENCES.filter((s) => s.range === band || s.range === "any");
+  const band: Band = dist <= CLOSE ? "close" : dist <= MID ? "mid" : "far";
+  let pool = MODULES.filter((m) => m.range === band || m.range === "any");
   /*
    * Under pressure the pool loses its quiet sequences and the blows get
    * heavier. This is the rail against a match that will not end: it is
@@ -1936,24 +2403,53 @@ function chooseSequence(st: DuelState): void {
    * threshold expecting to touch an edge case, because it is the ending.
    */
   const hard = st.dir.pressure > 22;
-  if (hard) pool = pool.filter((s) => s.beats.some((b) => b.outcome === "hit"));
-  if (pool.length === 0) pool = SEQUENCES.filter((s) => s.range === "any");
-  if (pool.length === 0) pool = SEQUENCES;
+  if (hard) pool = pool.filter((m) => m.hits);
+  if (pool.length === 0) pool = MODULES.filter((m) => m.range === "any");
+  if (pool.length === 0) pool = MODULES;
 
-  const total = pool.reduce((n, s) => n + s.weight, 0) || TOTAL_WEIGHT;
+  const total = pool.reduce((n, m) => n + m.weight, 0) || TOTAL_WEIGHT;
   let roll = Math.random() * total;
   let pick = pool[0];
-  for (const s of pool) {
-    roll -= s.weight;
+  for (const m of pool) {
+    roll -= m.weight;
     if (roll <= 0) {
-      pick = s;
+      pick = m;
       break;
     }
   }
-  st.dir.seq = pick;
+  st.dir.seq = buildSequence(pick);
   st.dir.f = 0;
   st.dir.next = 0;
-  st.dir.att = Math.random() < 0.5 ? "a" : "b";
+  /*
+   * The phrase, and the one thing the role coin is allowed to skip.
+   *
+   * A module is one exchange. Chaining two or three of them under a *single*
+   * coin is what makes a run of pressure read as a fight rather than as a
+   * shuffle — a fight where the aggressor changes every two seconds reads as
+   * random, and runs are what a duel actually looks like.
+   *
+   * The coin still consults nothing when it is thrown. `chain` is rolled at the
+   * same moment and consults nothing either, so this cannot become a way for an
+   * early lucky roll to compound: it decides how long the *next* phrase is,
+   * before anybody knows what happens in it.
+   *
+   * **The band is re-measured for every module, which is why they chain rather
+   * than concatenate.** A composed-up-front sequence would have to guess where
+   * each module leaves the pair, and a guess that is wrong schedules a close
+   * exchange at 250 units, where the swords swing through air. Here the second
+   * module of a phrase is chosen against the distance the first one actually
+   * produced.
+   *
+   * Under the anti-stall rail phrases are cut to one module, so the closing
+   * exchanges of a match each get their own coin.
+   */
+  if (st.dir.chain > 0) {
+    st.dir.chain -= 1;
+  } else {
+    st.dir.att = Math.random() < 0.5 ? "a" : "b";
+    const r = Math.random();
+    st.dir.chain = hard ? 0 : r < 0.45 ? 0 : r < 0.85 ? 1 : 2;
+  }
   st.dir.pressure += 1;
 }
 
@@ -2293,8 +2789,15 @@ function step(st: DuelState): void {
        * `disengage` (the only `any`-range entry, so the only one in all three
        * shrunken pools) took 30% of every exchange. The declared weights
        * described a fight nobody had seen since the opening match.
+       *
+       * `chain` clears with it, for a smaller reason: a phrase is a run of
+       * pressure by one fighter, and a run cannot survive the fighters
+       * teleporting back to their marks. Left set, the first exchange of a new
+       * match would inherit the last exchange of the old one's aggressor
+       * instead of throwing a fresh coin.
        */
       st.dir.pressure = 0;
+      st.dir.chain = 0;
     }
   }
 

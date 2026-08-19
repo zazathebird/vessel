@@ -215,6 +215,34 @@ free-running oscillators, and a rAF loop that keeps animating in calm.
 character identity, new moves, VFX, audio. Names are operator-only; silhouettes stay instantly
 identifiable. The plan, the measurements and the *not taking* list are in `docs/DUEL-ABSORB.md`.
 
+**Phase 1 is shipped (2026-08-18).** The 28 hand-authored `SEQUENCES` are 28 `MODULES` — builders
+that roll their arcs, counts and timing and derive every reaction frame from the move table — and
+the director chains one to three of them under a single role coin, re-measuring the band before
+each. An exact exchange now repeats within its own match on **0.03%** of exchanges, against
+everything past the twenty-eighth before. Tempo unchanged (51.8s median vs 50.4s, benched
+identically). The static gate is replaced by a generator gate: **224,000 sequences** built from a
+fixed seed and asserted on, all five new assertions verified by breaking them.
+
+**Four remain, in order.** Phase 2 (character identity — `frontend-design` is a standing
+instruction for it), phase 3 (new moves: rolls, aerials, spins, thrown props, blasters), phase 4
+(VFX — directional sparks, scorch decals, real blade lighting; **no shadow-blur glow**, see the
+render-cost measurement), phase 5 (audio).
+
+**Two things for the client before their phases start**, both flagged rather than assumed:
+
+1. **Phase 5 needs a product decision.** The site's rule is *"every voice is fired by a gesture."* A
+   duel clash is fired by the *animation*. The rule's purpose — nothing plays uninvited, no
+   `AudioContext` until a deliberate toggle — is satisfied as long as duel audio only sounds when
+   `sound` is explicitly on. Its letter is not. That is the client's call, not this side's.
+2. **Phase 2's naming rule has one residue.** Real names would still exist as strings in the public
+   JS bundle even when only rendered behind `isOperator`, because the site ships one bundle. Display
+   is the exposure that matters and this is almost certainly fine — but if they want it airtight the
+   names have to move behind an operator-gated API response, which is a bigger change.
+
+**What no bench can settle, and is the same open question as before:** whether a chained phrase
+reads as one fighter pressing an advantage or as two exchanges glued together, and whether the
+rolled rests land as poise or as a hang. It wants an eye on a real screen.
+
 ### C. Severing / dismemberment — **deferred by the client**
 
 Asked for ("cutting in half, dismembering"), then deprioritised ("if the

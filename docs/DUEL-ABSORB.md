@@ -1,6 +1,7 @@
 # Absorbing the duel-cycle engine
 
-**Status: planned 2026-08-18, not started.** Client decisions taken; see *Decisions* below.
+**Status: phase 1 shipped 2026-08-18. Phases 2–5 planned, not started.** Client decisions taken;
+see *Decisions* below. Phase 5 still has one product question for the client, marked in place.
 
 `handoff_duel_engine/` holds a second, independently written duel engine
 (`duel-cycle-v2.html`, 1,905 lines) and a implementation brief (`BRIEF.md`, 350 lines). The client
@@ -156,25 +157,55 @@ airtight the names have to move behind an operator-gated API response, which is 
 Ordered by dependency, then payoff. Each phase ships with its own gate, per the standing discipline
 in `CLAUDE.md` (*Checks — run them, and add to them*).
 
-### Phase 1 — the procedural generator
+### Phase 1 — the procedural generator — **shipped 2026-08-18**
 
 The headline ask: *"completely random, not a set amount of looping duels."*
 
-Today `SEQUENCES` is 28 hand-authored entries. Replace the *selection* of a whole sequence with the
-*composition* of one from a weighted module pool, keeping `Sequence`/`Beat` as the unit so the
-director, `rolePush` equivalent, and every existing gate keep working.
+`SEQUENCES` was 28 hand-authored entries. It is `MODULES` now — 28 builders,
+`(roll) => { beats, length }` — and `chooseSequence` picks one by weight and band and then
+**builds** it. `Sequence`/`Beat` survive as the unit, so the director and every existing gate kept
+working.
 
-- Each of the 28 sequences becomes a **module**: a function `(ctx) => Beat[]` that rolls its own
-  internals (strike order, counts, timing jitter) rather than returning a fixed array. This is the
-  fix for the `mFlurry` finding above.
-- `chooseSequence` becomes `composeSequence`: pick 1–3 modules by weight for the current band and
-  pressure, concatenate with correct beat offsets, return one `Sequence`.
-- **The static gate cannot survive this**, so it is replaced by a stronger dynamic one: generate
-  200,000 sequences in the check suite and assert on every one — no reaction precedes its cause, no
-  contact inside a `hold` plateau, every module reachable, no beat past `length`, separation valid.
-  That is strictly better than the table check it replaces.
-- The fairness guarantee is untouched: modules name roles, never sides, and the role coin still
-  consults nothing.
+What shipped, against what was planned:
+
+- **Each sequence became a module that rolls its own internals** — arcs, counts, intervals, power,
+  trailing rest. As planned, and it is the fix for the `mFlurry` finding above.
+- **Every reaction frame is derived from the move table** (`lands(move, at)`), not typed. This was
+  *not* in the plan and turned out to be the load-bearing part: it is what makes the rolls safe,
+  because the class of bug that has cost this effect the most — a reaction scheduled before its own
+  cause — becomes unrepresentable rather than merely checked for.
+- **Modules chain rather than concatenate**, which is the one plan change worth arguing.
+  Concatenating 1–3 modules up front needs each module to declare where it *leaves* the pair, and a
+  wrong declaration schedules a close exchange at 250 units where the swords swing through air.
+  Chaining runs them under a single role coin and **re-measures the band before each one**, so the
+  second module of a phrase is chosen against the distance the first actually produced. Same
+  phrase-level variety, no guessing. Under the anti-stall rail phrases are cut to one module.
+- **The static gate was replaced by a stronger dynamic one**, as planned: every module built 8,000
+  times from a fixed seed — **224,000 sequences** — asserting beat ordering, bounds, contact
+  arithmetic, reaction causality, a new throw-recovery guard, `hits` holding on every roll, and move
+  reachability. All five new assertions were verified by breaking them deliberately.
+- **The fairness guarantee is untouched.** Modules name roles, never sides; the role coin consults
+  nothing. Measured 0.46σ over 119 matches in the suite, 1.18σ over 783 in the bench.
+
+Measured, benched identically against the pre-change engine:
+
+| | before | after |
+|---|---|---|
+| Exact exchange repeated within its own match | 100% past the 28th | **0.03%** (3 of 9,290) |
+| Median match | 50.4s | 51.8s |
+| Modules (sequences) per match | 23.3 | 23.3 |
+| Picks under the anti-stall rail | 12.0% | 10.8% |
+| Close-band occupancy | 62.5% | 60.1% |
+
+Two numbers in `CLAUDE.md` were found stale while benching and are corrected there: matches run
+~50s, not "~45s", and the rail takes 10.8% of picks, not "7.4%" — both were measured before the
+2026-08-18 choreography sheet landed. The zero-damage share is 34%, not "roughly a fifth"; the
+weights did not change, the description of them had drifted.
+
+**What still wants an eye**, and no bench can settle it: whether a chained phrase reads as one
+fighter pressing an advantage or as two exchanges glued together, and whether the rolled rests
+between exchanges land as poise or as a hang. That is the same open tempo question as before,
+asked of a slightly different fight.
 
 ### Phase 2 — character identity
 

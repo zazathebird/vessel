@@ -755,13 +755,19 @@ All deliberate. Add to this list rather than silently diverging.
      **The rail is the ending of every match, not an emergency, and its comment
      claimed the opposite in both directions** (measured 2026-08-16). Before the
      reset it fired on 98.6% of picks; after it, the comment still read "a normal
-     match never reaches it", which is also false. A match runs ~24 sequences
+     match never reaches it", which is also false. A match runs ~23 modules
      against a threshold of 22, so the rail takes the last one or two of *every*
-     match — **7.4%** of all picks, measured over 400,000 frames at 23.0 picks
-     per match. (An earlier note here said 16%; the direction was right, the
-     magnitude out by two — corrected 2026-08-17.) That is a fight tightening as
-     it ends and it is why matches converge at all. Do not raise the threshold
+     match — **10.8%** of all picks, measured over 600,000 frames at 23.3 picks
+     per match. (Two earlier notes here said 16% and then 7.4%; the direction was
+     always right and the magnitude has now been measured twice on the same
+     bench, so 10.8% is the number to trust.) That is a fight tightening as it
+     ends and it is why matches converge at all. Do not raise the threshold
      expecting to touch an edge case.
+
+     **Under the rail a phrase is cut to one module**, so the closing exchanges
+     each get their own role coin. That is the rail doing its job twice: fewer
+     quiet modules *and* no long run of pressure by one fighter at the moment
+     the match is being decided.
    - **`bladeGap`'s second solve uses `vw`, not `uw`.** Re-solving segment `b`
      against a clamped `s` is `((w + s·u)·v)/(v·v)`. With `uw` it reported
      segments that provably cross as 16 units apart and returned `r = 0` for
@@ -920,10 +926,63 @@ All deliberate. Add to this list rather than silently diverging.
    drew identical outward rings, so a pull looked like a push — which mattered
    more once `force_pull` was fixed to actually pull.
 
+   **The fight is generated, not selected** (2026-08-18, client: *"completely
+   random, not a set amount of looping duels"*). `SEQUENCES` was 28 fixed arrays
+   of beats and the director picked one whole, so every exchange after the
+   twenty-eighth was an exact repeat of an earlier one. It is `MODULES` now — 28
+   *builders*, `(roll) => { beats, length }` — and the director picks a module by
+   weight and band and then **builds** it. Measured over 1.2M stepped frames, an
+   exact exchange repeats within its own match on **0.03%** of exchanges (3 of
+   9,290). `docs/DUEL-ABSORB.md` is the plan this came off; five things are
+   load-bearing:
+
+   - **Every reaction frame is derived from the move table, never typed.** A
+     module computes `lands(move, at)` and places the stagger there, so rolling a
+     diagonal cut into an overhead moves the block, the counter, the flinch and
+     the trailing rest with it. This is what makes the rolls *safe*: the class of
+     bug that has cost this effect the most — a reaction scheduled before its own
+     cause — is now unrepresentable rather than merely checked for.
+   - **Rolling the pool is not enough; the rolls have to be inside the modules.**
+     The reference engine rolls its module order and never repeats a whole fight,
+     and its most-picked module runs `STRIKES[i % STRIKES.length]` from `i = 0`,
+     so every flurry it has drawn was down, across, up, thrust. Phrase-level
+     repetition is audible even when no two fights are identical.
+   - **Modules chain; they do not concatenate.** One to three modules run under a
+     single role coin — a run of pressure by one fighter, which is what a duel
+     looks like — and **the band is re-measured before each one**. Composing a
+     phrase up front would mean guessing where each module leaves the pair, and a
+     wrong guess schedules a close exchange at 250 units, where the swords swing
+     through air.
+   - **`buildSequence` sorts the beats and the gate still asserts builders emit
+     them sorted.** `runDirector` walks the array in order and stops at the first
+     beat not yet due, so one out-of-order beat stalls every beat behind it. The
+     sort makes that safe in production; the assertion is what stops the sort
+     from hiding an arithmetic mistake.
+   - **`Module.hits` must hold on every roll**, because the anti-stall rail
+     filters on it. A module that rolls its only hit away would join the rail's
+     pool and then fail to close the match it was picked to close.
+
+   **The static gate could not survive this and was replaced by a stronger one.**
+   A table can be read; a generator has to be *run*. `npm run check` now builds
+   every module 8,000 times from a fixed seed — **224,000 sequences** — and
+   asserts ordering, bounds, contact arithmetic, reaction causality, the throw
+   guard and move reachability on every one. All five new assertions were
+   verified by breaking them deliberately.
+
+   **Tempo did not move, and two numbers in this file were stale before it.**
+   Benched identically against the pre-change engine: median match **51.8s** vs
+   50.4s, 23.3 modules per match vs 23.3 sequences, close-band occupancy 60.1% vs
+   62.5%, fairness 0.46σ. The file had said matches run "~45s" and the rail takes
+   "7.4%" of picks; both were measured before the choreography sheet landed and
+   both are corrected above. The zero-damage share is **34%**, not the "roughly a
+   fifth" claimed further up — that note named `probe`, `standoff` and
+   `disengage`, and `disengage` deals damage. The weights have not changed; only
+   the description of them had drifted.
+
    **The choreography sheet is finished** (2026-08-18). `duck` + `strike_level`,
    `overrun`, the skipped-wind-up riposte and `blade_throw` are all built, the
    somersault actually somersaults, and `retreat` — which no sequence had ever
-   used — got one. **28 sequences, 31 moves, every one reachable and gated.**
+   used — got one. **28 modules, 31 moves, every one reachable and gated.**
    Four rules there are load-bearing:
 
    - **The somersault's tumble is derived from its own impulse, never typed.**
@@ -997,10 +1056,10 @@ All deliberate. Add to this list rather than silently diverging.
    which stopped being true the day it was re-ranged and was corrected here on
    2026-08-18. **Nothing is ranged `far` today.** The band still exists in
    `chooseSequence` and the fight does not decide anything in it: measured, past
-   `MID` is 0.07% of frames and **zero** of 3,232 picks, because the leash pulls
-   the pair back inside `MID` long before a sequence ends. A far pick would fall
+   `MID` is **0.05%** of frames and zero of 4,645 picks, because the leash pulls
+   the pair back inside `MID` long before a module ends. A far pick would fall
    through to the `any` pool, where `disengage` is the only candidate. **If you
-   move the leash again, re-check the sequence distribution** — the ranges and
+   move the leash again, re-check the module distribution** — the ranges and
    the leash are coupled, and the failure is invisible.
 
    **One fight at a time, enforced in two places on purpose** (2026-08-15, client: "when in
@@ -1455,10 +1514,12 @@ it was "does the thing it claims to do actually happen".
 
 What it covers: types; stylesheet brace balance; the QR encoder against the ISO Reed-Solomon worked
 example, both format copies agreeing on a published level-M value, and a round trip back to the
-input; the duel's fairness, sequence reachability and numerical stability over 360,000 stepped
-frames, that its move tables are arithmetically sound (no contact frame inside a `hold` plateau, no
-damage reaction before its cause, no move nothing reaches), and that a pass move crosses without
-mirroring the figure and lands it upright; the catalogue counts this file documents; that no stylesheet rule pairs a band with a
+input; the duel's fairness, module reachability and numerical stability over 360,000 stepped
+frames, that **224,000 procedurally generated sequences** are every one arithmetically sound (beats
+in order, none past the length, no contact frame inside a `hold` plateau, no damage reaction before
+its cause, no recovery scheduled while a thrown blade is still in the air, no move nothing reaches,
+and every module that declares `hits` landing one on every roll), and that a pass move crosses
+without mirroring the figure and lands it upright; the catalogue counts this file documents; that no stylesheet rule pairs a band with a
 layout that band never renders; that no preset offers a withdrawn effect or ornament; the edge
 fade's truth table including both 1px dead bands; that no scroll-driven animation is reset by the
 entrance layer and no from-only keyframe lands on a value it cannot interpolate to; the ornament

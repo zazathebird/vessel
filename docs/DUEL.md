@@ -1,5 +1,18 @@
 # The lightsword duel
 
+> **Revised again 2026-08-18 (later): the exchanges are generated, not
+> selected.** The 28 hand-authored `SEQUENCES` are 28 `MODULES` — builders that
+> roll their own strikes, counts and timing and derive every reaction frame from
+> the move table. The director picks a module by weight and band, **builds** it,
+> and chains one to three of them under a single role coin, re-measuring the band
+> before each. Client's ask: *"completely random, not a set amount of looping
+> duels."* Measured, an exact exchange now repeats within its own match on
+> **0.03%** of exchanges, against 100% of everything past the twenty-eighth
+> before. Tempo is unchanged — median match 51.8s against 50.4s on the same
+> bench. `docs/DUEL-ABSORB.md` has the plan and the reference-engine
+> measurements it came off; `CLAUDE.md` deviation 9 has the five load-bearing
+> rules.
+>
 > **Superseded in part, 2026-08-14.** This document describes the *reference*
 > implementation and the porting rules, both of which still stand. It no longer
 > describes how the fight is built. Two things changed and the code is now the
@@ -10,10 +23,11 @@
 >   a shield. The client's call: "im fine with stick figures as long as the
 >   fights are decent." All the investment went into the fighting.
 > - **Fighters decide nothing.** The per-fighter `decide()` this document
->   describes is gone. A director picks a scripted `Sequence`, assigns roles by a
->   coin flip, and hands out moves on scripted frames — because two independent
->   randomisers cannot produce action and reaction. See the long note above
->   `MOVES` in `src/fx/duel.ts`, and deviation 9 in `CLAUDE.md`.
+>   describes is gone. A director picks a `Module`, builds it into a `Sequence`,
+>   assigns roles by a coin flip, and hands out moves on scripted frames —
+>   because two independent randomisers cannot produce action and reaction. See
+>   the long note above `MOVES` in `src/fx/duel.ts`, and deviation 9 in
+>   `CLAUDE.md`.
 >
 > What is still true and still worth reading here: the four porting rules (no
 > literal colours, no fixed pixel geometry, state on the caller's cache, the
@@ -173,8 +187,11 @@ describes what ships, and the two survivors are the ones that mattered: **the
 match loop with winners**, and **per-match `attackPower` / `forcePower`**.
 
 - **Bodies** are stick figures — see the banner at the top of this file.
-- **Decision** is gone. A director picks a scripted `Sequence` and assigns the
-  two roles on a coin flip; fighters choose nothing.
+- **Decision** is gone. A director picks a `Module`, builds it into a `Sequence`
+  and assigns the two roles on a coin flip; fighters choose nothing. The build is
+  where the randomness lives — the module rolls its arcs, counts and intervals,
+  and every reaction frame is derived from the move table rather than typed, so
+  a rolled strike cannot desynchronise the block or the flinch that answers it.
 - **Timing** is keyframe tables per move, 26–56 frames, with a dead hold at the
   top of every wind-up. Strikes are 4–6 frames for the whole arc; the tempo
   comes from the contrast with 20–40 frames of stillness between exchanges.
@@ -187,9 +204,13 @@ outcome). The reasoning for declining it was sound and is worth keeping, because
 it is exactly what makes the current design safe: a *reactive* block can extend a
 move indefinitely and the match-reset loop has no timeout, so a mutual block lock
 would hang the effect. The way in was to make blocks **scripted rather than
-reactive** — sequences have fixed lengths, the director advances unconditionally,
-and the blade lock's duration is rolled when it starts. Nothing waits on a
-condition. Do not add a block that does.
+reactive** — a built sequence's length is fixed the moment it is built, the
+director advances unconditionally, and the blade lock's duration is rolled when
+it starts. Nothing waits on a condition. **The generator does not weaken this
+and must not be allowed to**: every loop inside a module is counted, and there is
+deliberately no "re-roll until it differs" anywhere in the pool — `cutAfter`
+picks the next arc by offset for exactly that reason. Do not add a block, or a
+roll, that waits.
 
 ## Porting it into this codebase
 

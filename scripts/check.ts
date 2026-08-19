@@ -25,7 +25,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 import { qrMatrix } from "../src/auth/qr";
-import { createDuel, advanceDuel, DUEL_TABLES, GRAVITY } from "../src/fx/duel";
+import { createDuel, advanceDuel, buildSequence, makeRoll, DUEL_TABLES, GRAVITY } from "../src/fx/duel";
 import { PAGES } from "../src/data/pages";
 import { PATHS } from "../src/data/pageIds";
 import { LAYOUTS, FX, PICKABLE_FX, TYPESETS, SCOPES } from "../src/data/catalog";
@@ -608,23 +608,40 @@ if (!FAST) check("duel: fairness, reachability, stability", () => {
   must(n > 100, `only ${n} matches — the fight may be stalling`);
   must(sigma < 3, `side bias ${sigma.toFixed(2)} sigma over ${n} matches`);
   // Nothing is ranged `far` any more — the leash keeps the fight out of that
-  // band entirely — so every sequence in the pool must actually be reachable.
-  const total = DUEL_TABLES.sequences.length;
+  // band entirely — so every module in the pool must actually be reachable.
+  const total = DUEL_TABLES.modules.length;
   const fired = seen.size;
-  must(fired === total, `only ${fired} of ${total} sequences fired`);
-  return `${n} matches, ${sigma.toFixed(2)}σ, ${fired}/${total} sequences, no NaN`;
+  must(fired === total, `only ${fired} of ${total} modules fired`);
+  return `${n} matches, ${sigma.toFixed(2)}σ, ${fired}/${total} modules, no NaN`;
 });
 
 /*
+ * The generator, and why this gate had to change shape rather than be tweaked.
+ *
  * The move tables are arithmetic in data, and that is where this effect's bugs
  * live: a contact frame parked inside a `hold` plateau so the blow lands nine
  * frames before the sword arrives, a reaction scheduled before its own cause, a
  * move nothing in the pool reaches. Each of those shipped once. None of them is
  * visible reading the file and none reliably fails a stepped simulation, because
  * the fight runs perfectly well and merely looks wrong.
+ *
+ * Until 2026-08-18 the second half of that was a table of 28 hand-authored
+ * sequences and this gate read it. The pool is a *generator* now — the client's
+ * ask was "completely random, not a set amount of looping duels" — and a
+ * generator cannot be read. It has to be run, and run enough times to visit its
+ * corners, so this builds every module thousands of times from a fixed seed and
+ * asserts on every result.
+ *
+ * That is strictly stronger than what it replaced. The old gate could only
+ * confirm the numbers somebody had typed; this one re-derives every contact
+ * frame from the move table on every roll, so a module that rolls itself into an
+ * impossible ordering fails here rather than on the site.
+ *
+ * The seed is fixed and per-module, so a failure is reproducible: the same run
+ * of the suite produces the same sequences in the same order.
  */
-check("duel: the move tables are arithmetically sound", () => {
-  const { moves, sequences } = DUEL_TABLES;
+check("duel: every generated sequence is arithmetically sound", () => {
+  const { moves, modules } = DUEL_TABLES;
 
   // Reaction moves exist only as the consequence of a scripted blow.
   const REACTIONS = new Set(["stagger", "knockdown", "stumble_in", "recoil"]);
@@ -632,72 +649,207 @@ check("duel: the move tables are arithmetically sound", () => {
   // deferred bounce off a block, and the corpse.
   const ENGINE = new Set(["guard", "flourish", "recoil", "dead"]);
 
+  /*
+   * Per-move properties, which no roll can affect — so they are asserted once
+   * over the table rather than once per generated sequence.
+   *
+   * **Contact must be a frame the blade has arrived on.** `spin_attack` fired at
+   * 23, inside a plateau that parks the blade overhead until 28 and swings at
+   * 32, so the damage, the sparks and the knockdown all landed with the sword
+   * still up and it swept through empty air nine frames later. Four of six
+   * attacks were early against their own tables.
+   *
+   * **Blade attacks only.** The force moves land their contact with the
+   * outstretched *hand* — the rings are drawn off `offHand`, not off the sword —
+   * and `force_hold` parks its blade overhead for the whole lift on purpose, so
+   * its contact is inside a plateau and correctly so. This gate caught it on the
+   * first run, which is the right outcome for a rule stated one notch too wide:
+   * the invariant was always about the blade arriving.
+   */
+  for (const [id, m] of Object.entries(moves)) {
+    must(
+      m.windup === undefined || m.windup < m.contact,
+      `${id}: windup ${m.windup} is not before contact ${m.contact}`,
+    );
+    if (m.contact >= 0 && m.chan === "attacking") {
+      const t = m.contact / m.frames;
+      const held = m.blade.some(
+        (k, i) => i + 1 < m.blade.length && m.blade[i + 1][2] === "hold" && t > k[0] && t < m.blade[i + 1][0],
+      );
+      must(!held, `${id}: contact ${m.contact} lands inside a hold plateau`);
+    }
+  }
+
   /** The frame a beat's blow actually lands, counting a skipped wind-up. */
-  const contactOf = (b: (typeof sequences)[number]["beats"][number]): number => {
+  const contactOf = (b: { move: string; at: number; quick?: boolean }): number => {
     const m = moves[b.move];
     return b.at + m.contact - (b.quick ? (m.windup ?? 0) : 0);
   };
 
-  for (const s of sequences) {
-    for (const b of s.beats) {
-      const m = moves[b.move];
-      must(m !== undefined, `${s.id} names an unknown move ${b.move}`);
-      // A quick entry with no wind-up to skip is a beat that thinks it is a
-      // riposte and is not — it would run at full length and land late.
+  /** mulberry32 — small, seeded, and good enough to walk a builder's corners. */
+  const seeded = (s: number) => () => {
+    s = (s + 0x6d2b79f5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+
+  const reached = new Set<string>(ENGINE);
+  const PER_MODULE = 8_000;
+  let built = 0;
+  let longest = 0;
+
+  for (let mi = 0; mi < modules.length; mi += 1) {
+    const mod = modules[mi];
+    const rand = seeded(0x5eed + mi * 7919);
+    let everHit = false;
+    for (let i = 0; i < PER_MODULE; i += 1) {
+      // The raw build, not `buildSequence`, because `buildSequence` sorts the
+      // beats and whether the *builder* emitted them in order is one of the
+      // things gated below.
+      const s = mod.build(makeRoll(rand));
+      built += 1;
+      longest = Math.max(longest, s.length);
+
+      must(s.beats.length > 0, `${mod.id}: built an empty sequence`);
       must(
-        !b.quick || m.windup !== undefined,
-        `${s.id}: ${b.move} is entered quick but declares no windup`,
+        Number.isFinite(s.length) && s.length > 0 && s.length < 1200,
+        `${mod.id}: implausible length ${s.length}`,
       );
-      must(
-        m.windup === undefined || m.windup < m.contact,
-        `${b.move}: windup ${m.windup} is not before contact ${m.contact}`,
-      );
-      /*
-       * **Contact must be a frame the blade has arrived on.** `spin_attack`
-       * fired at 23, inside a plateau that parks the blade overhead until 28 and
-       * swings at 32, so the damage, the sparks and the knockdown all landed
-       * with the sword still up and it swept through empty air nine frames
-       * later. Four of six attacks were early against their own tables.
-       *
-       * **Blade attacks only.** The force moves land their contact with the
-       * outstretched *hand* — the rings are drawn off `offHand`, not off the
-       * sword — and `force_hold` parks its blade overhead for the whole lift on
-       * purpose, so its contact is inside a plateau and correctly so. This gate
-       * caught it on the first run, which is the right outcome for a rule stated
-       * one notch too wide: the invariant was always about the blade arriving.
-       */
-      if (m.contact >= 0 && m.chan === "attacking") {
-        const t = m.contact / m.frames;
-        const held = m.blade.some(
-          (k, i) => i + 1 < m.blade.length && m.blade[i + 1][2] === "hold" && t > k[0] && t < m.blade[i + 1][0],
+
+      let prevAt = -1;
+      const contacts: number[] = [];
+      for (const b of s.beats) {
+        const m = moves[b.move];
+        must(m !== undefined, `${mod.id} names an unknown move ${b.move}`);
+        reached.add(b.move);
+        /*
+         * `runDirector` walks the array in order and stops at the first beat
+         * whose frame has not arrived, so a beat out of order stalls every beat
+         * behind it until its own frame comes round. `buildSequence` sorts, so
+         * this cannot reach the site — but a builder that rolls its way into one
+         * has an arithmetic mistake in it, and the sort would hide it.
+         */
+        must(b.at >= prevAt, `${mod.id}: beat ${b.move} at ${b.at} is out of order`);
+        prevAt = b.at;
+        // A beat at or past `length` is a beat the director throws away.
+        must(b.at >= 0 && b.at < s.length, `${mod.id}: ${b.move} at ${b.at} outside 0..${s.length}`);
+        // A quick entry with no wind-up to skip is a beat that thinks it is a
+        // riposte and is not — it would run at full length and land late.
+        must(
+          !b.quick || m.windup !== undefined,
+          `${mod.id}: ${b.move} is entered quick but declares no windup`,
         );
-        must(!held, `${b.move}: contact ${m.contact} lands inside a hold plateau`);
+        /*
+         * `power` is not always a damage multiplier. On a `lock` beat it is the
+         * press — 1 drives, 0 gives ground — so zero is meaningful there and
+         * only a *scripted blow* has to carry a positive one. A hit multiplied
+         * by zero is a blow that lands for no damage, which reads as a miss the
+         * victim flinches at.
+         */
+        must(
+          b.power === undefined || (b.power >= 0 && b.power <= 2),
+          `${mod.id}: ${b.move} rolled power ${b.power}`,
+        );
+        must(
+          b.outcome !== "hit" || b.power === undefined || b.power > 0,
+          `${mod.id}: ${b.move} scripts a hit at power ${b.power}`,
+        );
+        /*
+         * A scripted hit on a move with no contact frame never resolves:
+         * `resolveContact` is called from the frame `mf === m.contact`, so the
+         * damage, the sparks and the hit-stop simply never happen and the
+         * reaction beat fires over a blow that was never dealt.
+         */
+        if (b.outcome !== undefined) {
+          must(m.contact >= 0, `${mod.id}: ${b.move} is given an outcome but can never connect`);
+        }
+        if (b.outcome === "hit") {
+          contacts.push(contactOf(b));
+          everHit = true;
+        }
+      }
+
+      /*
+       * A damage reaction may never precede its cause. A *parry* may, and
+       * several deliberately do — a block that arrives after the blow is not a
+       * block — so only the reactions are tested.
+       */
+      for (const b of s.beats) {
+        if (!REACTIONS.has(b.move)) continue;
+        must(
+          contacts.some((c) => c <= b.at),
+          `${mod.id}: ${b.move} at ${b.at} precedes every blow that could cause it`,
+        );
+      }
+
+      /*
+       * The thrower may not be given another move while its blade is still in
+       * the air. `bladeWorld` returns the flying segment for the whole flight,
+       * so a guard scheduled inside it takes the hand to a rest pose while the
+       * sword is two hundred units downrange — and the smear, the blade-on-blade
+       * spark test and the burst placement all follow the blade, so they follow
+       * it into the wrong story. `the-throw` floors its recovery against the
+       * move's own length rather than trusting the roll; this is the gate that
+       * keeps that true.
+       */
+      for (let j = 0; j < s.beats.length; j += 1) {
+        const b = s.beats[j];
+        if (b.move !== "blade_throw") continue;
+        const back = b.at + moves.blade_throw.frames;
+        for (let k = j + 1; k < s.beats.length; k += 1) {
+          const n = s.beats[k];
+          must(
+            n.who !== b.who || n.at >= back,
+            `${mod.id}: ${n.move} at ${n.at} interrupts a throw still in the air until ${back}`,
+          );
+        }
       }
     }
 
     /*
-     * A damage reaction may never precede its cause. A *parry* may, and several
-     * deliberately do — a block that arrives after the blow is not a block — so
-     * only the reactions are tested.
+     * `hits` is what the anti-stall rail filters on, so a module that declares
+     * it must produce a landed blow on *every* roll — not merely on most. A
+     * module that rolls its only hit away would silently join the rail's pool
+     * and then fail to close the match it was picked to close.
      */
-    const contacts = s.beats.filter((b) => b.outcome === "hit").map(contactOf);
-    for (const b of s.beats) {
-      if (!REACTIONS.has(b.move)) continue;
-      must(
-        contacts.some((c) => c <= b.at),
-        `${s.id}: ${b.move} at ${b.at} precedes every blow that could cause it`,
-      );
-    }
+    if (mod.hits) must(everHit, `${mod.id} declares hits but rolled none in ${PER_MODULE} builds`);
+  }
+
+  // `buildSequence` is the production path: same builder, beats sorted, module
+  // id carried through for the reachability count in the simulation gate.
+  for (const mod of modules) {
+    const s = buildSequence(mod, seeded(0xb1ade));
+    must(s.id === mod.id, `buildSequence lost the module id for ${mod.id}`);
+    must(
+      s.beats.every((b, i) => i === 0 || b.at >= s.beats[i - 1].at),
+      `buildSequence returned unsorted beats for ${mod.id}`,
+    );
   }
 
   // A move nothing reaches is a move that does not exist. `docs/DECISIONS.md`
   // 2026-08-17: an unreachable sequence is exactly what this suite was built for.
-  const reached = new Set<string>(ENGINE);
-  for (const s of sequences) for (const b of s.beats) reached.add(b.move);
   const orphans = Object.keys(moves).filter((id) => !reached.has(id));
   must(orphans.length === 0, `unreachable move(s): ${orphans.join(", ")}`);
 
-  return `${Object.keys(moves).length} moves, ${sequences.length} sequences, contacts and reactions ordered`;
+  /*
+   * The mix. Zero-damage modules are what the strikes are loud against, and they
+   * are also the one thing that can stretch a match indefinitely — so the share
+   * is reported rather than assumed, and railed well above where it sits.
+   *
+   * It sits at 34%, not the "roughly a fifth" an older note in `CLAUDE.md`
+   * claimed. That note named `probe`, `standoff` and `disengage`, and
+   * `disengage` deals damage; the real quiet set is `close-in`, `step-in`,
+   * `probe`, `overhead-denied`, `standoff` and `the-overrun`. The number has not
+   * moved with this rewrite — the weights are the ones the table shipped with —
+   * only the description of it.
+   */
+  const totalWeight = modules.reduce((n, m) => n + m.weight, 0);
+  const quiet = modules.filter((m) => !m.hits).reduce((n, m) => n + m.weight, 0);
+  const share = quiet / totalWeight;
+  must(share < 0.4, `zero-damage modules are ${(share * 100).toFixed(0)}% of the weight`);
+
+  return `${Object.keys(moves).length} moves, ${modules.length} modules, ${built.toLocaleString()} sequences generated, longest ${longest}f, ${(share * 100).toFixed(0)}% quiet`;
 });
 
 /*

@@ -14,6 +14,136 @@ file records what happened to the codebase.
 ---
 
 
+## 2026-08-18 (latest) — the duel's exchanges are generated, not selected
+
+Phase 1 of `docs/DUEL-ABSORB.md`, which is the plan for absorbing the second duel engine the client
+had built. The client's ask, verbatim: *"completely random, not a set amount of looping duels."*
+
+**The problem was exactly what that sentence says it was.** `SEQUENCES` was 28 hand-authored arrays
+of beats and `chooseSequence` picked one whole, so every exchange after the twenty-eighth was an
+exact repeat of an earlier one — same arcs, same frames, same outcome. A match runs ~23 exchanges,
+so a visitor watching two matches had seen the entire vocabulary.
+
+### What was built
+
+28 `MODULES`, each a builder `(roll) => { beats, length }`. The director picks one by weight and
+band exactly as before, and then **builds** it: two picks of `riposte-chain` are two different
+exchanges, not the same one twice.
+
+**Every reaction frame is derived from the move table rather than typed.** This was not in the plan
+and is the part that makes the rest safe. A module computes `lands(move, at)` — `at + contact`,
+counting a skipped wind-up — and places the block, the flinch and the trailing rest against it, so
+rolling a diagonal cut into an overhead moves all three with it. The class of bug that has cost this
+effect the most, a reaction scheduled before its own cause, becomes *unrepresentable* rather than
+merely checked for. The hand-authored table had that bug at least twice (`trade`'s flinches,
+`spin-connects`' knockdown) and both were found by a gate after shipping.
+
+**Modules chain rather than concatenate, and that is the one deliberate change from the plan.** The
+plan said compose 1–3 modules up front with beat offsets. That needs each module to declare which
+band it *leaves* the pair in, and a wrong declaration schedules a close exchange at 250 units, where
+the swords swing through air. Chaining runs one to three modules under a single role coin and
+**re-measures the band before each**, so the second module of a phrase is chosen against the
+distance the first actually produced. Same phrase-level variety, no guessing, and no cross-module
+beat arithmetic to get wrong. `st.dir.chain` carries it; it is rolled at the same moment as the coin
+and consults nothing, and it clears on match reset because a run of pressure cannot survive the
+fighters teleporting back to their marks.
+
+Phrases are cut to one module under the anti-stall rail, so the closing exchanges of a match each
+get a fresh coin.
+
+**Two modules deliberately roll almost nothing**, and both say why in place. `under-the-sweep`'s
+sweep/duck pairing is a measured fit between two specific blade curves — the blade runs at y 1–8
+while the ducked head sits at 22 — so rolling either arc or sliding the crouch puts the head back in
+the sword's path. `riposte-instant`'s five frame numbers are a chain of dependencies ending in a
+six-frame window for the attacker's deferred recoil; rolling any of them closes that window on some
+runs and not others.
+
+**There is no rejection loop anywhere in the pool.** `cutAfter` picks the next arc by offset rather
+than re-rolling until it differs, because a loop whose length depends on a roll is a loop that waits
+on a condition, and the match-reset loop has no timeout. Every loop in a module is counted.
+
+### The gate had to change shape, and got stronger
+
+A table can be read; a generator has to be run. The old gate walked 28 arrays. The new one builds
+every module 8,000 times from a fixed per-module seed — **224,000 sequences** — and asserts on every
+one: beats in ascending order, none at or past `length`, no unknown move, `quick` only where a
+`windup` exists, power in range and positive on a scripted hit, no outcome on a move that can never
+connect, no damage reaction before every blow that could cause it, no recovery scheduled while a
+thrown blade is still in the air, `hits` holding on every roll, and every move reachable. Per-move
+properties that no roll can affect — `windup < contact`, contact outside a `hold` plateau — moved to
+a single pass over the move table.
+
+Two of those are new invariants rather than ports:
+
+- **The throw guard.** `bladeWorld` returns the flying segment for the whole flight, so a beat that
+  gives the thrower another move mid-flight takes the hand to a rest pose while the sword is 200
+  units downrange — and the smear, the blade-on-blade spark test and the burst placement all follow
+  the blade into the wrong story. `the-throw` floors its recovery against the move's own length;
+  this is what keeps that true.
+- **Builders must emit beats in order.** `buildSequence` sorts them, so an out-of-order beat cannot
+  reach the site — but `runDirector` stops at the first beat not yet due, so one would have stalled
+  every beat behind it, and the sort would have hidden the arithmetic mistake that produced it.
+
+**All five new assertions were verified by breaking them deliberately**, per the standing
+discipline: reversed `the-overrun`'s beats, dropped `the-throw`'s floor, moved a stagger one frame
+early, made a `hits: true` module roll its hit away, and declared `hits` on a module that never
+lands one. Each failed with the right message.
+
+### Measurements
+
+Benched identically against the pre-change engine — same bench file, same 600,000 stepped frames,
+same starting styles. `git stash` on the two changed files was how the "before" column was taken,
+which is worth doing rather than trusting a number written down earlier:
+
+| | before | after |
+|---|---|---|
+| Exact exchange repeated within its own match | everything past the 28th | **0.03%** (3 of 9,290) |
+| Distinct forms of the thinnest module | 1 | 517 |
+| Median match | 50.4s | 51.8s |
+| Mean match | 49.3s | 50.2s |
+| Modules (sequences) per match | 23.3 | 23.3 |
+| Picks under the anti-stall rail | 12.0% | 10.8% |
+| Close-band occupancy | 62.5% | 60.1% |
+| Far-band occupancy | 0.08% | 0.05% |
+| Side bias | — | 0.46σ over 119, 1.18σ over 783 |
+
+Module-id reuse within a fight is 35.1%, against **48.4%** measured on the reference engine — but
+the number that matters is that reusing an id no longer means reusing the exchange.
+
+**Three modules were thickened after the first bench.** `step-in`, `close-the-gap` and
+`the-overrun` came out at 187, 189 and 209 distinct forms, because a three or four beat module with
+two rolled numbers has very little to roll. A `guard`/`circle` choice on the first, an optional
+give-ground beat on the second, and a recovery lag on the third took the pool's floor to 517. That
+lag is also the better image: two figures turning round a frame or two apart read as two people,
+where turning in unison reads as two halves of one animation.
+
+### Two numbers in `CLAUDE.md` were stale before this, and are corrected
+
+Found by benching rather than by reading. The file said matches run **~45s** and the anti-stall rail
+takes **7.4%** of picks; measured on the pre-change engine they are **50.4s** and **12.0%**. Both
+figures predate the 2026-08-18 choreography sheet, which added moves and lengthened exchanges.
+
+It also said roughly a fifth of the pool's weight deals no damage, naming `probe`, `standoff` and
+`disengage` — and `disengage` deals damage. The real quiet set is `close-in`, `step-in`, `probe`,
+`overhead-denied`, `standoff` and `the-overrun`, and it is **34%** of the weight. The weights have
+not changed since the table shipped; only the description of them had drifted. The gate now reports
+the share on every run and rails it at 40%, so it cannot drift again silently.
+
+### Not done, and why
+
+Phases 2–5 of `docs/DUEL-ABSORB.md` — character identity, new moves, VFX, audio — are untouched.
+Phase 5 carries a product question that is the client's rather than this side's: the site's rule is
+*"every voice is fired by a gesture"*, and a duel clash is fired by the animation. The rule's
+purpose is satisfied as long as duel audio only sounds when `sound` is explicitly on; its letter is
+not.
+
+**What no bench can settle**, and it is the same open question the tempo work left: whether a
+chained phrase reads as one fighter pressing an advantage or as two exchanges glued together, and
+whether the rolled rests between exchanges land as poise or as a hang. rAF parks in this
+environment, so it wants an eye on a real screen.
+
+---
+
 ## 2026-08-18 (last) — the duel's remaining choreography, and the defects found building it
 
 `TODO.md`'s section B — the moves designed but never built. Four were outstanding: `duck`,
