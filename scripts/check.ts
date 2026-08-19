@@ -195,6 +195,78 @@ check("no band pairs with a layout it never renders", () => {
   return `${pairs} band/layout pairings, all reachable`;
 });
 
+// ---- 2a4. A touch-sizing rule names both narrow bands, never phone alone ----
+//
+// 2026-08-19. **A phone held sideways is `band-tablet`, not `band-phone`.** The
+// band is computed from `innerWidth` alone (`src/config/bands.ts`), and a
+// landscape phone is ~844 CSS pixels wide, which sits inside the tablet band's
+// 560–899. So every touch-target rule gated on `.band-phone` reached portrait
+// only, and the one input mode that cannot use a mouse got the desk treatment.
+//
+// Measured at 844×420 before the fix: the footer's five links — `sign in` among
+// them, which CLAUDE.md makes the *only* permanent route to an account — were
+// 15px tall against a 24px floor, while the same links at 420×860 measured 44.
+// Two of the four offending rules were the file explorer's row heights.
+//
+// The 2026-08-17 sweep that added these rules could not have caught it: it
+// measured a portrait viewport, and in portrait they are all correct. That is
+// exactly the class of gap a gate is for.
+//
+// A rule counts as touch-sizing when it uses one of the three idioms this
+// codebase uses for a hit area, which are specific enough not to catch ordinary
+// layout padding: `min-height: 44px` (the site's stated convention), a `padding`
+// cancelled by a negative `margin` (an invisible hit area that shifts nothing),
+// or `padding-block` (row height in the explorer's tables). Deliberately *not*
+// flagged, and each verified as a real phone-only case: `.v-codes` (a grid
+// column count, driven by width), `.v-tile`'s 128px minimum, and the `.v-hero` /
+// `.v-termbody` paddings, which are layout spacing rather than targets.
+
+check("touch-sizing rules name both narrow bands", () => {
+  const dir = "src/styles";
+  const phoneOnly: string[] = [];
+  let touch = 0;
+
+  for (const file of readdirSync(dir).filter((f) => f.endsWith(".css"))) {
+    const css = readFileSync(join(dir, file), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({
+      sels: m[1].split(",").map((s) => s.trim().replace(/\s+/g, " ")).filter(Boolean),
+      body: m[2],
+    }));
+
+    // Every target that is given tablet treatment anywhere in this file, so the
+    // two halves of a fix may live in separate rules if that ever reads better.
+    const tabletTargets = new Set<string>();
+    for (const r of rules) {
+      for (const s of r.sels) {
+        const m = /^\.band-tablet[\s.](.+)$/.exec(s);
+        if (m) tabletTargets.add(m[1].trim());
+      }
+    }
+
+    for (const r of rules) {
+      const hasFloor = /min-height:\s*44px/.test(r.body);
+      const hasNegPull = /padding:/.test(r.body) && /margin:\s*-/.test(r.body);
+      const hasRowPad = /padding-block:/.test(r.body);
+      if (!hasFloor && !hasNegPull && !hasRowPad) continue;
+
+      for (const s of r.sels) {
+        const m = /^\.band-phone[\s.](.+)$/.exec(s);
+        if (!m) continue;
+        touch += 1;
+        const target = m[1].trim();
+        if (!tabletTargets.has(target)) phoneOnly.push(`${file}: ${s}`);
+      }
+    }
+  }
+
+  must(
+    phoneOnly.length === 0,
+    "touch-sizing rules that reach portrait only — a landscape phone is " +
+      `band-tablet (844px wide), so these never fire on it: ${phoneOnly.join("; ")}`,
+  );
+  return `${touch} phone touch rules, all paired with tablet`;
+});
+
 // ---- 2a5. Scroll-driven animations survive the entrance layer ---------------
 //
 // 2026-08-18. `entrances.css` imports after `layouts.css` and its base arrival

@@ -2998,22 +2998,35 @@
    else to (2026-08-17 audit; the sweep's only sub-44 targets were these and
    the account links). Horizontal padding stays 6px: the row's gap is 14px, so
    wider hit areas would overlap adjacent links, which is worse than narrow. */
-.band-phone .v-footer-link {
+/* BOTH NARROW BANDS, and the tablet half is not optional — a phone held
+   sideways is 844 CSS pixels wide, which is `band-tablet` (560–899), so these
+   four rules reached no phone in landscape at all. Measured at 844×420 before
+   the fix: the footer's five links, `sign in` among them, were 15px tall
+   against a 24px floor, while the same links at 420×860 passed. `.chip`,
+   `.v-btn`, `.v-reveal` and the 16px input rule above already name both bands;
+   these four were the ones the 2026-08-17 sweep left phone-only, and the sweep
+   could not have caught it because it only ever measured a portrait viewport.
+   There is no mouse anywhere on the tablet band — treat it as touch. */
+.band-phone .v-footer-link,
+.band-tablet .v-footer-link {
   padding: 14px 6px;
   margin: -14px -6px;
 }
 
-.band-phone .v-account-link {
+.band-phone .v-account-link,
+.band-tablet .v-account-link {
   padding: 12px 2px;
   margin: -12px -2px;
 }
 
 /* Explorer rows reach touch size; pane width and the tile grid already did. */
-.band-phone .v-files td {
+.band-phone .v-files td,
+.band-tablet .v-files td {
   padding-block: 12px;
 }
 
-.band-phone .v-col-row {
+.band-phone .v-col-row,
+.band-tablet .v-col-row {
   padding-block: 11px;
 }
 
