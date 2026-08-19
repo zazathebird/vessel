@@ -263,7 +263,7 @@ function expectIterations(value: unknown): number {
  * address: the client bucket is named by `clientKey`, an HMAC under a salt that
  * rotates daily (§9, and `crypto.ts`).
  */
-async function buckets(request: Request, env: Env, handleLower: string | null): Promise<string[]> {
+export async function buckets(request: Request, env: Env, handleLower: string | null): Promise<string[]> {
   // Absent in local development, where there is no edge in front of us. The
   // literal is a bucket name and not an address, so nothing is written down
   // either way.
@@ -338,7 +338,7 @@ async function assertAllowed(env: Env, names: string[]): Promise<void> {
  * for a salt is not a failable attempt, and counting it would let anyone lock an
  * owner out of their own account by requesting theirs in a loop.
  */
-async function assertAttempt(env: Env, names: string[]): Promise<void> {
+export async function assertAttempt(env: Env, names: string[]): Promise<void> {
   await gate(env, names, "/attempt");
 }
 
@@ -387,7 +387,7 @@ async function recordFailure(env: Env, names: string[]): Promise<void> {
  * traffic drains it about as fast as it fills it while a run of failures still
  * accumulates. Index 0 is the client bucket by construction — see `buckets`.
  */
-async function recordSuccess(env: Env, names: string[]): Promise<void> {
+export async function recordSuccess(env: Env, names: string[]): Promise<void> {
   await Promise.all([
     limiterFetch(env, names[0], "/succeed"),
     ...names.slice(1).map((name) => limiterFetch(env, name, "/reset")),

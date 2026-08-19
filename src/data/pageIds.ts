@@ -11,7 +11,7 @@
 export type PageId =
   | "home" | "about" | "work" | "gallery" | "contact"
   | "guestbook" | "now" | "changelog" | "setup" | "scams" | "notfound" | "signup" | "signin" | "admin"
-  | "machines" | "share";
+  | "machines" | "share" | "downloads";
 
 /**
  * Header nav — **seven** public pills, in order.
@@ -106,6 +106,19 @@ export const FOOTER_NAV: { id: PageId; label: string }[] = [
   // not going to scroll back up, and somebody who reads to the bottom of any
   // page on this site should be one click from it.
   { id: "scams", label: "Scams" },
+  /*
+   * Downloads (2026-08-19, client request). A footer page on `setup`'s
+   * precedent rather than `scams`': the seven-pill header is a settled design,
+   * and `NAV` is also what `useOperatorRoutes` cycles and what Radial's orbit
+   * renders, so a pill there changes arrow-key paging and the dial for
+   * everybody. `scams` was judged worth that and this is not — somebody buying
+   * a program has been sent here or has gone looking, whereas the scams page
+   * has to reach a person who did not know they needed it.
+   *
+   * Revisit if the client starts selling in earnest: the argument flips then,
+   * because a shop nobody can find is a shop that is not open.
+   */
+  { id: "downloads", label: "Downloads" },
 ];
 
 export const PATHS: Record<PageId, string> = {
@@ -125,6 +138,7 @@ export const PATHS: Record<PageId, string> = {
   admin: "/admin",
   machines: "/machines",
   share: "/share",
+  downloads: "/downloads",
 };
 
 const BY_PATH = new Map<string, PageId>(

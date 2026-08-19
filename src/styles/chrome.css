@@ -575,7 +575,13 @@
  * thing that needs it rather than to a list of page ids that a new account page
  * would have to remember to join.
  */
-.layout-sidescroll .v-stage:has(.v-account) {
+.layout-sidescroll .v-stage:has(.v-account),
+/* The downloads catalogue is the same shape of content as the account form — a
+   task rather than a filmstrip cell — and is a direct child of the stage for
+   the same reason, so it inherits the same opt-out and the same measurements
+   above. Keyed on the container class rather than on a page id, so a new page
+   using this container gets it without anyone remembering to come back here. */
+.layout-sidescroll .v-stage:has(.v-downloads) {
   display: block;
   overflow-x: hidden;
   overflow-y: auto;
@@ -3133,4 +3139,363 @@
    over. */
 .v-reveal.is-shown {
   color: var(--a1);
+}
+
+/* ==========================================================================
+   Downloads (2026-08-19, client request)
+   ==========================================================================
+
+   THE PAGE IS A MANIFEST, NOT A SHOP. There is no checkout — the client is
+   paid by e-transfer and hands over a code — so a price-and-Buy card grid
+   would describe something that does not happen. Each row is styled as a line
+   out of a file listing instead: the name in the display face, the facts about
+   the file in mono, and the lock state as the only thing that changes.
+
+   The one flourish is `is-open`, and it earns its place by carrying real
+   information rather than decorating: a row is reachable or it is not, and
+   redeeming a code moves rows between those states in place.
+
+   NO LITERAL COLOURS. Every value below is a palette token, so this page
+   recolours with the 0.9s bleed like everything else. */
+
+/*
+ * Width and stage behaviour are `.v-account`'s problem restated, and the
+ * comment there has the measurements: this section is a direct child of
+ * `.v-stage`, not of `.v-grid`, so `grid-column` does nothing on Side-scroll —
+ * where the stage is a flex row and this would become a track item sized by the
+ * filmstrip. `width` rather than `max-width` for the same reason: a flex item
+ * with only a maximum still shrinks to its content.
+ *
+ * Wider than the account form's 34rem because this is a list to scan rather
+ * than a form to fill in, and a manifest row needs room for a name, a blurb and
+ * three facts without wrapping the facts.
+ */
+.v-downloads {
+  grid-column: 1 / -1;
+  flex: 0 0 auto;
+  width: min(100%, 52rem);
+  margin: 0 auto;
+  padding: 4px 0 8px;
+}
+
+.v-dl-empty {
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.65;
+  max-width: 46ch;
+}
+
+/* The unsigned-binary notice. `--a3` is the site's danger token, and this is
+   the one place on the page that genuinely warrants it: the page is about to
+   tell somebody that a security warning is expected, which is the same sentence
+   a scammer uses. It is deliberately louder than the catalogue under it. */
+.v-dl-notice {
+  border: 1px solid var(--a3);
+  border-left-width: 3px;
+  border-radius: 3px;
+  padding: 16px 18px;
+  margin-bottom: 28px;
+  background: color-mix(in oklab, var(--a3) 7%, transparent);
+}
+
+.v-dl-notice-title {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--a3);
+  margin: 0 0 8px;
+}
+
+.v-dl-notice-body {
+  margin: 0;
+  color: var(--fg);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.v-dl-code {
+  margin-bottom: 30px;
+}
+
+.v-dl-code-input {
+  /* A code is read off a phone and typed in. Mono so the reader can tell a 0
+     from an O while typing, and tracked out so the four-character groups stay
+     countable — the two things that make a hand-typed code survivable. */
+  font-family: var(--font-mono);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.v-dl-code-hint {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+  max-width: 58ch;
+}
+
+.v-dl-error {
+  margin: 10px 0 0;
+  color: var(--a3);
+  font-size: 13px;
+}
+
+.v-dl-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/*
+ * The row. A hairline between entries rather than a card each: cards would make
+ * ten small programs look like ten products, and the whole point of the
+ * manifest reading is that they are files in a list.
+ *
+ * `grid`, not flex, so the action column holds one width down the whole list
+ * and the eye can run down it. `auto` on the meta row keeps the facts under the
+ * name on narrow widths without a second breakpoint.
+ */
+.v-dl-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    "main action"
+    "meta action";
+  gap: 4px 20px;
+  align-items: start;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.v-dl-item:first-child {
+  border-top: 1px solid var(--line);
+}
+
+.v-dl-main {
+  grid-area: main;
+}
+
+.v-dl-name {
+  margin: 0 0 5px;
+  font-size: 18px;
+  font-weight: var(--display-weight, 600);
+  color: var(--fg);
+  letter-spacing: -0.01em;
+}
+
+.v-dl-blurb {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.6;
+  max-width: 52ch;
+}
+
+/* Attribution and caveat: both are things to know *before* clicking, so they
+   sit above the action rather than under it. `--muted`, not `--faint`, which
+   fails AA on all 25 palettes (see the footer note above). */
+.v-dl-attrib,
+.v-dl-caveat {
+  margin: 6px 0 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.v-dl-caveat {
+  color: var(--a3);
+}
+
+.v-dl-meta {
+  grid-area: meta;
+  margin: 2px 0 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.v-dl-platform {
+  color: var(--a1);
+}
+
+.v-dl-dot {
+  color: var(--line);
+}
+
+.v-dl-action {
+  grid-area: action;
+  align-self: center;
+}
+
+.v-dl-get {
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+/* Not a disabled button — there is nothing to press. It states the condition,
+   in the same mono register as the rest of the file's facts. */
+.v-dl-locked {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/*
+ * THE PAGE'S ONE MOMENT. An open row carries a rule in the accent colour, so
+ * redeeming a code is visible *in the list* — the thing that changed is the
+ * thing you were looking at, rather than a toast about it.
+ *
+ * A border, not a background wash: `--panel` and its two accessibility floors
+ * own card backgrounds on this site (CLAUDE.md, `--panel`), and a background
+ * set here would drive through both.
+ *
+ * THE TRANSPARENT BORDER IS ON EVERY ROW AND THAT IS THE LOAD-BEARING PART.
+ * Declaring the border only on `.is-open` made an open row 17px wider than a
+ * locked one (measured 899 against 882 at desk, 408 against 391 on the phone),
+ * so redeeming a code shoved every row it opened sideways — the layout moving
+ * at the exact moment the reader is trying to see what changed, which reads as
+ * a glitch rather than as an unlock. Reserving the space on all rows means only
+ * the colour changes and nothing shifts. The 0.9s timing is the palette's, not
+ * the interaction layer's: this is a colour, and colour belongs to the bleed.
+ */
+.v-dl-item {
+  border-left: 2px solid transparent;
+  padding-left: 14px;
+  margin-left: -16px;
+  transition: border-left-color 0.9s ease;
+}
+
+.v-dl-item.is-open {
+  border-left-color: var(--a1);
+}
+
+/* Both narrow bands, per the touch convention above — a phone in landscape is
+   `band-tablet`, so a phone-only rule here would reach portrait alone. The
+   action drops under the row rather than fighting the name for width. */
+.band-phone .v-dl-item,
+.band-tablet .v-dl-item {
+  grid-template-columns: 1fr;
+  grid-template-areas:
+    "main"
+    "meta"
+    "action";
+  gap: 10px 0;
+}
+
+.band-phone .v-dl-action,
+.band-tablet .v-dl-action {
+  align-self: start;
+}
+
+.band-phone .v-dl-get,
+.band-tablet .v-dl-get {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
+
+/* Download codes — the operator's side (2026-08-19). Sits under Accounts on
+   the admin page and reuses `.v-admin-list` / `.v-admin-row` wholesale, so a
+   row of codes and a row of accounts read as the same kind of object. Only the
+   things with no equivalent are styled here. */
+
+.v-dlcodes {
+  margin-top: 40px;
+  padding-top: 30px;
+  border-top: 1px solid var(--line);
+}
+
+.v-dlcodes-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 26px;
+}
+
+.v-dlcodes-row {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.v-dlcodes-row .v-field {
+  flex: 1 1 12rem;
+}
+
+.v-dlcodes-hint {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+  max-width: 56ch;
+}
+
+/* The once-only panel. `--a1` rather than `--a3`: this is not a danger, it is
+   the one moment the operator has to act on, and the accent is what the site
+   uses for "look here". */
+.v-dlcodes-fresh {
+  border: 1px solid var(--a1);
+  border-radius: 3px;
+  padding: 16px 18px;
+  margin-bottom: 26px;
+  background: color-mix(in oklab, var(--a1) 7%, transparent);
+}
+
+.v-dlcodes-fresh-label {
+  margin: 0 0 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--a1);
+}
+
+/* Big, mono and tracked: this is read aloud down a telephone or retyped off a
+   screen, which is the one job it has. */
+.v-dlcodes-fresh-code {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 22px;
+  letter-spacing: 0.22em;
+  color: var(--fg);
+  word-break: break-all;
+  margin-bottom: 14px;
+}
+
+.v-dlcodes-fresh-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.v-dlcodes-state {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.v-dlcodes-state.is-live {
+  color: var(--a1);
+}
+
+/* `--muted`, not `--faint`: a spent code's state is information, and `--faint`
+   fails AA on all 25 palettes. */
+.v-dlcodes-state.is-dead {
+  color: var(--muted);
 }

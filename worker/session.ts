@@ -77,6 +77,16 @@ const MAX_SESSION_AGE_MS = 12 * 60 * 60 * 1000;
 const SET_PASSWORD_TTL_MS = 15 * 60 * 1000;
 
 /**
+ * A redeemed download ticket. Half an hour, not five minutes: the other tickets
+ * gate a form the person is already looking at, while this one gates a transfer
+ * that may be hundreds of megabytes down a rural connection, and a ticket that
+ * expires mid-download would look exactly like a broken file. It costs nothing
+ * to be generous — the ticket is not the entitlement, the code is, so an
+ * expiry only ever means typing the code again.
+ */
+const DOWNLOAD_TTL_MS = 30 * 60 * 1000;
+
+/**
  * `set-password` is the capability to replace a password *without presenting the
  * current one*, and it exists for exactly one person: someone who just redeemed
  * a recovery code and therefore has no current password to present.
@@ -101,7 +111,13 @@ export type TokenPurpose =
   // — so the Worker keeps no challenge table and a replayed registration is
   // caught by the credential-id uniqueness index rather than by session state.
   | "webauthn-register"
-  | "webauthn-signin";
+  | "webauthn-signin"
+  // A redeemed download code (worker/downloads.ts). Its subject is the list of
+  // catalogue ids the code opened, so the ticket cannot be re-pointed at an
+  // item the code did not cover. Longer-lived than the other tickets because a
+  // large file over a slow line is not a five-minute affair, and because losing
+  // it mid-download costs a re-type of the code rather than anything else.
+  | "download";
 
 export interface Token {
   subject: string;
@@ -133,7 +149,9 @@ export async function mint(
       ? SESSION_TTL_MS
       : purpose === "set-password"
         ? SET_PASSWORD_TTL_MS
-        : TICKET_TTL_MS;
+        : purpose === "download"
+          ? DOWNLOAD_TTL_MS
+          : TICKET_TTL_MS;
   const nonce = toBase64Url(crypto.getRandomValues(new Uint8Array(9)));
   const body = `${purpose}.${toBase64Url(new TextEncoder().encode(subject))}.${now + ttl}.${issuedAt}.${nonce}`;
   return `${body}.${toBase64Url(await hmac(secret, body))}`;

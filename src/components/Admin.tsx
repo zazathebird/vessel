@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { DownloadCodes } from "./DownloadCodes";
 
 import { useConfig } from "../config/ConfigContext";
 import { useSession } from "../auth/SessionContext";
@@ -258,6 +259,12 @@ export function Admin() {
         }
         onClose={() => setConfirming(null)}
       />
+
+      {/* Download codes live on the admin page rather than in the siteconfig
+          panel: the panel is *appearance*, and this is neither appearance nor
+          an account. It is the third operator surface, and admin is where the
+          other operator-only lists already are. */}
+      <DownloadCodes />
     </section>
   );
 }

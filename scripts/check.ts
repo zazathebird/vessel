@@ -29,6 +29,7 @@ import { createDuel, createDuelFrom, advanceDuel, buildSequence, makeRoll, DUEL_
 import { BLADE_COLORS, DUEL_POOLS, FIGHTERS, rollPairing } from "../src/fx/fighters";
 import type { CostumeCtx, FighterStyle } from "../src/fx/fighters";
 import { PAGES } from "../src/data/pages";
+import { DOWNLOADS } from "../src/data/downloads";
 import { PATHS } from "../src/data/pageIds";
 import { LAYOUTS, FX, PICKABLE_FX, TYPESETS, SCOPES } from "../src/data/catalog";
 import type { LayoutId } from "../src/data/catalog";
@@ -448,6 +449,61 @@ check("the account form owns its width", () => {
   );
 
   return "explicit width, and Side-scroll's stage opts out";
+});
+
+// ---- 2b. The downloads catalogue and its container --------------------------
+//
+// 2026-08-19. Three separate failures, all of which look fine in a build.
+//
+// **The container.** `.v-downloads` is a direct child of `.v-stage`, exactly
+// like `.v-account`, so it inherits that section's documented Side-scroll
+// problem in full: the stage is a flex row there, `grid-column` does nothing,
+// and a section with only a `max-width` gets sized by the filmstrip track. The
+// account form measured 210px when this bit it the first time. Same shape of
+// bug, same two declarations, so the same two assertions.
+//
+// **The ids.** An id is simultaneously the R2 object key and a URL query value.
+// A space or a slash in one produces a link that 404s for a paying customer
+// and an object key that no longer matches what was uploaded — and neither
+// shows up until somebody has paid. Uppercase is the quieter version of the
+// same trap, because R2 keys are case-sensitive and a hand-typed
+// `wrangler r2 object put` is not.
+//
+// **The filenames.** `content-disposition` hands this to the browser verbatim.
+// An extensionless name lands in somebody's Downloads folder as a file Windows
+// cannot open, on a page whose whole job is handing over working software.
+
+check("the downloads catalogue and its container hold together", () => {
+  const css = readFileSync("src/styles/chrome.css", "utf8");
+
+  const block = css.match(/(^|\n)\.v-downloads\s*\{([^}]*)\}/);
+  must(block !== null, "no `.v-downloads` rule found in chrome.css");
+  must(
+    /(^|[\s;])width\s*:/.test(block![2]),
+    "`.v-downloads` sets no explicit `width` — a `max-width` alone lets Side-scroll's flex track shrink it",
+  );
+  must(
+    /\.layout-sidescroll\s+\.v-stage:has\(\.v-downloads\)/.test(css),
+    "Side-scroll's stage no longer opts out of its track for the downloads catalogue",
+  );
+
+  const seen = new Set<string>();
+  for (const item of DOWNLOADS) {
+    must(
+      /^[a-z0-9][a-z0-9-]*$/.test(item.id),
+      `download id "${item.id}" is not lowercase-kebab — it is an R2 object key and a URL value`,
+    );
+    must(!seen.has(item.id), `duplicate download id "${item.id}"`);
+    seen.add(item.id);
+    must(
+      /\.[a-z0-9]{1,6}$/i.test(item.filename),
+      `download "${item.id}" has a filename with no extension ("${item.filename}") — it is handed to the browser verbatim`,
+    );
+    must(item.name.trim().length > 0, `download "${item.id}" has no name`);
+    must(item.blurb.trim().length > 0, `download "${item.id}" has no blurb`);
+  }
+
+  return `${DOWNLOADS.length} catalogue entries, container owns its width`;
 });
 
 // ---- 3. The QR encoder -----------------------------------------------------

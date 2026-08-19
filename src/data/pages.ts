@@ -268,6 +268,19 @@ export const PAGES: Record<PageId, Page> = {
     blocks: [],
   },
 
+  downloads: {
+    eyebrow: "programs",
+    title: "Things I've built.",
+    // Written for this build, 2026-08-19. Same plain register as the 2026-08-15
+    // rewrite, and it names the awkward part rather than skating past it: some
+    // of these cost money and the way you pay is an e-transfer to a person,
+    // which is unusual enough that saying so up front is less strange than
+    // letting somebody discover it at the click.
+    lede: "Small programs I've written to fix things that annoyed me, and a few I've collected over the years. Some are free. The rest are a few dollars — send me an e-transfer and I'll send you a code that unlocks the download.",
+    ctas: [{ label: "Ask me about one \u2192", to: "contact", primary: true }],
+    blocks: [],
+  },
+
   share: {
     eyebrow: "drives",
     title: "Share this machine.",
@@ -705,7 +718,7 @@ export const PAGES: Record<PageId, Page> = {
       // client kept this line *because* it was correct — the counts on the 404
       // are jokes that depend on being true — so keeping the word would have
       // been the change, not correcting it. One word; nothing else here moved.
-      { kicker: "suggestion", title: "Try the parts that exist", body: "There are ten other pages and all of them are more interesting than this one.", hasList: true, items: ["Home — the front page", "Contact — the useful one", "Now — what is on the bench today", "Gallery — the dumping ground"] },
+      { kicker: "suggestion", title: "Try the parts that exist", body: "There are eleven other pages and all of them are more interesting than this one.", hasList: true, items: ["Home — the front page", "Contact — the useful one", "Now — what is on the bench today", "Gallery — the dumping ground"] },
     ],
   },
 };

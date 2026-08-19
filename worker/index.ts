@@ -17,6 +17,7 @@
 import * as accounts from "./accounts";
 import * as admin from "./admin";
 import * as machines from "./machines";
+import * as downloads from "./downloads";
 import * as passkeys from "./passkeys";
 import * as setups from "./setups";
 import { clientKey } from "./crypto";
@@ -359,6 +360,25 @@ async function route(
       return readSiteConfig(request, env);
     case "POST /api/site-config":
       return publishSiteConfig(request, env);
+
+    // The downloads page (2026-08-19). `claim` and `file` are the only two
+    // unauthenticated routes added since signup: the whole point is that a
+    // buyer needs no account, because an account would mean collecting the
+    // identity this design exists not to hold. `claim` is rate-limited on the
+    // same Durable Object as sign-in; `file` is gated by the ticket `claim`
+    // mints, or is open when the catalogue marks an item free.
+    case "POST /api/downloads/claim":
+      return downloads.claim(request, env);
+    case "GET /api/downloads/file":
+      return downloads.file(request, env, url);
+
+    // Minting, listing and revoking access codes. Operator only.
+    case "POST /api/admin/downloads/mint":
+      return downloads.mintCode(request, env);
+    case "GET /api/admin/downloads":
+      return downloads.listCodes(request, env);
+    case "POST /api/admin/downloads/revoke":
+      return downloads.revokeCode(request, env);
 
     // Operator administration of accounts. Every one of these refuses a caller
     // who is not a signed-in operator; none of them can read key material.

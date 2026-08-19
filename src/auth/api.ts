@@ -252,4 +252,36 @@ export const api = {
   driveAdd: (machineId: string, label: string) =>
     post<{ status: string; drive: DriveInfo }>("/api/drives", { machineId, label }),
   driveRemove: (driveId: string) => post<{ status: string }>("/api/drives/remove", { driveId }),
+
+  /*
+   * Downloads (2026-08-19). `downloadClaim` is the only route in this object
+   * that a signed-out stranger calls on purpose — everything else here either
+   * creates a session or assumes one. There is deliberately no `download` call
+   * for the file itself: that is a plain anchor to a plain URL, so the browser
+   * streams it and its own download manager owns the transfer. Fetching it here
+   * would mean buffering the whole file into the tab and handing it over as a
+   * `blob:`, which is the one construct still blocking the CSP flip.
+   */
+  downloadClaim: (code: string) =>
+    post<{ ticket: string; items: string[]; usesLeft: number }>("/api/downloads/claim", { code }),
+
+  adminDownloadsList: () => call<{ codes: DownloadCodeRow[] }>("/api/admin/downloads"),
+  adminDownloadMint: (body: { label: string; item: string | null; maxUses: number; days: number }) =>
+    post<{ code: string }>("/api/admin/downloads/mint", body),
+  adminDownloadRevoke: (ref: string) =>
+    post<{ ok: true }>("/api/admin/downloads/revoke", { ref }),
 };
+
+/** One row of the operator's code list. Holds nothing that identifies a person. */
+export interface DownloadCodeRow {
+  /** First eight hex characters of the stored hash — the handle for revocation. */
+  ref: string;
+  label: string;
+  item_id: string | null;
+  created_at: number;
+  expires_at: number | null;
+  max_uses: number;
+  uses: number;
+  revoked_at: number | null;
+  last_used_at: number | null;
+}

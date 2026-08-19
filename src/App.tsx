@@ -16,6 +16,7 @@ import { SignIn } from "./components/SignIn";
 import { Admin } from "./components/Admin";
 import { MachinesPage } from "./components/MachinesPage";
 import { SharePage } from "./components/SharePage";
+import { DownloadsPage } from "./components/DownloadsPage";
 import { SiteConfigPanel } from "./components/SiteConfigPanel";
 import { OperatorDoor } from "./components/OperatorDoor";
 import { Greeting } from "./components/Greeting";
@@ -108,6 +109,8 @@ export default function App() {
         <MachinesPage />
       ) : config.page === "share" ? (
         <SharePage />
+      ) : config.page === "downloads" ? (
+        <DownloadsPage />
       ) : (
         grid
       )}

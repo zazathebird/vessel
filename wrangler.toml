@@ -92,6 +92,17 @@ class_name = "RateLimiter"
 name = "SIGNAL"
 class_name = "MachineSignal"
 
+# The downloadable programs (2026-08-19). PRIVATE — no public bucket URL, no
+# custom domain on it. The only path to a byte is worker/downloads.ts, after an
+# access code is checked, which is what makes the gate real rather than
+# decorative. Files in dist/ would be fetchable by anyone who guessed a name.
+#
+# Create it once, before the first deploy that references it:
+#   wrangler r2 bucket create vessel-downloads
+[[r2_buckets]]
+binding = "DOWNLOADS"
+bucket_name = "vessel-downloads"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["RateLimiter"]
