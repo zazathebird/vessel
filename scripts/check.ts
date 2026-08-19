@@ -30,6 +30,7 @@ import { BLADE_COLORS, DUEL_POOLS, FIGHTERS, rollPairing } from "../src/fx/fight
 import type { CostumeCtx, FighterKind, FighterStyle } from "../src/fx/fighters";
 import { PAGES } from "../src/data/pages";
 import { DOWNLOADS } from "../src/data/downloads";
+import { rangePlan } from "../worker/downloads";
 import { PATHS } from "../src/data/pageIds";
 import { LAYOUTS, FX, PICKABLE_FX, TYPESETS, SCOPES } from "../src/data/catalog";
 import type { LayoutId } from "../src/data/catalog";
@@ -504,6 +505,70 @@ check("the downloads catalogue and its container hold together", () => {
   }
 
   return `${DOWNLOADS.length} catalogue entries, container owns its width`;
+});
+
+// ---- 2c. The download's partial-response arithmetic -------------------------
+//
+// 2026-08-19, the first time the bucket was made to hand over a byte, and the
+// bug was on *every* download the page could serve.
+//
+// `env.DOWNLOADS.get(id, { range: request.headers })` reports an `object.range`
+// whether or not the request carried a `Range` header — a plain GET comes back
+// as `{ offset: 0, length: size }` — so the module's test for "did R2 serve a
+// partial body" was answering `206 Partial Content`, with a `content-range`
+// spanning the whole file, to browsers that had asked for no such thing. RFC
+// 9110 §15.3.7 permits a 206 only in reply to a range request. Browsers tolerate
+// it; download managers and proxies are entitled not to, and these are large
+// files going to people on the connections that made them ring the operator.
+//
+// The second row of the table is the other half: R2 may *decline* a range and
+// send everything, which the old code would have announced as a partial. A
+// client resuming at 40MB that trusts a `content-range` it did not ask for
+// writes those bytes at the wrong offset, and the corruption surfaces when the
+// program will not run.
+//
+// Gated as a truth table rather than through the Worker because this is exactly
+// the kind of decision this codebase extracts and steps — `edgeState` and
+// `duelCamera` are here for the same reason. Every row below was observed on a
+// live local Worker against a real 300,000-byte object before it was written
+// down; the `bytes=0-` and unsatisfiable rows are the two that came back from
+// R2 looking identical to a whole-file read, which is why they are here.
+
+check("a download is a 206 only when it is genuinely partial", () => {
+  const size = 300_000;
+  // The three shapes `R2Range` is a union of, spelled structurally: this file is
+  // bundled for Node and has no workers-types in scope.
+  type Served = { offset?: number; length?: number } | { suffix: number };
+  const rows: Array<[string, boolean, Served | undefined, { offset: number; length: number } | null]> = [
+    ["no Range header, R2 reports the whole object", false, { offset: 0, length: size }, null],
+    ["no Range header, no reported range", false, undefined, null],
+    ["bytes=100000-100999", true, { offset: 100_000, length: 1_000 }, { offset: 100_000, length: 1_000 }],
+    ["bytes=150000- (a resume)", true, { offset: 150_000, length: 150_000 }, { offset: 150_000, length: 150_000 }],
+    ["bytes=-1000 (suffix form)", true, { suffix: 1_000 }, { offset: 299_000, length: 1_000 }],
+    ["bytes=0- (whole file, asked for)", true, { offset: 0, length: size }, null],
+    ["unsatisfiable, R2 declined and sent everything", true, { offset: 0, length: size }, null],
+    ["a length past the end is clamped", true, { offset: 299_000, length: 9_000 }, { offset: 299_000, length: 1_000 }],
+    ["an offset past the end claims nothing", true, { offset: size + 10, length: 50 }, { offset: size, length: 0 }],
+  ];
+
+  for (const [name, asked, served, want] of rows) {
+    const got = rangePlan(asked, served, size);
+    if (want === null) {
+      must(got === null, `${name}: expected a 200, got 206 claiming ${JSON.stringify(got)}`);
+      continue;
+    }
+    must(got !== null, `${name}: expected a 206, got a 200`);
+    must(
+      got!.offset === want.offset && got!.length === want.length,
+      `${name}: expected ${JSON.stringify(want)}, got ${JSON.stringify(got)}`,
+    );
+    // The header the browser reads back must never name a byte the object does
+    // not have; a `content-range` past the end is how a stitched file ends up
+    // the wrong length.
+    must(got!.offset + got!.length <= size, `${name}: content-range would run past the object`);
+  }
+
+  return `${rows.length} range shapes, and a plain GET is a 200`;
 });
 
 // ---- 3. The QR encoder -----------------------------------------------------

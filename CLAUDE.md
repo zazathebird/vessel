@@ -1609,6 +1609,32 @@ Found while building; none are blocking. Listed in `TODO.md`; the reasoning is h
 4. **Signup discloses handle availability** (409) while `challenge` goes to real trouble to hide it.
    Defensible — availability is inherently public — but the two should not disagree.
 
+## Downloads — the invariants
+
+`docs/DOWNLOADS.md` is the runbook — how to upload a program, mint a code, give one away. These are
+the four things that are easy to undo by accident.
+
+- **The bucket is private and the bytes only ever leave through `worker/downloads.ts`.** Put a
+  program in `public/` and the code box in front of it becomes decoration: anyone who guesses a
+  filename has the file, and the first buyer can post the link. There is no public bucket URL and
+  no custom domain on it, deliberately.
+- **`id` is a wire format** — the R2 object key *and* the URL value, so it appears in links people
+  keep. Add ids, never rename one. `npm run check` refuses anything but lowercase-kebab, refuses a
+  duplicate, and refuses a filename with no extension, because `content-disposition` hands that
+  name to the browser verbatim and all three failures surface only after somebody has paid.
+- **A download answers `206` only when it is genuinely partial, and the request header is what
+  decides that** (`rangePlan`, 2026-08-19). R2 reports an `object.range` even for a request that
+  carried no `Range` at all, so testing the object instead of the request answered `206` with a
+  whole-file `content-range` on **every** download the page could serve. The second half of the same
+  rule: R2 may *decline* a range and send everything, and announcing that as a partial makes a
+  resuming client write bytes at the wrong offset. A served range that is not a genuine subset is a
+  200. Gated as a truth table; `docs/DECISIONS.md` 2026-08-19 has the measurements.
+- **The table holds no personal data, and the free-text `label` is the one field that could change
+  that.** No name, no email, no payment reference, no IP — which is what keeps `SPEC-ACCOUNTS.md`
+  §9's inventory unchanged by this whole feature, and it is why payment stays out of band. A code is
+  a bearer token like a cinema ticket. Typing a customer's name into the note puts personal data in
+  the one table whose entire claim is that it holds none; a date and an amount identifies the row.
+
 ## Checks — run them, and add to them
 
 `npm run check` is the gate. `npm run check:fast` (4s) is the same thing without the duel
@@ -1640,7 +1666,8 @@ entrance layer and no from-only keyframe lands on a value it cannot interpolate 
 station's wire order, its five/six/seven-field abstain rule, that its `roam` guardrail actually
 bites and that no station rule touches Radial; that every layout owns an entrance; that the account
 form owns its width; that hidden ornaments still decode and an out-of-range field falls to the
-default; and that every route has copy and the 404's page count is still true.
+default; that a download answers `206` only when it is genuinely sending part of a file; and that
+every route has copy and the 404's page count is still true.
 
 **Each gate is there because that exact failure shipped.** Verified by breaking each one
 deliberately and confirming it fails — including the QR bug that broke a real scan, which the suite

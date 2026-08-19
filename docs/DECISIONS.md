@@ -14,7 +14,51 @@ file records what happened to the codebase.
 ---
 
 
-## 2026-08-19 (latest) — the fighters get bodies, and the no-fill rule is replaced
+## 2026-08-19 (latest) — the first byte out of the bucket, and every download was a 206
+
+The client created the R2 bucket (*"i set up the cloudflare thing you requested"*), which made the
+downloads page testable for the first time: it shipped the day before with an empty catalogue and a
+private bucket that did not exist yet, so **not one byte had ever been served through it.**
+
+Benched locally — a real 300,000-byte object in local R2, five code rows in local D1 covering
+valid / scoped / revoked / expired / exhausted, and the built site served by `wrangler dev`. The
+gate itself was right on every count: lower case and stray hyphens both normalise to the same code,
+all four failure states give one identical refusal, a paid item with no ticket is a 403, a
+scope-limited ticket cannot be re-pointed, the bytes come back byte-identical, and a resume from
+150,000 returns exactly the tail. The unlock reads correctly in a browser at the desk band and the
+phone band, and its three controls measure 44–46px, so the touch-target rule from the day before
+holds here too.
+
+**The bug was in the arithmetic underneath all of that, and it was on every download.**
+`env.DOWNLOADS.get(id, { range: request.headers })` populates `object.range` **whether or not the
+request carried a `Range` header** — a plain GET comes back reporting `{ offset: 0, length: size }`.
+`file()` tested that field for an offset to decide the status, so a browser that had asked for
+nothing received `206 Partial Content` with `content-range: bytes 0-299999/300000`. RFC 9110
+§15.3.7 allows a 206 only in reply to a range request. Browsers tolerate it; download managers and
+proxies are entitled not to, and the module's own comment explains at length that these are large
+files going to people on the connections that made them ring the operator in the first place.
+
+A second shape was found in the same bench and is the more dangerous of the two: **R2 may decline a
+range and send the whole object.** `Range: bytes=999999999-` came back complete, and the old code
+would have announced it as `bytes 0-299999/300000` — a client resuming at 40MB that believes a
+`content-range` it did not ask for writes those bytes at the wrong offset, and the corruption
+surfaces as a program that will not run. The suffix form (`bytes=-1000`) is a third shape, and
+`R2Range` is a union in which only one of the three carries an offset at all.
+
+**The fix is one exported pure function, `rangePlan`,** for the reason this codebase always extracts
+a decision it cannot watch — `edgeState` and `duelCamera` are here for the same reason. The request
+header decides whether a 206 is even possible, and a served range that is not genuinely a subset of
+the object is answered as a 200, which is explicitly allowed and cannot be misread. `npm run check`
+gates it as a nine-row truth table, every row of which was observed against the live local Worker
+before it was written down. Verified after the change: no header → 200, a mid-file range → 206 with
+the right `content-range`, a suffix range → 206, an unsatisfiable range → 200 with the whole file,
+`bytes=0-` → 200, and a resume's bytes still land byte-identical.
+
+Nothing was live to break — the catalogue is empty, so no customer has ever been handed one of these
+responses. The fix is in before the first file goes up, which is the only reason this entry is a
+note rather than an incident.
+
+## 2026-08-19 — the fighters get bodies, and the no-fill rule is replaced
 
 Client, having looked at the live site: *"ok the swordfights still arent the fixed ones. pleas
 emake sure they are either all fixed and deployed, or keep going with the engine and the grpahical

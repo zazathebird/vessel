@@ -33,6 +33,11 @@ screen says so at the point of entry; a date and an amount identifies the row pe
 
 ## One-time setup
 
+**Both steps are done** (2026-08-19, by the client): `vessel-downloads` exists, and
+`wrangler d1 migrations list vessel --remote` reports nothing left to apply. Kept here because it is
+what a fresh environment — or a second Cloudflare account — needs, and because the bucket's
+privacy is a standing rule rather than a step.
+
 Two things, once, before the first deploy that includes this.
 
 **1. Create the bucket.** It must be private — no public URL, no custom domain on it. The only path

@@ -181,6 +181,57 @@ export async function claim(request: Request, env: Env): Promise<Response> {
   );
 }
 
+/** What a partial response is actually sending, once both sides agree there is one. */
+export interface RangePlan {
+  offset: number;
+  length: number;
+}
+
+/**
+ * Decide whether a response is a 206 and, if so, which bytes it claims to be.
+ *
+ * PURE AND EXPORTED BECAUSE THE ANSWER CANNOT BE READ OFF THE R2 OBJECT, and
+ * believing it could shipped a bug on every download this page has ever served
+ * (found 2026-08-19, the first time the bucket was made to hand over a byte).
+ * `env.DOWNLOADS.get(id, { range: request.headers })` populates `object.range`
+ * **whether or not the request carried a `Range` header at all** — a plain GET
+ * comes back reporting `{ offset: 0, length: size }` — so testing that field for
+ * an offset, which is what this module did, answered `206 Partial Content` with
+ * a `content-range` covering the whole file to browsers that had asked for no
+ * such thing. RFC 9110 §15.3.7 allows a 206 only in reply to a range request;
+ * the browsers tolerate it and download managers and proxies are entitled not
+ * to. Measured on the bench: every free item, every paid item, 206.
+ *
+ * So the request header decides, not the object, and the second clause is the
+ * other half of the same lesson: **R2 may decline a range and send everything.**
+ * An unsatisfiable `bytes=999999999-` came back as the whole object, which the
+ * old code would have announced as `bytes 0-299999/300000` — a resuming client
+ * that trusts a `content-range` it did not ask for writes those bytes at the
+ * wrong offset. Serving the whole file as a 200 is explicitly allowed (a server
+ * may ignore `Range`) and cannot be misread, so a served range that is not
+ * genuinely a subset is answered as one.
+ *
+ * The suffix form (`bytes=-1000`) is normalised here rather than trusted,
+ * because `R2Range` is a union of three shapes and only one of them carries an
+ * offset. Clamped to the object, so no arithmetic here can claim a byte that
+ * does not exist.
+ */
+export function rangePlan(asked: boolean, served: R2Range | undefined, size: number): RangePlan | null {
+  if (!asked || !served) return null;
+
+  const suffix = "suffix" in served ? served.suffix : undefined;
+  const rawOffset = suffix !== undefined ? size - suffix : ("offset" in served ? (served.offset ?? 0) : 0);
+  const offset = Math.min(Math.max(0, rawOffset), size);
+  const rawLength =
+    suffix !== undefined ? suffix : "length" in served ? (served.length ?? size - offset) : size - offset;
+  const length = Math.min(Math.max(0, rawLength), size - offset);
+
+  // The whole object is not a partial response, however it was asked for.
+  if (offset === 0 && length === size) return null;
+
+  return { offset, length };
+}
+
 /**
  * Stream one file out of the private bucket.
  *
@@ -232,17 +283,16 @@ export async function file(request: Request, env: Env, url: URL): Promise<Respon
   // it has been told ranges are available.
   headers.set("accept-ranges", "bytes");
 
-  // `object.range` is present only when R2 actually served a partial body, so
-  // it — not the request header — is what decides the status. A range that R2
-  // declined to honour must still answer 200 with the whole file, or the
-  // browser stitches a complete file out of a response it believes is partial.
-  const range = object.range;
-  if (range && "offset" in range) {
-    const offset = range.offset ?? 0;
-    const length = range.length ?? object.size - offset;
-    const end = offset + length - 1;
-    headers.set("content-range", `bytes ${offset}-${end}/${object.size}`);
-    headers.set("content-length", String(length));
+  // `rangePlan` decides, and the comment on it is the reason: `object.range` is
+  // populated even for a request that carried no `Range` header, so it cannot
+  // be the test. A range R2 declined to honour answers 200 with the whole file,
+  // or the browser stitches a complete file out of a response it believes is
+  // partial — and one that never asked gets a plain 200, as it must.
+  const plan = rangePlan(request.headers.has("range"), object.range, object.size);
+  if (plan) {
+    const end = plan.offset + plan.length - 1;
+    headers.set("content-range", `bytes ${plan.offset}-${end}/${object.size}`);
+    headers.set("content-length", String(plan.length));
     return new Response(object.body, { status: 206, headers });
   }
 
