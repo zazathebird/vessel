@@ -1,7 +1,8 @@
 # Absorbing the duel-cycle engine
 
-**Status: phase 1 shipped 2026-08-18. Phases 2–5 planned, not started.** Client decisions taken;
-see *Decisions* below. Phase 5 still has one product question for the client, marked in place.
+**Status: phases 1 and 2 shipped 2026-08-18. Phases 3–5 planned, not started.** Client decisions
+taken; see *Decisions* below. Phase 5 still has one product question for the client, marked in
+place; phase 2's question closed itself — no real name is used anywhere, so none ships.
 
 `handoff_duel_engine/` holds a second, independently written duel engine
 (`duel-cycle-v2.html`, 1,905 lines) and a implementation brief (`BRIEF.md`, 350 lines). The client
@@ -145,10 +146,13 @@ The client's decision creates a clean, mechanical rule:
   are being withheld, which is the same trade the site already made when it renamed the weapon to
   "lightsword" (`docs/DUEL.md`, *The naming and likeness constraint*).
 
-**One thing to put to the client before building this** (flagged, not assumed): the real names would
-still exist as strings in the public JS bundle even when never rendered, because the site ships one
-bundle. Display is the exposure that matters and this is almost certainly fine — but if they want it
-airtight the names have to move behind an operator-gated API response, which is a bigger change.
+**That question is closed, and it closed by not needing an answer** (2026-08-18). It was: the real
+names would still exist as strings in the public JS bundle even when never rendered, because the
+site ships one bundle. Phase 2 shipped without using real names *at all* — the operator surfaces
+show the ornament picker's two entries, not a cast list, so the permission was never spent. There is
+no proper noun in `src/fx/fighters.ts`, and recognition comes from the silhouette, which is what the
+client asked for in the first place. If real names are ever wanted on an operator screen, this
+paragraph is the reasoning to re-read first.
 
 ---
 
@@ -207,20 +211,70 @@ fighter pressing an advantage or as two exchanges glued together, and whether th
 between exchanges land as poise or as a hang. That is the same open tempo question as before,
 asked of a slightly different fight.
 
-### Phase 2 — character identity
+### Phase 2 — character identity — **shipped 2026-08-18**
 
-The client's requirement is "obvious and instantly identifiable". `frontend-design` gets loaded for
-this phase — it is a standing instruction for visual work.
+The client's requirement: *"make the characters obvious and instantly identifiable."*
+`frontend-design` was loaded for it, per the standing instruction.
 
-- Add optional `head` / `torso` / `overlay` draw hooks and per-fighter `proportion` multipliers to
-  the fighter definition, consumed by `drawFighter`. The brief's structure is right.
-- Expand from 4 styles to a roster, each with one signature silhouette read. Keep the existing edge
-  pass over the new shapes or the dark ones vanish.
-- **Already done on our side, do not rebuild:** two-handed grip. `CLAUDE.md` deviation 9 —
-  *"Both hands are on the grip now unless an arm is pushing or balancing a kick."* The brief's
-  workstream 2 IK section is solving a problem this engine does not have.
-- Nametags: archetype only, and only if they read at ornament scale. Health bars stay
-  **ornament-only** (`docs/DUEL.md`) — they are wrong behind body copy and that is not reopened.
+The roster is `src/fx/fighters.ts`: **eight costumes**, four good and four evil, in two pools of
+four pairings each. `duel` fights The Hermit / The Apprentice against The Mask / The Hollow;
+`duelholy` fights The Saint / The Seraph against The Devil / The Crown. Both duels roll a pairing
+on mount **and again on every match reset**, so the fighters change every ~52 seconds — the
+character-level half of *"not a set amount of looping duels"*, since two fighters who never change
+are still a loop at the scale anybody watches at.
+
+What shipped, against what was planned:
+
+- **`back` / `head` / `overlay` hooks and per-fighter proportions**, as planned, except that the
+  brief's `torso` slot became `back` — drawn *before* the legs. A costume drawn last swallows the
+  limbs it hangs off, which is most of how the filled version turned two swordsmen into two slabs.
+- **`proportion` is `shoulder` / `weight` / `hunch`, and deliberately has no height multiplier.**
+  The blade is drawn inside the same transform as the body and its length feeds `bladeGap`, the
+  clash test and every contact frame in `MOVES` — a vertically scaled figure holds a sword whose
+  drawn length disagrees with the one the simulation is using. That is the "proximity is not
+  contact" bug class, bought for nothing.
+- **No edge pass was needed.** The brief wants one because its bodies are filled in near-black; ours
+  are stroked in the palette's `--fg` over the palette's background, so they cannot disappear into a
+  dark arena. Noted rather than skipped silently.
+- **Every costume declares its `headroom` and `duelFocus` frames on it.** Clearance above the head
+  was a flat 26 units, which is fine for four marks that all sat on a skull and wrong for horns, a
+  halo and a pair of wings. Measured over 320,000 frames across all eight pairings: at the flat
+  value the tall costumes were cropped on **0.07%** of frames — about one visible clip every
+  23 seconds — and the per-costume clearance takes that to **0.00%** while the median camera scale
+  moves 2.70→2.71 of a possible 2.9, which is nothing.
+- **Nametags: declined.** The plan allowed them "only if they read at ornament scale", and they do
+  not: at the 190px slot a figure is ~61px and a legible label is a seventh of its height, hung over
+  a fight it would be competing with. *Not taking* already refuses fight labels and title cards
+  under deviation 8 (*show the layout, do not caption it*), and a nametag is a fight label. The
+  archetype names exist in the roster and are rendered nowhere.
+- **The naming rule closed itself.** The plan permitted real names on operator-gated surfaces; none
+  are used anywhere, so the residue flagged for the client — real names sitting in the public bundle
+  even when never rendered — does not exist. There is no proper noun in `src/fx/fighters.ts`.
+- **Already done, not rebuilt:** the two-handed grip (`CLAUDE.md` deviation 9). The brief's
+  workstream 2 IK section solves a problem this engine does not have.
+- Health bars stay **ornament-only** (`docs/DUEL.md`). Not reopened.
+
+**The costumes were looked at, not reasoned about.** Animation cannot be watched here, but a *still*
+can be: `drawDuel` was driven into a real canvas under headless Chrome and screenshotted, eight
+costumes at one pose, at both desk scale and the phone slot's ~61px figure. Three of the eight
+failed on sight and were rebuilt — the wings read as a leaf (any closed curve at this size is a blob
+with a highlight round it; they are an open fan of feathers now), the cape read as a plank down the
+figure's side (both edges stay behind the spine and the hem is wider than the shoulders now), and
+the helmet read as a slightly thicker head (it is drawn wider than the skull it covers). **That
+method is worth keeping for any future costume work**, and it is cheap: bundle the real module,
+draw one frame, screenshot.
+
+**Gated.** Two new checks, seven assertions between them, each verified by breaking it: every
+costume is stroked and never filled, draws something, declares its reach tightly (over-declaring is
+not free — it pulls the camera back), and stays inside what the camera frames; every pool is one
+alignment against the other, no costume is in two pools, none is unreachable, and every fighter's
+`side` agrees with its blade colour. Plus a stepped gate for the runtime half: a pooled fight really
+does rotate its fighters, always mixed, while a pinned pairing (what every bench drives) is left
+alone.
+
+**What still wants an eye:** whether the costumes read *while moving*, which is the only state the
+site ever shows them in. Stills are what this environment can produce and they are not the same
+question.
 
 ### Phase 3 — new moves
 

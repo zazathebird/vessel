@@ -223,21 +223,29 @@ everything past the twenty-eighth before. Tempo unchanged (51.8s median vs 50.4s
 identically). The static gate is replaced by a generator gate: **224,000 sequences** built from a
 fixed seed and asserted on, all five new assertions verified by breaking them.
 
-**Four remain, in order.** Phase 2 (character identity — `frontend-design` is a standing
-instruction for it), phase 3 (new moves: rolls, aerials, spins, thrown props, blasters), phase 4
-(VFX — directional sparks, scorch decals, real blade lighting; **no shadow-blur glow**, see the
-render-cost measurement), phase 5 (audio).
+**Phase 2 is shipped (2026-08-18).** The four silhouettes are a roster of eight in
+`src/fx/fighters.ts` — four good, four evil, two pools of four pairings — with `back`/`head`/
+`overlay` costume hooks and render-only proportion multipliers, and **each duel rolls its pairing
+again on every match reset**, so the fighters change every ~52s. Costumes are stroked and never
+filled (the rule behind *"they are holding shields"*, now gated), and each declares its reach so
+`duelFocus` can frame it: measured over 320,000 frames, a flat clearance cropped the tall costumes
+on 0.07% of frames and the per-costume one on 0.00%, for no loss of figure size. Three of the eight
+were rebuilt after being *looked at* — stills rendered through headless Chrome, which is the method
+worth reusing. Nametags were declined (deviation 8: a label over a 61px figure captions a fight).
 
-**Two things for the client before their phases start**, both flagged rather than assumed:
+**Three remain, in order.** Phase 3 (new moves: rolls, aerials, spins, thrown props, blasters),
+phase 4 (VFX — directional sparks, scorch decals, real blade lighting; **no shadow-blur glow**, see
+the render-cost measurement), phase 5 (audio).
 
-1. **Phase 5 needs a product decision.** The site's rule is *"every voice is fired by a gesture."* A
-   duel clash is fired by the *animation*. The rule's purpose — nothing plays uninvited, no
-   `AudioContext` until a deliberate toggle — is satisfied as long as duel audio only sounds when
-   `sound` is explicitly on. Its letter is not. That is the client's call, not this side's.
-2. **Phase 2's naming rule has one residue.** Real names would still exist as strings in the public
-   JS bundle even when only rendered behind `isOperator`, because the site ships one bundle. Display
-   is the exposure that matters and this is almost certainly fine — but if they want it airtight the
-   names have to move behind an operator-gated API response, which is a bigger change.
+**One thing for the client before phase 5 starts**, flagged rather than assumed: the site's rule is
+*"every voice is fired by a gesture."* A duel clash is fired by the *animation*. The rule's purpose
+— nothing plays uninvited, no `AudioContext` until a deliberate toggle — is satisfied as long as
+duel audio only sounds when `sound` is explicitly on. Its letter is not. That is the client's call,
+not this side's.
+
+**Phase 2's naming residue closed itself and needs nothing.** The worry was that real names would
+sit in the public JS bundle even when only rendered behind `isOperator`. No real name is used
+anywhere — the roster is archetypes — so there is nothing in the bundle to worry about.
 
 **What no bench can settle, and is the same open question as before:** whether a chained phrase
 reads as one fighter pressing an advantage or as two exchanges glued together, and whether the

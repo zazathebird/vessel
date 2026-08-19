@@ -20,10 +20,10 @@ import {
   WORLD_H as DUEL_WORLD_H,
   WORLD_W as DUEL_WORLD_W,
   advanceDuel,
-  createDuel,
+  createDuelFrom,
   drawDuel,
 } from "./duel";
-import type { DuelState, FighterStyle } from "./duel";
+import type { DuelPool, DuelState } from "./duel";
 
 export interface Frame {
   ctx: CanvasRenderingContext2D;
@@ -1897,10 +1897,16 @@ const telemetry: Effect = ({ ctx, w, h, p, t, beat }) => {
  * hero vitals strip. No copy correction is owed.
  */
 
-function duelling(left: FighterStyle, right: FighterStyle): Effect {
+function duelling(pool: DuelPool): Effect {
   return ({ ctx, w, h, p, t, dt }, cache) => {
     let st = cache.duel;
-    if (!st) st = cache.duel = createDuel(left, right);
+    /*
+     * The pairing is rolled from the pool rather than pinned, here and again on
+     * every match reset inside `advanceDuel` — phase 2 of `docs/DUEL-ABSORB.md`.
+     * The blade colours therefore have to be read off the fighters who actually
+     * walked on, not off the ids this factory was built with.
+     */
+    if (!st) st = cache.duel = createDuelFrom(pool);
 
     /*
      * The fight runs on real time, not on the boosted effect clock (client,
@@ -1954,8 +1960,8 @@ function duelling(left: FighterStyle, right: FighterStyle): Effect {
       ink: p.fg,
       // The blades keep their alignment colours in every palette — the one
       // literal-colour carve-out on the site (see BLADE_COLORS in fx/duel.ts).
-      bladeA: BLADE_COLORS[left],
-      bladeB: BLADE_COLORS[right],
+      bladeA: BLADE_COLORS[st.a.style],
+      bladeB: BLADE_COLORS[st.b.style],
       core: p.fg,
       spark: p.a2,
       line: p.line,
@@ -1981,8 +1987,8 @@ function duelling(left: FighterStyle, right: FighterStyle): Effect {
   };
 }
 
-const duel = duelling("hooded", "caped");
-const duelholy = duelling("haloed", "horned");
+const duel = duelling("duel");
+const duelholy = duelling("duelholy");
 
 const EFFECTS: Record<Exclude<FxId, "off">, Effect> = {
   vessels,

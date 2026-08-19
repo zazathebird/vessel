@@ -25,7 +25,9 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 import { qrMatrix } from "../src/auth/qr";
-import { createDuel, advanceDuel, buildSequence, makeRoll, DUEL_TABLES, GRAVITY } from "../src/fx/duel";
+import { createDuel, createDuelFrom, advanceDuel, buildSequence, makeRoll, DUEL_TABLES, GRAVITY } from "../src/fx/duel";
+import { BLADE_COLORS, DUEL_POOLS, FIGHTERS, rollPairing } from "../src/fx/fighters";
+import type { CostumeCtx, FighterStyle } from "../src/fx/fighters";
 import { PAGES } from "../src/data/pages";
 import { PATHS } from "../src/data/pageIds";
 import { LAYOUTS, FX, PICKABLE_FX, TYPESETS, SCOPES } from "../src/data/catalog";
@@ -902,6 +904,244 @@ if (!FAST) check("duel: a pass crosses without mirroring, and lands upright", ()
   must(landings > 20, `only ${landings} somersaults in 120,000 frames — is the move reachable?`);
   must(offBy === 0, `${offBy} of ${landings} somersaults landed mid-revolution (window ends ${upright})`);
   return `${landings} somersaults, none mirrored, all upright at ${upright}`;
+});
+
+/*
+ * The roster (phase 2 of `docs/DUEL-ABSORB.md`), and why a costume needs a gate
+ * at all when it is "only drawing".
+ *
+ * Three of the four things asserted here have already shipped as bugs in this
+ * effect, in one form or another:
+ *
+ * - **Filled costume.** The version the client rejected drew filled robes and
+ *   capes behind a filled torso, which composited into one slab and read as
+ *   *"they are holding shields"*. That is not a matter of taste that can be
+ *   left to an eye — it is a rule, and a rule about drawing calls can be
+ *   checked. Every mark on this roster is a stroke.
+ * - **Geometry that outgrows its frame.** `duelFocus` reserves clearance above
+ *   the head from each costume's declared `headroom`. A declaration is a second
+ *   copy of a number that lives in the drawing, and second copies drift — the
+ *   camera has already framed a corpse as though it were standing once, for
+ *   exactly this reason. So the drawing is *driven* and the reach re-derived
+ *   from the calls it makes, and the declaration has to be tight, not merely
+ *   generous: over-declaring is not free, it pulls the camera back.
+ * - **A carve-out that stops meaning anything.** Good fights in blue or green
+ *   and evil in red, in every palette — the site's one literal-colour exception,
+ *   granted by the client. Alignment is stated twice (the roster's `side`, the
+ *   colour table) and the two must agree, or the rule is decoration.
+ *
+ * The fourth is new: a costume that draws nothing at all would typecheck, run,
+ * and quietly make two fighters identical.
+ */
+check("duel: every costume is stroked, framed and aligned", () => {
+  /**
+   * A recording 2D context: enough of the interface for a costume to draw into,
+   * and it records where. Only the coordinates matter, so a curve is bounded by
+   * its control points — which is conservative in the right direction, since the
+   * curve itself stays inside that hull.
+   */
+  const recorder = () => {
+    const pts: { x: number; y: number }[] = [];
+    let fills = 0;
+    const at = (x: number, y: number) => pts.push({ x, y });
+    const ctx = {
+      strokeStyle: "",
+      fillStyle: "",
+      globalAlpha: 1,
+      lineWidth: 1,
+      lineCap: "butt",
+      lineJoin: "miter",
+      strokes: 0,
+      beginPath() {},
+      closePath() {},
+      save() {},
+      restore() {},
+      translate() {},
+      moveTo: at,
+      lineTo: at,
+      quadraticCurveTo(cx: number, cy: number, x: number, y: number) {
+        at(cx, cy);
+        at(x, y);
+      },
+      arc(x: number, y: number, r: number) {
+        at(x - r, y - r);
+        at(x + r, y + r);
+      },
+      ellipse(x: number, y: number, rx: number, ry: number) {
+        at(x - rx, y - ry);
+        at(x + rx, y + ry);
+      },
+      stroke() {
+        this.strokes += 1;
+      },
+      fill() {
+        fills += 1;
+      },
+      fillRect() {
+        fills += 1;
+      },
+    };
+    return { ctx, pts, fills: () => fills };
+  };
+
+  /** A body to dress, at a given moment of the idle cycle and travel. */
+  const body = (t: number, vx: number, airborne: boolean): CostumeCtx => {
+    const breath = Math.sin(t * 0.045) * 1.1;
+    const headY = -8 + breath * 0.6;
+    return {
+      hx: 0,
+      hy: headY + 6,
+      hr: 8,
+      shY: 13 + breath,
+      shX: 11,
+      hipY: 42,
+      hipX: 7,
+      feetY: 70,
+      lean: vx * 1.4,
+      vx,
+      speed: Math.min(1, Math.abs(vx) / 2.2),
+      airborne,
+      t,
+      phase: (t * 0.37) % (Math.PI * 2),
+      ink: "#fff",
+      blade: "#3d9bff",
+      dim: 1,
+      alpha: 0.85,
+      hand: { x: 22, y: 6 },
+      elbow: { x: 16, y: 14 },
+      offHand: { x: 14, y: 14 },
+      offElbow: { x: -2, y: 26 },
+      lw: (n: number) => n,
+    };
+  };
+
+  const GOOD = new Set(["#3d9bff", "#37d67a"]);
+  const lines: string[] = [];
+  for (const [id, kind] of Object.entries(FIGHTERS)) {
+    const style = id as FighterStyle;
+    const colour = BLADE_COLORS[style];
+    must(!!colour, `${id} has no blade colour`);
+    must(
+      kind.side === "good" ? GOOD.has(colour) : !GOOD.has(colour),
+      `${id} is ${kind.side} but carries ${colour} — the alignment carve-out disagrees with itself`,
+    );
+
+    const rec = recorder();
+    // Sweep the idle cycle and the travel range a costume is handed. `vx` is
+    // clamped to ±3.5 by `drawFighter` before it ever reaches a hook, so this
+    // is the whole domain, not a sample of it.
+    for (let t = 0; t < 400; t += 1) {
+      for (const vx of [-3.5, -1.2, 0, 1.2, 3.5]) {
+        for (const airborne of [false, true]) {
+          const c = body(t, vx, airborne);
+          kind.back?.(rec.ctx as unknown as CanvasRenderingContext2D, c);
+          kind.head?.(rec.ctx as unknown as CanvasRenderingContext2D, c);
+          kind.overlay?.(rec.ctx as unknown as CanvasRenderingContext2D, c);
+        }
+      }
+    }
+
+    must(rec.pts.length > 0, `${id} (${kind.label}) draws nothing — it is indistinguishable`);
+    must(rec.ctx.strokes > 0, `${id} builds a path and never strokes it`);
+    must(rec.fills() === 0, `${id} fills ${rec.fills()} shape(s) — costume is stroked, never filled`);
+
+    const reach = Math.ceil(-Math.min(...rec.pts.map((q) => q.y)));
+    must(
+      reach <= kind.headroom,
+      `${id} reaches ${reach} above the torso but declares headroom ${kind.headroom} — the camera will crop it`,
+    );
+    must(
+      kind.headroom - reach <= 6,
+      `${id} declares headroom ${kind.headroom} for a reach of ${reach} — slack pulls the camera back for nothing`,
+    );
+    // Nothing may stream off sideways: `duelFocus` frames on the bodies, so a
+    // costume much wider than one leaves the shot at the arena walls.
+    const side = Math.ceil(Math.max(...rec.pts.map((q) => Math.abs(q.x))));
+    must(side <= 34, `${id} reaches ${side} units sideways — beyond what the camera frames`);
+    lines.push(`${kind.label} ${reach}/${side}`);
+  }
+
+  /*
+   * The pools. Every match must be one alignment against the other — the blade
+   * carve-out is meaningless in a fight between two good fighters, and the
+   * fairness coin means nothing if a viewer cannot tell which side is which.
+   * And a costume nothing can roll is a costume nobody will ever see, which is
+   * the same failure as an unreachable duel module and is caught the same way:
+   * by rolling, not by reading.
+   */
+  const seen = new Set<string>();
+  const orders = new Set<string>();
+  for (const pool of Object.keys(DUEL_POOLS) as (keyof typeof DUEL_POOLS)[]) {
+    const { good, evil } = DUEL_POOLS[pool];
+    must(good.length > 0 && evil.length > 0, `pool ${pool} is one-sided`);
+    for (const s of [...good, ...evil]) {
+      must(!seen.has(s), `${s} is in more than one pool — pools are meant to keep lookalikes apart`);
+      seen.add(s);
+      must(
+        FIGHTERS[s].side === (good.includes(s) ? "good" : "evil"),
+        `${s} is listed on the ${good.includes(s) ? "good" : "evil"} side of ${pool} but declares ${FIGHTERS[s].side}`,
+      );
+    }
+    let rng = 1;
+    for (let i = 0; i < 4000; i += 1) {
+      // A cheap deterministic sequence, so a failure here is reproducible.
+      rng = (rng * 1103515245 + 12345) % 2147483648;
+      const [l, r] = rollPairing(pool, () => (rng = (rng * 1103515245 + 12345) % 2147483648) / 2147483648);
+      must(
+        FIGHTERS[l].side !== FIGHTERS[r].side,
+        `${pool} rolled ${l} against ${r} — both ${FIGHTERS[l].side}`,
+      );
+      orders.add(`${pool}:${l}:${r}`);
+    }
+  }
+  const missing = (Object.keys(FIGHTERS) as FighterStyle[]).filter((s) => !seen.has(s));
+  must(missing.length === 0, `unreachable costume(s): ${missing.join(", ")}`);
+  // Both arena ends, both pools: 2 pools × 2 good × 2 evil × 2 orders.
+  const wanted = Object.values(DUEL_POOLS).reduce((n, p) => n + p.good.length * p.evil.length * 2, 0);
+  must(orders.size === wanted, `${orders.size} of ${wanted} pairings rolled`);
+  return `${lines.length} costumes (${lines.join(", ")}), ${orders.size} pairings`;
+});
+
+/*
+ * The other half of phase 2, and the only part of it that is not drawing: a
+ * pooled fight rolls **new fighters on every match reset**, so a visitor who
+ * watches for a few minutes sees the roster rather than one pairing forever.
+ *
+ * That is a change to `step`'s reset branch, which is the same branch that
+ * clears the anti-stall rail and the phrase chain — a branch this effect has
+ * had two shipped bugs in. So it is stepped rather than read: run a real pooled
+ * fight through several matches and check the fighters actually change, that
+ * every match is still one alignment against the other, and that a pinned
+ * pairing (which every bench and the reference gates use) is left alone.
+ */
+if (!FAST) check("duel: a pooled fight rotates its fighters", () => {
+  const st = createDuelFrom("duel");
+  const pairs = new Set<string>();
+  let matches = 0;
+  let mixed = 0;
+  for (let i = 0; i < 60_000; i += 1) {
+    advanceDuel(st, 1);
+    if (st.matches !== matches) {
+      matches = st.matches;
+      pairs.add(`${st.a.style}/${st.b.style}`);
+      if (FIGHTERS[st.a.style].side !== FIGHTERS[st.b.style].side) mixed += 1;
+    }
+  }
+  must(matches > 4, `only ${matches} matches in 60,000 frames`);
+  must(mixed === matches, `${matches - mixed} match(es) rolled two fighters of one alignment`);
+  must(pairs.size > 1, `${matches} matches and only one pairing — the reset is not re-rolling`);
+
+  // A pinned fight must not acquire the behaviour: `createDuel` is what the
+  // benches and the other duel gates drive, and a bench whose fighters changed
+  // under it would be measuring something it did not set up.
+  const pinned = createDuel("hooded", "caped");
+  for (let i = 0; i < 20_000; i += 1) advanceDuel(pinned, 1);
+  must(pinned.matches > 0, "the pinned fight never finished a match");
+  must(
+    pinned.a.style === "hooded" && pinned.b.style === "caped",
+    `a pinned pairing rotated to ${pinned.a.style}/${pinned.b.style}`,
+  );
+  return `${matches} matches, ${pairs.size} pairings, all mixed; pinned pairing held`;
 });
 
 

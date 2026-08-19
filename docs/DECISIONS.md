@@ -14,7 +14,62 @@ file records what happened to the codebase.
 ---
 
 
-## 2026-08-18 (latest) — the duel's exchanges are generated, not selected
+## 2026-08-18 (latest) — the duel has a cast, and the costumes are gated
+
+Phase 2 of `docs/DUEL-ABSORB.md`, the same day as phase 1 below. Client: *"make the characters
+obvious and instantly identifiable, but do not name them on pages that are not accessible only by
+me, to avoid any copyright or legal bullshit."*
+
+**What there was.** Four styles, and the entire costume was four marks drawn on the head — a hood
+peak, two horns, a halo, a helmet brow — with a comment explaining that at the size these render,
+the head is the only place a silhouette difference survives. That was true when it was written and
+has not been true since 2026-08-14, when the ornament gained a camera and roughly doubled the size a
+figure renders at (~61px on a phone, ~109px on desk). Each duel id was also pinned to one pair
+forever, which is the character-level version of the loop phase 1 had just removed from the
+exchanges.
+
+**What there is.** `src/fx/fighters.ts`: eight costumes — four good, four evil — in two pools of
+four pairings, with `back` / `head` / `overlay` draw hooks and render-only `shoulder` / `weight` /
+`hunch` multipliers. Both duels roll a pairing on mount **and again on every match reset**, so the
+fighters change every ~52 seconds.
+
+**Four decisions worth keeping:**
+
+- **No height multiplier**, though the brief asked for one. The blade is drawn inside the same
+  transform as the body and its length feeds `bladeGap`, the clash test and every contact frame in
+  `MOVES`. A vertically scaled figure holds a sword whose drawn length disagrees with the one the
+  simulation is using — the "proximity is not contact" bug class, bought for a cosmetic.
+- **Costumes are stroked, never filled, and the gate enforces it.** The rejected 2026-08-14 version
+  was filled geometry and read as *"they are holding shields"*. That is a rule about draw calls, so
+  it can be checked rather than remembered.
+- **Per-costume head clearance.** `duelFocus` reserved a flat 26 units above the torso origin.
+  Measured over 320,000 frames across all eight pairings: horns, halo and wings were cropped on
+  **0.07%** of frames — roughly one visible clip every 23 seconds — and per-costume clearance takes
+  that to **0.00%** for a median camera scale of 2.71 against 2.70 out of a possible 2.9. The gate
+  re-derives each declaration from the drawing calls and fails on slack as well as shortfall,
+  because over-declaring is not free.
+- **No real names and no nametags.** The client permitted names on operator-gated surfaces; none are
+  used, so the residue flagged in the plan — real names sitting in the shipped bundle even when
+  never rendered — does not exist. Nametags were allowed "if they read at ornament scale" and do
+  not: a legible label is a seventh of a 61px figure's height, and deviation 8 already refuses to
+  caption the fight.
+
+**The costumes were looked at, not reasoned about, and that is the transferable part.** Animation
+cannot be watched in this environment, but a still can: the real `drawDuel` was driven into a canvas
+under headless Chrome and screenshotted, eight costumes at one pose, at desk scale and at the phone
+slot's true ~61px. **Three of the eight failed on sight** — the wings read as a leaf (any closed
+curve at this size is a blob with a highlight round it; they are an open fan of feathers now), the
+cape read as a plank down the figure's side (both edges now stay behind the spine and the hem is
+wider than the shoulders), and the helmet read as a slightly thicker head (it is drawn wider than
+the skull it covers). None of those three would have been found by any bench, and all three took one
+screenshot each.
+
+Two gates, seven assertions, each verified by breaking it deliberately; plus a stepped gate that a
+pooled fight rotates its fighters and a pinned pairing does not, because the reset branch it touches
+is the same one that clears the anti-stall rail and has had two shipped bugs in it.
+
+
+## 2026-08-18 — the duel's exchanges are generated, not selected
 
 Phase 1 of `docs/DUEL-ABSORB.md`, which is the plan for absorbing the second duel engine the client
 had built. The client's ask, verbatim: *"completely random, not a set amount of looping duels."*

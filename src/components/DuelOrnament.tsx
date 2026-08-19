@@ -7,11 +7,11 @@ import {
   FEET_Y,
   WORLD_W,
   advanceDuel,
-  createDuel,
+  createDuelFrom,
   drawDuel,
   duelFocus,
 } from "../fx/duel";
-import type { DuelState, FighterStyle } from "../fx/duel";
+import type { DuelPool, DuelState } from "../fx/duel";
 
 /**
  * The lightsword duel in the hero-ornament slot — the client's original
@@ -35,11 +35,6 @@ import type { DuelState, FighterStyle } from "../fx/duel";
  * fighter, the spark burst and the winner's raised blade are the announcement,
  * for the same reason the vitals strip was removed (show, don't caption).
  */
-
-const PAIRINGS: Record<"duel" | "duelholy", [FighterStyle, FighterStyle]> = {
-  duel: ["hooded", "caped"],
-  duelholy: ["haloed", "horned"],
-};
 
 /*
  * The camera, and why the slot needed one.
@@ -195,7 +190,7 @@ export function duelCamera(
   return { cam: next, x: w / 2 - x * next.scale, y: feet - FEET_Y * next.scale, scale: next.scale };
 }
 
-export function DuelOrnament({ pairing }: { pairing: "duel" | "duelholy" }) {
+export function DuelOrnament({ pairing }: { pairing: DuelPool }) {
   const { config, saver } = useConfig();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -205,7 +200,11 @@ export function DuelOrnament({ pairing }: { pairing: "duel" | "duelholy" }) {
   });
 
   useEffect(() => {
-    const st = createDuel(...PAIRINGS[pairing]);
+    // Two fighters rolled from the pool this ornament names — and re-rolled on
+    // every match reset, inside `advanceDuel`. The two ids used to be a fixed
+    // pairing in this file; they are `src/fx/fighters.ts` now, so both homes of
+    // the duel get the roster without either of them knowing it exists.
+    const st = createDuelFrom(pairing);
     let raf = 0;
     let last = performance.now();
     // Null until the first drawn frame, which snaps rather than eases — a
@@ -255,8 +254,8 @@ export function DuelOrnament({ pairing }: { pairing: "duel" | "duelholy" }) {
         ink: p.fg,
         // Blades are the site's one literal-colour carve-out (see BLADE_COLORS):
         // good is blue/green, evil is red, whatever the palette says.
-        bladeA: BLADE_COLORS[PAIRINGS[pairing][0]],
-        bladeB: BLADE_COLORS[PAIRINGS[pairing][1]],
+        bladeA: BLADE_COLORS[st.a.style],
+        bladeB: BLADE_COLORS[st.b.style],
         core: p.fg,
         spark: p.a2,
         line: p.line,

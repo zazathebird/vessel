@@ -67,6 +67,27 @@ palette (`BLADE_COLORS` in `src/fx/duel.ts`). That is the site's one deliberate
 literal-colour carve-out; everything else in the scene still recolours with the
 palette bleed. CLAUDE.md *Known deviations* 9 records both.
 
+**Update 2026-08-18: the four silhouettes are a roster of eight.** Phase 2 of
+`docs/DUEL-ABSORB.md`, client: *"make the characters obvious and instantly
+identifiable."* They live in `src/fx/fighters.ts` as costume hooks — `back`
+(drawn behind the body), `head`, `overlay` — plus render-only shoulder, stroke
+weight and hunch multipliers. Four good and four evil, in two pools of four
+pairings, and **each duel rolls its pairing again on every match reset**, so the
+fighters change every ~52 seconds rather than the same two grinding forever.
+
+Two rules carry over from the rebuild and are now enforced rather than merely
+written down: every mark is **stroked, never filled** (filled costume is what
+made the pair read as shield-carriers, and `npm run check` refuses a hook that
+fills), and every costume **declares how far above the head it reaches**, which
+`duelFocus` uses for clearance — measured, a flat clearance cropped horns, halo
+and wings on 0.07% of frames.
+
+**The naming and likeness constraint below is unchanged and is now absolute in
+code:** the roster carries archetypes only (The Hermit, The Mask, The Saint, The
+Hollow…), and there is no proper noun anywhere in the file. Nametags were
+declined — a label over a 61px figure captions a fight, which deviation 8
+settled.
+
 **Status: rebuilt 2026-08-13, live in the hero-ornament slot.** The match
 engine is `src/fx/duel.ts`, the ornament host is
 `src/components/DuelOrnament.tsx`, and both pairings are pickable in

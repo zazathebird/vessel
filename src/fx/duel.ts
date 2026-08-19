@@ -44,20 +44,18 @@
  * split explicitly.
  */
 
-export type FighterStyle = "hooded" | "caped" | "haloed" | "horned";
-
-/**
- * The one deliberate literal-colour exception on the site (client request,
- * 2026-08-13): the good side fights in blue/green and the evil side in red,
- * in every palette. Everything else in the scene — bodies, sparks, ground,
- * blade cores — still reads the live palette and recolours with the bleed.
+/*
+ * Who the fighters are lives in `src/fx/fighters.ts` — the roster, the costume
+ * hooks and the pools. Re-exported here because every existing caller imports
+ * these two names from this module, and because `BLADE_COLORS` is the site's
+ * one literal-colour carve-out: it should stay findable from the file that
+ * draws the blades.
  */
-export const BLADE_COLORS: Record<FighterStyle, string> = {
-  hooded: "#3d9bff",
-  haloed: "#37d67a",
-  caped: "#ff3b30",
-  horned: "#ff2929",
-};
+import { FIGHTERS, rollPairing } from "./fighters";
+import type { CostumeCtx, DuelPool, FighterStyle } from "./fighters";
+
+export type { FighterStyle, CostumeCtx, DuelPool } from "./fighters";
+export { BLADE_COLORS, FIGHTERS, DUEL_POOLS, rollPairing } from "./fighters";
 
 type Action = "neutral" | "attacking" | "kicking" | "force" | "dead";
 
@@ -242,6 +240,11 @@ interface Spark {
 }
 
 export interface DuelState {
+  /**
+   * Where the next match's fighters come from, or null to keep this one's.
+   * See `createDuelFrom`.
+   */
+  pool: DuelPool | null;
   a: Fighter;
   b: Fighter;
   sparks: Spark[];
@@ -309,8 +312,14 @@ function makeFighter(x: number, facing: 1 | -1, style: FighterStyle): Fighter {
   };
 }
 
+/**
+ * A fight between two named costumes. The pool is null, so the same two
+ * fighters come back for every match — which is what a bench wants, and what
+ * anything pinning a pairing deliberately wants.
+ */
 export function createDuel(left: FighterStyle, right: FighterStyle): DuelState {
   return {
+    pool: null,
     a: makeFighter(START_A, 1, left),
     b: makeFighter(START_B, -1, right),
     sparks: [],
@@ -323,6 +332,27 @@ export function createDuel(left: FighterStyle, right: FighterStyle): DuelState {
     prev: 0,
     idle: 0,
   };
+}
+
+/**
+ * A fight drawn from a pool — the form both of the site's duels use.
+ *
+ * The pairing is rolled here **and again on every match reset**, so a visitor
+ * who watches for a couple of minutes sees different fighters walk on rather
+ * than the same two rounds forever. That is the character-level half of the
+ * client's *"completely random, not a set amount of looping duels"*: phase 1
+ * stopped the exchanges repeating, and two fighters who never change are still
+ * a loop at the scale anybody actually watches at.
+ *
+ * The reset is a **cut** — `DuelOrnament` nulls its camera on `matches`
+ * changing — so new fighters appearing there is a scene change, not a swap
+ * mid-frame.
+ */
+export function createDuelFrom(pool: DuelPool, rng: () => number = Math.random): DuelState {
+  const [left, right] = rollPairing(pool, rng);
+  const st = createDuel(left, right);
+  st.pool = pool;
+  return st;
 }
 
 function centre(f: Fighter): number {
@@ -2775,8 +2805,12 @@ function step(st: DuelState): void {
       // Next match: same fighters, fresh health, re-rolled powers.
       const { a, b } = st;
       st.matches += 1;
-      st.a = makeFighter(START_A, 1, a.style);
-      st.b = makeFighter(START_B, -1, b.style);
+      // Fresh fighters if this fight came from a pool, the same two if it was
+      // pinned to a pairing. Rolled here rather than in the caller so every
+      // home of the duel gets it without knowing the roster exists.
+      const [left, right] = st.pool ? rollPairing(st.pool) : [a.style, b.style];
+      st.a = makeFighter(START_A, 1, left);
+      st.b = makeFighter(START_B, -1, right);
       /*
        * The anti-stall rail is **per match**, and resetting it here is what
        * makes that true. `pressure` counts sequences and nothing else cleared
@@ -3425,9 +3459,99 @@ function drawFighter(
     1 + (Math.sin(st.idle * 0.8 + f.phase) + Math.sin(st.idle * 1.37 + f.phase * 2)) * 0.008;
   const g = bladeLocal(f, flick);
 
+  const kind = FIGHTERS[f.style];
+  /*
+   * The three render-only multipliers. `weight` runs through every stroke, so a
+   * heavy fighter is *built* heavier rather than merely drawn bigger; `shoulder`
+   * widens the bar and both arm roots, which is where a square silhouette comes
+   * from; `hunch` carries the neck forward. None of them reaches the simulation
+   * — `FighterKind.prop` says why there is deliberately no height multiplier.
+   */
+  const lw = (n: number) => n * kind.prop.weight;
+  const shX = SHOULDER_X * kind.prop.shoulder;
+
   const hipY = TORSO_H;
   const shY = SHOULDER_Y + breath;
-  const neckX = lean * 0.9;
+  const neckX = lean * 0.9 + kind.prop.hunch;
+
+  /*
+   * Both hands, solved before anything is drawn rather than beside the arm that
+   * uses them: a sleeve hangs off an elbow, and the costume's back hook runs
+   * before the arms do. Same expressions as before, moved up.
+   */
+  let offHandX = g.hx - Math.cos(f.bladeA) * 8;
+  let offHandY = g.hy - Math.sin(f.bladeA) * 8;
+  if (f.action === "force") {
+    offHandX = -4 + 30 * Math.min(1, forceP * 2.5);
+    offHandY = 21;
+  } else if (f.action === "kicking") {
+    // Thrown out for balance, which is what a kick actually needs.
+    offHandX = -22;
+    offHandY = 12;
+  } else if (thrown) {
+    // Nothing to hold. Down at the side, so the two arms disagree and the
+    // extended one reads as the one doing something.
+    offHandX = -8;
+    offHandY = 28;
+  }
+  // An empty hand held out toward the blade it has just thrown, rather than
+  // clutching a grip that is fifty units away. It is the same arm; only the
+  // target changes.
+  const handX = thrown ? 26 : g.hx;
+  const handY = thrown ? 10 : g.hy;
+
+  /*
+   * What the costume is told about the body it is dressing.
+   *
+   * `vx` is clamped, and that is the one line in here worth defending. Cloth
+   * trails by travel, and the impulses in `MOVES` reach several units a frame —
+   * unclamped, a cape or a tail is flung the better part of a body-length
+   * behind its owner for the one frame of a launch, which reads as the drawing
+   * tearing rather than as speed. Costume travel is a *reading* of movement,
+   * not a measurement of it.
+   */
+  const costume: CostumeCtx = {
+    hx: neckX,
+    hy: headY + 6,
+    hr: 8,
+    shY,
+    shX,
+    hipY,
+    hipX: HIP_X,
+    feetY: BODY_H,
+    lean,
+    vx: Math.max(-3.5, Math.min(3.5, localVx)),
+    speed,
+    airborne,
+    t: st.idle,
+    phase: f.phase,
+    ink: v.ink,
+    blade,
+    dim: v.dim,
+    alpha: bodyAlpha,
+    hand: { x: handX, y: handY },
+    elbow: joint(shX + lean, shY, handX, handY, UPPER_ARM, FOREARM, -1),
+    offHand: { x: offHandX, y: offHandY },
+    offElbow: joint(-shX + lean, shY, offHandX, offHandY, OFF_UPPER_ARM, OFF_FOREARM, 1),
+    lw,
+  };
+
+  /*
+   * The costume behind the body — capes, wings, tails, robe skirts — drawn
+   * first so the limbs read *over* it. A cape drawn last swallows the legs it
+   * is supposed to hang off, which is most of how the filled version the client
+   * rejected turned two swordsmen into two slabs.
+   *
+   * It runs on a dead fighter too, deliberately: the corpse is rotated flat
+   * about its own feet inside this same transform, so the cloth goes down with
+   * it and lies on the ground, and the pairing stays legible through the two
+   * seconds anybody actually looks at the loser.
+   */
+  if (kind.back) {
+    ctx.save();
+    kind.back(ctx, costume);
+    ctx.restore();
+  }
 
   // ---- legs, behind everything -------------------------------------------
   const kickP = f.action === "kicking" ? Math.min(1, f.mf / MOVES[f.move].frames) : 0;
@@ -3451,110 +3575,86 @@ function drawFighter(
       footX += Math.sin(ph) * 13 * speed;
       footY -= Math.max(0, Math.cos(ph)) * 9 * speed;
     }
-    limb(hipX, hipY, footX, footY, THIGH, SHIN, -1, front ? 5 : 4);
+    limb(hipX, hipY, footX, footY, THIGH, SHIN, -1, lw(front ? 5 : 4));
   }
 
   // ---- spine and head -----------------------------------------------------
   ctx.globalAlpha = bodyAlpha;
   ctx.strokeStyle = v.ink;
-  ctx.lineWidth = 6;
+  ctx.lineWidth = lw(6);
   ctx.beginPath();
   ctx.moveTo(0, hipY);
   ctx.lineTo(neckX, shY - 2);
   ctx.stroke();
 
-  ctx.lineWidth = 5;
+  ctx.lineWidth = lw(5);
   ctx.beginPath();
-  ctx.moveTo(-SHOULDER_X + lean, shY);
-  ctx.lineTo(SHOULDER_X + lean, shY);
+  ctx.moveTo(-shX + lean, shY);
+  ctx.lineTo(shX + lean, shY);
   ctx.stroke();
 
-  ctx.fillStyle = v.ink;
-  ctx.beginPath();
-  ctx.arc(neckX, headY + 6, 8, 0, TAU);
-  ctx.fill();
+  // A hollow costume has no head: the point of an empty cowl is that there is
+  // nothing inside it, and a disc drawn under the hood makes it a hat.
+  if (!kind.hollow) {
+    ctx.fillStyle = v.ink;
+    ctx.beginPath();
+    ctx.arc(neckX, headY + 6, 8, 0, TAU);
+    ctx.fill();
+  }
 
   // ---- the off hand -------------------------------------------------------
-  // On the grip, a little below the sword hand, unless the arm is pushing.
-  let offHandX = g.hx - Math.cos(f.bladeA) * 8;
-  let offHandY = g.hy - Math.sin(f.bladeA) * 8;
-  if (f.action === "force") {
-    offHandX = -4 + 30 * Math.min(1, forceP * 2.5);
-    offHandY = 21;
-  } else if (f.action === "kicking") {
-    // Thrown out for balance, which is what a kick actually needs.
-    offHandX = -22;
-    offHandY = 12;
-  } else if (thrown) {
-    // Nothing to hold. Down at the side, so the two arms disagree and the
-    // extended one reads as the one doing something.
-    offHandX = -8;
-    offHandY = 28;
-  }
+  // On the grip, a little below the sword hand, unless the arm is pushing —
+  // solved above, with the costume's.
   ctx.globalAlpha = bodyAlpha * 0.85;
   ctx.strokeStyle = v.ink;
-  limb(-SHOULDER_X + lean, shY, offHandX, offHandY, OFF_UPPER_ARM, OFF_FOREARM, 1, 4.5);
+  limb(-shX + lean, shY, offHandX, offHandY, OFF_UPPER_ARM, OFF_FOREARM, 1, lw(4.5));
 
   // ---- the sword arm ------------------------------------------------------
   if (!dead) {
     ctx.globalAlpha = bodyAlpha;
-    // An empty hand held out toward the blade it has just thrown, rather than
-    // clutching a grip that is fifty units away. It is the same arm; only the
-    // target changes.
-    const handX = thrown ? 26 : g.hx;
-    const handY = thrown ? 10 : g.hy;
-    limb(SHOULDER_X + lean, shY, handX, handY, UPPER_ARM, FOREARM, -1, 5);
+    limb(shX + lean, shY, handX, handY, UPPER_ARM, FOREARM, -1, lw(5));
   }
 
   /*
-   * The whole costume is four marks — one per style, drawn on the head.
-   *
-   * Everything else that used to distinguish them (capes, auras, wings, tunics,
-   * chest panels, tails, belts) was filled geometry hung off the torso, and
-   * filled geometry is exactly what made the pair read as armoured shield-
-   * carriers. At the size these actually render, the head is the only place a
-   * silhouette difference survives anyway.
+   * Sleeves and anything hanging off a hand, over the arms because that is
+   * where they are. The one hook that is allowed to know about the limbs, which
+   * is why `CostumeCtx` carries both hands and both elbows.
    */
-  ctx.save();
-  ctx.translate(neckX, 0);
-  ctx.strokeStyle = v.ink;
-  ctx.globalAlpha = bodyAlpha;
-  ctx.lineWidth = 3;
-  if (f.style === "hooded") {
-    // A hood: a peak over the skull.
-    ctx.beginPath();
-    ctx.moveTo(-10, headY + 12);
-    ctx.lineTo(1, headY - 9);
-    ctx.lineTo(10, headY + 10);
-    ctx.stroke();
-  } else if (f.style === "horned") {
-    ctx.beginPath();
-    ctx.moveTo(-6, headY + 1);
-    ctx.quadraticCurveTo(-13, headY - 7, -8, headY - 13);
-    ctx.moveTo(6, headY + 1);
-    ctx.quadraticCurveTo(13, headY - 7, 8, headY - 13);
-    ctx.stroke();
-  } else if (f.style === "haloed") {
-    const halo = headY - 6 + Math.sin(st.idle * 0.04 + f.phase) * 1.6;
-    ctx.strokeStyle = blade;
-    ctx.globalAlpha = 0.9 * v.dim;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.ellipse(0, halo, 12, 4, 0, 0, TAU);
-    ctx.stroke();
-  } else {
-    // Caped: a helmet brow, one stroke.
-    ctx.beginPath();
-    ctx.arc(0, headY + 6, 9, Math.PI * 1.05, Math.PI * 1.95);
-    ctx.stroke();
+  if (kind.overlay) {
+    ctx.save();
+    kind.overlay(ctx, costume);
+    ctx.restore();
   }
-  ctx.restore();
+
+  /*
+   * The head mark, and it is still where most of the recognition lives.
+   *
+   * The four marks that used to be inlined here are the first four entries of
+   * `FIGHTERS` now, with the roster's other hooks around them. The reason they
+   * were *only* head marks is worth keeping, because it is also the reason the
+   * torso hooks are safe to have at all: everything that used to distinguish
+   * these figures below the neck (capes, auras, tunics, chest panels, belts) was
+   * **filled** geometry, and filled geometry composited into one pale slab that
+   * the client read, correctly, as a shield. A stroked cape is not that shape,
+   * and the ornament's camera — which landed after those marks were written —
+   * has since roughly doubled the size a fighter renders at, which is what makes
+   * a torso-level read legible in the first place.
+   *
+   * Drawn inside the head's own translate, so a costume can be written about a
+   * skull at the origin and needs to know nothing about lean or hunch.
+   */
+  if (kind.head) {
+    ctx.save();
+    ctx.translate(neckX, 0);
+    kind.head(ctx, costume);
+    ctx.restore();
+  }
 
   // Hit feedback: the figure flares in the spark colour.
   if (f.flash > 0) {
     ctx.globalAlpha = f.flash * 0.55 * v.dim;
     ctx.strokeStyle = v.spark;
-    ctx.lineWidth = 7;
+    ctx.lineWidth = lw(7);
     ctx.beginPath();
     ctx.moveTo(0, hipY);
     ctx.lineTo(neckX, shY - 2);
@@ -3714,10 +3814,23 @@ export function duelFocus(st: DuelState): { cx: number; width: number; top: numb
   const b = span(st.b);
   const lo = Math.min(a.lo, b.lo);
   const hi = Math.max(a.hi, b.hi);
+  /*
+   * **Clearance is per costume, because the costumes are not the same height.**
+   *
+   * This was a flat 26 units above the torso origin, which is a head (10) plus
+   * air, and it was right for four marks that all sat on the skull. A roster
+   * has horns, a halo and a pair of wings in it: the wings reach 21 units above
+   * the origin on their own, so a fixed 26 left five units of air above the tips
+   * — the camera would frame them shaved off at the top of the ornament with
+   * nothing in the code saying why. Each entry declares its `headroom` and
+   * `npm run check` re-derives it by driving the hooks, so the number cannot
+   * drift away from the drawing.
+   */
+  const clear = (f: Fighter) => Math.max(26, FIGHTERS[f.style].headroom + 16);
   return {
     cx: (lo + hi) / 2,
     width: hi - lo,
-    top: Math.min(apex(st.a), apex(st.b)) - 26,
+    top: Math.min(apex(st.a) - clear(st.a), apex(st.b) - clear(st.b)),
   };
 }
 

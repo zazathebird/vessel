@@ -610,7 +610,8 @@ All deliberate. Add to this list rather than silently diverging.
    2026-08-18 the second reason was that five taps on this slot were the phone band's only findable
    route to sign-in, which the footer's permanent link has since replaced).
    Offered today: None, the two **lightsword duels** from `docs/DUEL.md` (2026-08-13, the only
-   canvas ornament — `src/components/DuelOrnament.tsx`), and **Sonar** (appended at index 7,
+   canvas ornament — `src/components/DuelOrnament.tsx`; each is a *pool* of four pairings since
+   2026-08-18, not a fixed pair — see deviation 9), and **Sonar** (appended at index 7,
    2026-08-17, now `DEFAULT_ORNAMENT`) — a scope the site reads rather than a circle it admires:
    bezel, range rings, one beam on a 4.8s revolution, and contacts whose flares are
    `animation-delay`-matched to the beam's arrival at their bearing, arithmetic written out in
@@ -684,10 +685,46 @@ All deliberate. Add to this list rather than silently diverging.
    ` · adapted` suffix went with it; see the adapted-layouts trap above for what that costs.
    `docs/DECISIONS.md` has the full note.
 9. **The duel blades are literal colours** (client request, 2026-08-13): the good side fights in
-   blue/green (`hooded` blue, `haloed` green) and the evil side in red, in **every** palette —
-   `BLADE_COLORS` in `src/fx/duel.ts`. This is the one deliberate exception to "no component
-   should contain a literal colour"; everything else in the duel scene (bodies, sparks, ground,
-   blade cores, health-bar tracks) still reads the live palette and recolours with the bleed. The
+   blue/green and the evil side in red, in **every** palette — `BLADE_COLORS`, which lives in
+   `src/fx/fighters.ts` now and is re-exported from `src/fx/duel.ts` under the name everything
+   greps for. This is the one deliberate exception to "no component should contain a literal
+   colour"; everything else in the duel scene (bodies, sparks, ground, blade cores, health-bar
+   tracks) still reads the live palette and recolours with the bleed. **Alignment is declared
+   twice** — as `side` on the roster entry and as the colour — and `npm run check` fails if the two
+   disagree, because a good fighter holding a red blade is the one way this carve-out silently
+   stops meaning anything.
+
+   **Who is fighting is a roster of eight, in `src/fx/fighters.ts`** (2026-08-18, phase 2 of
+   `docs/DUEL-ABSORB.md`, client: *"make the characters obvious and instantly identifiable"*). Four
+   good, four evil, in two pools of four pairings: `duel` runs The Hermit / The Apprentice against
+   The Mask / The Hollow, `duelholy` runs The Saint / The Seraph against The Devil / The Crown.
+   Both duels **roll a pairing on mount and again on every match reset**, so the fighters change
+   every ~52s — two fighters who never change are still a loop at the scale anybody watches at.
+   Five things there are load-bearing:
+
+   - **Costumes are stroked, never filled.** The version the client rejected drew a filled torso
+     quad, a filled head block and a filled robe, which composited into one pale slab about as wide
+     as the figure was tall — *"they are holding shields"*. Mass is outline and stroke weight, and
+     that is the whole vocabulary. Gated: a hook that calls `fill` at all fails the suite.
+   - **`proportion` is `shoulder` / `weight` / `hunch`, and there is deliberately no height
+     multiplier.** The blade is drawn inside the same transform as the body and its length feeds
+     `bladeGap`, the clash test and every contact frame in `MOVES` — a vertically scaled figure
+     would hold a sword whose drawn length disagreed with the one the simulation uses, which is the
+     "proximity is not contact" bug class bought for nothing.
+   - **Every costume declares its `headroom` and `duelFocus` frames on it.** Head clearance was a
+     flat 26 units, right for four marks that all sat on a skull and wrong for horns, a halo and
+     wings: measured over 320,000 frames the tall costumes were cropped on 0.07% of frames at the
+     flat value and 0.00% per-costume, for a median camera scale of 2.71 against 2.70. The
+     declaration is re-derived by the gate from the drawing calls, and **over-declaring fails too**
+     — slack pulls the camera back for nothing.
+   - **`back` hooks draw before the legs.** A cape drawn last swallows the limbs it hangs off,
+     which is most of how the filled version turned two swordsmen into two slabs. Costume is drawn
+     on a dead fighter as well: it rotates flat with the corpse and keeps the pairing legible
+     through the two seconds anybody actually looks at the loser.
+   - **No real names, anywhere.** The client permitted them on operator-gated surfaces; none are
+     used, so the flagged residue (names in the public bundle even when never rendered) does not
+     exist. There is no proper noun in the file. **Nametags were declined** for the same reason
+     deviation 8 removed the vitals strip — a label over a 61px figure is a caption on a fight. The
    same day the four silhouettes were upgraded to read unmistakably — hair/halo/aura/robe,
    curved horns/bat wing/spade tail, hood/belt/tunic, dome helmet/chest panel/floor cape — with
    every non-blade colour still palette-supplied.
@@ -1519,7 +1556,10 @@ frames, that **224,000 procedurally generated sequences** are every one arithmet
 in order, none past the length, no contact frame inside a `hold` plateau, no damage reaction before
 its cause, no recovery scheduled while a thrown blade is still in the air, no move nothing reaches,
 and every module that declares `hits` landing one on every roll), and that a pass move crosses
-without mirroring the figure and lands it upright; the catalogue counts this file documents; that no stylesheet rule pairs a band with a
+without mirroring the figure and lands it upright; that every duel costume is stroked rather than
+filled, declares its reach tightly enough for the camera to frame it, and sits in a pool that puts
+one alignment against the other, and that a pooled fight really does rotate its fighters while a
+pinned pairing does not; the catalogue counts this file documents; that no stylesheet rule pairs a band with a
 layout that band never renders; that no preset offers a withdrawn effect or ornament; the edge
 fade's truth table including both 1px dead bands; that no scroll-driven animation is reset by the
 entrance layer and no from-only keyframe lands on a value it cannot interpolate to; the ornament
