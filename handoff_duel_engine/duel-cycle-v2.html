@@ -9,116 +9,140 @@
 
   * { margin:0; padding:0; box-sizing:border-box; }
   html, body {
-    width:100%; height:100%; overflow:hidden;
+    width:100%; height:100%;
     background:#050507;
     font-family:'JetBrains Mono', monospace;
   }
-  #stage { position:fixed; inset:0; }
-  canvas { display:block; width:100%; height:100%; }
+
+  /* The engine is a PANEL, not a page. Everything below is positioned
+     against #duelPanel, never against the viewport, so the same markup
+     drops into a page at any size. The host sizes the panel; the panel
+     sizes itself to nothing. */
+  #duelPanel {
+    position:relative; overflow:hidden;
+    width:100%; height:100%;
+    background:#050507;
+    container-type:inline-size;
+    --pad: clamp(10px, 2.4cqw, 22px);
+  }
+  #duelPanel canvas { display:block; width:100%; height:100%; }
 
   #vignette {
-    position:fixed; inset:0; pointer-events:none;
+    position:absolute; inset:0; pointer-events:none;
     background: radial-gradient(ellipse at center, rgba(0,0,0,0) 42%, rgba(0,0,0,0.62) 100%);
   }
 
+  /* --- title card ------------------------------------------------- */
   #titleCard {
-    position:fixed; top:6%; left:50%; transform:translate(-50%,-8px);
-    text-align:center; pointer-events:none;
-    opacity:0; transition:opacity 0.6s ease, transform 0.6s ease;
+    position:absolute; top:7%; left:50%; translate:-50% -8px;
+    text-align:center; pointer-events:none; width:100%;
+    opacity:0; transition:opacity 0.6s ease, translate 0.6s ease;
   }
-  #titleCard.show { opacity:1; transform:translate(-50%,0); }
+  #titleCard.show { opacity:1; translate:-50% 0; }
   #titleCard .names {
     font-family:'Bebas Neue', sans-serif;
-    font-size:clamp(26px, 5vw, 54px);
-    letter-spacing:3px;
+    font-size:clamp(20px, 5cqw, 54px);
+    letter-spacing:0.06em;
     color:#f2f2f2;
-    text-shadow:0 0 18px rgba(0,0,0,0.8), 0 2px 4px rgba(0,0,0,0.6);
+    text-shadow:0 0 18px rgba(0,0,0,0.85), 0 2px 4px rgba(0,0,0,0.6);
     line-height:1.05;
   }
   #titleCard .vs {
     font-family:'JetBrains Mono', monospace;
-    font-size:10px; letter-spacing:6px; color:#9a9aa5;
-    margin-top:4px;
+    font-size:clamp(8px, 1.1cqw, 10px); letter-spacing:0.5em; color:#9a9aa5;
+    margin-top:5px; text-shadow:0 1px 3px rgba(0,0,0,0.9);
   }
 
   #resultCard {
-    position:fixed; top:15%; left:50%; transform:translate(-50%,10px);
+    position:absolute; top:15%; left:50%; translate:-50% 10px; width:100%;
     font-family:'Bebas Neue', sans-serif;
-    font-size:clamp(18px, 3vw, 28px);
-    letter-spacing:4px;
+    font-size:clamp(16px, 3cqw, 30px);
+    letter-spacing:0.14em;
     color:#ffd966;
-    text-shadow:0 0 20px rgba(255,180,60,0.5), 0 2px 4px rgba(0,0,0,0.7);
-    opacity:0; transition:opacity 0.5s ease, transform 0.5s ease;
+    text-shadow:0 0 20px rgba(255,180,60,0.5), 0 2px 4px rgba(0,0,0,0.75);
+    opacity:0; transition:opacity 0.5s ease, translate 0.5s ease;
     pointer-events:none; text-align:center;
   }
-  #resultCard.show { opacity:1; transform:translate(-50%,0); }
+  #resultCard.show { opacity:1; translate:-50% 0; }
   #resultCard .sub {
     display:block;
     font-family:'JetBrains Mono', monospace;
-    font-size:9px; letter-spacing:3px; color:#8d8d98;
+    font-size:9px; letter-spacing:0.3em; color:#8d8d98;
     margin-top:6px; text-shadow:none;
   }
 
+  /* --- controls ----------------------------------------------------
+     Hidden until the panel is hovered or something inside it has focus,
+     so the default state of a background panel is just the fight. */
   #controls {
-    position:fixed; bottom:4.5%; left:50%; transform:translateX(-50%);
+    position:absolute; bottom:var(--pad); left:50%; translate:-50% 0;
     display:flex; align-items:center; gap:8px;
-    background:rgba(15,15,20,0.55);
-    border:1px solid rgba(255,255,255,0.08);
+    background:rgba(12,12,17,0.62);
+    border:1px solid rgba(255,255,255,0.09);
     backdrop-filter:blur(10px);
-    padding:9px 12px; border-radius:999px;
-    max-width:94vw;
+    padding:8px 11px; border-radius:999px;
+    max-width:calc(100% - var(--pad)*2);
+    opacity:0.14; transition:opacity 0.35s ease;
   }
+  #duelPanel:hover #controls, #controls:focus-within { opacity:1; }
   .ctlBtn {
     appearance:none; border:none; cursor:pointer;
     background:rgba(255,255,255,0.06);
     color:#e8e8ec;
     font-family:'JetBrains Mono', monospace;
-    font-size:11px; letter-spacing:1px;
-    padding:9px 14px; border-radius:999px;
-    transition:background 0.2s ease, transform 0.15s ease;
+    font-size:11px; letter-spacing:0.08em;
+    padding:8px 13px; border-radius:999px;
+    transition:background 0.2s ease, scale 0.15s ease;
     white-space:nowrap;
   }
   .ctlBtn:hover { background:rgba(255,255,255,0.14); }
-  .ctlBtn:active { transform:scale(0.96); }
+  .ctlBtn:active { scale:0.96; }
   .ctlBtn:focus-visible { outline:2px solid #ffd966; outline-offset:2px; }
   .ctlBtn.on { background:rgba(255,217,102,0.16); color:#ffd966; }
   #fightLabel {
-    font-size:9px; letter-spacing:2px; color:#7a7a85;
-    padding:0 8px; min-width:120px; text-align:center;
+    font-size:9px; letter-spacing:0.2em; color:#7a7a85;
+    padding:0 8px; min-width:118px; text-align:center;
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
   }
 
   #loading {
-    position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
-    color:#6a6a75; font-family:'JetBrains Mono', monospace; font-size:12px; letter-spacing:2px;
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    color:#6a6a75; font-family:'JetBrains Mono', monospace; font-size:12px; letter-spacing:0.2em;
     background:#050507; z-index:10;
   }
 
-  @media (max-width:560px){
+  /* Container queries, not media queries — the panel may be 400px wide
+     inside a 1600px page, and it is the panel that has to adapt. */
+  @container (max-width: 560px){
     #fightLabel { display:none; }
-    .ctlBtn { padding:8px 11px; font-size:10px; }
+    .ctlBtn { padding:7px 10px; font-size:10px; }
+    #controls { opacity:0.5; }
+  }
+  @media (prefers-reduced-motion: reduce){
+    #titleCard, #resultCard, .ctlBtn, #controls { transition:none; }
   }
 </style>
 </head>
 <body>
 
-<div id="loading">IGNITING…</div>
-<div id="stage">
+<div id="duelPanel">
   <canvas id="c"></canvas>
-</div>
-<div id="vignette"></div>
+  <div id="vignette"></div>
 
-<div id="titleCard">
-  <div class="names" id="namesLine"></div>
-  <div class="vs" id="arenaLine">DUEL</div>
-</div>
-<div id="resultCard"></div>
+  <div id="titleCard">
+    <div class="names" id="namesLine"></div>
+    <div class="vs" id="arenaLine">DUEL</div>
+  </div>
+  <div id="resultCard"></div>
 
-<div id="controls">
-  <button class="ctlBtn" id="playBtn">⏸ PAUSE</button>
-  <div id="fightLabel">—</div>
-  <button class="ctlBtn" id="soundBtn">♪ SOUND</button>
-  <button class="ctlBtn" id="skipBtn">SKIP ⏭</button>
+  <div id="controls">
+    <button class="ctlBtn" id="playBtn">⏸ PAUSE</button>
+    <div id="fightLabel">—</div>
+    <button class="ctlBtn" id="soundBtn">♪ SOUND</button>
+    <button class="ctlBtn" id="skipBtn">SKIP ⏭</button>
+  </div>
+
+  <div id="loading">IGNITING…</div>
 </div>
 
 <script>
@@ -165,6 +189,9 @@ function pt(o, angleDeg, len, dir){
   const r = angleDeg*DEG;
   return { x:o.x+Math.sin(r)*len*dir, y:o.y-Math.cos(r)*len };
 }
+/* The one shared wall clock. Effects that wobble read it rather than each
+   growing a timer, so everything that flickers flickers in step. */
+function clock(){ return state ? state.clock : 0; }
 function rotAround(p, c, rad){
   const dx=p.x-c.x, dy=p.y-c.y;
   const cs=Math.cos(rad), sn=Math.sin(rad);
@@ -184,6 +211,10 @@ const RIG = {
 */
 const POSE_BASE = {
   lean:6, headTilt:0, rot:0, hipBob:0,
+  // grip: how much of the off hand is on the weapon. 1 = both hands on the
+  // hilt (solved by IK in computeJoints), 0 = the pose's own armL angles.
+  // A scalar rather than a flag so `lerpPose` can blend releasing the grip.
+  grip:1,
   weaponExtend:1, weaponAngle:35, weaponAngleL:325,
   armR:{shoulder:105, elbow:55}, armL:{shoulder:200, elbow:205},
   legR:{hip:168, knee:176}, legL:{hip:196, knee:184}
@@ -308,11 +339,105 @@ const POSES = {
   deathFall:  P({ lean:-48, headTilt:10, hipBob:58,
                   armR:{shoulder:196, elbow:210}, armL:{shoulder:246, elbow:236},
                   weaponAngle:190, weaponExtend:0,
-                  legR:{hip:95, knee:110}, legL:{hip:100, knee:108} })
+                  legR:{hip:95, knee:110}, legL:{hip:100, knee:108} }),
+
+  /* --- signature guards -------------------------------------------------
+     A duelist is recognisable standing still, and until now every fighter
+     stood in the same one. These are resolved per fighter at playback by
+     `poseFor` — the generator still just says 'guard'.
+
+     Soresu   tight and bladed away, sabre vertical, elbows in — all defence
+     Djem So  sabre high and back over the shoulder, weight forward — power
+     Ataru    coiled low, sabre trailing, knees deep — ready to leave the floor
+     Makashi  side-on fencer, one hand, off hand at the small of the back
+     Juyo     open and unorthodox, sabre low and wide, chin up
+     Whirl    both blades out horizontal, arms wide (four-armed styling)
+     Brawl    the blunt weapons — bat on the shoulder, no technique at all  */
+  guardSoresu:  P({ lean:3, headTilt:-1, armR:{shoulder:118, elbow:38},
+                    weaponAngle:2, legR:{hip:162,knee:174}, legL:{hip:200,knee:184}, hipBob:3 }),
+  guardDjemSo:  P({ lean:11, headTilt:-3, armR:{shoulder:348, elbow:316},
+                    weaponAngle:318, legR:{hip:146,knee:166}, legL:{hip:212,knee:190}, hipBob:4 }),
+  guardAtaru:   P({ lean:14, headTilt:-4, armR:{shoulder:128, elbow:66},
+                    weaponAngle:24, legR:{hip:140,knee:154}, legL:{hip:218,knee:198}, hipBob:12 }),
+  guardMakashi: P({ lean:0, headTilt:-6, grip:0, armR:{shoulder:126, elbow:74},
+                    armL:{shoulder:238, elbow:288}, weaponAngle:52,
+                    legR:{hip:158,knee:176}, legL:{hip:198,knee:180} }),
+  guardJuyo:    P({ lean:-4, headTilt:5, armR:{shoulder:112, elbow:134},
+                    weaponAngle:142, legR:{hip:150,knee:166}, legL:{hip:208,knee:186}, hipBob:2 }),
+  guardWhirl:   P({ lean:6, grip:0, armR:{shoulder:96, elbow:116}, armL:{shoulder:264, elbow:244},
+                    weaponAngle:126, weaponAngleL:236,
+                    legR:{hip:152,knee:170}, legL:{hip:206,knee:186} }),
+  guardBrawl:   P({ lean:4, grip:0, armR:{shoulder:20, elbow:330}, armL:{shoulder:196, elbow:204},
+                    weaponAngle:300, legR:{hip:164,knee:176}, legL:{hip:200,knee:184}, hipBob:2 }),
+
+  /* --- the stare --------------------------------------------------------
+     Squared up, sabre lowered, chin level. Half of what a screen duel is
+     made of is the beat where neither of them moves. */
+  standoff:  P({ lean:2, headTilt:-3, armR:{shoulder:140, elbow:150},
+                 weaponAngle:152, legR:{hip:166,knee:178}, legL:{hip:198,knee:182}, hipBob:1 }),
+
+  /* --- ground work ------------------------------------------------------
+     `rot` pivots about the hip, so a genuinely prone figure would swing its
+     legs through the floor. A roll therefore drops hipHeight in the pose and
+     tucks the limbs in, and lets `rot` carry only the spin — the same
+     compromise `deathFall` makes. */
+  rollTuck: P({ lean:40, headTilt:20, hipBob:46, grip:0.5,
+                armR:{shoulder:150, elbow:200}, armL:{shoulder:210, elbow:250},
+                weaponAngle:190, legR:{hip:110,knee:60}, legL:{hip:120,knee:66} }),
+  rollUp:   P({ lean:18, headTilt:4, hipBob:26,
+                armR:{shoulder:120, elbow:70}, weaponAngle:30,
+                legR:{hip:132,knee:104}, legL:{hip:214,knee:236} }),
+
+  /* --- aerials --- */
+  handspring: P({ lean:-36, headTilt:14, hipBob:-6, grip:0,
+                  armR:{shoulder:340, elbow:330}, armL:{shoulder:20, elbow:10},
+                  weaponAngle:300, legR:{hip:126,knee:120}, legL:{hip:160,knee:150} }),
+  wallKick:   P({ lean:-18, headTilt:-6, hipBob:-18, grip:0,
+                  armR:{shoulder:16, elbow:346}, armL:{shoulder:262, elbow:290},
+                  weaponAngle:318, legR:{hip:64,knee:96}, legL:{hip:150,knee:112} }),
+  airStrike:  P({ lean:-6, headTilt:-4, hipBob:-8,
+                  armR:{shoulder:8, elbow:344}, weaponAngle:330,
+                  legR:{hip:132,knee:96}, legL:{hip:176,knee:140} }),
+  tuck:       P({ lean:0, hipBob:-10, grip:0.6,
+                  armR:{shoulder:150, elbow:210}, armL:{shoulder:212, elbow:262},
+                  weaponAngle:200, legR:{hip:104,knee:36}, legL:{hip:120,knee:44} }),
+
+  /* --- telekinesis on objects --- */
+  liftCast:     P({ lean:-6, headTilt:-6, grip:0, armR:{shoulder:44, elbow:16},
+                    armL:{shoulder:316, elbow:344}, weaponAngle:6,
+                    legR:{hip:158,knee:174}, legL:{hip:202,knee:184} }),
+  throwWind:    P({ lean:-14, headTilt:6, hipBob:-2, grip:0,
+                    armR:{shoulder:320, elbow:296}, armL:{shoulder:300, elbow:276},
+                    weaponAngle:288, legR:{hip:158,knee:172}, legL:{hip:214,knee:194} }),
+  throwRelease: P({ lean:20, headTilt:-6, hipBob:4, grip:0,
+                    armR:{shoulder:82, elbow:78}, armL:{shoulder:96, elbow:88},
+                    weaponAngle:60, legR:{hip:126,knee:148}, legL:{hip:222,knee:198} }),
+  recoverBlade: P({ lean:4, headTilt:-2, grip:0, weaponExtend:0,
+                    armR:{shoulder:88, elbow:80}, armL:{shoulder:206, elbow:210},
+                    legR:{hip:164,knee:176}, legL:{hip:200,knee:184} }),
+
+  /* --- deflection and the long press --- */
+  deflectSpin: P({ lean:2, armR:{shoulder:64, elbow:24}, weaponAngle:350,
+                   legR:{hip:156,knee:170}, legL:{hip:206,knee:186} }),
+  deflectLow:  P({ lean:10, headTilt:2, armR:{shoulder:124, elbow:140}, weaponAngle:158,
+                   legR:{hip:152,knee:168}, legL:{hip:204,knee:186}, hipBob:6 }),
+  pressFwd:    P({ lean:22, headTilt:-4, armR:{shoulder:100, elbow:118}, weaponAngle:118,
+                   legR:{hip:128,knee:150}, legL:{hip:224,knee:198}, hipBob:4 }),
+  pressBack:   P({ lean:-14, headTilt:6, armR:{shoulder:48, elbow:66}, weaponAngle:288,
+                   legR:{hip:176,knee:180}, legL:{hip:206,knee:190}, hipBob:6 })
 };
 
+/* Poses where the off hand is demonstrably doing something other than
+   holding the hilt. Everything else two-hands the weapon, which is the
+   single largest change to how the figures read. */
+for(const k of ['igniteStart','salute','guardBack','thrust','kick','spinKick',
+                'forceCast','forcePull','taunt','stagger','knockback','wounded',
+                'exhausted','disarmLose','finishLose','kneel','deathFall']){
+  POSES[k].grip = 0;
+}
+
 const POSE_ANGLE_KEYS = ['lean','headTilt','weaponAngle','weaponAngleL'];
-const POSE_LINEAR_KEYS = ['rot','hipBob','weaponExtend'];
+const POSE_LINEAR_KEYS = ['rot','hipBob','weaponExtend','grip'];
 const POSE_JOINTS = [['armR','shoulder'],['armR','elbow'],['armL','shoulder'],['armL','elbow'],
                      ['legR','hip'],['legR','knee'],['legL','hip'],['legL','knee']];
 
@@ -330,76 +455,113 @@ function lerpPose(a, b, t){
    Values 0..1. They bias which choreography modules get drawn.
 */
 function F(o){
-  return Object.assign({
+  const out = Object.assign({
     weapon:'blade', scale:1, cape:false, jitter:1, speed:1, bladeLen:88,
-    style:{ agg:0.5, def:0.5, acro:0.4, force:0.2, flair:0.3 }
+    guard:'guard',            // signature stance, substituted at playback
+    style:{ agg:0.5, def:0.5, acro:0.4, force:0.2, flair:0.3, blaster:0 }
   }, o);
+  // `blaster` is newer than the fighters, so default it rather than making
+  // every entry restate it. A 0 weight means the module never draws.
+  if(out.style.blaster === undefined) out.style.blaster = 0;
+  return out;
 }
 
 const FIGHTERS = {
-  luke:      F({ name:"LUKE SKYWALKER", color:"#e9e6da", glow:"#4fb8ff",
-                 style:{agg:0.62,def:0.5,acro:0.55,force:0.55,flair:0.35}, speed:1.02 }),
+  luke:      F({ name:"LUKE SKYWALKER", mark:"#a3853f", color:"#e9e6da", glow:"#4fb8ff", guard:'guardDjemSo',
+                 style:{agg:0.62,def:0.5,acro:0.55,force:0.55,flair:0.35,blaster:0.5}, speed:1.02 }),
   vader:     F({ name:"DARTH VADER", color:"#1c1c20", glow:"#ff3b3b", scale:1.08, cape:true,
-                 style:{agg:0.82,def:0.45,acro:0.12,force:0.75,flair:0.2}, speed:0.86, jitter:0.4 }),
-  obiwan:    F({ name:"OBI-WAN KENOBI", color:"#d8cdb2", glow:"#4fb8ff",
-                 style:{agg:0.4,def:0.9,acro:0.4,force:0.45,flair:0.25}, speed:1.0, jitter:0.5 }),
-  anakin:    F({ name:"ANAKIN SKYWALKER", color:"#c9b48d", glow:"#4fb8ff",
-                 style:{agg:0.9,def:0.35,acro:0.6,force:0.5,flair:0.45}, speed:1.16, jitter:1.6 }),
+                 guard:'guardDjemSo', proportion:{shoulderW:1.24, spine:1.04, upperArm:1.05},
+                 style:{agg:0.82,def:0.45,acro:0.12,force:0.75,flair:0.2,blaster:0.4}, speed:0.86, jitter:0.4 }),
+  obiwan:    F({ name:"OBI-WAN KENOBI", mark:"#9a8460", color:"#d8cdb2", glow:"#4fb8ff", guard:'guardSoresu',
+                 style:{agg:0.4,def:0.9,acro:0.4,force:0.45,flair:0.25,blaster:0.5}, speed:1.0, jitter:0.5 }),
+  anakin:    F({ name:"ANAKIN SKYWALKER", mark:"#4a3524", color:"#c9b48d", glow:"#4fb8ff", guard:'guardDjemSo',
+                 style:{agg:0.9,def:0.35,acro:0.6,force:0.5,flair:0.45,blaster:0.4}, speed:1.16, jitter:1.6 }),
   yoda:      F({ name:"YODA", color:"#5fae4a", glow:"#3dff6b", scale:0.62, bladeLen:64,
-                 style:{agg:0.6,def:0.55,acro:0.95,force:0.8,flair:0.5}, speed:1.34, jitter:0.4 }),
-  dooku:     F({ name:"COUNT DOOKU", color:"#1c1c20", glow:"#ff3b3b", scale:1.1, cape:true,
-                 style:{agg:0.5,def:0.85,acro:0.2,force:0.6,flair:0.55}, speed:1.06, jitter:0.3 }),
-  maul:      F({ name:"DARTH MAUL", color:"#8c1c1c", glow:"#ff2020", weapon:'staff', bladeLen:78,
-                 style:{agg:0.92,def:0.4,acro:0.85,force:0.35,flair:0.7}, speed:1.24, jitter:1.4 }),
+                 guard:'guardAtaru',
+                 proportion:{spine:0.84, upperArm:0.9, forearm:0.9, thigh:0.88, shin:0.88,
+                             headR:1.32, shoulderW:1.06},
+                 style:{agg:0.6,def:0.55,acro:0.95,force:0.8,flair:0.5,blaster:0.2}, speed:1.34, jitter:0.4 }),
+  dooku:     F({ name:"COUNT DOOKU", mark:"#c8c3bb", color:"#1c1c20", glow:"#ff3b3b", scale:1.1, cape:true,
+                 guard:'guardMakashi', curvedHilt:true, bladeLen:84,
+                 proportion:{spine:1.08, upperArm:1.09, forearm:1.09, thigh:1.06, shin:1.06, shoulderW:0.9},
+                 style:{agg:0.5,def:0.85,acro:0.2,force:0.6,flair:0.55,blaster:0.3}, speed:1.06, jitter:0.3 }),
+  maul:      F({ name:"DARTH MAUL", mark:"#20100f", color:"#8c1c1c", glow:"#ff2020", weapon:'staff', bladeLen:78,
+                 guard:'guardAtaru',
+                 style:{agg:0.92,def:0.4,acro:0.85,force:0.35,flair:0.7,blaster:0.3}, speed:1.24, jitter:1.4 }),
   palpatine: F({ name:"EMPEROR PALPATINE", color:"#221926", glow:"#ff3b3b", cape:true,
-                 style:{agg:0.75,def:0.35,acro:0.55,force:0.95,flair:0.8}, speed:1.2, jitter:1.8 }),
+                 guard:'guardJuyo', proportion:{spine:0.95, hipHeight:0.93},
+                 style:{agg:0.75,def:0.35,acro:0.55,force:0.95,flair:0.8,blaster:0.2}, speed:1.2, jitter:1.8 }),
   ahsoka:    F({ name:"AHSOKA TANO", color:"#e2762c", glow:"#7fe3ff", weapon:'dual', bladeLen:72,
-                 style:{agg:0.7,def:0.6,acro:0.9,force:0.4,flair:0.6}, speed:1.22, jitter:1.0 }),
+                 guard:'guardAtaru',
+                 style:{agg:0.7,def:0.6,acro:0.9,force:0.4,flair:0.6,blaster:0.5}, speed:1.22, jitter:1.0 }),
   grievous:  F({ name:"GENERAL GRIEVOUS", color:"#c8c2ae", glow:"#3dff6b", weapon:'dual', scale:1.12,
-                 style:{agg:0.85,def:0.3,acro:0.6,force:0.05,flair:0.75}, speed:1.3, jitter:2.6 }),
-  rey:       F({ name:"REY", color:"#d9cfc0", glow:"#4fb8ff",
-                 style:{agg:0.68,def:0.5,acro:0.6,force:0.5,flair:0.3}, speed:1.1, jitter:1.2 }),
+                 guard:'guardWhirl',
+                 proportion:{upperArm:1.3, forearm:1.32, thigh:1.16, shin:1.22, shoulderW:1.12,
+                             spine:1.02, headR:0.8},
+                 style:{agg:0.85,def:0.3,acro:0.6,force:0.05,flair:0.75,blaster:0.6}, speed:1.3, jitter:2.6 }),
+  rey:       F({ name:"REY", mark:"#6b4f36", color:"#d9cfc0", glow:"#4fb8ff",
+                 style:{agg:0.68,def:0.5,acro:0.6,force:0.5,flair:0.3,blaster:0.5}, speed:1.1, jitter:1.2 }),
   kylo:      F({ name:"KYLO REN", color:"#202026", glow:"#ff4a2a", scale:1.06, cape:true,
-                 style:{agg:0.88,def:0.3,acro:0.25,force:0.65,flair:0.4}, speed:0.96, jitter:2.2 }),
+                 guard:'guardDjemSo', unstable:true, crossguard:true,
+                 style:{agg:0.88,def:0.3,acro:0.25,force:0.65,flair:0.4,blaster:0.4}, speed:0.96, jitter:2.2 }),
 
-  jesus:     F({ name:"JESUS", color:"#f3ead6", glow:"#ffd966",
+  jesus:     F({ name:"JESUS", mark:"#6d4d30", color:"#f3ead6", glow:"#ffd966", guard:'guardSoresu',
                  style:{agg:0.35,def:0.8,acro:0.35,force:0.9,flair:0.3}, speed:0.94, jitter:0.5 }),
-  devil:     F({ name:"THE DEVIL", color:"#23090a", glow:"#ff1f3d", scale:1.04, cape:true,
+  devil:     F({ name:"THE DEVIL", mark:"#5a1a1c", color:"#23090a", glow:"#ff1f3d", scale:1.04, cape:true,
+                 guard:'guardJuyo', proportion:{shoulderW:1.16},
                  style:{agg:0.85,def:0.4,acro:0.35,force:0.85,flair:0.7}, speed:0.98, jitter:1.3 }),
 
-  rick:      F({ name:"RICK SANCHEZ", color:"#e7ebef", glow:"#39ff6a",
-                 style:{agg:0.6,def:0.4,acro:0.3,force:0.5,flair:0.9}, speed:1.2, jitter:8, comedic:true }),
-  morty:     F({ name:"MORTY SMITH", color:"#f2d33c", glow:"#2be0c8", scale:0.94,
-                 style:{agg:0.3,def:0.5,acro:0.4,force:0.15,flair:0.3}, speed:1.14, jitter:9, comedic:true }),
-  homer:     F({ name:"HOMER SIMPSON", color:"#ffffff", glow:"#8a5a2b", weapon:'blunt', scale:1.05,
-                 style:{agg:0.55,def:0.25,acro:0.1,force:0.05,flair:0.6}, speed:0.84, jitter:4, comedic:true }),
-  ned:       F({ name:"NED FLANDERS", color:"#3fae4a", glow:"#c9a45c", weapon:'blunt',
-                 style:{agg:0.3,def:0.7,acro:0.15,force:0.05,flair:0.4}, speed:0.9, jitter:3, comedic:true }),
+  rick:      F({ name:"RICK SANCHEZ", mark:"#dff0f6", color:"#e7ebef", glow:"#39ff6a", guard:'guardJuyo',
+                 style:{agg:0.6,def:0.4,acro:0.3,force:0.5,flair:0.9,blaster:0.9}, speed:1.2, jitter:8, comedic:true }),
+  morty:     F({ name:"MORTY SMITH", mark:"#6b4a2a", color:"#f2d33c", glow:"#2be0c8", scale:0.94,
+                 proportion:{headR:1.16, spine:0.94},
+                 style:{agg:0.3,def:0.5,acro:0.4,force:0.15,flair:0.3,blaster:0.4}, speed:1.14, jitter:9, comedic:true }),
+
+  /* Homer and Ned are the client's own characterisation, 2026-08-19:
+     Homer swings a heavy UNSTABLE orange blade with telegraphed, frantic
+     technique; Ned is quietly agile behind a righteous green one. Both were
+     `blunt` before, which made their duel a bat fight — the blades are the
+     point of the gag, and `mFinishCocoa` is its punchline. */
+  homer:     F({ name:"HOMER SIMPSON", mark:"#2f2f37", color:"#f7d94c", glow:"#ff7a12", scale:1.05,
+                 guard:'guardBrawl', unstable:true, bladeLen:82,
+                 proportion:{shoulderW:1.52, spine:0.8, thigh:0.76, shin:0.8,
+                             hipHeight:0.9, headR:1.2, upperArm:0.94, forearm:0.94},
+                 style:{agg:0.72,def:0.18,acro:0.08,force:0.05,flair:0.6}, speed:0.84, jitter:4, comedic:true }),
+  ned:       F({ name:"NED FLANDERS", mark:"#3b2c1e", color:"#4a9d52", glow:"#4dff6a", guard:'guardSoresu',
+                 proportion:{headR:1.1},
+                 style:{agg:0.28,def:0.82,acro:0.42,force:0.05,flair:0.4}, speed:1.02, jitter:1.6, comedic:true }),
   bart:      F({ name:"BART SIMPSON", color:"#ff8c1a", glow:"#9aa0a6", weapon:'blunt', scale:0.85, bladeLen:40,
+                 guard:'guardBrawl',
+                 proportion:{spine:0.86, thigh:0.86, shin:0.86, headR:1.24},
                  style:{agg:0.7,def:0.3,acro:0.65,force:0.05,flair:0.8}, speed:1.12, jitter:5, comedic:true }),
 
-  neo:       F({ name:"NEO", color:"#16161a", glow:"#00ff41", cape:true,
-                 style:{agg:0.6,def:0.7,acro:0.8,force:0.7,flair:0.5}, speed:1.06, jitter:0.6 }),
-  smith:     F({ name:"AGENT SMITH", color:"#3a3a42", glow:"#c7c7d1",
-                 style:{agg:0.75,def:0.6,acro:0.5,force:0.3,flair:0.2}, speed:1.04, jitter:0.5 }),
+  neo:       F({ name:"NEO", mark:"#0e0e12", color:"#16161a", glow:"#00ff41", cape:true, proportion:{spine:1.02},
+                 style:{agg:0.6,def:0.7,acro:0.8,force:0.7,flair:0.5,blaster:0.9}, speed:1.06, jitter:0.6 }),
+  smith:     F({ name:"AGENT SMITH", mark:"#15151a", color:"#3a3a42", glow:"#c7c7d1",
+                 style:{agg:0.75,def:0.6,acro:0.5,force:0.3,flair:0.2,blaster:0.95}, speed:1.04, jitter:0.5 }),
 
-  naruto:    F({ name:"NARUTO", color:"#ff7a1a", glow:"#ffb347",
+  naruto:    F({ name:"NARUTO", mark:"#ffd24a", color:"#ff7a1a", glow:"#ffb347", guard:'guardAtaru',
                  style:{agg:0.85,def:0.3,acro:0.8,force:0.6,flair:0.6}, speed:1.18, jitter:3 }),
-  sasuke:    F({ name:"SASUKE", color:"#20243a", glow:"#4fd3ff",
+  sasuke:    F({ name:"SASUKE", mark:"#15151f", color:"#20243a", glow:"#4fd3ff", guard:'guardMakashi',
                  style:{agg:0.7,def:0.6,acro:0.75,force:0.6,flair:0.5}, speed:1.2, jitter:2 }),
-  goku:      F({ name:"GOKU", color:"#ff8c1a", glow:"#ffe066", scale:1.03,
+  goku:      F({ name:"GOKU", mark:"#141420", color:"#ff8c1a", glow:"#ffe066", scale:1.03, guard:'guardAtaru',
                  style:{agg:0.8,def:0.45,acro:0.85,force:0.85,flair:0.5}, speed:1.2, jitter:2 }),
-  vegeta:    F({ name:"VEGETA", color:"#274b8a", glow:"#7a5cff", scale:1.03,
+  vegeta:    F({ name:"VEGETA", mark:"#12121c", color:"#274b8a", glow:"#7a5cff", scale:1.03, guard:'guardJuyo',
+                 proportion:{shoulderW:1.2},
                  style:{agg:0.9,def:0.4,acro:0.7,force:0.85,flair:0.6}, speed:1.18, jitter:2 }),
 
   batman:    F({ name:"BATMAN", color:"#1b1b22", glow:"#3a6cff", scale:1.06, cape:true,
-                 style:{agg:0.6,def:0.8,acro:0.7,force:0.1,flair:0.3}, speed:1.04, jitter:1 }),
-  joker:     F({ name:"THE JOKER", color:"#3a1a4a", glow:"#7dff3a", scale:0.98,
-                 style:{agg:0.75,def:0.25,acro:0.5,force:0.1,flair:0.95}, speed:1.08, jitter:5, comedic:true }),
+                 proportion:{shoulderW:1.22, spine:1.02},
+                 style:{agg:0.6,def:0.8,acro:0.7,force:0.1,flair:0.3,blaster:0.3}, speed:1.04, jitter:1 }),
+  joker:     F({ name:"THE JOKER", color:"#3a1a4a", glow:"#7dff3a", scale:0.98, guard:'guardJuyo',
+                 proportion:{spine:1.04, upperArm:1.04},
+                 style:{agg:0.75,def:0.25,acro:0.5,force:0.1,flair:0.95,blaster:0.7}, speed:1.08, jitter:5, comedic:true }),
 
-  gandalf:   F({ name:"GANDALF", color:"#e6e2d8", glow:"#ffffff", cape:true,
+  gandalf:   F({ name:"GANDALF", mark:"#f2efe6", color:"#e6e2d8", glow:"#ffffff", cape:true, guard:'guardSoresu',
                  style:{agg:0.45,def:0.8,acro:0.2,force:0.9,flair:0.5}, speed:0.9, jitter:0.6 }),
   sauron:    F({ name:"SAURON", color:"#1e1811", glow:"#ff8a1f", scale:1.18, cape:true, weapon:'blunt',
+                 guard:'guardDjemSo',
+                 proportion:{spine:1.1, upperArm:1.14, forearm:1.14, shoulderW:1.32, thigh:1.05, shin:1.05},
                  style:{agg:0.95,def:0.35,acro:0.05,force:0.7,flair:0.4}, speed:0.78, jitter:0.5 })
 };
 
@@ -433,7 +595,7 @@ const MATCHUPS = [
   { a:"rey", b:"kylo", arena:"snow" },
   { a:"luke", b:"palpatine", arena:"space" },
   { a:"rick", b:"morty", arena:"void" },
-  { a:"homer", b:"ned", arena:"suburb" },
+  { a:"homer", b:"ned", arena:"suburb", winner:"B" },   // Ned wins; see mFinishCocoa
   { a:"bart", b:"homer", arena:"suburb" },
   { a:"neo", b:"smith", arena:"matrix" },
   { a:"naruto", b:"sasuke", arena:"snow" },
@@ -449,7 +611,17 @@ const ARENA_KEYS = Object.keys(ARENAS);
 const FIGHTER_KEYS = Object.keys(FIGHTERS);
 const RANDOM_MATCHUP_CHANCE = 0.34;
 
-/* ============================== CANVAS ============================== */
+/* ============================== CANVAS ==============================
+   Sized against the PANEL, never the viewport. The engine ships as an
+   embedded element, so `window.innerWidth` is the wrong number in the
+   only deployment that matters.
+*/
+/* `state` is a const declared much further down, and `typeof` does NOT
+   dodge the temporal dead zone — reading it from resize() during the first
+   call throws before the engine ever starts. A plain flag does. */
+let booted = false;
+
+const panel = document.getElementById('duelPanel');
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 let W=0, H=0, DPR=1, rigScale=1, groundY=0, spaceScale=1;
@@ -457,33 +629,88 @@ const prefersReducedMotion = window.matchMedia &&
   window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 function resize(){
+  const box = panel.getBoundingClientRect();
   DPR = Math.min(window.devicePixelRatio||1, 2);
-  W = window.innerWidth; H = window.innerHeight;
+  W = Math.max(1, Math.round(box.width));
+  H = Math.max(1, Math.round(box.height));
   canvas.width = Math.max(1, Math.round(W*DPR));
   canvas.height = Math.max(1, Math.round(H*DPR));
   ctx.setTransform(DPR,0,0,DPR,0,0);
-  rigScale = clamp(H/620, 0.5, 1.25);
-  spaceScale = clamp(W/1180, 0.30, 1.1);
-  groundY = H*0.74;
+  rigScale = clamp(H/620, 0.44, 1.3);
+  // The arena has to respect the SHORT edge too. A 1600x360 letterbox with
+  // width-only scaling puts two small figures a thousand pixels apart, which
+  // reads as two people ignoring each other rather than as a duel.
+  spaceScale = clamp(Math.min(W/1180, (H/620)*1.8), 0.26, 1.15);
+  groundY = H*0.76;
+  // Assigning canvas.width WIPES the buffer, and the loop may not be running
+  // to put anything back — it parks when the panel scrolls off-screen, when
+  // the tab is hidden, and in any automated browser. Resizing in any of
+  // those states left a blank panel until something else happened to
+  // repaint. Redraw here instead of waiting for a frame that may not come.
+  if(booted) render(0);
 }
-window.addEventListener('resize', resize);
+
+if(window.ResizeObserver){
+  new ResizeObserver(resize).observe(panel);
+} else {
+  window.addEventListener('resize', resize);
+}
 resize();
+
+/* Off-screen panels stop costing anything. A background element on
+   someone's homepage must not run a canvas the reader has scrolled past. */
+let panelVisible = true;
+if(window.IntersectionObserver){
+  new IntersectionObserver(function(entries){
+    for(const e of entries) panelVisible = e.isIntersecting;
+    if(!panelVisible) Sound.silenceHums();
+  }, { threshold:0 }).observe(panel);
+}
 
 function worldX(off){ return W*0.5 + off*spaceScale; }
 
 /* ============================== AUDIO ==============================
-   Everything is synthesised — no external assets, nothing to host.
-   Starts muted; the browser only lets us open a context on a gesture.
+   Everything is synthesised — no external assets, nothing to host. Starts
+   MUTED and the context is not constructed until the first gesture, which
+   is both the autoplay policy and the correct default for a background
+   panel. The public API (clash, ignite, boom, bodyHit, landing, zap, force,
+   hum) is the seam: swapping the internals for recorded buffers later means
+   touching nothing outside this module.
+
+   Signal path:  voice -> dry -> master -> out
+                        \-> send -> convolver(room) -> master
+                 sub bus is its own chain so big hits keep their low end
+                 when the room reverb is short.
 */
 const Sound = (function(){
-  let ac=null, master=null, noiseBuf=null, ready=false, on=false;
-  const hums=[];
+  let ac=null, master=null, dry=null, send=null, room=null, noiseBuf=null;
+  let ready=false, on=false;
+  const hums=[], swings=[];
 
-  function makeNoise(){
-    const len = Math.floor(ac.sampleRate*1.2);
+  function makeNoise(secs){
+    const len = Math.floor(ac.sampleRate*(secs||1.2));
     const buf = ac.createBuffer(1, len, ac.sampleRate);
     const d = buf.getChannelData(0);
     for(let i=0;i<len;i++) d[i] = Math.random()*2-1;
+    return buf;
+  }
+
+  /* A procedural impulse: decaying filtered noise. One convolver, no asset,
+     and the decay length is per-arena — a throne room rings, a desert does
+     not. */
+  function makeImpulse(secs, bright){
+    const n = Math.floor(ac.sampleRate*secs);
+    const buf = ac.createBuffer(2, n, ac.sampleRate);
+    for(let ch=0; ch<2; ch++){
+      const d = buf.getChannelData(ch);
+      let lp = 0;
+      for(let i=0;i<n;i++){
+        const t = i/n;
+        const raw = (Math.random()*2-1) * Math.pow(1-t, 2.4);
+        lp += (raw - lp) * (0.06 + bright*0.5);
+        d[i] = lp;
+      }
+    }
     return buf;
   }
 
@@ -492,30 +719,57 @@ const Sound = (function(){
     const AC = window.AudioContext || window.webkitAudioContext;
     if(!AC) return;
     ac = new AC();
-    master = ac.createGain();
-    master.gain.value = 0;
-    master.connect(ac.destination);
+    master = ac.createGain(); master.gain.value = 0; master.connect(ac.destination);
+    dry = ac.createGain(); dry.gain.value = 0.92; dry.connect(master);
+    room = ac.createConvolver(); room.buffer = makeImpulse(1.2, 0.35);
+    const wet = ac.createGain(); wet.gain.value = 0.5;
+    send = ac.createGain(); send.gain.value = 0.26;
+    send.connect(room); room.connect(wet); wet.connect(master);
     noiseBuf = makeNoise();
+
     for(let i=0;i<2;i++){
+      // --- the hum: two detuned saws, a sub sine, a second harmonic and an
+      // LFO on the filter so it breathes instead of sitting still
       const g = ac.createGain(); g.gain.value = 0;
+      const pan = ac.createStereoPanner ? ac.createStereoPanner() : null;
       const f = ac.createBiquadFilter(); f.type='lowpass'; f.frequency.value=700; f.Q.value=5;
       const o1 = ac.createOscillator(); o1.type='sawtooth'; o1.frequency.value=94;
       const o2 = ac.createOscillator(); o2.type='sawtooth'; o2.frequency.value=99.5;
       const o3 = ac.createOscillator(); o3.type='sine';     o3.frequency.value=47;
-      o1.connect(f); o2.connect(f); o3.connect(f);
-      f.connect(g); g.connect(master);
-      o1.start(); o2.start(); o3.start();
-      hums.push({g,f});
+      const o4 = ac.createOscillator(); o4.type='sine';     o4.frequency.value=188;
+      const o4g = ac.createGain(); o4g.gain.value = 0.22;
+      const lfo = ac.createOscillator(); lfo.type='sine'; lfo.frequency.value = 4.1 + i*0.7;
+      const lfoG = ac.createGain(); lfoG.gain.value = 46;
+      lfo.connect(lfoG); lfoG.connect(f.frequency);
+      o1.connect(f); o2.connect(f); o3.connect(f); o4.connect(o4g); o4g.connect(f);
+      f.connect(g);
+      if(pan){ g.connect(pan); pan.connect(dry); pan.connect(send); }
+      else { g.connect(dry); g.connect(send); }
+      o1.start(); o2.start(); o3.start(); o4.start(); lfo.start();
+      hums.push({g,f,pan,o1,o2,o3,o4});
+
+      // --- the swing whoosh: one continuous noise voice per fighter, driven
+      // by blade-tip speed. Panning by screen X gives doppler-ish movement
+      // for nothing.
+      const sg = ac.createGain(); sg.gain.value = 0;
+      const sf = ac.createBiquadFilter(); sf.type='bandpass'; sf.frequency.value=700; sf.Q.value=1.1;
+      const sp = ac.createStereoPanner ? ac.createStereoPanner() : null;
+      const src = ac.createBufferSource(); src.buffer = noiseBuf; src.loop = true;
+      src.connect(sf); sf.connect(sg);
+      if(sp){ sg.connect(sp); sp.connect(dry); sp.connect(send); }
+      else { sg.connect(dry); sg.connect(send); }
+      src.start();
+      swings.push({g:sg, f:sf, pan:sp});
     }
     ready = true;
   }
 
   function burst(opts){
     if(!on || !ready) return;
-    const t = ac.currentTime;
+    const t = ac.currentTime + (opts.at||0);
     const src = ac.createBufferSource();
-    src.buffer = noiseBuf;
-    src.loop = true;
+    src.buffer = noiseBuf; src.loop = true;
+    src.playbackRate.value = opts.rate || 1;
     const f = ac.createBiquadFilter();
     f.type = opts.filter || 'bandpass';
     f.frequency.setValueAtTime(opts.f0, t);
@@ -523,25 +777,46 @@ const Sound = (function(){
     f.Q.value = opts.q || 1.2;
     const g = ac.createGain();
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(opts.vol, t+0.008);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.0002, opts.vol), t+(opts.atk||0.008));
     g.gain.exponentialRampToValueAtTime(0.0001, t+opts.dur);
-    src.connect(f); f.connect(g); g.connect(master);
+    src.connect(f); f.connect(g); g.connect(dry);
+    if(opts.wet !== 0) g.connect(send);
     src.start(t); src.stop(t+opts.dur+0.05);
   }
 
   function tone(opts){
     if(!on || !ready) return;
-    const t = ac.currentTime;
+    const t = ac.currentTime + (opts.at||0);
     const o = ac.createOscillator();
     o.type = opts.type || 'sine';
     o.frequency.setValueAtTime(opts.f0, t);
     o.frequency.exponentialRampToValueAtTime(Math.max(20, opts.f1), t+opts.dur);
     const g = ac.createGain();
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(opts.vol, t+0.01);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.0002, opts.vol), t+(opts.atk||0.01));
     g.gain.exponentialRampToValueAtTime(0.0001, t+opts.dur);
-    o.connect(g); g.connect(master);
+    o.connect(g); g.connect(dry);
+    if(opts.wet !== 0) g.connect(send);
     o.start(t); o.stop(t+opts.dur+0.05);
+  }
+
+  /* the 3–6ms metallic transient that makes a clash sound like metal rather
+     than like a filtered noise gate opening */
+  function ting(f0, vol, at){
+    if(!on || !ready) return;
+    const t = ac.currentTime + (at||0);
+    const bp = ac.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=f0; bp.Q.value=14;
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(vol, t+0.002);
+    g.gain.exponentialRampToValueAtTime(0.0001, t+0.055);
+    for(let i=0;i<3;i++){
+      const o = ac.createOscillator();
+      o.type = 'square';
+      o.frequency.value = f0*(1 + i*0.41) * (0.97 + Math.random()*0.06);
+      o.connect(bp); o.start(t); o.stop(t+0.06);
+    }
+    bp.connect(g); g.connect(dry); g.connect(send);
   }
 
   return {
@@ -552,39 +827,119 @@ const Sound = (function(){
       on = !on;
       if(on && ac.state === 'suspended') ac.resume();
       master.gain.setTargetAtTime(on ? 0.5 : 0, ac.currentTime, 0.05);
+      // the room is set per fight, so without this, enabling sound mid-fight
+      // played the default room until the next one — up to half a minute
+      if(on && state && state.fight) this.setRoom(state.fight.arenaKey);
       return on;
     },
-    // speed: 0..1 normalised blade tip velocity
-    hum(i, speed, pitch){
+    /* Per-arena room. Long for the throne room and the temple, short in the
+       open — the reverb is most of what tells you where you are. */
+    setRoom(arenaKey){
+      if(!ready) return;
+      const LONG  = { throne:2.6, temple:2.4, hell:2.2, space:1.9, city:1.7, matrix:1.6 };
+      const SHORT = { desert:0.5, dunes:0.5, swamp:0.7, suburb:0.8, snow:0.9, peak:1.1 };
+      const secs = LONG[arenaKey] || SHORT[arenaKey] || 1.2;
+      room.buffer = makeImpulse(secs, secs > 1.8 ? 0.22 : 0.4);
+      send.gain.setTargetAtTime(secs > 1.8 ? 0.34 : 0.2, ac.currentTime, 0.2);
+    },
+    /* speed 0..1 normalised blade-tip velocity; screenX 0..1 for the pan */
+    hum(i, speed, char, screenX){
       if(!on || !ready || !hums[i]) return;
-      const h = hums[i];
-      const t = ac.currentTime;
+      const h = hums[i], s = swings[i], t = ac.currentTime;
+      // pitch derives from the fighter's own scale, as every colour derives
+      // from the palette — small fighters hum high
+      const pitch = clamp(1/(char.scale||1), 0.72, 1.55);
+      h.o1.frequency.setTargetAtTime(94*pitch, t, 0.3);
+      h.o2.frequency.setTargetAtTime(99.5*pitch, t, 0.3);
+      h.o3.frequency.setTargetAtTime(47*pitch, t, 0.3);
+      h.o4.frequency.setTargetAtTime(188*pitch, t, 0.3);
       h.g.gain.setTargetAtTime(0.035 + speed*0.16, t, 0.05);
-      h.f.frequency.setTargetAtTime(420 + speed*2600 + (pitch||0)*120, t, 0.04);
+      h.f.frequency.setTargetAtTime(420 + speed*2600, t, 0.04);
+      const pan = clamp((screenX-0.5)*1.7, -1, 1);
+      if(h.pan) h.pan.pan.setTargetAtTime(pan, t, 0.08);
+      // the whoosh only exists while the blade is actually moving
+      const sw = Math.max(0, speed-0.16)/0.84;
+      s.g.gain.setTargetAtTime(sw*sw*0.20, t, 0.035);
+      s.f.frequency.setTargetAtTime(360 + sw*2600, t, 0.03);
+      s.f.Q.setTargetAtTime(0.8 + sw*1.6, t, 0.05);
+      if(s.pan) s.pan.pan.setTargetAtTime(pan, t, 0.06);
     },
     silenceHums(){
       if(!ready) return;
-      for(const h of hums) h.g.gain.setTargetAtTime(0, ac.currentTime, 0.08);
+      const t = ac.currentTime;
+      for(const h of hums) h.g.gain.setTargetAtTime(0, t, 0.08);
+      for(const s of swings) s.g.gain.setTargetAtTime(0, t, 0.08);
     },
+
+    /* --- impacts ------------------------------------------------------- */
+    /* Three layers, because one filtered burst is a hiss and not a hit:
+       a metallic transient, a bandpassed body sweeping down, and a sub
+       thump. Everything is detuned ±15% per hit — repetition is the tell. */
     clash(power){
-      burst({f0:2600+power*2200, f1:520, dur:0.16+power*0.12, vol:0.16+power*0.2, q:0.9});
-      tone({type:'square', f0:1500+power*900, f1:180, dur:0.1+power*0.08, vol:0.05+power*0.05});
+      const v = 0.85 + Math.random()*0.3;
+      ting((2400 + power*2600)*v, 0.05 + power*0.07, 0);
+      burst({ f0:(2600+power*2200)*v, f1:520*v, dur:0.16+power*0.12,
+              vol:0.14+power*0.19, q:0.9, atk:0.004 });
+      tone({ type:'sine', f0:92*v, f1:40, dur:0.13+power*0.1, vol:0.10+power*0.14, atk:0.003 });
+    },
+    /* Grains scattered over the tail of a clash. The count follows the spark
+       count, so a 34-spark finisher sizzles longer than a 9-spark flurry. */
+    sizzle(sparkCount){
+      if(!on || !ready) return;
+      const n = clamp(Math.round(sparkCount*1.1), 6, 40);
+      for(let i=0;i<n;i++){
+        burst({ at: 0.02 + Math.random()*(0.24 + sparkCount*0.008),
+                f0: 5200 + Math.random()*4200, f1: 2600, dur: 0.02 + Math.random()*0.045,
+                vol: 0.012 + Math.random()*0.026, q: 5, atk:0.002, rate: 0.8+Math.random()*0.7 });
+      }
+    },
+    /* The sidechained low end. Most of what makes a heavy blow feel heavy is
+       here and not in the transient. */
+    sub(power){
+      tone({ type:'sine', f0:60, f1:28, dur:0.4 + power*0.32,
+             vol:0.16 + power*0.26, atk:0.012, wet:0 });
     },
     ignite(){
       burst({f0:180, f1:2400, dur:0.34, vol:0.18, q:1.4});
       tone({type:'sawtooth', f0:70, f1:360, dur:0.3, vol:0.07});
     },
     boom(){
-      tone({type:'sine', f0:150, f1:32, dur:0.75, vol:0.34});
+      tone({type:'sine', f0:150, f1:32, dur:0.75, vol:0.3});
       burst({filter:'lowpass', f0:900, f1:90, dur:0.5, vol:0.18});
     },
-    thud(){
-      tone({type:'sine', f0:120, f1:44, dur:0.28, vol:0.2});
-      burst({filter:'lowpass', f0:700, f1:120, dur:0.2, vol:0.12});
+    /* three different weights, where there used to be one `thud` */
+    bodyHit(power){
+      tone({type:'sine', f0:170, f1:58, dur:0.2, vol:0.13+power*0.1, atk:0.004});
+      burst({filter:'lowpass', f0:1300, f1:220, dur:0.12, vol:0.10+power*0.08, atk:0.003});
     },
-    zap(){
-      burst({f0:4200, f1:900, dur:0.28, vol:0.14, q:3});
-    }
+    landing(power){
+      tone({type:'sine', f0:110, f1:38, dur:0.34, vol:0.16+power*0.12, atk:0.006});
+      burst({filter:'lowpass', f0:620, f1:110, dur:0.24, vol:0.12, q:0.7});
+    },
+    kneel(){
+      tone({type:'sine', f0:96, f1:44, dur:0.42, vol:0.13, atk:0.02});
+      burst({filter:'lowpass', f0:420, f1:90, dur:0.3, vol:0.07});
+    },
+    /* energy: a rising pressure whoomph with a wide sweep, not a zap */
+    force(){
+      burst({filter:'lowpass', f0:120, f1:1700, dur:0.44, vol:0.2, q:0.6, atk:0.05});
+      tone({type:'sine', f0:44, f1:150, dur:0.5, vol:0.2, atk:0.06, wet:0});
+    },
+    whoomph(){
+      burst({filter:'bandpass', f0:300, f1:1500, dur:0.3, vol:0.15, q:0.8, atk:0.03});
+      tone({type:'sine', f0:70, f1:130, dur:0.34, vol:0.14, atk:0.03, wet:0});
+    },
+    /* lightning: crackle grains rather than a single high burst */
+    zap(scale){
+      const s = scale === undefined ? 1 : scale;
+      burst({f0:4200, f1:900, dur:0.24*s, vol:0.11*s, q:3});
+      const n = Math.round(10*s);
+      for(let i=0;i<n;i++){
+        burst({ at: Math.random()*0.26, f0: 3000+Math.random()*5000, f1: 1400,
+                dur: 0.012+Math.random()*0.03, vol: 0.014+Math.random()*0.03, q:8, atk:0.001 });
+      }
+    },
+    thud(){ this.bodyHit(0.5); }
   };
 })();
 
@@ -592,15 +947,22 @@ const Sound = (function(){
 let particles = [];
 const MAX_PARTICLES = 460;
 
-function emitSpark(x, y, colorA, colorB, count, power){
+/* Sparks come off struck metal along the contact normal, in two opposed
+   lobes — not radially. `norm` is that axis in radians; without it the old
+   uniform spray is kept for anything with no meaningful direction. They also
+   bounce off the floor, which is what stops them reading as a firework. */
+function emitSpark(x, y, colorA, colorB, count, power, norm){
   if(particles.length > MAX_PARTICLES) return;
   for(let i=0;i<count;i++){
-    const a = rand(0,TAU);
+    const a = norm === undefined
+      ? rand(0,TAU)
+      : norm + (chance(0.5) ? 0 : Math.PI) + rand(-0.62, 0.62);
     const sp = rand(70, 200 + 260*(power||0.4));
     particles.push({
       x, y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp - rand(0,110),
       life:0, maxLife:rand(0.22,0.62),
-      color: chance(0.5)?colorA:colorB, size:rand(1.4,3.4), grav:240, type:'spark'
+      color: chance(0.5)?colorA:colorB, size:rand(1.4,3.4), grav:240,
+      type:'spark', bounce:true
     });
   }
 }
@@ -667,6 +1029,232 @@ function updateParticles(dt){
     if(p.life > p.maxLife || p.y > H+80){ particles.splice(i,1); continue; }
     p.vy += (p.grav||0)*dt;
     p.x += p.vx*dt; p.y += p.vy*dt;
+    if(p.bounce && p.y > groundY && p.vy > 0){
+      p.y = groundY; p.vy *= -0.42; p.vx *= 0.7;
+      if(Math.abs(p.vy) < 26){ p.bounce = false; p.grav = 0; p.vx *= 0.3; }
+    }
+  }
+}
+
+/* ============================== SCORCH DECALS ==============================
+   Plasma touching stone leaves something behind. Decals sit under the
+   fighters and cool white -> orange -> dark over ~2s, which also quietly
+   records where the fight has been. */
+const decals = [];
+const MAX_DECALS = 26;
+function addDecal(x, y, heat){
+  if(prefersReducedMotion) return;
+  decals.push({ x, y:y + rand(-2,3), r:rand(9,20)*(0.7+heat), born:0,
+                life:rand(1.7,2.6), heat:clamp(heat,0.15,1), skew:rand(0.22,0.4) });
+  while(decals.length > MAX_DECALS) decals.shift();
+}
+function updateDecals(dt){
+  for(let i=decals.length-1;i>=0;i--){
+    decals[i].born += dt;
+    if(decals[i].born > decals[i].life) decals.splice(i,1);
+  }
+}
+function drawDecals(){
+  if(!decals.length) return;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for(const d of decals){
+    const t = d.born/d.life;
+    // white -> orange -> ember -> nothing, ADDITIVE so it reads as heat on
+    // the floor. Painted normally it darkened the ground into what looked
+    // like a second ground shadow, which is the opposite of a scorch.
+    const g = Math.round(lerp(236, 52, Math.min(1, t*1.5)));
+    const b = Math.round(lerp(200, 8, Math.min(1, t*1.1)));
+    ctx.globalAlpha = (1-t)*(1-t)*0.5*d.heat;
+    ctx.fillStyle = 'rgb(255,'+g+','+b+')';
+    ctx.beginPath();
+    ctx.ellipse(d.x, d.y, d.r*(1+t*0.6), d.r*d.skew, 0, 0, TAU);
+    ctx.fill();
+    if(t < 0.25){   // the bright core, only while it is genuinely hot
+      ctx.globalAlpha = (1 - t/0.25)*0.4*d.heat;
+      ctx.fillStyle = '#fff3d8';
+      ctx.beginPath();
+      ctx.ellipse(d.x, d.y, d.r*0.42, d.r*d.skew*0.6, 0, 0, TAU);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+/* ============================== BLASTER BOLTS ==============================
+   A volley arrives from off-stage and both duelists deflect it. That needs
+   no sidearm, no new rig and no new generator path — a bolt is a particle
+   with a stop line, and `deflect` is a pose the engine already has. */
+const bolts = [];
+const MAX_BOLTS = 40;
+function fireVolley(beat){
+  const b = beat.bolts;
+  const fromLeft = b.from < 0;
+  // The bolt stops at whoever is deflecting it, read live — the beat was
+  // authored in world units and the panel decides what those are in pixels.
+  const stop = propX(b.who);
+  for(let i=0;i<b.n && bolts.length < MAX_BOLTS;i++){
+    const y = groundY - rand(60, 190)*rigScale;
+    bolts.push({
+      x: fromLeft ? -30 : W+30, y,
+      vx: (fromLeft ? 1 : -1) * rand(1150, 1500),
+      vy: rand(-24, 24),
+      stopX: stop + rand(-16, 16),
+      color: b.color, delay: i*rand(0.05, 0.13),
+      len: rand(22, 34), deflected:false, life:0
+    });
+  }
+}
+function updateBolts(dt){
+  for(let i=bolts.length-1;i>=0;i--){
+    const p = bolts[i];
+    if(p.delay > 0){ p.delay -= dt; continue; }
+    p.life += dt;
+    p.x += p.vx*dt; p.y += p.vy*dt;
+    if(!p.deflected && (p.vx > 0 ? p.x >= p.stopX : p.x <= p.stopX)){
+      // deflected: sent off at a new angle, with sparks off the blade
+      // sent back the way it came, angled up off the blade
+      p.deflected = true;
+      const back = p.vx > 0 ? -1 : 1;
+      const a = rand(0.35, 1.25);
+      const sp = rand(900, 1400);
+      p.vx = back*Math.cos(a)*sp;
+      p.vy = -Math.sin(a)*sp;
+      emitSpark(p.x, p.y, p.color, '#ffffff', 7, 0.5);
+      Sound.zap(0.5);
+    }
+    if(p.life > 2.4 || p.x < -140 || p.x > W+140 || p.y < -120) bolts.splice(i,1);
+  }
+}
+function drawBolts(){
+  if(!bolts.length) return;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.lineCap = 'round';
+  for(const p of bolts){
+    if(p.delay > 0) continue;
+    const d = Math.hypot(p.vx, p.vy) || 1;
+    const tx = p.x - p.vx/d*p.len, ty = p.y - p.vy/d*p.len;
+    ctx.strokeStyle = p.color; ctx.shadowColor = p.color; ctx.shadowBlur = 12;
+    ctx.globalAlpha = 0.55; ctx.lineWidth = 5.5;
+    ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(tx,ty); ctx.stroke();
+    ctx.shadowBlur = 0; ctx.globalAlpha = 1; ctx.lineWidth = 1.9;
+    ctx.strokeStyle = '#ffffff';
+    ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(tx,ty); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/* ============================== THROWN PROPS ==============================
+   Lifted, hovered, hurled, then cut in half or eaten. Props are drawn as
+   flat polygons in the arena's own darkness so they read as scenery that
+   came loose rather than as a new art style arriving. */
+const props = [];
+const PROP_SHAPES = {
+  rock:    [[-16,10],[-10,-9],[3,-14],[15,-4],[12,11]],
+  crate:   [[-15,-13],[15,-13],[15,13],[-15,13]],
+  pillar:  [[-11,-26],[11,-26],[13,24],[-13,24]],
+  console: [[-19,-10],[19,-14],[17,12],[-17,12],[-14,2]],
+  slab:    [[-24,-7],[24,-11],[22,10],[-22,8]]
+};
+const PROP_KEYS = Object.keys(PROP_SHAPES);
+
+/* Props are positioned from the LIVE fighter positions, not from anything
+   baked in at generation time — the arena is a different number of pixels
+   wide on every panel it lands in. */
+function propX(who){
+  return who === 'A' ? worldX(state.baseXA + state.dxA)
+                     : worldX(state.baseXB + state.dxB);
+}
+function propBeat(beat, cx){
+  const p = beat.prop;
+  if(p.act === 'lift'){
+    const home = propX(p.who);
+    props.push({
+      kind: p.kind, x: lerp(home, cx, 0.4), y: groundY-6, vx:0, vy:0,
+      rot:rand(-0.4,0.4), vrot:rand(-0.5,0.5),
+      scale: (0.9 + Math.random()*0.5)*rigScale, phase:'lift', t:0,
+      restY: groundY - rand(120,175)*rigScale, halves:null
+    });
+    Sound.force();
+  } else if(p.act === 'hurl'){
+    const it = props[props.length-1];
+    if(!it) return;
+    it.phase = 'fly'; it.t = 0;
+    it.vx = (propX(p.who) - it.x)/0.42;
+    it.vy = -rand(70, 150)*rigScale;
+    it.vrot = rand(-5, 5);
+    Sound.whoomph();
+  } else if(p.act === 'cut'){
+    const it = props[props.length-1];
+    if(!it) return;
+    it.phase = 'split'; it.t = 0;
+    it.halves = [{ dx:0, dy:0, vx:-140, vy:-190, rot:0, vrot:-4 },
+                 { dx:0, dy:0, vx: 140, vy:-150, rot:0, vrot: 4 }];
+    emitSpark(it.x, it.y, beat.propColor||'#ffffff', '#ffffff', 22, 0.8);
+    addDecal(it.x, groundY, 0.5);
+  } else if(p.act === 'hit'){
+    const it = props[props.length-1];
+    if(!it) return;
+    it.phase = 'burst'; it.t = 0;
+    emitSpark(it.x, it.y, '#ffd8a0', '#ffffff', 20, 0.7);
+    emitDust(it.x, groundY, '#b8a894', 12);
+  }
+}
+function updateProps(dt){
+  for(let i=props.length-1;i>=0;i--){
+    const it = props[i];
+    it.t += dt;
+    if(it.phase === 'lift'){
+      it.y = lerp(it.y, it.restY, 1-Math.exp(-dt*4.5));
+      it.rot += it.vrot*dt*0.5;
+      it.x += Math.sin(it.t*5.2)*8*dt;      // the wobble of something held
+    } else if(it.phase === 'fly'){
+      it.vy += 420*dt;
+      it.x += it.vx*dt; it.y += it.vy*dt; it.rot += it.vrot*dt;
+      if(it.y > groundY-4){ it.phase='burst'; it.t=0; emitDust(it.x, groundY, '#b8a894', 10); }
+    } else if(it.phase === 'split'){
+      for(const h of it.halves){
+        h.vy += 620*dt; h.dx += h.vx*dt; h.dy += h.vy*dt; h.rot += h.vrot*dt;
+      }
+      if(it.t > 1.3) props.splice(i,1);
+    } else if(it.phase === 'burst'){
+      if(it.t > 0.45) props.splice(i,1);
+    }
+    if(props.length > 4) props.shift();
+  }
+}
+function drawPropShape(kind, x, y, rot, scale, alpha){
+  const s = PROP_SHAPES[kind] || PROP_SHAPES.rock;
+  ctx.save();
+  ctx.translate(x, y); ctx.rotate(rot); ctx.scale(scale, scale);
+  ctx.globalAlpha = alpha === undefined ? 1 : alpha;
+  ctx.beginPath(); ctx.moveTo(s[0][0], s[0][1]);
+  for(let i=1;i<s.length;i++) ctx.lineTo(s[i][0], s[i][1]);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(16,15,20,0.92)'; ctx.fill();
+  ctx.lineWidth = 1.6; ctx.strokeStyle = 'rgba(168,176,198,0.5)'; ctx.stroke();
+  ctx.restore();
+}
+function drawProps(layer){
+  for(const it of props){
+    // hovering and flying props pass in FRONT; nothing sits behind yet, but
+    // the split halves fall past the fighters' feet and belong behind them
+    const front = it.phase !== 'split';
+    if((layer === 'front') !== front) continue;
+    if(it.phase === 'split'){
+      for(const h of it.halves)
+        drawPropShape(it.kind, it.x+h.dx, it.y+h.dy, it.rot+h.rot, it.scale,
+                      clamp(1 - it.t/1.3, 0, 1));
+    } else if(it.phase !== 'burst'){
+      drawPropShape(it.kind, it.x, it.y, it.rot, it.scale, 1);
+      if(it.phase === 'lift'){
+        ctx.save(); ctx.globalCompositeOperation='lighter'; ctx.globalAlpha=0.16;
+        ctx.fillStyle = '#8fa8ff';
+        ctx.beginPath(); ctx.arc(it.x, it.y, 30*it.scale, 0, TAU); ctx.fill();
+        ctx.restore();
+      }
+    }
   }
 }
 
@@ -703,11 +1291,19 @@ function drawParticles(filterType){
 }
 
 /* ============================== SHAKE / FLASH / CAMERA ============================== */
-let shakeT=0, shakeMag=0;
-function triggerShake(mag, dur){
+/* Shake is directional: a blow travelling left kicks the frame left. Random
+   jitter on both axes reads as a rumble, which is the wrong note for a
+   single struck sword. The axis is the blow's own, plus a little vertical
+   so it is not a pure slide. */
+let shakeT=0, shakeMag=0, shakeVX=0, shakeVY=0;
+function triggerShake(mag, dur, axisX){
   if(prefersReducedMotion) return;
   shakeT = Math.max(shakeT, dur);
   shakeMag = Math.max(shakeMag, mag);
+  if(axisX !== undefined){
+    const s = axisX >= 0 ? 1 : -1;
+    shakeVX = s*0.92; shakeVY = -0.38;
+  } else { shakeVX = 0.7; shakeVY = -0.7; }
 }
 
 const flash = { color:'#ffffff', a:0, decay:3 };
@@ -725,23 +1321,81 @@ function resetCamera(){
 }
 
 /* ============================== FIGURE DRAWING ============================== */
-function computeJoints(x, yOff, dir, pose, scale){
-  const S = rigScale*scale;
-  const hip = { x, y: groundY - RIG.hipHeight*S + (pose.hipBob||0)*S + (yOff||0) };
-  const neck = pt(hip, pose.lean, RIG.spine*S, dir);
-  const head = pt(neck, pose.lean + pose.headTilt, (RIG.headR+8)*S, dir);
-  const shR = pt(neck, 100, RIG.shoulderW*S, dir);
-  const shL = pt(neck, 260, RIG.shoulderW*S, dir);
-  const elR = pt(shR, pose.armR.shoulder, RIG.upperArm*S, dir);
-  const haR = pt(elR, pose.armR.elbow, RIG.forearm*S, dir);
-  const elL = pt(shL, pose.armL.shoulder, RIG.upperArm*S, dir);
-  const haL = pt(elL, pose.armL.elbow, RIG.forearm*S, dir);
-  const knR = pt(hip, pose.legR.hip, RIG.thigh*S, dir);
-  const ftR = pt(knR, pose.legR.knee, RIG.shin*S, dir);
-  const knL = pt(hip, pose.legL.hip, RIG.thigh*S, dir);
-  const ftL = pt(knL, pose.legL.knee, RIG.shin*S, dir);
 
-  const j = {hip,neck,head,shR,shL,elR,haR,elL,haL,knR,ftR,knL,ftL,S};
+/* Per-fighter limb multipliers. Grievous is long-limbed, Homer is wide and
+   short-legged, Yoda is already handled by `scale`. Anything absent falls
+   back to the shared RIG, so a fighter with no `proportion` is untouched. */
+function rigFor(char){
+  const p = char.proportion;
+  if(!p) return RIG;
+  if(char._rig) return char._rig;
+  const out = {};
+  for(const k in RIG) out[k] = RIG[k] * (p[k] !== undefined ? p[k] : 1);
+  return (char._rig = out);
+}
+
+/* Two-bone IK, solved in world space rather than in pose angles. Solving in
+   angles would mean converting back through `pt`'s mirrored convention twice
+   and re-deriving the elbow sign; positions are what the renderer wants
+   anyway. Returns {el, ha}. */
+function solveArm(sh, target, L1, L2){
+  let dx = target.x - sh.x, dy = target.y - sh.y;
+  let d = Math.hypot(dx, dy);
+  const reach = L1 + L2;
+  if(d < 0.001){ dx = 0; dy = L1; d = L1; }
+  // Out of reach: point straight at the hilt and fall short. A hand floating
+  // a few pixels shy of the grip reads fine; an unsolvable pop does not.
+  if(d >= reach*0.999){
+    const u = { x:dx/d, y:dy/d };
+    return { el:{ x:sh.x+u.x*L1, y:sh.y+u.y*L1 },
+             ha:{ x:sh.x+u.x*reach, y:sh.y+u.y*reach }, short:true };
+  }
+  const base = Math.atan2(dy, dx);
+  const cosA = clamp((d*d + L1*L1 - L2*L2)/(2*d*L1), -1, 1);
+  const a = Math.acos(cosA);
+  // Two solutions; take the one with the lower elbow. That is the elbow-out,
+  // elbow-down triangle a real two-handed grip makes, and it is the one that
+  // can never fold the forearm through the chest.
+  const e1 = { x:sh.x+Math.cos(base+a)*L1, y:sh.y+Math.sin(base+a)*L1 };
+  const e2 = { x:sh.x+Math.cos(base-a)*L1, y:sh.y+Math.sin(base-a)*L1 };
+  return { el: e1.y >= e2.y ? e1 : e2, ha:{ x:target.x, y:target.y } };
+}
+
+function computeJoints(x, yOff, dir, pose, char){
+  const R = rigFor(char);
+  const S = rigScale*(char.scale||1);
+  const hip = { x, y: groundY - R.hipHeight*S + (pose.hipBob||0)*S + (yOff||0) };
+  const neck = pt(hip, pose.lean, R.spine*S, dir);
+  const head = pt(neck, pose.lean + pose.headTilt, (R.headR+8)*S, dir);
+  const shR = pt(neck, 100, R.shoulderW*S, dir);
+  const shL = pt(neck, 260, R.shoulderW*S, dir);
+  const elR = pt(shR, pose.armR.shoulder, R.upperArm*S, dir);
+  const haR = pt(elR, pose.armR.elbow, R.forearm*S, dir);
+  let elL = pt(shL, pose.armL.shoulder, R.upperArm*S, dir);
+  let haL = pt(elL, pose.armL.elbow, R.forearm*S, dir);
+  const knR = pt(hip, pose.legR.hip, R.thigh*S, dir);
+  const ftR = pt(knR, pose.legR.knee, R.shin*S, dir);
+  const knL = pt(hip, pose.legL.hip, R.thigh*S, dir);
+  const ftL = pt(knL, pose.legL.knee, R.shin*S, dir);
+
+  /* --- the off hand ------------------------------------------------------
+     A single blade held one-handed is the thing that made every duel read as
+     amateur. `grip` is a 0..1 scalar so `lerpPose` can blend it, and the IK
+     runs on the BLENDED pose — solving per keyframe and then blending would
+     separate the hands mid-transition. */
+  const twoHand = (char.weapon === 'dual' || char.offhand) ? 0 : clamp(pose.grip, 0, 1);
+  if(twoHand > 0.002 && pose.weaponExtend > 0.08){
+    // A staff is gripped along the shaft, not at the same point as the right
+    // hand — that wide-arm hold is most of what a saberstaff looks like.
+    const target = char.weapon === 'staff'
+      ? pt(haR, pose.weaponAngle + 180, 30*S, dir)
+      : haR;
+    const ik = solveArm(shL, target, R.upperArm*S, R.forearm*S);
+    elL = { x:lerp(elL.x, ik.el.x, twoHand), y:lerp(elL.y, ik.el.y, twoHand) };
+    haL = { x:lerp(haL.x, ik.ha.x, twoHand), y:lerp(haL.y, ik.ha.y, twoHand) };
+  }
+
+  const j = {hip,neck,head,shR,shL,elR,haR,elL,haL,knR,ftR,knL,ftL,S,R,dir};
 
   const spin = (pose.rot||0) * dir;
   if(spin){
@@ -776,6 +1430,557 @@ function edgeColor(hex){
   return luminance(hex) < 0.32 ? 'rgba(164,174,201,0.55)' : 'rgba(0,0,0,0.42)';
 }
 
+/* A SECOND TONE, and it is what makes two beige Jedi in matching robes
+   tell apart at 180px. Every costume mark used the one body colour, so
+   Obi-Wan's beard, Anakin's hair and both their robes were the same value
+   and merged into one shape. Head-region marks use this instead.
+
+   Derived by pushing the body colour away from its own luminance — a dark
+   fighter gets a lighter mark and a light one a darker mark — so every
+   character gets the separation without per-character work. `char.mark`
+   overrides it where the real answer is a specific colour (blond, black
+   hair, a white beard). Cached per fighter; this is not per-frame work. */
+function shade(hex, amt){
+  const h = hex.replace('#','');
+  const to = amt > 0 ? 255 : 0, k = Math.abs(amt);
+  const ch = i => {
+    const v = parseInt(h.substr(i,2),16);
+    return Math.round(v + (to - v)*k).toString(16).padStart(2,'0');
+  };
+  return '#' + ch(0) + ch(2) + ch(4);
+}
+function markColor(char){
+  if(char._mark) return char._mark;
+  return (char._mark = char.mark ||
+    shade(char.color, luminance(char.color) < 0.32 ? 0.42 : -0.52));
+}
+
+/* ============================== COSTUMES ==============================
+   The requirement is recognition at 200–320px, mid-motion, on a reader who
+   is looking at the page and not at the fight. That rules out faces. What
+   survives at that size is SILHOUETTE, MASS and one signature shape.
+
+   Two rules keep 29 characters looking like one set rather than a grab bag:
+
+   1. Every costume is assembled from the six primitives below and nothing
+      else. No costume reaches for ctx directly.
+   2. Body-covering cloth hangs BEHIND the limbs, translucent, in the `back`
+      slot. A filled quad between the arms is what turns two swordsmen into
+      two slabs holding shields — it is the single failure this vocabulary
+      exists to prevent, and the reason the torso itself stays a stroke.
+
+   Slots, all called with (j, dir, S) per the handoff brief:
+     back(j,dir,S)     before the legs — capes, coats, robes, extra limbs
+     head(j,dir,S)     replaces the plain circle. Carries most of the read.
+     torso(j,dir,S)    after the spine stroke — collars, belts, pads
+     overlay(j,dir,S)  last — the signature accessory
+*/
+let D = null;   // current draw context, set once per figure by drawFigure
+
+/* ONE UNIT RULE, and it is the only thing you need to remember to write a
+   costume: every length and width a costume passes in is in RIG UNITS —
+   the same units as RIG.headR and RIG.spine. Every primitive multiplies by
+   D.S itself. Mixing pixels in here scales twice and the mark silently
+   doubles on a retina display. `px(u)` is the escape hatch for the two
+   costumes that reach for ctx directly. */
+function px(u){ return u*D.S; }
+function fillAs(c, a){ ctx.globalAlpha = a===undefined ? 1 : a; ctx.fillStyle = c||D.col; }
+
+/* THE RIM. Several fighters are near-black by design — Vader, Batman, Neo,
+   Sauron — and on a dark arena a black helmet on a black head is nothing at
+   all. The skeleton has always had an edge pass; the costumes had not, so
+   every mark on the characters who most needed one was invisible. Each
+   primitive now lays its own rim under itself: stroke the path in the edge
+   colour, then fill, so the fill covers the inner half of the stroke and
+   what survives is a clean outline half a stroke wide.
+
+   `bare` opts out, for marks that are already a contrasting colour (a white
+   eye, a black visor) where a rim would only muddy them. */
+function rimAndFill(fill, a, bare){
+  if(!bare && D.edge){
+    ctx.strokeStyle = D.edge;
+    ctx.lineWidth = px(D.rimW);
+    ctx.lineJoin = 'round';
+    ctx.globalAlpha = a===undefined ? 1 : Math.max(a, 0.55);
+    ctx.stroke();
+  }
+  fillAs(fill, a);
+  ctx.fill();
+}
+
+/* 1. mass — an ellipse of body. Hair, egg bodies, hoods, beards. */
+function mass(p, rx, ry, rot, fill, a, bare){
+  ctx.save();
+  ctx.beginPath();
+  ctx.ellipse(p.x, p.y, Math.abs(px(rx)), Math.abs(px(ry)), (rot||0)*DEG*D.dir, 0, TAU);
+  rimAndFill(fill, a, bare);
+  ctx.restore();
+}
+/* 2. plate — a filled polygon of already-solved points. Helmet flanges,
+      lapels, shoulder pads, emblems, beard wedges. */
+function plate(pts, fill, a, bare){
+  if(!pts || pts.length < 3) return;
+  ctx.save();
+  ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+  for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x, pts[i].y);
+  ctx.closePath();
+  rimAndFill(fill, a, bare);
+  ctx.restore();
+}
+/* 3. rod — a stroked segment. Antennae, tails, moustaches, braids, staffs.
+      A stroke cannot be filled over, so it gets its rim by being drawn
+      twice: once fat in the edge colour, once at width. */
+function rod(a, b, w, color, alpha, bare){
+  ctx.save(); ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y);
+  if(!bare && D.edge){
+    ctx.globalAlpha = alpha===undefined ? 1 : Math.max(alpha, 0.55);
+    ctx.lineWidth = px(w) + px(D.rimW*0.85); ctx.strokeStyle = D.edge; ctx.stroke();
+  }
+  ctx.globalAlpha = alpha===undefined ? 1 : alpha;
+  ctx.lineWidth = px(w); ctx.strokeStyle = color||D.col; ctx.stroke();
+  ctx.restore();
+}
+/* 4. spray — n tapering spikes fanned from a point. The workhorse: hair,
+      horns, crowns, montrals, ears, crests. Wobble is derived from the index
+      and never from Math.random, or the hair boils on every frame. */
+function spray(o, base, n, spread, len, w, color, jit){
+  ctx.save(); ctx.lineCap='round';
+  for(let pass=0; pass<2; pass++){
+    if(pass===0 && !D.edge) continue;
+    ctx.strokeStyle = pass===0 ? D.edge : (color||D.col);
+    for(let i=0;i<n;i++){
+      const f = n===1 ? 0.5 : i/(n-1);
+      const wob = jit ? 1 + (((i*37)%7)-3)*0.045*jit : 1;
+      const L = px(len) * (0.62 + 0.38*Math.sin(Math.PI*f)) * wob;
+      const tip = pt(o, base + (f-0.5)*spread, L + (pass===0?px(1.4):0), D.dir);
+      ctx.beginPath(); ctx.moveTo(o.x,o.y); ctx.lineTo(tip.x,tip.y);
+      ctx.lineWidth = px(w)*(1 - 0.25*f) + (pass===0 ? px(D.rimW*0.85) : 0);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+/* 5. drape — hanging cloth between two shoulder points and two hem points,
+      with a soft belly so it reads as fabric and not as a sign. This is the
+      ONLY way body-covering cloth enters a costume, and it is always called
+      from the `back` slot so it can never swallow the limbs. */
+function drape(t1, t2, b1, b2, fill, a, belly){
+  ctx.save(); fillAs(fill, a===undefined ? 0.42 : a);
+  ctx.beginPath();
+  ctx.moveTo(t1.x, t1.y); ctx.lineTo(t2.x, t2.y);
+  ctx.quadraticCurveTo(b2.x + px(belly||0)*D.dir, b2.y - Math.abs(b2.y-t2.y)*0.28, b2.x, b2.y);
+  ctx.quadraticCurveTo((b1.x+b2.x)/2, b2.y + px(6), b1.x, b1.y);
+  ctx.closePath();
+  // Cloth only takes a rim when the fighter is dark enough to vanish
+  // without one — a dark outline round a pale robe is just a border.
+  if(D.edge && D.dark){ ctx.strokeStyle = D.edge; ctx.lineWidth = px(2.0); ctx.lineJoin='round'; ctx.stroke(); }
+  ctx.fill(); ctx.restore();
+}
+/* 6. ring — a shallow ellipse outline read in perspective. Haloes, glasses,
+      emblems, bands. */
+function ring(p, r, w, color, a){
+  ctx.save(); ctx.globalAlpha = a===undefined ? 1 : a;
+  ctx.beginPath(); ctx.ellipse(p.x, p.y, Math.abs(px(r)), Math.abs(px(r))*0.34, 0, 0, TAU);
+  ctx.lineWidth = px(w); ctx.strokeStyle = color||D.col; ctx.stroke(); ctx.restore();
+}
+/* the default head, so a costume can add marks to it rather than replace it */
+function baseHead(j, r){
+  ctx.save(); fillAs(D.col, 1);
+  ctx.beginPath(); ctx.arc(j.head.x, j.head.y, px(r===undefined ? D.hr : r), 0, TAU);
+  ctx.fill(); ctx.restore();
+}
+/* a point offset from a joint, in rig units, respecting facing */
+function off(p, ang, len){ return pt(p, ang, px(len), D.dir); }
+
+/* ---- the 29 ---------------------------------------------------------
+   One distinguishing read each. Original stylised geometry throughout —
+   shapes chosen to survive at 30px, not reproductions of anyone's art. */
+const COSTUMES = {
+  /* ================= the sabre lineage ================= */
+  vader: {
+    head(j){
+      const r = D.hr;
+      // A DOME wants an ellipse. Built out of quads it reads as a box on
+      // the shoulders, which is a different helmet entirely.
+      mass(off(j.head,0,r*0.12), r*1.24, r*1.34, 0, D.col, 1);
+      // the flared bottom flange, and the faceplate line across it
+      plate([off(j.head,142,r*1.15), off(j.head,218,r*1.15),
+             off(j.head,201,r*2.15), off(j.head,159,r*2.15)], D.col, 1);
+      rod(off(j.head,152,r*1.3), off(j.head,208,r*1.3), 0.8, D.edge, 0.85, true);
+      // the brow: two short angled marks that give the mask its scowl
+      rod(off(j.head,52,r*1.0), off(j.head,86,r*0.72), 0.9, D.edge, 0.8, true);
+      rod(off(j.head,308,r*1.0), off(j.head,274,r*0.72), 0.9, D.edge, 0.8, true);
+    },
+    torso(j){  // high square shoulders
+      plate([off(j.shR,0,7), off(j.shL,0,7), off(j.shL,180,4), off(j.shR,180,4)], D.col, 0.95);
+    }
+  },
+  luke: {   // deliberately the plain one: bare head, small hair, no cape
+    head(j){ baseHead(j); spray(off(j.head,342,D.hr*0.7), 330, 5, 70, D.hr*0.7, D.hr*0.3, D.mark, 0.4); }
+  },
+  obiwan: {
+    back(j){
+      drape(j.shR, j.hip, off(j.knR,8,4), off(j.hip,166,26), D.col, 0.24, 5);
+      drape(j.hip, j.shL, off(j.hip,194,28), off(j.knL,-8,4), D.col, 0.26, -5);
+      mass(off(j.elL,120,10), D.hr*0.8, D.hr*0.5, 40, D.col, 0.30);   // sleeve flare
+    },
+    head(j){
+      const r = D.hr;
+      baseHead(j);
+      spray(off(j.head,320,r*0.6), 320, 4, 60, r*0.62, r*0.28, D.mark, 0.3);
+      plate([off(j.head,140,r*0.9), off(j.head,198,r*0.95), off(j.head,168,r*2.0)], D.mark, 1);
+    }
+  },
+  anakin: {
+    back(j){   // robe skirt, split at the front
+      drape(j.shR, j.hip, off(j.knR,4,2), off(j.hip,170,26), D.col, 0.26, 4);
+      drape(j.hip, j.shL, off(j.hip,190,26), off(j.knL,-4,2), D.col, 0.26, -4);
+    },
+    head(j){
+      baseHead(j);
+      mass(off(j.head,254,D.hr*0.66), D.hr*0.84, D.hr*0.66, 22, D.mark, 1);
+      rod(off(j.head,214,D.hr*0.9), off(j.shL,196,D.hr*1.1), 1.1, D.mark, 0.9);  // padawan braid
+    }
+  },
+  yoda: {
+    back(j){ drape(j.shR, j.shL, off(j.ftR,0,10), off(j.ftL,0,10), D.col, 0.30, 12); },
+    head(j){
+      const r = D.hr;
+      baseHead(j);
+      plate([off(j.head,86,r*0.5), off(j.head,62,r*2.6), off(j.head,110,r*1.6)], D.col, 1);
+      plate([off(j.head,274,r*0.5), off(j.head,298,r*2.6), off(j.head,250,r*1.6)], D.col, 1);
+    }
+  },
+  dooku: {
+    head(j){
+      const r = D.hr;
+      baseHead(j);
+      mass(off(j.head,276,r*0.78), r*0.72, r*0.46, -16, D.mark, 1);
+      plate([off(j.head,146,r*0.85), off(j.head,198,r*0.9), off(j.head,172,r*1.7)], D.mark, 1);
+    }
+  },
+  maul: {   // a ring of short horns around the crown; no robe mass at all
+    head(j){ baseHead(j); spray(j.head, 0, 9, 300, D.hr*1.55, D.hr*0.28, D.mark, 0.5); }
+  },
+  palpatine: {
+    back(j){ drape(j.shR, j.shL, off(j.knR,0,6), off(j.knL,0,6), D.col, 0.34, 10); },
+    head(j){   // a deep pointed hood with no visible head inside it
+      const r = D.hr;
+      plate([off(j.head,96,r*1.25), off(j.head,264,r*1.25),
+             off(j.head,248,r*1.55), off(j.head,344,r*2.3), off(j.head,112,r*1.55)], D.col, 1);
+      mass(off(j.head,152,r*0.3), r*0.72, r*0.56, 0, '#000000', 0.6, true);
+    },
+    torso(j){ mass(off(j.elL,150,12), D.hr*0.95, D.hr*0.58, 30, D.col, 0.38); }
+  },
+  ahsoka: {
+    head(j){
+      const r = D.hr;
+      baseHead(j);
+      spray(off(j.head,0,r*0.5), 350, 2, 46, r*1.5, r*0.34, D.col, 0);   // montrals
+      rod(off(j.head,120,r*0.8), off(j.shR,132,r*2.6), r*0.5, D.col, 1); // lekku, forward
+      rod(off(j.head,232,r*0.8), off(j.shL,214,r*2.2), r*0.42, D.col, 0.85);
+    }
+  },
+  grievous: {
+    back(j){   // the second pair of arms, behind the working ones
+      const e1 = off(j.shL, 258, 30), h1 = off(e1, 300, 28);
+      const e2 = off(j.shR, 102, 30), h2 = off(e2, 60, 28);
+      ctx.save(); ctx.globalAlpha = 0.6;
+      rod(j.shL, e1, D.lw*0.8, D.col, 1); rod(e1, h1, D.lw*0.7, D.col, 1);
+      rod(j.shR, e2, D.lw*0.8, D.col, 1); rod(e2, h2, D.lw*0.7, D.col, 1);
+      ctx.restore();
+    },
+    head(j){   // narrow head, beak profile, hunched shoulder cowl
+      const r = D.hr;
+      mass(j.head, r*0.7, r*1.05, 8, D.col, 1);
+      plate([off(j.head,72,r*0.5), off(j.head,96,r*1.8), off(j.head,128,r*0.7)], D.col, 1);
+      plate([off(j.neck,70,14), off(j.neck,290,14),
+             off(j.neck,320,26), off(j.neck,40,26)], D.col, 0.8);
+    }
+  },
+  rey: {
+    head(j){
+      const r = D.hr;
+      baseHead(j);
+      mass(off(j.head,306,r*1.05), r*0.52, r*0.52, 0, D.mark, 1);
+      mass(off(j.head,272,r*1.5), r*0.46, r*0.46, 0, D.mark, 1);
+      mass(off(j.head,238,r*1.75), r*0.4, r*0.4, 0, D.mark, 1);
+    },
+    overlay(j){   // wrapped forearm bands
+      rod(off(j.elR,0,6), off(j.haR,180,10), D.lw*1.25, D.col, 0.7);
+      rod(off(j.elL,0,6), off(j.haL,180,10), D.lw*1.1, D.col, 0.5);
+    }
+  },
+  kylo: {
+    back(j){   // ragged cape hem
+      const b1 = off(j.hip,190,64), b2 = off(j.hip,206,86);
+      ctx.save(); fillAs(D.col, 0.44);
+      ctx.beginPath(); ctx.moveTo(j.shR.x, j.shR.y); ctx.lineTo(j.shL.x, j.shL.y);
+      ctx.lineTo(b2.x, b2.y);
+      for(let i=1;i<=5;i++){
+        const f = i/5;
+        ctx.lineTo(lerp(b2.x,b1.x,f), lerp(b2.y,b1.y,f) + (i%2 ? px(9) : px(-5)));
+      }
+      ctx.closePath(); ctx.fill(); ctx.restore();
+    },
+    head(j){   // slim helmet, vertical face slit
+      const r = D.hr;
+      mass(j.head, r*0.84, r*1.1, 0, D.col, 1);
+      plate([off(j.head,58,r*0.9), off(j.head,122,r*0.9),
+             off(j.head,152,r*0.5), off(j.head,28,r*0.5)], D.col, 1);
+      rod(off(j.head,72,r*0.72), off(j.head,116,r*0.78), r*0.2, D.edge, 0.95);
+    }
+  },
+
+  /* ================= the parable ================= */
+  jesus: {
+    back(j){ drape(j.shR, j.shL, off(j.ftR,0,8), off(j.ftL,0,8), D.col, 0.30, 8); },
+    head(j){
+      const r = D.hr;
+      baseHead(j);
+      mass(off(j.head,220,r*0.7), r*1.0, r*1.02, 0, D.mark, 1);
+      plate([off(j.head,142,r*0.9), off(j.head,202,r*0.9), off(j.head,172,r*1.9)], D.mark, 1);
+    },
+    overlay(j){ ring(off(j.head,0,D.hr*1.55), D.hr*0.95, 1.1, D.glow, 0.6); }
+  },
+  devil: {
+    head(j){
+      const r = D.hr;
+      baseHead(j);
+      rod(off(j.head,26,r*0.85), off(j.head,332,r*2.7), r*0.4, D.mark, 1);
+      rod(off(j.head,334,r*0.85), off(j.head,296,r*2.5), r*0.36, D.mark, 1);
+    },
+    overlay(j){   // a tail dropping from the hip and curling back up
+      const a = off(j.hip,214,10), b = off(j.hip,206,54), c = off(j.hip,254,72);
+      ctx.save(); ctx.lineCap='round'; ctx.beginPath();
+      ctx.moveTo(a.x,a.y); ctx.quadraticCurveTo(b.x,b.y,c.x,c.y);
+      // stroked twice for its rim, the same as `rod` — a near-black tail on
+      // a near-black arena is otherwise not there at all
+      ctx.lineWidth = px(D.lw*0.62)+px(D.rimW*0.85); ctx.strokeStyle = D.edge; ctx.stroke();
+      ctx.lineWidth = px(D.lw*0.62); ctx.strokeStyle = D.mark; ctx.stroke();
+      ctx.restore();
+      plate([off(c,254,4), off(c,206,15), off(c,300,15)], D.mark, 1);
+    }
+  },
+
+  /* ================= the cartoons ================= */
+  rick: {
+    back(j){   // lab coat: two open panels, nothing across the front
+      drape(j.shR, j.hip, off(j.knR,6,6), off(j.hip,168,30), D.col, 0.30, 5);
+      drape(j.hip, j.shL, off(j.hip,192,30), off(j.knL,-6,6), D.col, 0.30, -5);
+    },
+    head(j){
+      const r = D.hr;
+      baseHead(j);
+      spray(off(j.head,340,r*0.7), 340, 6, 120, r*1.3, r*0.32, D.mark, 1.2);
+      rod(off(j.head,68,r*0.62), off(j.head,118,r*0.66), r*0.16, D.edge, 0.85);  // unibrow
+    }
+  },
+  morty: {
+    head(j){ baseHead(j); spray(off(j.head,352,D.hr*0.86), 350, 2, 34, D.hr*0.5, D.hr*0.24, D.mark, 0.4); },
+    torso(j){
+      mass(off(j.shR,100,8), D.hr*0.44, D.hr*0.34, 0, D.col, 0.85);
+      mass(off(j.shL,260,8), D.hr*0.42, D.hr*0.32, 0, D.col, 0.7);
+    }
+  },
+  homer: {
+    back(j){   // the wide egg, behind the limbs so it can never become a slab
+      const c = { x:(j.hip.x+j.neck.x)/2, y:(j.hip.y+j.neck.y)/2 };
+      mass(c, D.hr*1.5, D.hr*1.75, 0, D.col, 0.5);
+    },
+    head(j){
+      const r = D.hr;
+      baseHead(j);
+      // no neck: bridge the head into the shoulders with the same mass
+      plate([off(j.head,124,r*0.95), off(j.head,236,r*0.95), j.shL, j.shR], D.col, 0.95);
+      rod(off(j.head,352,r*0.95), off(j.head,346,r*1.8), 0.9, D.mark, 1);
+      rod(off(j.head,10,r*0.95),  off(j.head,16,r*1.8),  0.9, D.mark, 1);
+    },
+    overlay(j){   // the bulging eye, wider the more frantic the swing
+      const r = D.hr, e = off(j.head, 66, r*0.6);
+      const bulge = 1 + 0.45*(D.fx.effort||0);
+      mass(e, r*0.21*bulge, r*0.23*bulge, 0, '#ffffff', 0.92, true);
+      mass(off(e, 90, 1.6), r*0.09, r*0.09, 0, '#101014', 0.95, true);
+    }
+  },
+  ned: {
+    head(j){
+      const r = D.hr;
+      baseHead(j);
+      mass(off(j.head,300,r*0.8), r*0.8, r*0.48, -14, D.mark, 1);
+      rod(off(j.head,56,r*0.72), off(j.head,106,r*0.78), r*0.28, D.mark, 1);   // moustache bar
+      ring(off(j.head,74,r*0.5), r*0.32, 0.9, D.edge, 0.9);
+      ring(off(j.head,104,r*0.52), r*0.32, 0.9, D.edge, 0.9);
+    },
+    torso(j){
+      plate([off(j.neck,96,9), off(j.neck,264,9),
+             off(j.neck,206,20), off(j.neck,154,20)], D.col, 0.9);
+    },
+    overlay(j){
+      // A halo that answers the sabre: faint always, bright while he parries.
+      const a = 0.16 + 0.72*(D.fx.blocking||0);
+      ring(off(j.head,0,D.hr*1.6), D.hr*1.0, 1.2, D.glow, a);
+    }
+  },
+  bart: {
+    head(j){   // the spiked crown, one polygon so it reads as a shape not hair
+      const r = D.hr, pts = [off(j.head,254,r*0.9)];
+      baseHead(j);
+      for(let i=0;i<9;i++) pts.push(off(j.head, 250 - i*(196/8), i%2 ? r*1.9 : r*1.0));
+      pts.push(off(j.head,58,r*0.9));
+      plate(pts, D.col, 1);
+    }
+  },
+
+  /* ================= the machine ================= */
+  neo: {
+    back(j){ drape(j.shR, j.shL, off(j.ftR,0,-14), off(j.ftL,0,-14), D.col, 0.44, 2); },
+    head(j){
+      const r = D.hr;
+      baseHead(j);
+      mass(off(j.head,330,r*0.6), r*0.92, r*0.6, -10, D.mark, 1);
+      rod(off(j.head,58,r*0.66), off(j.head,116,r*0.7), r*0.36, '#0b0b0e', 0.95, true);
+    }
+  },
+  smith: {
+    head(j){
+      const r = D.hr;
+      baseHead(j);
+      spray(off(j.head,344,r*0.82), 336, 3, 44, r*0.6, r*0.22, D.mark, 0.3);
+      rod(off(j.head,74,r*0.62), off(j.head,116,r*0.66), r*0.32, '#0d0d10', 0.95, true);
+      mass(off(j.head,246,r*0.9), r*0.22, r*0.22, 0, D.edge, 1);
+      rod(off(j.head,244,r*0.95), off(j.neck,268,10), 0.7, D.edge, 0.8);
+    },
+    torso(j){
+      const mid = off(j.neck,150,26);
+      plate([off(j.neck,96,10), mid, off(j.neck,120,15)], D.col, 0.95);
+      plate([off(j.neck,264,10), mid, off(j.neck,240,15)], D.col, 0.8);
+    }
+  },
+
+  /* ================= the shonen ================= */
+  naruto: {
+    head(j){
+      baseHead(j);
+      spray(j.head, 0, 8, 250, D.hr*1.5, D.hr*0.3, D.mark, 0.8);
+      rod(off(j.head,52,D.hr*1.0), off(j.head,308,D.hr*1.0), D.hr*0.3, D.edge, 0.95);
+    },
+    torso(j){ plate([off(j.neck,98,10), off(j.neck,262,10),
+                     off(j.hip,200,12), off(j.hip,160,12)], D.col, 0.34); }
+  },
+  sasuke: {
+    head(j){
+      const r = D.hr;
+      baseHead(j);
+      plate([off(j.head,290,r*0.9), off(j.head,244,r*2.4),
+             off(j.head,300,r*2.0), off(j.head,338,r*1.2)], D.mark, 1);
+    },
+    torso(j){
+      plate([off(j.neck,86,12), off(j.neck,274,12),
+             off(j.neck,296,30), off(j.neck,64,30)], D.col, 0.9);
+    },
+    overlay(j){   // one arm out of the sleeve — cloth on the off arm only
+      drape(off(j.shL,0,2), off(j.shL,180,8), off(j.elL,0,10), off(j.elL,180,6), D.col, 0.4, 0);
+    }
+  },
+  goku: {
+    head(j){ baseHead(j); spray(j.head, 0, 7, 170, D.hr*2.1, D.hr*0.32, D.mark, 0.5); },
+    torso(j){ rod(off(j.hip,80,16), off(j.hip,280,16), D.lw*1.05, D.glow, 0.75); }
+  },
+  vegeta: {
+    head(j){   // flat top with a widow's peak
+      const r = D.hr;
+      baseHead(j);
+      plate([off(j.head,286,r*1.0), off(j.head,284,r*1.95), off(j.head,76,r*1.95),
+             off(j.head,74,r*1.0), off(j.head,0,r*1.2)], D.mark, 1);
+    },
+    torso(j){
+      plate([off(j.shR,20,10), off(j.shR,150,14), off(j.shR,96,22)], D.col, 1);
+      plate([off(j.shL,340,10), off(j.shL,210,14), off(j.shL,264,22)], D.col, 0.85);
+    },
+    overlay(j){
+      mass(j.haR, D.hr*0.32, D.hr*0.32, 0, D.col, 1);
+      mass(j.haL, D.hr*0.28, D.hr*0.28, 0, D.col, 0.8);
+    }
+  },
+
+  /* ================= the cowl ================= */
+  batman: {
+    back(j){   // scalloped cape
+      const b1 = off(j.hip,188,74), b2 = off(j.hip,214,96);
+      ctx.save(); fillAs(D.col, 0.46);
+      ctx.beginPath(); ctx.moveTo(j.shR.x, j.shR.y); ctx.lineTo(j.shL.x, j.shL.y);
+      ctx.lineTo(b2.x, b2.y);
+      for(let i=1;i<=4;i++){
+        const f=i/4, mx=lerp(b2.x,b1.x,f), my=lerp(b2.y,b1.y,f);
+        ctx.quadraticCurveTo(mx + px(6)*D.dir, my + px(13), mx, my);
+      }
+      ctx.closePath(); ctx.fill(); ctx.restore();
+    },
+    head(j){
+      const r = D.hr;
+      baseHead(j);
+      plate([off(j.head,342,r*0.85), off(j.head,336,r*2.2), off(j.head,316,r*0.9)], D.col, 1);
+      plate([off(j.head,18,r*0.85),  off(j.head,24,r*2.2),  off(j.head,44,r*0.9)],  D.col, 1);
+    },
+    overlay(j){
+      const c = off(j.neck,150,22);
+      plate([off(c,90,9), off(c,180,7), off(c,270,9), off(c,0,7)], D.glow, 0.55);
+    }
+  },
+  joker: {
+    back(j){   // tailcoat — two tails, nothing across the front
+      drape(j.shR, j.hip, off(j.knR,10,10), off(j.hip,172,34), D.col, 0.34, 6);
+      drape(j.hip, j.shL, off(j.hip,196,34), off(j.knL,-10,10), D.col, 0.34, -6);
+    },
+    head(j){
+      const r = D.hr;
+      baseHead(j);
+      mass(off(j.head,250,r*0.85), r*1.15, r*0.95, 16, D.glow, 0.5);
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(j.head.x + D.dir*px(r*0.1), j.head.y + px(r*0.2), px(r*0.66), 0.28, Math.PI-0.28);
+      ctx.lineWidth = px(r*0.22); ctx.strokeStyle = '#f2f2f2'; ctx.lineCap='round'; ctx.stroke();
+      ctx.restore();
+    }
+  },
+
+  /* ================= the road ================= */
+  gandalf: {
+    back(j){
+      drape(j.shR, j.shL, off(j.ftR,0,8), off(j.ftL,0,8), D.col, 0.32, 10);
+      // the staff, in the off hand — the reason he is the one fighter who
+      // never solves the two-handed grip
+      rod(off(j.haL,0,74), off(j.haL,180,58), 2.1, '#6b5a44', 1);
+      mass(off(j.haL,0,74), D.hr*0.34, D.hr*0.28, 0, D.glow, 0.55);
+    },
+    head(j){
+      const r = D.hr;
+      baseHead(j);
+      plate([off(j.head,266,r*1.95), off(j.head,90,r*1.95), off(j.head,0,r*1.1)], D.mark, 1);
+      plate([off(j.head,300,r*1.15), off(j.head,60,r*1.15), off(j.head,6,r*3.2)], D.mark, 1);
+      plate([off(j.head,150,r*0.95), off(j.head,208,r*0.95), off(j.head,176,r*3.0)], D.col, 1);
+    }
+  },
+  sauron: {
+    back(j){ drape(j.shR, j.shL, off(j.knR,0,10), off(j.knL,0,10), D.col, 0.4, 10); },
+    head(j){
+      baseHead(j);
+      spray(j.head, 0, 7, 190, D.hr*1.9, D.hr*0.28, D.col, 0.3);
+      spray(j.head, 0, 1, 0, D.hr*2.8, D.hr*0.32, D.col, 0);
+    },
+    torso(j){
+      plate([off(j.shR,10,12), off(j.shR,150,16), off(j.shR,92,26)], D.col, 1);
+      plate([off(j.shL,350,12), off(j.shL,210,16), off(j.shL,268,26)], D.col, 0.85);
+    }
+  }
+};
+for(const k in COSTUMES) if(FIGHTERS[k]) FIGHTERS[k].draw = COSTUMES[k];
+FIGHTERS.gandalf.offhand = 'staff';   // never solves the two-handed grip
+FIGHTERS.sauron.bluntHead = 'mace';
+FIGHTERS.bart.bluntHead = 'board';
+
 function paintSkeleton(j, w, color){
   strokeLine(j.shL, j.elL, w, color);
   strokeLine(j.elL, j.haL, w, color);
@@ -788,36 +1993,51 @@ function paintSkeleton(j, w, color){
   strokeLine(j.elR, j.haR, w, color);
 }
 
-function drawBlade(from, to, glow, S, width){
+/* Plasma: bloom, body, white core. An `unstable` blade (Kylo's, and Homer's
+   at the client's request) gets a ragged edge and a length that flickers —
+   drawn as a polyline with a deterministic wobble so it crackles rather than
+   boiling, and a crossflow of stray sparks off the emitter. */
+function drawBlade(from, to, glow, S, width, unstable, seed){
   ctx.save();
   ctx.lineCap = 'round';
-  // outer bloom
+  let path = null;
+  if(unstable){
+    const n = 7, dx = (to.x-from.x)/n, dy = (to.y-from.y)/n;
+    const nx = -(to.y-from.y), ny = (to.x-from.x);
+    const nl = Math.hypot(nx,ny) || 1;
+    path = [];
+    for(let i=0;i<=n;i++){
+      const w = i===0 ? 0 : Math.sin(seed*3.1 + i*2.3)*1.9*S*(i/n);
+      path.push({ x:from.x+dx*i + nx/nl*w, y:from.y+dy*i + ny/nl*w });
+    }
+  }
+  function stroke(w){
+    ctx.beginPath();
+    if(path){ ctx.moveTo(path[0].x,path[0].y); for(let i=1;i<path.length;i++) ctx.lineTo(path[i].x,path[i].y); }
+    else { ctx.moveTo(from.x,from.y); ctx.lineTo(to.x,to.y); }
+    ctx.lineWidth = w; ctx.stroke();
+  }
   ctx.globalCompositeOperation = 'lighter';
   ctx.shadowColor = glow; ctx.shadowBlur = 26*S;
-  ctx.strokeStyle = glow; ctx.globalAlpha = 0.34; ctx.lineWidth = (width+7)*S;
-  ctx.beginPath(); ctx.moveTo(from.x,from.y); ctx.lineTo(to.x,to.y); ctx.stroke();
-  // body
-  ctx.shadowBlur = 12*S; ctx.globalAlpha = 0.85; ctx.lineWidth = width*S;
-  ctx.beginPath(); ctx.moveTo(from.x,from.y); ctx.lineTo(to.x,to.y); ctx.stroke();
-  // white core
+  ctx.strokeStyle = glow; ctx.globalAlpha = 0.34; stroke((width+7)*S);
+  ctx.shadowBlur = 12*S; ctx.globalAlpha = 0.85; stroke(width*S);
   ctx.globalCompositeOperation = 'source-over';
   ctx.shadowBlur = 0; ctx.globalAlpha = 1;
-  ctx.strokeStyle = '#ffffff'; ctx.lineWidth = Math.max(1, width*0.32)*S;
-  ctx.beginPath(); ctx.moveTo(from.x,from.y); ctx.lineTo(to.x,to.y); ctx.stroke();
+  ctx.strokeStyle = '#ffffff'; stroke(Math.max(1, width*0.32)*S);
   ctx.restore();
 }
 
-function drawCape(j, dir, color, sway){
-  const top1 = j.shR, top2 = j.shL;
-  const drop = 74*j.S;
+/* The generic cape, for fighters whose costume does not draw its own. */
+function drawCape(j, dir, color, sway, len){
+  const drop = (len||74)*j.S;
   const b1 = { x:j.hip.x - dir*(16+sway)*j.S, y:j.hip.y + drop };
   const b2 = { x:j.hip.x - dir*(40+sway*1.5)*j.S, y:j.hip.y + drop*0.82 };
   ctx.save();
   ctx.globalAlpha = 0.5;
   ctx.fillStyle = color;
   ctx.beginPath();
-  ctx.moveTo(top1.x, top1.y);
-  ctx.lineTo(top2.x, top2.y);
+  ctx.moveTo(j.shR.x, j.shR.y);
+  ctx.lineTo(j.shL.x, j.shL.y);
   ctx.quadraticCurveTo(b2.x, b2.y - drop*0.3, b2.x, b2.y);
   ctx.lineTo(b1.x, b1.y);
   ctx.closePath();
@@ -825,8 +2045,104 @@ function drawCape(j, dir, color, sway){
   ctx.restore();
 }
 
-function drawFigure(x, yOff, dir, pose, char, airborne){
-  const j = computeJoints(x, yOff, dir, pose, char.scale);
+/* An oriented hilt with both hands on it, rather than the 3.2px dot that
+   used to stand in for a grip. `curved` cants the emitter off the grip axis,
+   which is the whole of Dooku's read at this size. */
+function drawHilt(hand, angle, dir, S, curved, second){
+  const back = pt(hand, angle+180, 5.5*S, dir);
+  const fore = pt(hand, angle + (curved ? -13 : 0), 7.5*S, dir);
+  ctx.save();
+  ctx.lineCap = 'butt';
+  ctx.strokeStyle = '#3a3a41'; ctx.lineWidth = 4.4*S;
+  ctx.beginPath(); ctx.moveTo(back.x,back.y); ctx.lineTo(fore.x,fore.y); ctx.stroke();
+  ctx.strokeStyle = '#8d8d99'; ctx.lineWidth = 1.5*S;
+  const c = pt(hand, angle+180, 1.5*S, dir);
+  ctx.beginPath(); ctx.moveTo(c.x,c.y); ctx.lineTo(fore.x,fore.y); ctx.stroke();
+  ctx.fillStyle = '#16161a';
+  ctx.beginPath(); ctx.arc(hand.x, hand.y, 2.4*S, 0, TAU); ctx.fill();
+  if(second){ ctx.beginPath(); ctx.arc(second.x, second.y, 2.2*S, 0, TAU); ctx.fill(); }
+  ctx.restore();
+  return fore;   // the emitter: where the blade actually starts
+}
+
+/* Blade light on the body. The old pass was a fixed 1.6px offset at a flat
+   alpha, which is a highlight rather than a light. This one takes the
+   direction from the blade's midpoint to each limb and falls off with
+   distance, so a blade held overhead lights the shoulders and a blade held
+   low lights the shins. Cheap, and the largest single readability gain on a
+   dark arena. */
+function bladeLight(j, segs, glow, S, lw){
+  if(!segs.length) return;
+  let mx=0, my=0;
+  for(const s of segs){ mx += (s.a.x+s.b.x)/2; my += (s.a.y+s.b.y)/2; }
+  mx /= segs.length; my /= segs.length;
+  const limbs = [[j.hip,j.neck],[j.shR,j.elR],[j.elR,j.haR],[j.shL,j.elL],[j.elL,j.haL],
+                 [j.hip,j.knR],[j.knR,j.ftR],[j.hip,j.knL],[j.knL,j.ftL]];
+  const reach = 130*S;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = glow;
+  for(const [a,b] of limbs){
+    const cxx=(a.x+b.x)/2, cyy=(a.y+b.y)/2;
+    let dx = cxx-mx, dy = cyy-my;
+    const d = Math.hypot(dx,dy) || 1;
+    const fall = clamp(1 - d/reach, 0, 1);
+    if(fall < 0.04) continue;
+    const o = lw*0.30;
+    dx/=d; dy/=d;
+    ctx.globalAlpha = 0.06 + 0.30*fall*fall;
+    ctx.lineWidth = lw*0.36;
+    ctx.beginPath();
+    ctx.moveTo(a.x+dx*o, a.y+dy*o); ctx.lineTo(b.x+dx*o, b.y+dy*o);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/* WHERE THE BLADE IS, derived once from the numbers that draw it.
+   Extracted because two things need it and they must never disagree:
+   `drawFigure` draws it, and `impactPoint` places sparks on it. Reading the
+   PREVIOUS frame's drawn geometry instead put bursts a measured 14px off the
+   sword during a fast cut, because that is how far a tip travels in 16ms. */
+function weaponGeom(j, pose, char, dir){
+  const ext = clamp(pose.weaponExtend, 0, 1);
+  const spin = (pose.rot||0)*dir;
+  const wAngle = pose.weaponAngle + spin*dir;   // keep the blade with the body
+  const wAngleL = pose.weaponAngleL + spin*dir;
+  const out = { segs:[], tip:j.haR, tipL:null, wAngle, wAngleL,
+                emit:j.haR, ang:wAngle, baseLen:0, blunt:char.weapon === 'blunt' };
+  if(out.blunt){
+    out.tip = pt(j.haR, wAngle, 46*j.S*Math.max(ext, 0.35), dir);
+    return out;
+  }
+  if(ext <= 0.02) return out;
+  const baseLen = char.bladeLen * j.S * ext;
+  const wob = char.unstable ? 1 + Math.sin(clock()*11 + j.hip.x*0.03)*0.035 : 1;
+  const ang = wAngle + (char.curvedHilt ? -13 : 0);
+  // the emitter, not the hand: a hilt is a real object and the blade starts
+  // at the far end of it
+  const emit = char.weapon === 'staff' ? j.haR : pt(j.haR, ang, 7.5*j.S, dir);
+  out.emit = emit; out.ang = ang; out.baseLen = baseLen;
+  out.tip = pt(emit, ang, baseLen*wob, dir);
+  out.segs.push({ a:emit, b:out.tip });
+  if(char.weapon === 'staff'){
+    out.tipL = pt(j.haR, wAngle+180, baseLen, dir);
+    out.segs.push({ a:j.haR, b:out.tipL });
+  } else if(char.weapon === 'dual'){
+    out.tipL = pt(j.haL, wAngleL, baseLen*0.86, dir);
+    out.segs.push({ a:j.haL, b:out.tipL });
+  }
+  return out;
+}
+
+function drawFigure(x, yOff, dir, pose, char, airborne, fx){
+  const j = computeJoints(x, yOff, dir, pose, char);
+  const R = j.R;
+  const lw = 6.2*j.S;
+  const edge = edgeColor(char.color);
+  fx = fx || {};
+
   ctx.save();
 
   // ground shadow — tightens and fades when airborne
@@ -836,15 +2152,21 @@ function drawFigure(x, yOff, dir, pose, char, airborne){
   ctx.fillStyle = "rgba(0,0,0," + (0.35 - 0.2*air).toFixed(3) + ")";
   ctx.fill();
 
-  if(char.cape) drawCape(j, dir, char.color, clamp((pose.lean||0)*0.4, -8, 12));
+  /* The costume draw context. Everything a costume needs, in rig units. */
+  const dark = luminance(char.color) < 0.32;
+  D = { col:char.color, glow:char.glow, edge, hr:R.headR, lw:6.2,
+        mark: markColor(char),
+        S:j.S, dir, char, fx, dark, rimW: dark ? 2.6 : 1.1 };
+  const co = char.draw || {};
 
-  const lw = 6.2*j.S;
-  const edge = edgeColor(char.color);
+  // BACK — cloth and extra limbs, behind everything, translucent
+  if(co.back) co.back(j, dir, j.S);
+  else if(char.cape) drawCape(j, dir, char.color, clamp((pose.lean||0)*0.4, -8, 12));
 
   // edge pass — keeps the silhouette readable whatever the arena
   paintSkeleton(j, lw*1.5, edge);
   ctx.beginPath();
-  ctx.arc(j.head.x, j.head.y, (RIG.headR+1.7)*j.S, 0, TAU);
+  ctx.arc(j.head.x, j.head.y, (R.headR+1.7)*j.S, 0, TAU);
   ctx.fillStyle = edge; ctx.fill();
 
   // back limbs, slightly recessed for depth
@@ -855,71 +2177,105 @@ function drawFigure(x, yOff, dir, pose, char, airborne){
   strokeLine(j.hip, j.knL, lw, char.color);
   strokeLine(j.knL, j.ftL, lw, char.color);
   ctx.restore();
-  // torso
+  // torso — a stroke, never a filled slab
   strokeLine(j.hip, j.neck, lw*1.05, char.color);
+  if(co.torso) co.torso(j, dir, j.S);
   // front leg
   strokeLine(j.hip, j.knR, lw, char.color);
   strokeLine(j.knR, j.ftR, lw, char.color);
-  // head
-  ctx.beginPath();
-  ctx.arc(j.head.x, j.head.y, RIG.headR*j.S, 0, TAU);
-  ctx.fillStyle = char.color; ctx.fill();
+  // head — the costume's if it has one
+  if(co.head) co.head(j, dir, j.S);
+  else {
+    ctx.beginPath();
+    ctx.arc(j.head.x, j.head.y, R.headR*j.S, 0, TAU);
+    ctx.fillStyle = char.color; ctx.fill();
+  }
   // front arm
   strokeLine(j.shR, j.elR, lw, char.color);
   strokeLine(j.elR, j.haR, lw, char.color);
+  if(co.overlay) co.overlay(j, dir, j.S);
 
-  // rim light — the blade lighting the body
-  ctx.save();
-  ctx.globalCompositeOperation = 'lighter';
-  ctx.globalAlpha = 0.16;
-  const rim = lw*0.34;
-  strokeLine({x:j.hip.x+dir*1.6, y:j.hip.y}, {x:j.neck.x+dir*1.6, y:j.neck.y}, rim, char.glow);
-  strokeLine({x:j.shR.x+dir*1.6, y:j.shR.y}, {x:j.elR.x+dir*1.6, y:j.elR.y}, rim, char.glow);
-  strokeLine({x:j.elR.x+dir*1.6, y:j.elR.y}, {x:j.haR.x+dir*1.6, y:j.haR.y}, rim, char.glow);
-  ctx.restore();
+  /* --- the weapon ------------------------------------------------------ */
+  const wp = weaponGeom(j, pose, char, dir);
+  const segs = wp.segs;
+  let tipR = wp.tip, tipL = wp.tipL;
 
-  const ext = clamp(pose.weaponExtend, 0, 1);
-  const isBlade = char.weapon !== 'blunt';
-  const baseLen = char.bladeLen * j.S * ext;
-  const spin = (pose.rot||0)*dir;
-  const wAngle = pose.weaponAngle + spin*dir; // keep the blade with the body during flips
-  const wAngleL = pose.weaponAngleL + spin*dir;
-
-  let tipR = j.haR, tipL = null;
-
-  if(isBlade && ext > 0.02){
-    tipR = pt(j.haR, wAngle, baseLen, dir);
-    drawBlade(j.haR, tipR, char.glow, j.S, 6.4);
-    if(char.weapon === 'staff'){
-      const backTip = pt(j.haR, wAngle+180, baseLen, dir);
-      drawBlade(j.haR, backTip, char.glow, j.S, 6.4);
-      tipL = backTip;
-    } else if(char.weapon === 'dual'){
-      tipL = pt(j.haL, wAngleL, baseLen*0.86, dir);
-      drawBlade(j.haL, tipL, char.glow, j.S, 5.4);
-    }
-    // hilt
-    ctx.beginPath(); ctx.arc(j.haR.x, j.haR.y, 3.2*j.S, 0, TAU);
-    ctx.fillStyle = "#2a2a2e"; ctx.fill();
-  } else if(!isBlade){
-    const len = 46*j.S*Math.max(ext, 0.35);
-    tipR = pt(j.haR, wAngle, len, dir);
+  if(wp.blunt){
     ctx.save();
     ctx.lineCap = 'round';
     ctx.shadowColor = "#000"; ctx.shadowBlur = 4*j.S;
     ctx.strokeStyle = char.glow; ctx.lineWidth = 9.5*j.S;
     ctx.beginPath(); ctx.moveTo(j.haR.x,j.haR.y); ctx.lineTo(tipR.x,tipR.y); ctx.stroke();
+    if(char.bluntHead === 'mace'){
+      ctx.fillStyle = char.glow;
+      ctx.beginPath(); ctx.arc(tipR.x, tipR.y, 9*j.S, 0, TAU); ctx.fill();
+      for(let i=0;i<6;i++){
+        const p2 = pt(tipR, i*60, 15*j.S, dir);
+        ctx.strokeStyle = char.glow; ctx.lineWidth = 3*j.S;
+        ctx.beginPath(); ctx.moveTo(tipR.x,tipR.y); ctx.lineTo(p2.x,p2.y); ctx.stroke();
+      }
+    } else if(char.bluntHead === 'board'){
+      const a = pt(tipR, wp.wAngle+90, 20*j.S, dir), b = pt(tipR, wp.wAngle-90, 20*j.S, dir);
+      ctx.strokeStyle = char.glow; ctx.lineWidth = 6*j.S; ctx.lineCap='round';
+      ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+      ctx.fillStyle = '#c8c8d0';
+      for(const w of [a,b]){
+        const p2 = pt(w, wp.wAngle, 6*j.S, dir);
+        ctx.beginPath(); ctx.arc(p2.x,p2.y,2.6*j.S,0,TAU); ctx.fill();
+      }
+    }
+    ctx.restore();
+  } else if(segs.length){
+    drawHilt(j.haR, wp.wAngle, dir, j.S, char.curvedHilt,
+             pose.grip > 0.5 && char.weapon !== 'dual' ? j.haL : null);
+    drawBlade(segs[0].a, segs[0].b, char.glow, j.S, 6.4, char.unstable, x*0.01);
+    if(char.weapon === 'staff'){
+      drawBlade(segs[1].a, segs[1].b, char.glow, j.S, 6.4);
+    } else if(char.weapon === 'dual'){
+      drawBlade(segs[1].a, segs[1].b, char.glow, j.S, 5.4);
+      drawHilt(j.haL, wp.wAngleL, dir, j.S, false, null);
+    } else if(char.crossguard){
+      // the two quillons — a quarter of the length, square to the blade
+      const q1 = pt(wp.emit, wp.ang+82, wp.baseLen*0.24, dir);
+      const q2 = pt(wp.emit, wp.ang-82, wp.baseLen*0.24, dir);
+      drawBlade(wp.emit, q1, char.glow, j.S, 4.0, true, x*0.01+2);
+      drawBlade(wp.emit, q2, char.glow, j.S, 4.0, true, x*0.01+5);
+    }
+  }
+
+  // the blade lighting the body — after the weapon, so it knows where it is
+  if(segs.length) bladeLight(j, segs, char.glow, j.S, lw);
+
+  /* One or two frames of white silhouette on the struck fighter. The single
+     cheapest way to make a hit land — the eye reads the flash as impact
+     before it reads the pose. */
+  if(fx.hit > 0.01){
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = clamp(fx.hit, 0, 1)*0.85;
+    paintSkeleton(j, lw*1.25, '#ffffff');
+    ctx.beginPath(); ctx.arc(j.head.x, j.head.y, R.headR*j.S, 0, TAU);
+    ctx.fillStyle = '#ffffff'; ctx.fill();
     ctx.restore();
   }
 
   ctx.restore();
-  return { hand:j.haR, handL:j.haL, tip:tipR, tipL, head:j.head, hip:j.hip, S:j.S };
+  D = null;
+  return { hand:j.haR, handL:j.haL, tip:tipR, tipL, head:j.head, hip:j.hip,
+           neck:j.neck, S:j.S, segs };
 }
 
 /* ---- blade trails ---- */
+const TRAIL_MIN = 7;    // px the tip must travel to earn a sample
 function pushTrail(trail, hand, tip){
+  const last = trail[trail.length-1];
+  if(last && Math.hypot(tip.x-last.tx, tip.y-last.ty) < TRAIL_MIN){
+    // standing still: let the smear drain instead of thickening into a fan
+    if(trail.length) trail.shift();
+    return;
+  }
   trail.push({ hx:hand.x, hy:hand.y, tx:tip.x, ty:tip.y });
-  if(trail.length > 13) trail.shift();
+  if(trail.length > 7) trail.shift();
 }
 function drawTrail(trail, color){
   if(trail.length < 2) return;
@@ -928,7 +2284,10 @@ function drawTrail(trail, color){
   ctx.fillStyle = color;
   for(let i=1;i<trail.length;i++){
     const a = trail[i-1], b = trail[i];
-    ctx.globalAlpha = (i/trail.length) * 0.20;
+    // Quadratic, so the smear collapses to almost nothing behind a slow
+    // blade and only opens up on a real swing.
+    const f = i/trail.length;
+    ctx.globalAlpha = f*f * 0.11;
     ctx.beginPath();
     ctx.moveTo(a.hx, a.hy); ctx.lineTo(a.tx, a.ty);
     ctx.lineTo(b.tx, b.ty); ctx.lineTo(b.hx, b.hy);
@@ -1117,14 +2476,22 @@ function makeBuilder(tempo){
 }
 
 /* --- beat helper: assigns poses by role --- */
+/* Keys that mean "the attacker" or "the defender" and therefore have to be
+   translated into A/B below rather than copied through. */
+const ROLE_KEYS = { stepAtk:1, stepDef:1, arcAtk:1, arcDef:1,
+                    spinAtk:1, spinDef:1, turnAtk:1, turnDef:1, dur:1 };
+
 function rolePush(g, atk, def, atkPose, defPose, o){
   o = o || {};
-  const b = {
-    dur: o.dur !== undefined ? o.dur : 0.3,
-    ease: o.ease, contact: o.contact, spark: o.spark, shake: o.shake,
-    flash: o.flash, hitstop: o.hitstop, slow: o.slow, sfx: o.sfx,
-    cam: o.cam, swap: o.swap, noSep: o.noSep, resolve: o.resolve
-  };
+  const b = { dur: o.dur !== undefined ? o.dur : 0.3 };
+  /* Everything else the caller passes rides along untouched. This used to be
+     a whitelist of thirteen field names, which meant every beat property
+     added after it was written — `bolts`, `prop`, `propColor`, `gag`,
+     `cocoa` — was silently dropped on the floor. The modules that depended
+     on them ran, emitted beats, and did nothing, while still looking
+     completely correct in the source. A whitelist is the wrong shape here:
+     the role translation is the special case, not the payload. */
+  for(const k in o) if(!ROLE_KEYS[k]) b[k] = o[k];
   b['pose'+atk] = atkPose;
   b['pose'+def] = defPose;
   if(o.stepAtk) b['dx'+atk] = o.stepAtk * g.fwd(atk);
@@ -1150,105 +2517,262 @@ function turnFactor(t){
   return (c >= 0 ? 1 : -1) * Math.max(0.14, Math.abs(c));
 }
 
-/* --- choreography modules --- */
+/* --- choreography modules ---
+   The generator picks WHICH module runs and in what order, and that stays
+   random. What a module does once picked is authored — that is the whole
+   division of labour here, and it is why "make the fights read better" and
+   "keep the fights procedurally generated" are not in conflict.
+
+   Three things below are the difference between a duel and two people
+   waving sticks, and all three were missing:
+
+   1. CUTS CHAIN. A blade ends somewhere, and the next one starts from
+      there. `choice(STRIKES)` picks uniformly and has no memory, so every
+      exchange was a sequence of unrelated swings that each reset to
+      neutral first.
+   2. THEY HOLD DISTANCE. Every strike used to carry a 20–26 unit step, so
+      the pair marched the arena and the separation clamp shoved them back.
+      Ground is now taken deliberately, by modules whose job is taking it
+      (`mPress`, `mFlurry`), and an exchange happens at one distance with
+      footwork.
+   3. THERE IS A BEAT WHERE NOTHING HAPPENS. Wind-ups hold at the top,
+      recoveries settle, and `mStandoff` is nothing but two people looking
+      at each other. A fight reads through the contrast.
+*/
 const STRIKES = ['strikeDown','strikeAcross','strikeUp','thrust'];
 const WINDUPS = { strikeDown:'windupHigh', strikeAcross:'windupSide', strikeUp:'windupLow', thrust:'guard' };
 const BLOCKS  = { strikeDown:'blockHigh', strikeAcross:'blockMid', strikeUp:'blockLow', thrust:'parry' };
 
-function mProbe(g, atk, def){
-  rolePush(g, atk, def, 'circleStep', 'circleStep', { dur:0.34, stepAtk:22, stepDef:14, cam:{z:1.0} });
-  const s = choice(STRIKES);
-  rolePush(g, atk, def, WINDUPS[s], 'guard', { dur:0.22 });
-  rolePush(g, atk, def, s, BLOCKS[s], {
-    dur:0.2, stepAtk:26, contact:contactAt(g,def), spark:12,
-    shake:[2.5,0.14], sfx:'clash', hitstop:0.03
+/* Where a blade can go from where it just finished. A downward cut ends
+   low, so it rises or goes lateral next; a rising cut ends high. Repeating
+   `strikeAcross` is deliberate — that is the backhand return. */
+const STRIKE_CHAIN = {
+  strikeDown:   ['strikeUp','strikeAcross','thrust','strikeAcross'],
+  strikeAcross: ['strikeAcross','strikeDown','thrust'],
+  strikeUp:     ['strikeDown','strikeAcross','strikeAcross'],
+  thrust:       ['strikeAcross','strikeDown','strikeUp']
+};
+function nextStrike(prev){
+  if(!prev) return choice(STRIKES);
+  return choice(STRIKE_CHAIN[prev] || STRIKES);
+}
+
+/* A held beat: the same pose twice, so `lerpPose` has nothing to move.
+   This is the "dead hold" at the top of a wind-up and the settle after an
+   exchange, and it costs one line. */
+function hold(g, atk, def, atkPose, defPose, dur){
+  return rolePush(g, atk, def, atkPose, defPose, { dur, ease:'out' });
+}
+
+/* Close to a given separation. A blade lock is nose to nose, and a fixed
+   `stepAtk: 30` cannot deliver that — where it ends up depends entirely on
+   how far apart the previous module happened to leave them, which is how a
+   sabre lock ended up being played at arm's length and the cocoa ending got
+   framed with one fighter off the side of the panel. */
+function closeTo(g, atk, def, target, o){
+  const need = (g.sep() - target)/2;
+  return Object.assign({}, o || {}, { stepAtk:need, stepDef:need });
+}
+
+/* Circling: both fighters travel the same way across the screen. `fwd` is
+   opposite for the two roles, so opposed signs slide the pair sideways
+   instead of closing them. */
+function circle(g, atk, def, d, dur){
+  return rolePush(g, atk, def, 'circleStep', 'circleStep',
+                  { dur:dur||0.42, stepAtk:d, stepDef:-d });
+}
+
+/* A CUT CAN ONLY LAND FROM INSIDE REACH, and this was the largest remaining
+   realism problem. A blade tip sits about 118 world units forward of the
+   hip, so two facing fighters cross blades at roughly 236 and reach a body
+   at roughly 118. Measured over 1,262 beats that claimed a blade connected,
+   the median separation was 219 and **43% were scheduled further apart than
+   the two blades could physically meet** — the swing went through empty air
+   and the sparks had nowhere to be but the end of a sword pointing at
+   nobody. Fixed steps cannot solve it: where a strike lands depends entirely
+   on how far apart the previous module happened to leave the pair. */
+const STRIKE_RANGE = MIN_SEP + 22;
+function closeStep(g, min){
+  return clamp(g.sep() - STRIKE_RANGE, min === undefined ? 6 : min, 78);
+}
+
+/* One authored exchange: wind up, hold, cut, recover — with the wind-up
+   skipped when the blade is already where the next cut starts from, which
+   is what makes a flurry flow instead of stutter. The approach happens on
+   the WIND-UP, because that is when a fighter steps in. */
+function swing(g, atk, def, s, o){
+  o = o || {};
+  if(!o.noWindup){
+    rolePush(g, atk, def, WINDUPS[s], 'guard',
+             { dur:o.windup || 0.2, stepAtk: closeStep(g, 0)*0.55 });
+    if(o.heavy) hold(g, atk, def, WINDUPS[s], 'guard', o.heavy);
+  }
+  return rolePush(g, atk, def, s, BLOCKS[s], {
+    dur: o.dur || 0.17,
+    stepAtk: o.stepAtk === undefined ? closeStep(g) : o.stepAtk,
+    stepDef: o.stepDef === undefined ? -7 : o.stepDef,
+    contact: contactAt(g, def),
+    spark: o.spark || 13,
+    shake: o.shake || [2.8, 0.15],
+    sfx: 'clash',
+    hitstop: o.hitstop === undefined ? 0.03 : o.hitstop,
+    flash: o.flash, slow: o.slow, cam: o.cam
   });
-  rolePush(g, atk, def, 'guard', 'guard', { dur:0.26, stepAtk:-18 });
+}
+
+/* Move back to guard, and then STAY there. The second beat is the one that
+   matters — it is the frame in which nothing happens, and a fight reads
+   through the contrast between that and the exchange either side of it. A
+   single beat returning to guard is a recovery; this is a rest. */
+function settle(g, atk, def){
+  rolePush(g, atk, def, 'guard', 'guard', { dur:0.3, ease:'out' });
+  hold(g, atk, def, 'guard', 'guard', rand(0.22, 0.48));
+}
+
+/* The defender takes a moment to be hurt. `wounded` was in the pose table
+   from the start and nothing ever reached it. */
+function reel(g, atk, def){
+  rolePush(g, atk, def, 'guard', 'wounded', { dur:0.36, stepDef:-12, ease:'out' });
+}
+
+function mProbe(g, atk, def){
+  circle(g, atk, def, 20, 0.44);
+  const s = nextStrike();
+  swing(g, atk, def, s, { windup:0.24, heavy:0.1, spark:11 });
+  settle(g, atk, def);
 }
 
 function mExchange(g, atk, def, count){
   count = count || randInt(2,4);
-  let a = atk, d = def;
+  let a = atk, d = def, prev = null;
   for(let i=0;i<count;i++){
-    const s = choice(STRIKES);
-    rolePush(g, a, d, WINDUPS[s], 'guard', { dur:0.2 });
-    rolePush(g, a, d, s, BLOCKS[s], {
-      dur:0.19, stepAtk:20, stepDef:-8, contact:contactAt(g,d), spark:14,
-      shake:[3,0.16], sfx:'clash', hitstop:0.035
+    const s = nextStrike(prev);
+    swing(g, a, d, s, {
+      windup: i===0 ? 0.2 : 0.14,
+      heavy: i===0 && chance(0.5) ? 0.1 : 0,
+      spark: 14
     });
-    const t = a; a = d; d = t; // riposte — roles swap
+    prev = s;
+    const t = a; a = d; d = t;   // riposte — roles swap
   }
-  rolePush(g, a, d, 'guard', 'guard', { dur:0.24 });
+  settle(g, a, d);
 }
 
 function mFlurry(g, atk, def){
-  rolePush(g, atk, def, 'windupHigh', 'guard', { dur:0.2, cam:{z:1.12, focus:0.5} });
+  rolePush(g, atk, def, 'windupHigh', 'guard', { dur:0.22, cam:{z:1.12, focus:0.5} });
+  hold(g, atk, def, 'windupHigh', 'guard', 0.12);
   const n = randInt(4,6);
+  let prev = 'strikeDown';
   for(let i=0;i<n;i++){
-    const s = STRIKES[i % STRIKES.length];
-    rolePush(g, atk, def, s, BLOCKS[s], {
-      dur:0.125, stepAtk:i<2?16:6, stepDef:-6,
-      contact:contactAt(g,def), spark:9, shake:[2.4,0.1], sfx:'clash'
+    // A flurry is the one place ground is taken, and it is taken up front.
+    const s = nextStrike(prev); prev = s;
+    swing(g, atk, def, s, {
+      noWindup:true, dur:0.125, spark:9, shake:[2.4,0.1], hitstop:0,
+      stepAtk: i<2 ? 15 : 4, stepDef: i<2 ? -11 : -3
     });
   }
   rolePush(g, atk, def, 'strikeAcross', 'stagger', {
-    dur:0.24, stepAtk:14, stepDef:-30, contact:contactAt(g,def), spark:22,
+    dur:0.24, stepAtk:12, stepDef:-30, contact:contactAt(g,def), spark:22,
     shake:[5,0.24], sfx:'clash', hitstop:0.06, flash:{color:'#ffffff', a:0.14}
   });
-  rolePush(g, atk, def, 'guard', 'guard', { dur:0.3, stepDef:12 });
+  if(chance(0.5)) reel(g, atk, def);
+  settle(g, atk, def);
+}
+
+/* Driving the other one backwards across the arena, blade grinding on
+   blade. The most quoted image in the genre, and the answer to "they drift"
+   — this is ground taken on purpose rather than accumulated by accident. */
+function mPress(g, atk, def){
+  rolePush(g, atk, def, 'windupHigh', 'guardHigh', { dur:0.24, cam:{z:1.1, focus:0.5} });
+  const n = randInt(3,5);
+  for(let i=0;i<n;i++){
+    rolePush(g, atk, def, 'pressFwd', 'pressBack', {
+      dur:0.27, stepAtk:30, stepDef:-27, contact:contactAt(g,def), spark:9,
+      shake:[2.4,0.12], sfx:'clash', cam:{z:1.1, focus:0.5}
+    });
+  }
+  rolePush(g, atk, def, 'strikeDown', 'stagger', {
+    dur:0.24, stepAtk:14, stepDef:-34, contact:contactAt(g,def), spark:24,
+    shake:[6,0.28], sfx:'clash', hitstop:0.06, flash:{color:'#ffffff', a:0.16}
+  });
+  if(chance(0.65)) reel(g, atk, def);
+  settle(g, atk, def);
 }
 
 function mBindRiposte(g, atk, def){
   rolePush(g, atk, def, 'windupSide', 'guardBack', { dur:0.26 });
+  hold(g, atk, def, 'windupSide', 'guardBack', 0.11);
   rolePush(g, atk, def, 'thrust', 'parry', {
-    dur:0.2, stepAtk:28, contact:contactAt(g,def), spark:10, shake:[2,0.12], sfx:'clash'
+    dur:0.18, stepAtk:closeStep(g), contact:contactAt(g,def), spark:10,
+    shake:[2,0.12], sfx:'clash'
   });
+  // the riposte leaves from the parry's own blade angle, so it needs no
+  // wind-up of its own — that is what makes a counter feel instant
   rolePush(g, def, atk, 'riposte', 'stagger', {
-    dur:0.2, stepAtk:18, stepDef:-22, contact:contactAt(g,atk), spark:18,
+    dur:0.18, stepAtk:14, stepDef:-22, contact:contactAt(g,atk), spark:18,
     shake:[4,0.2], sfx:'clash', hitstop:0.05
   });
-  rolePush(g, atk, def, 'guard', 'guard', { dur:0.3, stepAtk:-10 });
+  settle(g, atk, def);
 }
 
 function mSaberLock(g, atk, def){
   rolePush(g, atk, def, 'windupHigh', 'windupHigh', { dur:0.28, cam:{z:1.0} });
-  rolePush(g, atk, def, 'lockPush', 'lockPush', {
-    dur:0.34, stepAtk:26, stepDef:26, contact:0.5, spark:26,
+  rolePush(g, atk, def, 'lockPush', 'lockPush', closeTo(g, atk, def, MIN_SEP + 6, {
+    dur:0.34, contact:0.5, spark:26,
     shake:[4,0.28], sfx:'clash', hitstop:0.07, flash:{color:'#ffffff', a:0.18},
-    cam:{z:1.28, focus:0.5}
-  });
+    cam:{z:1.24, focus:0.5}
+  }));
   const winner = chance(0.5) ? atk : def;
   const loser = winner===atk ? def : atk;
   rolePush(g, winner, loser, 'lockStrainF', 'lockStrainB', {
-    dur:0.46, stepAtk:14, stepDef:-14, contact:0.5, spark:16, cam:{z:1.3, focus:0.5}
+    dur:0.5, slow:0.9, stepAtk:14, stepDef:-14, contact:0.5, spark:16, cam:{z:1.3, focus:0.5}
   });
   rolePush(g, winner, loser, 'lockPush', 'knockback', {
-    dur:0.32, stepAtk:10, stepDef:-58, contact:0.5, spark:24,
+    dur:0.32, stepAtk:10, stepDef:-58, contact:0.35, spark:24,
     shake:[7,0.3], sfx:'boom', flash:{color:'#ffffff', a:0.2}, hitstop:0.05
   });
-  rolePush(g, winner, loser, 'guard', 'guard', { dur:0.36 });
+  settle(g, winner, loser);
 }
 
 function mSweepLeap(g, atk, def){
   rolePush(g, atk, def, 'windupLow', 'guard', { dur:0.24 });
   rolePush(g, atk, def, 'sweepLow', 'leap', {
-    dur:0.26, stepAtk:22, arcDef:120, contact:contactAt(g,def), spark:8, sfx:'clash',
+    dur:0.26, stepAtk:16, arcDef:120, contact:contactAt(g,def), spark:8, sfx:'clash',
     cam:{z:1.14, focus:0.5}
   });
-  rolePush(g, atk, def, 'guard', 'land', { dur:0.24, stepDef:-16, sfx:'thud', shake:[3,0.16] });
+  rolePush(g, atk, def, 'guard', 'land', { dur:0.24, stepDef:-14, sfx:'land', shake:[3,0.16] });
   rolePush(g, def, atk, 'riposte', 'blockLow', {
-    dur:0.2, stepAtk:16, contact:contactAt(g,atk), spark:14, shake:[3,0.16], sfx:'clash'
+    dur:0.19, stepAtk:12, contact:contactAt(g,atk), spark:14, shake:[3,0.16], sfx:'clash'
   });
-  rolePush(g, atk, def, 'guard', 'guard', { dur:0.26 });
+  settle(g, atk, def);
+}
+
+/* A somersault clean over a low sweep. `tuck` drops the hips in the pose
+   so the spin reads as a body turning rather than legs through the floor. */
+function mSomersault(g, atk, def){
+  rolePush(g, atk, def, 'windupLow', 'guard', { dur:0.22 });
+  const b = { dur:0.46, ease:'out', noSep:true, cam:{z:1.16, focus:0.5} };
+  b['pose'+atk] = 'sweepLow';
+  b['pose'+def] = 'tuck';
+  b['arc'+def]  = 140;
+  b['spin'+def] = 360;
+  b['dx'+atk]   = 16*g.fwd(atk);
+  g.push(b);
+  rolePush(g, atk, def, 'guard', 'land', { dur:0.24, sfx:'land', shake:[3,0.16] });
+  rolePush(g, def, atk, 'strikeDown', 'blockHigh', {
+    dur:0.19, stepAtk:10, contact:contactAt(g,atk), spark:16, shake:[3.5,0.18], sfx:'clash'
+  });
+  settle(g, atk, def);
 }
 
 function mDuckCounter(g, atk, def){
   rolePush(g, atk, def, 'windupSide', 'guard', { dur:0.22 });
-  rolePush(g, atk, def, 'strikeAcross', 'duck', { dur:0.2, stepAtk:24, cam:{z:1.16, focus:0.5} });
+  rolePush(g, atk, def, 'strikeAcross', 'duck', { dur:0.2, stepAtk:16, cam:{z:1.16, focus:0.5} });
   rolePush(g, def, atk, 'strikeUp', 'blockLow', {
-    dur:0.2, stepAtk:18, contact:contactAt(g,atk), spark:16, shake:[3.5,0.18], sfx:'clash', hitstop:0.04
+    dur:0.19, stepAtk:closeStep(g), contact:contactAt(g,atk), spark:16,
+    shake:[3.5,0.18], sfx:'clash', hitstop:0.04
   });
-  rolePush(g, atk, def, 'guard', 'guard', { dur:0.28, stepAtk:-14 });
+  settle(g, atk, def);
 }
 
 function mLeapOver(g, atk, def){
@@ -1263,88 +2787,272 @@ function mLeapOver(g, atk, def){
   b['arc'+atk] = 180;
   b['spin'+atk] = 360;
   g.push(b);
-  rolePush(g, atk, def, 'land', 'guard', { dur:0.26, sfx:'thud', shake:[3,0.16] });
+  rolePush(g, atk, def, 'land', 'guard', { dur:0.26, sfx:'land', shake:[3,0.16] });
   rolePush(g, atk, def, 'strikeDown', 'blockHigh', {
-    dur:0.2, stepAtk:14, contact:contactAt(g,def), spark:16, shake:[3.5,0.18], sfx:'clash'
+    dur:0.2, stepAtk:10, contact:contactAt(g,def), spark:16, shake:[3.5,0.18], sfx:'clash'
   });
-  rolePush(g, atk, def, 'guard', 'guard', { dur:0.28 });
+  settle(g, atk, def);
+}
+
+/* Straight up, and down again with the whole weight of it behind an
+   overhead. Gated on room the same way the vault is. */
+function mAirStrike(g, atk, def){
+  rolePush(g, atk, def, 'leap', 'guardHigh', { dur:0.26, arcAtk:100, cam:{z:1.12, focus:0.5} });
+  const b = { dur:0.34, ease:'in', noSep:true, cam:{z:1.2, focus:0.5} };
+  b['pose'+atk] = 'airStrike';
+  b['pose'+def] = 'blockHigh';
+  b['arc'+atk]  = 150;
+  b['dx'+atk]   = 44*g.fwd(atk);
+  b.contact = contactAt(g, def); b.spark = 26; b.shake = [7,0.3];
+  b.sfx = 'clash'; b.hitstop = 0.07; b.flash = { color:'#ffffff', a:0.18 };
+  g.push(b);
+  rolePush(g, atk, def, 'land', 'stagger', {
+    dur:0.28, stepDef:-26, sfx:'land', shake:[4,0.2]
+  });
+  settle(g, atk, def);
+}
+
+/* A back handspring out from under pressure. `spin` is negative because the
+   rotation has to agree with the direction of travel. */
+function mHandspring(g, atk, def){
+  rolePush(g, atk, def, 'windupSide', 'guardBack', { dur:0.2 });
+  const b = { dur:0.44, ease:'out', noSep:true, cam:{z:1.12, focus:0.5} };
+  b['pose'+atk] = 'strikeAcross';
+  b['pose'+def] = 'handspring';
+  b['arc'+def]  = 96;
+  b['spin'+def] = -360;
+  b['dx'+def]   = -104 * g.fwd(def);
+  b['dx'+atk]   = 22 * g.fwd(atk);
+  g.push(b);
+  rolePush(g, atk, def, 'guard', 'land', { dur:0.26, sfx:'land', shake:[2.6,0.14] });
+  circle(g, atk, def, 14, 0.36);
+}
+
+/* Backed against the edge and reversing off it. Only fires when a fighter
+   really is against the wall, and only when there is room on the far side
+   to land — the same two guards the vault uses. */
+function mWallKick(g, atk, def){
+  rolePush(g, def, atk, 'strikeAcross', 'guardBack', { dur:0.24, stepAtk:18 });
+  const b = { dur:0.46, ease:'out', noSep:true, swap:true, cam:{z:1.2, focus:0.5} };
+  b['pose'+atk] = 'wallKick';
+  b['pose'+def] = 'blockHigh';
+  b['arc'+atk]  = 158;
+  b['spin'+atk] = 360;
+  b['dx'+atk]   = g.landingFor(atk) - g.posOf(atk);
+  g.push(b);
+  rolePush(g, atk, def, 'land', 'guard', { dur:0.26, sfx:'land', shake:[3.4,0.18] });
+  rolePush(g, atk, def, 'strikeDown', 'blockHigh', {
+    dur:0.2, stepAtk:10, contact:contactAt(g,def), spark:18, shake:[4,0.2], sfx:'clash', hitstop:0.04
+  });
+  settle(g, atk, def);
+}
+
+/* Under the cut and up on the far side. `rollTuck` drops the hips rather
+   than trying to lay the rig flat — the same compromise `deathFall` makes,
+   and the reason a roll is expressible on a hip-pivot rig at all. */
+function mRoll(g, atk, def){
+  const travel = g.landingFor(def) - g.posOf(def);
+  rolePush(g, atk, def, 'windupSide', 'guard', { dur:0.22 });
+  const b = { dur:0.44, ease:'out', noSep:true, swap:true, cam:{z:1.14, focus:0.5} };
+  b['pose'+atk] = 'strikeAcross';
+  b['pose'+def] = 'rollTuck';
+  b['dx'+def]   = travel;
+  b['spin'+def] = 360;
+  g.push(b);
+  rolePush(g, atk, def, 'guard', 'rollUp', { dur:0.26, sfx:'land', shake:[2.2,0.12] });
+  rolePush(g, def, atk, 'riposte', 'blockLow', {
+    dur:0.19, stepAtk:12, contact:contactAt(g,atk), spark:16, shake:[3.5,0.18], sfx:'clash'
+  });
+  settle(g, atk, def);
 }
 
 function mSpinAttack(g, atk, def){
   rolePush(g, atk, def, 'windupSide', 'guard', { dur:0.24 });
+  hold(g, atk, def, 'windupSide', 'guard', 0.1);
   rolePush(g, atk, def, 'spinSlash', 'blockMid', {
-    dur:0.34, stepAtk:26, turnAtk:true, contact:contactAt(g,def), spark:20,
+    dur:0.34, stepAtk:closeStep(g), turnAtk:true, contact:contactAt(g,def), spark:20,
     shake:[4,0.2], sfx:'clash', hitstop:0.04, cam:{z:1.18, focus:0.5}
   });
   rolePush(g, atk, def, 'guard', 'stagger', { dur:0.26, stepDef:-20 });
-  rolePush(g, atk, def, 'guard', 'guard', { dur:0.26 });
+  settle(g, atk, def);
+}
+
+/* Two turns run together, then the blow that was hiding behind them. */
+function mSpinCombo(g, atk, def){
+  rolePush(g, atk, def, 'windupSide', 'guard', { dur:0.22 });
+  rolePush(g, atk, def, 'spinSlash', 'blockMid', {
+    dur:0.3, stepAtk:16, turnAtk:true, contact:contactAt(g,def), spark:15,
+    shake:[3,0.16], sfx:'clash', cam:{z:1.16, focus:0.5}
+  });
+  rolePush(g, atk, def, 'spinSlash', 'blockHigh', {
+    dur:0.28, stepAtk:10, turnAtk:true, contact:contactAt(g,def), spark:15,
+    shake:[3,0.16], sfx:'clash'
+  });
+  rolePush(g, atk, def, 'strikeAcross', 'stagger', {
+    dur:0.22, stepDef:-26, contact:contactAt(g,def), spark:24,
+    shake:[5,0.24], sfx:'clash', hitstop:0.05
+  });
+  settle(g, atk, def);
+}
+
+/* A turn made as a defence: the parry travels round the thrust and comes
+   out on the other side of it. */
+function mSpinParry(g, atk, def){
+  rolePush(g, atk, def, 'windupSide', 'guardBack', { dur:0.22 });
+  rolePush(g, atk, def, 'thrust', 'deflectSpin', {
+    dur:0.28, stepAtk:24, turnDef:true, contact:contactAt(g,def), spark:12,
+    shake:[2.6,0.14], sfx:'clash', cam:{z:1.2, focus:0.5}
+  });
+  rolePush(g, def, atk, 'riposte', 'stagger', {
+    dur:0.2, stepAtk:14, stepDef:-24, contact:contactAt(g,atk), spark:20,
+    shake:[4.5,0.22], sfx:'clash', hitstop:0.05
+  });
+  settle(g, atk, def);
 }
 
 function mKick(g, atk, def){
-  rolePush(g, atk, def, 'strikeAcross', 'blockMid', {
-    dur:0.2, stepAtk:20, contact:contactAt(g,def), spark:12, sfx:'clash'
-  });
+  swing(g, atk, def, 'strikeAcross', { windup:0.18, spark:12, stepAtk:14 });
   rolePush(g, atk, def, chance(0.4)?'spinKick':'kick', 'stagger', {
-    dur:0.26, stepAtk:12, stepDef:-40, turnAtk:chance(0.4),
+    dur:0.26, stepAtk:10, stepDef:-40, turnAtk:chance(0.4),
     contact:contactAt(g,def), shake:[5,0.24], sfx:'thud', hitstop:0.05
   });
-  rolePush(g, atk, def, 'guard', 'guard', { dur:0.32, stepDef:10 });
+  settle(g, atk, def);
 }
 
 function mForcePush(g, atk, def){
   rolePush(g, atk, def, 'forceCast', 'guard', { dur:0.34, cam:{z:1.1, focus:0.5} });
+  hold(g, atk, def, 'forceCast', 'guardHigh', 0.16);
   rolePush(g, atk, def, 'forceCast', 'knockback', {
-    dur:0.4, stepDef:-90, contact:contactAt(g,def), spark:20,
-    shake:[8,0.36], sfx:'boom', flash:{color:'#ffffff', a:0.16}, hitstop:0.05
+    dur:0.4, stepDef:-90, contact:0.25, spark:20,
+    shake:[8,0.36], sfx:'force', flash:{color:'#ffffff', a:0.16}, hitstop:0.05
   });
   rolePush(g, atk, def, 'guard', 'stagger', { dur:0.3 });
-  rolePush(g, atk, def, 'guard', 'guard', { dur:0.3, stepDef:24 });
+  settle(g, atk, def);
 }
 
 function mForcePull(g, atk, def){
   rolePush(g, atk, def, 'forcePull', 'stagger', {
-    dur:0.36, stepDef:56, contact:contactAt(g,def), sfx:'zap', cam:{z:1.14, focus:0.5}
+    dur:0.36, stepDef:56, contact:0.3, sfx:'force', cam:{z:1.14, focus:0.5}
   });
   rolePush(g, atk, def, 'strikeDown', 'blockHigh', {
-    dur:0.18, stepAtk:8, contact:contactAt(g,def), spark:20, shake:[4,0.2], sfx:'clash', hitstop:0.04
+    dur:0.18, stepAtk:6, contact:contactAt(g,def), spark:20, shake:[4,0.2], sfx:'clash', hitstop:0.04
   });
-  rolePush(g, atk, def, 'guard', 'guard', { dur:0.28, stepDef:-16 });
+  settle(g, atk, def);
 }
 
 function mDeflect(g, atk, def, colorA){
   rolePush(g, atk, def, 'forceCast', 'deflect', {
-    dur:0.44, contact:contactAt(g,def), spark:18, shake:[4,0.26], sfx:'zap',
+    dur:0.44, contact:0.2, spark:18, shake:[4,0.26], sfx:'zap',
     flash:{color:colorA, a:0.15}, cam:{z:1.16, focus:0.5}
   });
-  rolePush(g, atk, def, 'forceCast', 'deflect', {
-    dur:0.42, contact:contactAt(g,def), spark:22, shake:[5,0.3], sfx:'zap',
+  rolePush(g, atk, def, 'forceCast', 'deflectLow', {
+    dur:0.42, contact:0.2, spark:22, shake:[5,0.3], sfx:'zap',
     flash:{color:'#ffffff', a:0.12}
   });
   rolePush(g, def, atk, 'deflect', 'stagger', {
-    dur:0.3, stepDef:-26, contact:contactAt(g,atk), spark:24,
+    dur:0.3, stepDef:-26, contact:0.35, spark:24,
     shake:[6,0.3], sfx:'boom', hitstop:0.05
   });
-  rolePush(g, atk, def, 'guard', 'guard', { dur:0.34 });
+  settle(g, atk, def);
+}
+
+/* A volley arrives from off-stage and both duelists deflect it. No sidearm,
+   no new rig, no new generator path — bolts are particles with a stop line
+   and `deflect` is a pose the engine already had. */
+function mBlasterVolley(g, atk, def, color){
+  // arrive from behind whoever is further out, so the bolts cross the pair
+  const from = g.posOf(atk) < g.posOf(def) ? 1 : -1;
+  const near = from > 0 ? (g.posOf(atk) > g.posOf(def) ? atk : def)
+                        : (g.posOf(atk) < g.posOf(def) ? atk : def);
+  rolePush(g, atk, def, 'guardHigh', 'guardHigh', { dur:0.3, cam:{z:1.04} });
+  rolePush(g, atk, def, 'deflect', 'deflect', {
+    dur:0.62, contact:0.08, cam:{z:1.12, focus:0.5},
+    bolts:{ n:5, from, who:near, color }
+  });
+  rolePush(g, def, atk, 'deflectLow', 'deflect', {
+    dur:0.56, contact:0.06, shake:[2.4,0.14],
+    bolts:{ n:4, from:-from, who:(near===atk?def:atk), color }
+  });
+  rolePush(g, atk, def, 'guard', 'stagger', {
+    dur:0.3, stepDef:-22, contact:0.4, spark:14, shake:[4,0.2], sfx:'zap', hitstop:0.04
+  });
+  settle(g, atk, def);
+}
+
+/* Lift something loose, hold it wobbling, throw it, and either cut it in
+   half or wear it. The single most cinematic thing in this list. */
+function mThrownProp(g, atk, def, defColor){
+  const kind = choice(PROP_KEYS);
+  rolePush(g, atk, def, 'liftCast', 'guard', {
+    dur:0.48, contact:0.3, cam:{z:1.1, focus:0.5},
+    prop:{ act:'lift', kind, who:atk }
+  });
+  hold(g, atk, def, 'liftCast', 'guardHigh', 0.34);       // the wobble
+  rolePush(g, atk, def, 'throwWind', 'guardHigh', { dur:0.24 });
+  rolePush(g, atk, def, 'throwRelease', 'guardHigh', {
+    dur:0.3, contact:0.18, sfx:'force', cam:{z:1.14, focus:0.5},
+    prop:{ act:'hurl', who:def }
+  });
+  if(chance(0.62)){
+    rolePush(g, atk, def, 'guard', 'strikeAcross', {
+      dur:0.32, contact:0.4, spark:20, shake:[5,0.24], sfx:'clash', hitstop:0.05,
+      prop:{ act:'cut' }, propColor:defColor, cam:{z:1.2, focus:0.5}
+    });
+  } else {
+    rolePush(g, atk, def, 'guard', 'knockback', {
+      dur:0.36, stepDef:-72, contact:0.36, spark:14, shake:[7,0.3], sfx:'boom',
+      hitstop:0.06, prop:{ act:'hit' }
+    });
+  }
+  settle(g, atk, def);
+}
+
+/* The blade goes flying and is called straight back out of the air. */
+function mDisarmRecall(g, atk, def){
+  rolePush(g, atk, def, 'windupSide', 'guard', { dur:0.24 });
+  rolePush(g, atk, def, 'strikeAcross', 'disarmLose', {
+    dur:0.26, stepAtk:closeStep(g), contact:contactAt(g,def), spark:26,
+    shake:[5,0.26], sfx:'clash',
+    hitstop:0.06, cam:{z:1.24, focus:0.5}, slow:0.6
+  });
+  rolePush(g, atk, def, 'guard', 'recoverBlade', {
+    dur:0.42, contact:0.7, sfx:'force', slow:0.85, cam:{z:1.2, focus:0.5}
+  });
+  settle(g, atk, def);
 }
 
 function mNearMiss(g, atk, def){
   rolePush(g, atk, def, 'windupHigh', 'guardBack', { dur:0.24 });
+  hold(g, atk, def, 'windupHigh', 'guardBack', 0.12);
   rolePush(g, atk, def, 'thrust', 'parry', {
-    dur:0.16, stepAtk:34, cam:{z:1.34, focus:0.5}, slow:0.4, sfx:'clash', spark:6
+    dur:0.16, stepAtk:30, cam:{z:1.34, focus:0.5}, slow:0.4, sfx:'clash', spark:6, contact:0.5
   });
   rolePush(g, atk, def, 'thrust', 'circleStep', {
-    dur:0.3, stepDef:-24, cam:{z:1.3, focus:0.5}, slow:0.45
+    dur:0.3, stepDef:-20, cam:{z:1.3, focus:0.5}, slow:0.45
   });
-  rolePush(g, atk, def, 'guard', 'guard', { dur:0.3, stepAtk:-14, cam:{z:1.0} });
+  rolePush(g, atk, def, 'guard', 'guard', { dur:0.34, stepAtk:-12, cam:{z:1.0} });
+}
+
+/* Nothing happens. That is the entire module and it is load-bearing: a
+   fight reads through the contrast between stillness and explosion, and
+   before this there was no frame in which nobody was moving. */
+function mStandoff(g, atk, def){
+  const a = chance(0.35) ? 'guardLow' : 'standoff';
+  const b = chance(0.35) ? 'guardLow' : 'standoff';
+  rolePush(g, atk, def, a, b, { dur:0.5, cam:{z:1.06, focus:0.5} });
+  hold(g, atk, def, a, b, 0.72);
+  circle(g, atk, def, chance(0.5) ? 22 : -22, 0.66);
+  settle(g, atk, def);
 }
 
 function mTaunt(g, atk, def){
   rolePush(g, atk, def, 'taunt', 'guard', { dur:0.5, cam:{z:1.1, focus:0.5} });
+  hold(g, atk, def, 'taunt', 'guard', 0.24);
   rolePush(g, def, atk, 'strikeAcross', 'stagger', {
-    dur:0.2, stepAtk:26, contact:contactAt(g,atk), spark:16,
+    dur:0.2, stepAtk:22, contact:contactAt(g,atk), spark:16,
     shake:[4,0.2], sfx:'clash', hitstop:0.05
   });
-  rolePush(g, atk, def, 'guard', 'guard', { dur:0.3 });
+  settle(g, atk, def);
 }
 
 function mBreather(g, atk, def, weary){
@@ -1361,14 +3069,15 @@ function mBreather(g, atk, def, weary){
     cam:{z:0.98}
   };
   g.push(b);
-  rolePush(g, atk, def, 'guard', 'guard', { dur:0.3 });
+  settle(g, atk, def);
 }
 
 /* --- climax modules --- */
 function mFinishDisarm(g, win, lose){
   rolePush(g, win, lose, 'windupSide', 'windupHigh', { dur:0.3, cam:{z:1.12, focus:0.5} });
   rolePush(g, win, lose, 'strikeAcross', 'blockHigh', {
-    dur:0.22, stepAtk:26, contact:contactAt(g,lose), spark:22, shake:[5,0.24], sfx:'clash'
+    dur:0.22, stepAtk:closeStep(g), contact:contactAt(g,lose), spark:22,
+    shake:[5,0.24], sfx:'clash'
   });
   rolePush(g, win, lose, 'riposte', 'disarmLose', {
     dur:0.3, contact:contactAt(g,lose), spark:34, shake:[7,0.32], sfx:'clash',
@@ -1379,10 +3088,10 @@ function mFinishDisarm(g, win, lose){
 
 function mFinishLock(g, win, lose){
   rolePush(g, win, lose, 'windupHigh', 'windupHigh', { dur:0.3 });
-  rolePush(g, win, lose, 'lockPush', 'lockPush', {
-    dur:0.4, stepAtk:28, stepDef:28, contact:0.5, spark:30,
-    shake:[5,0.3], sfx:'clash', cam:{z:1.3, focus:0.5}, hitstop:0.07
-  });
+  rolePush(g, win, lose, 'lockPush', 'lockPush', closeTo(g, win, lose, MIN_SEP + 2, {
+    dur:0.4, contact:0.5, spark:30,
+    shake:[5,0.3], sfx:'clash', cam:{z:1.26, focus:0.5}, hitstop:0.07
+  }));
   rolePush(g, win, lose, 'lockStrainF', 'lockStrainB', { dur:0.6, slow:0.6, cam:{z:1.34, focus:0.5} });
   rolePush(g, win, lose, 'strikeDown', 'stagger', {
     dur:0.24, contact:contactAt(g,lose), spark:36, shake:[9,0.4], sfx:'boom',
@@ -1406,7 +3115,7 @@ function mFinishThrust(g, win, lose){
     dur:0.2, stepDef:26, contact:contactAt(g,win), spark:20, shake:[4,0.22], sfx:'clash', slow:0.5
   });
   rolePush(g, win, lose, 'thrust', 'stagger', {
-    dur:0.26, stepAtk:32, contact:contactAt(g,lose), spark:34,
+    dur:0.26, stepAtk:closeStep(g), contact:contactAt(g,lose), spark:34,
     shake:[8,0.36], sfx:'clash', slow:0.38, hitstop:0.12,
     flash:{color:'#ffffff', a:0.28}, cam:{z:1.38, focus:0.5}
   });
@@ -1415,12 +3124,41 @@ function mFinishThrust(g, win, lose){
 function mFinishSpin(g, win, lose){
   rolePush(g, win, lose, 'leap', 'guardHigh', { dur:0.26, arcAtk:80, cam:{z:1.12, focus:0.5} });
   rolePush(g, win, lose, 'spinSlash', 'blockHigh', {
-    dur:0.3, turnAtk:true, stepAtk:20, contact:contactAt(g,lose), spark:26,
+    dur:0.3, turnAtk:true, stepAtk:closeStep(g), contact:contactAt(g,lose), spark:26,
     shake:[6,0.28], sfx:'clash', slow:0.55, cam:{z:1.3, focus:0.5}
   });
   rolePush(g, win, lose, 'strikeAcross', 'stagger', {
     dur:0.24, contact:contactAt(g,lose), spark:34, shake:[8,0.36], sfx:'boom',
     slow:0.4, hitstop:0.1, flash:{color:'#ffffff', a:0.28}, cam:{z:1.34, focus:0.5}
+  });
+}
+
+/* The client's own ending for Homer vs Ned, 2026-08-19: the blade lock,
+   faces pushed together, Ned's sabre humming against Homer's neck — and
+   then he offers him a cocoa. It is gated to that one pairing and weighted
+   to win when it is available, because it is the point of that matchup. */
+function mFinishCocoa(g, win, lose){
+  rolePush(g, win, lose, 'windupHigh', 'windupHigh', { dur:0.32 });
+  rolePush(g, win, lose, 'lockPush', 'lockPush', closeTo(g, win, lose, MIN_SEP + 2, {
+    dur:0.4, contact:0.5, spark:30, shake:[5,0.3],
+    sfx:'clash', hitstop:0.07, cam:{z:1.26, focus:0.5}
+  }));
+  // held, at the closest the camera ever gets
+  rolePush(g, win, lose, 'lockStrainF', 'lockStrainB', {
+    dur:0.95, slow:0.6, cam:{z:1.3, focus:0.5}
+  });
+  rolePush(g, win, lose, 'disarmWin', 'disarmLose', {
+    dur:0.5, contact:0.35, spark:16, sfx:'clash', slow:0.7, cam:{z:1.26, focus:0.5}
+  });
+  // the offer, and the objection. The zoom stays wide enough for BOTH of
+  // them — the joke needs Homer in frame, and at 1.4 he was off the side.
+  rolePush(g, win, lose, 'taunt', 'kneel', {
+    dur:1.0, contact:0.15, sfx:'kneel', slow:0.8, cam:{z:1.18, focus:0.5},
+    cocoa:true, gag:{ text:'cocoa, neighbourino?', who:win, hold:1.9 }
+  });
+  rolePush(g, win, lose, 'taunt', 'kneel', {
+    dur:0.9, contact:0.05, slow:0.9, cam:{z:1.16, focus:0.5},
+    gag:{ text:"D'OH!", who:lose, hold:1.5, big:true }
   });
 }
 
@@ -1485,11 +3223,33 @@ function generateDuel(fighterA, fighterB, arena, opts){
       { v:mForcePull,   w: st(atk,'force')*1.2 },
       { v:mDeflect,     w: (st(atk,'force') > 0.7 ? 1.4 : 0) },
       { v:mNearMiss,    w: 0.5 + progress*1.2 },
-      { v:mTaunt,       w: comedic ? 1.6 : st(atk,'flair')*0.5 }
+      { v:mTaunt,       w: comedic ? 1.6 : st(atk,'flair')*0.5 },
+
+      /* --- added modules. Same shape, same weighting discipline: a weight
+         derived from the fighters' own style values, and 0 when the
+         geometry does not allow the move. --- */
+      { v:mPress,        w: 0.4 + st(atk,'agg')*1.8 },
+      { v:mStandoff,     w: 0.7 + (1-progress)*1.1 },
+      { v:mSpinCombo,    w: st(atk,'flair')*1.3 + st(atk,'acro')*0.7 },
+      { v:mSpinParry,    w: 0.3 + st(def,'def')*1.3 },
+      { v:mSomersault,   w: 0.2 + st(def,'acro')*1.5 },
+      { v:mHandspring,   w: 0.2 + st(def,'acro')*1.3 },
+      { v:mAirStrike,    w: 0.2 + st(atk,'acro')*1.4 },
+      { v:mDisarmRecall, w: 0.25 + st(atk,'agg')*0.6 },
+      { v:mRoll,         w: (g.hasVaultRoom(def) ? 0.2 + st(def,'acro')*1.6 : 0) },
+      // Measured at the tighter threshold this fired twice in sixty fights,
+      // which is a module nobody will ever see. The guard is what matters
+      // (there has to be a wall behind him and room in front); the exact
+      // distance from the edge is just how close counts as backed up.
+      { v:mWallKick,     w: (Math.abs(g.posOf(atk)) > ARENA_HALF-210 && g.hasVaultRoom(atk)
+                              ? 0.8 + st(atk,'acro')*2.8 : 0) },
+      { v:mBlasterVolley,w: Math.max(st(atk,'blaster'), st(def,'blaster'))*1.25 },
+      { v:mThrownProp,   w: Math.max(st(atk,'force')-0.35, 0)*3.0 }
     ];
 
     const mod = weightedPick(pool);
-    if(mod === mDeflect) mod(g, atk, def, roles[atk].glow);
+    if(mod === mDeflect || mod === mBlasterVolley) mod(g, atk, def, roles[atk].glow);
+    else if(mod === mThrownProp) mod(g, atk, def, roles[def].glow);
     else mod(g, atk, def);
 
     for(let i=before;i<g.beats.length;i++) elapsed += g.beats[i].dur;
@@ -1508,13 +3268,20 @@ function generateDuel(fighterA, fighterB, arena, opts){
   /* --- climax --- */
   const win = winA ? 'A' : 'B';
   const lose = winA ? 'B' : 'A';
+  const names = [fighterA.name, fighterB.name].sort().join('|');
+  // Ned has to be the one holding the cocoa, so the gag only arms when he
+  // is also the one who won.
+  const cocoa = names === 'HOMER SIMPSON|NED FLANDERS' && roles[win].name === 'NED FLANDERS';
   const finishers = [
     { v:mFinishDisarm, w: 1.2 + roles[win].style.def*1.2 },
     { v:mFinishLock,   w: 1.4 },
     { v:mFinishForce,  w: roles[win].style.force*2.6 },
     { v:mFinishThrust, w: 1.0 + roles[win].style.agg*1.2 },
     { v:mFinishSpin,   w: 0.6 + roles[win].style.acro*2.0 },
-    { v:mFinishDouble, w: comedic ? 2.2 : 0 }
+    { v:mFinishDouble, w: comedic ? 2.2 : 0 },
+    // The headline ending for that matchup — the usual one, not the only
+    // one. At 7 it drew about a quarter of the time.
+    { v:mFinishCocoa,  w: cocoa ? 13 : 0 }
   ];
   const fin = weightedPick(finishers);
   if(fin === mFinishForce) fin(g, win, lose, roles[win].glow);
@@ -1542,10 +3309,19 @@ function generateDuel(fighterA, fighterB, arena, opts){
 /* ============================== FIGHT ASSEMBLY ============================== */
 let lastKey = "";
 
+/* Dev-only pin, set from ?a=&b=&arena=. It is a guard in front of the
+   selection, not a change to it — with no query string the randomiser is
+   untouched. */
+let FORCE = null;
+
 function buildFight(){
   let aKey, bKey, arenaKey, winner;
 
-  if(chance(RANDOM_MATCHUP_CHANCE)){
+  if(FORCE){
+    aKey = FORCE.a; bKey = FORCE.b;
+    arenaKey = FORCE.arena || choice(ARENA_KEYS);
+    winner = FORCE.winner || 'random';
+  } else if(chance(RANDOM_MATCHUP_CHANCE)){
     const picks = shuffle(FIGHTER_KEYS).slice(0,2);
     aKey = picks[0]; bKey = picks[1];
     arenaKey = choice(ARENA_KEYS);
@@ -1556,12 +3332,19 @@ function buildFight(){
   }
 
   const key = aKey+'|'+bKey;
-  if(key === lastKey) return buildFight(); // never repeat back to back
+  if(!FORCE && key === lastKey) return buildFight(); // never repeat back to back
   lastKey = key;
 
   const A = FIGHTERS[aKey], B = FIGHTERS[bKey];
   const arena = ARENAS[arenaKey];
-  const winA = winner === 'A' ? true : winner === 'B' ? false : chance(0.5);
+  let winA = winner === 'A' ? true : winner === 'B' ? false : chance(0.5);
+
+  // Homer vs Ned resolves one way round, because its ending only works one
+  // way round — Ned is the one holding the cocoa. The curated matchup
+  // already said so; this covers the random pairing and the pinned one,
+  // which were both coin flips and disarmed the gag half the time.
+  if(aKey === 'ned' && bKey === 'homer') winA = true;
+  if(aKey === 'homer' && bKey === 'ned') winA = false;
 
   const length = weightedPick([
     { v:{ t:rand(15,20), n:'SHORT'    }, w:1 },
@@ -1602,13 +3385,69 @@ const state = {
   trailA: [], trailB: [],
   lastTipA: null, lastTipB: null,
   speedA: 0, speedB: 0,
+  gag: null,                 // a short line over a fighter's head
+  cocoa: 0,                  // Ned's mug, 0..1
+  hitA: 0, hitB: 0,          // white silhouette flash, decays fast
+  blockA: 0, blockB: 0,      // smoothed "is parrying" — Ned's halo reads it
+  hpA: 1, hpB: 1,            // displayed health, eased toward the plan
+  hpFlashA: 0, hpFlashB: 0,
   clock: 0
 };
+
+/* A fighter stands in their OWN guard. The generator still only ever says
+   'guard'; which guard that is belongs to the character, not to the
+   choreography, so it is resolved here at playback. This is most of what
+   makes a duelist recognisable while nothing is happening. */
+function poseFor(char, name){
+  if(name === 'guard' && char && char.guard && POSES[char.guard]) return POSES[char.guard];
+  return POSES[name];
+}
+
+/* ---- health, read out of the plan and never simulated --------------------
+   The generator has already decided who wins and emitted every beat. The
+   bars are an ornament: they read damage back OUT of the finished beat list
+   so nothing about them can feed into fight logic. */
+const HURT_WEIGHT  = { stagger:1, knockback:1.5, wounded:1.7, exhausted:0.4,
+                       disarmLose:2.2, finishLose:3.2 };
+const BLOCK_WEIGHT = { blockHigh:0.22, blockMid:0.22, blockLow:0.22, parry:0.14,
+                       deflect:0.2, lockStrainB:0.45, guardHigh:0.1, pressBack:0.3 };
+
+function planHealth(beats, winA){
+  const ev = { A:[], B:[] }, tot = { A:0, B:0 };
+  beats.forEach(function(b, i){
+    for(const who of ['A','B']){
+      const p = b['pose'+who];
+      const hurt = HURT_WEIGHT[p] || 0;
+      const chip = BLOCK_WEIGHT[p] || 0;
+      if(!hurt && !chip) continue;
+      const mag = hurt
+        ? hurt * (1 + (b.spark||0)/26 + (b.shake ? b.shake[0]/7 : 0))
+        : chip * (1 + (b.spark||0)/40);
+      ev[who].push([i, mag]); tot[who] += mag;
+    }
+  });
+  const loser = winA ? 'B' : 'A', winner = winA ? 'A' : 'B';
+  // The loser lands on zero at the finisher; the winner keeps 20–45%. A duel
+  // whose winner walks away untouched reads wrong.
+  const end = { [loser]:0, [winner]:rand(0.20, 0.45) };
+  const out = { A:new Array(beats.length), B:new Array(beats.length) };
+  for(const who of ['A','B']){
+    const drop = 1 - end[who];
+    const scale = tot[who] > 0.0001 ? drop/tot[who] : 0;
+    let hp = 1, k = 0;
+    for(let i=0;i<beats.length;i++){
+      while(k < ev[who].length && ev[who][k][0] === i){ hp -= ev[who][k][1]*scale; k++; }
+      out[who][i] = clamp(hp, 0, 1);
+    }
+  }
+  return out;
+}
 
 let titleTimer = null;
 
 function startFight(){
   const f = buildFight();
+  f.hp = planHealth(f.beats, f.winA);
   state.fight = f;
   state.beatIdx = -1;
   state.beatT = 0;
@@ -1625,11 +3464,19 @@ function startFight(){
   state.phase = 'playing';
   state.holdT = 0;
   state.hitstop = 0;
+  state.hitA = state.hitB = 0;
+  state.blockA = state.blockB = 0;
+  state.gag = null; state.cocoa = 0;
+  state.segsA = state.segsB = null;
+  Sound.setRoom(f.arenaKey);
+  state.hpA = state.hpB = 1;
+  state.hpFlashA = state.hpFlashB = 0;
   state.trailA.length = 0; state.trailB.length = 0;
   state.lastTipA = state.lastTipB = null;
   particles = particles.filter(p => p.type === 'ambient');
+  bolts.length = 0; props.length = 0; decals.length = 0;
   flash.a = 0;
-  shakeT = 0;
+  shakeT = 0; shakeVX = shakeVY = 0;
   resetCamera();
   nextBeat();
 
@@ -1652,8 +3499,8 @@ function nextBeat(){
   if(state.beatIdx > 0){
     const prev = f.beats[state.beatIdx-1];
     if(prev){
-      state.prevPoseA = POSES[prev.poseA] || state.prevPoseA;
-      state.prevPoseB = POSES[prev.poseB] || state.prevPoseB;
+      state.prevPoseA = poseFor(f.A, prev.poseA) || state.prevPoseA;
+      state.prevPoseB = poseFor(f.B, prev.poseB) || state.prevPoseB;
     }
   }
 
@@ -1677,51 +3524,160 @@ function easeFor(beat, t){
   }
 }
 
+/* Impacts land ON the contact frame, not when the beat completes. Before
+   this the clash sound and its sparks arrived after the swing had already
+   finished, which is most of why nothing felt like it connected. */
+/* Closest points between two segments. The second solve divides by v·v —
+   getting that wrong is a classic here, and it reports blades that provably
+   cross as being sixteen units apart, which makes a parry throw no sparks. */
+function segPair(p1, p2, p3, p4){
+  const ux=p2.x-p1.x, uy=p2.y-p1.y;
+  const vx=p4.x-p3.x, vy=p4.y-p3.y;
+  const wx=p1.x-p3.x, wy=p1.y-p3.y;
+  const a=ux*ux+uy*uy, b=ux*vx+uy*vy, c=vx*vx+vy*vy;
+  const d=ux*wx+uy*wy, e=vx*wx+vy*wy;
+  const den = a*c - b*b;
+  let sc, tc;
+  if(den < 1e-8){ sc = 0; tc = c > 1e-8 ? e/c : 0; }
+  else { sc = (b*e - c*d)/den; tc = (a*e - b*d)/den; }
+  sc = clamp(sc, 0, 1);
+  tc = clamp(c > 1e-8 ? (b*sc + e)/c : 0, 0, 1);
+  sc = clamp(a > 1e-8 ? (b*tc - d)/a : 0, 0, 1);
+  const P = { x:p1.x+ux*sc, y:p1.y+uy*sc };
+  const Q = { x:p3.x+vx*tc, y:p3.y+vy*tc };
+  return { onA:P, onB:Q, p:{ x:(P.x+Q.x)/2, y:(P.y+Q.y)/2 },
+           d:Math.hypot(P.x-Q.x, P.y-Q.y) };
+}
+
+const STRIKE_POSES = { strikeDown:1, strikeAcross:1, strikeUp:1, thrust:1,
+                       spinSlash:1, sweepLow:1, riposte:1, airStrike:1,
+                       pressFwd:1, lockPush:1, lockStrainF:1 };
+
+/* WHERE a burst goes. It used to be the midpoint between the two fighters
+   at a fixed height, which is a point in clear air that touches neither
+   sword: at f3 of a strike the sparks were a body-width from the blade that
+   caused them. Sparks now come off real geometry —
+     blades crossing  -> the point where they cross
+     one blade swung  -> that blade, nearest the fighter being hit
+     no blade at all  -> the victim's chest (a kick, a force push)
+   and only fall back to the old midpoint when nothing is drawn yet. */
+/* The blade and body of one fighter AS OF THIS FRAME, rebuilt from the live
+   pose rather than read back from the last render. */
+function liveGeom(who){
+  const f = state.fight;
+  if(!f) return null;
+  const char = who === 'A' ? f.A : f.B;
+  const base = who === 'A' ? state.poseA : state.poseB;
+  const spin = who === 'A' ? state.spinA : state.spinB;
+  const pose = Object.assign({}, base, { rot:(base.rot||0) + spin });
+  const dir  = who === 'A' ? state.dirA*state.turnA : state.dirB*state.turnB;
+  const x    = worldX(who === 'A' ? state.baseXA + state.dxA : state.baseXB + state.dxB);
+  const yOff = who === 'A' ? state.dyA : state.dyB;
+  const j = computeJoints(x, yOff, dir, pose, char);
+  return { segs: weaponGeom(j, pose, char, dir).segs,
+           body: { x:(j.hip.x+j.neck.x)/2, y:(j.hip.y+j.neck.y)/2 } };
+}
+
+function impactPoint(beat){
+  const gA = liveGeom('A'), gB = liveGeom('B');
+  const segsA = gA && gA.segs, segsB = gB && gB.segs;
+  const atkIsA = !!STRIKE_POSES[beat.poseA];
+  const atkIsB = !!STRIKE_POSES[beat.poseB];
+
+  if(segsA && segsA.length && segsB && segsB.length){
+    let best = null;
+    for(const a of segsA) for(const b of segsB){
+      const r = segPair(a.a, a.b, b.a, b.b);
+      if(!best || r.d < best.d) best = r;
+    }
+    if(best && best.d < 46*rigScale){
+      // Near enough that a parry is what happened. Spawn on the ATTACKER's
+      // blade, not at the midpoint of the gap: measured, the two blades sit
+      // a median 34px apart at contact, so the midpoint is 17px from either
+      // sword — a burst in the air between them, which is the whole bug this
+      // function exists to fix. By construction the sparks now come off the
+      // sword that just swung.
+      if(atkIsA && !atkIsB) return best.onA;
+      if(atkIsB && !atkIsA) return best.onB;
+      return best.p;
+    }
+  }
+  // one of them swung: put it on that blade, at the end nearest the victim
+  const segs = atkIsA ? segsA : atkIsB ? segsB : null;
+  const victim = atkIsA ? (gB && gB.body) : atkIsB ? (gA && gA.body) : null;
+  if(segs && segs.length && victim){
+    const sg = segs[0];
+    let best = null;
+    for(let i=0;i<=6;i++){
+      const q = { x:lerp(sg.a.x, sg.b.x, i/6), y:lerp(sg.a.y, sg.b.y, i/6) };
+      const dd = Math.hypot(q.x-victim.x, q.y-victim.y);
+      if(!best || dd < best.d) best = { q, d:dd };
+    }
+    return best.q;
+  }
+  if(victim) return victim;                       // a kick, a shove
+  const xA = worldX(state.baseXA + state.dxA), xB = worldX(state.baseXB + state.dxB);
+  const c = beat.contact !== undefined ? beat.contact : 0.5;
+  return { x:lerp(xA, xB, c), y:groundY - 132*rigScale };
+}
+
 function fireBeatEffects(beat){
   const f = state.fight;
-  const xA = worldX(state.baseXA), xB = worldX(state.baseXB);
-  const c = beat.contact !== undefined ? beat.contact : 0.5;
-  const cx = lerp(xA, xB, c);
-  const cy = groundY - 132*rigScale;
+  const xA = worldX(state.baseXA + state.dxA), xB = worldX(state.baseXB + state.dxB);
+  const hit = impactPoint(beat);
+  const cx = hit.x, cy = hit.y;
+  // read by the bench to measure burst placement against real geometry
+  state.lastImpact = { x:hit.x, y:hit.y, sfx:beat.sfx, spark:beat.spark };
 
   if(beat.spark){
-    emitSpark(cx, cy, f.A.glow, f.B.glow, beat.spark, beat.spark/34);
+    // Sparks spray along the contact normal — the line between the two
+    // fighters — rather than radially, so they read as struck metal.
+    const norm = Math.atan2(0, xB-xA) + Math.PI/2;
+    emitSpark(cx, cy, f.A.glow, f.B.glow, beat.spark, beat.spark/34, norm);
     if(beat.spark >= 24) emitRing(cx, cy, '#ffffff', 10);
+    if(beat.spark >= 18) addDecal(cx, groundY, beat.spark/40);
   }
-  if(beat.shake) triggerShake(beat.shake[0], beat.shake[1]);
+  if(beat.shake) triggerShake(beat.shake[0], beat.shake[1], xB-xA);
   if(beat.flash) triggerFlash(beat.flash.color, beat.flash.a, 3.2);
   if(beat.hitstop && !prefersReducedMotion) state.hitstop = beat.hitstop;
-  if(beat.sfx === 'clash') Sound.clash(clamp((beat.spark||10)/34, 0.1, 1));
-  else if(beat.sfx === 'boom') Sound.boom();
-  else if(beat.sfx === 'thud') Sound.thud();
-  else if(beat.sfx === 'zap') Sound.zap();
-  else if(beat.sfx === 'ignite') Sound.ignite();
 
-  if(beat.sfx === 'thud'){
+  // whoever arrives in a reaction pose is the one who just got hit
+  const power = clamp((beat.spark||10)/34, 0.12, 1);
+  if(HURT_WEIGHT[beat.poseA]) state.hitA = 1;
+  if(HURT_WEIGHT[beat.poseB]) state.hitB = 1;
+
+  if(beat.sfx === 'clash'){ Sound.clash(power); Sound.sizzle(beat.spark||10); }
+  else if(beat.sfx === 'boom'){ Sound.boom(); Sound.sub(1); }
+  else if(beat.sfx === 'thud'){ Sound.bodyHit(power); }
+  else if(beat.sfx === 'land'){ Sound.landing(power); }
+  else if(beat.sfx === 'kneel'){ Sound.kneel(); }
+  else if(beat.sfx === 'zap'){ Sound.zap(); }
+  else if(beat.sfx === 'force'){ Sound.force(); Sound.sub(0.8); }
+  else if(beat.sfx === 'ignite'){ Sound.ignite(); }
+  if(beat.shake && beat.shake[0] >= 6) Sound.sub(clamp(beat.shake[0]/10, 0.3, 1));
+
+  if(beat.sfx === 'thud' || beat.sfx === 'land'){
     const who = beat.arcA ? xA : beat.arcB ? xB : cx;
     emitDust(who, groundY, f.arena.ambientColor, 10);
+    addDecal(who, groundY, 0.4);
   }
+  if(beat.bolts) fireVolley(beat);
+  if(beat.prop) propBeat(beat, cx);
+  if(beat.cocoa) state.cocoa = 1;
+  if(beat.gag) state.gag = { text:beat.gag.text, who:beat.gag.who,
+                             big:!!beat.gag.big, t:0, hold:beat.gag.hold || 1.5 };
 }
 
 /* ============================== MAIN LOOP ============================== */
 let lastTime = performance.now();
 
-function frame(now){
-  requestAnimationFrame(frame);
-  let dt = (now - lastTime)/1000;
-  lastTime = now;
-  dt = Math.min(dt, 0.05);
-  if(!state.playing) dt = 0;
-
+function tick(dt){
   const f = state.fight;
-  if(!f){ return; }
+  if(!f) return;
 
   state.clock += dt;
 
-  if(state.hitstop > 0){
-    state.hitstop -= dt;
-    dt = 0;
-  }
+  if(state.hitstop > 0){ state.hitstop -= dt; dt = 0; }
 
   const beat = f.beats[state.beatIdx];
   const slow = beat && beat.slow ? beat.slow : 1;
@@ -1729,47 +3685,70 @@ function frame(now){
 
   updateAmbient(dt, f.arena);
   updateParticles(dt);
+  updateBolts(dt);
+  updateProps(dt);
+  updateDecals(dt);
   if(shakeT > 0){ shakeT -= dt; if(shakeT <= 0) shakeMag = 0; }
   if(flash.a > 0) flash.a = Math.max(0, flash.a - flash.decay*dt);
+  state.hitA = Math.max(0, state.hitA - dt*7);
+  state.hitB = Math.max(0, state.hitB - dt*7);
+  state.hpFlashA = Math.max(0, state.hpFlashA - dt*4);
+  state.hpFlashB = Math.max(0, state.hpFlashB - dt*4);
+  if(state.gag){ state.gag.t += dt; if(state.gag.t > state.gag.hold) state.gag = null; }
 
   if(state.phase === 'playing' && beat){
     state.beatT += scaled;
     const rawT = clamp(state.beatT/beat.dur, 0, 1);
     const t = easeFor(beat, rawT);
 
-    const targetA = POSES[beat.poseA] || state.prevPoseA;
-    const targetB = POSES[beat.poseB] || state.prevPoseB;
+    const targetA = poseFor(f.A, beat.poseA) || state.prevPoseA;
+    const targetB = poseFor(f.B, beat.poseB) || state.prevPoseB;
     const pA = lerpPose(state.prevPoseA, targetA, t);
     const pB = lerpPose(state.prevPoseB, targetB, t);
 
     // idle jitter so the figures never look frozen
-    const j = f.jitter;
-    if(j > 0.05){
+    const jt = f.jitter;
+    if(jt > 0.05){
       const w = state.clock;
-      pA.armR.shoulder += Math.sin(w*7.1 + 1)*j;
-      pA.armL.shoulder += Math.sin(w*6.3 + 2)*j*0.6;
-      pB.armR.shoulder += Math.sin(w*7.6 + 3)*j;
-      pB.armL.shoulder += Math.sin(w*6.7 + 4)*j*0.6;
+      pA.armR.shoulder += Math.sin(w*7.1 + 1)*jt;
+      pA.armL.shoulder += Math.sin(w*6.3 + 2)*jt*0.6;
+      pB.armR.shoulder += Math.sin(w*7.6 + 3)*jt;
+      pB.armL.shoulder += Math.sin(w*6.7 + 4)*jt*0.6;
     }
     if(f.comedic){
       pA.hipBob += Math.sin(state.clock*3.4)*3.5;
       pB.hipBob += Math.sin(state.clock*3.4 + 1.5)*3.5;
     }
 
-    if(beat.ignite){
-      pA.weaponExtend = t;
-      pB.weaponExtend = t;
-    }
+    if(beat.ignite){ pA.weaponExtend = t; pB.weaponExtend = t; }
 
     state.poseA = pA; state.poseB = pB;
     state.dxA = beat.dxA ? lerp(0, beat.dxA, t) : 0;
     state.dxB = beat.dxB ? lerp(0, beat.dxB, t) : 0;
-    state.dyA = beat.arcA ? -beat.arcA*Math.sin(Math.PI*rawT) : 0;
-    state.dyB = beat.arcB ? -beat.arcB*Math.sin(Math.PI*rawT) : 0;
+    // Arcs are vertical rig distance, so they scale with the rig, not with
+    // the raw pixel height — otherwise a short panel launches people out of
+    // the top of the frame.
+    state.dyA = beat.arcA ? -beat.arcA*rigScale*Math.sin(Math.PI*rawT) : 0;
+    state.dyB = beat.arcB ? -beat.arcB*rigScale*Math.sin(Math.PI*rawT) : 0;
     state.spinA = beat.spinA ? beat.spinA*rawT : 0;
     state.spinB = beat.spinB ? beat.spinB*rawT : 0;
     state.turnA = beat.turnA ? turnFactor(rawT) : 1;
     state.turnB = beat.turnB ? turnFactor(rawT) : 1;
+
+    const wantBlockA = BLOCK_WEIGHT[beat.poseA] ? 1 : 0;
+    const wantBlockB = BLOCK_WEIGHT[beat.poseB] ? 1 : 0;
+    state.blockA = lerp(state.blockA, wantBlockA, 1-Math.exp(-dt*9));
+    state.blockB = lerp(state.blockB, wantBlockB, 1-Math.exp(-dt*9));
+
+    // health bars ease toward the value planned for this beat
+    if(f.hp){
+      const tA = f.hp.A[state.beatIdx], tB = f.hp.B[state.beatIdx];
+      if(tA !== undefined && tA < state.hpA - 0.004) state.hpFlashA = 1;
+      if(tB !== undefined && tB < state.hpB - 0.004) state.hpFlashB = 1;
+      const kk = 1-Math.exp(-dt*5);
+      if(tA !== undefined) state.hpA = lerp(state.hpA, tA, kk);
+      if(tB !== undefined) state.hpB = lerp(state.hpB, tB, kk);
+    }
 
     // camera target
     const camZ = beat.cam && beat.cam.z ? beat.cam.z : 1;
@@ -1779,6 +3758,9 @@ function frame(now){
     cam.tx = prefersReducedMotion ? W*0.5 : lerp(W*0.5, fx, 0.65);
     cam.ty = prefersReducedMotion ? H*0.55 : groundY - 128*rigScale;
 
+    const fireAt = beat.contact !== undefined ? beat.contact : 1;
+    if(!beat.fired && rawT >= fireAt){ beat.fired = true; fireBeatEffects(beat); }
+
     if(rawT >= 1){
       state.baseXA += beat.dxA || 0;
       state.baseXB += beat.dxB || 0;
@@ -1787,7 +3769,6 @@ function frame(now){
       state.spinA = state.spinB = 0;
       state.turnA = state.turnB = 1;
       if(beat.swap){ state.dirA *= -1; state.dirB *= -1; }
-      fireBeatEffects(beat);
       nextBeat();
     }
   } else if(state.phase === 'holding'){
@@ -1796,13 +3777,121 @@ function frame(now){
     if(state.holdT > 2.6) startFight();
   }
 
-  // camera easing
   const k = 1 - Math.exp(-dt*5.5);
   cam.x = lerp(cam.x, cam.tx, k);
   cam.y = lerp(cam.y, cam.ty, k);
   cam.z = lerp(cam.z, cam.tz, k);
+}
 
+function frame(now){
+  requestAnimationFrame(frame);
+  let dt = (now - lastTime)/1000;
+  lastTime = now;
+  dt = Math.min(dt, 0.05);
+  if(!state.playing || !panelVisible) dt = 0;
+  if(!state.fight) return;
+  if(!panelVisible) return;   // off-screen panels cost nothing at all
+  tick(dt);
   render(dt);
+}
+
+/* world -> screen, for chrome that must NOT scale with the camera */
+function project(p){
+  return { x:(p.x - cam.x)*cam.z + W*0.5, y:(p.y - cam.y)*cam.z + H*0.55 };
+}
+
+/* ---- nametags and health bars -------------------------------------------
+   A reader who lands on the page mid-duel has no idea who these two are.
+   The title card had already faded; the tag is the fix. It is deliberately
+   instrument-small — the silhouettes are what should be carrying this, and
+   a label that competes with the fight has taken over the fight. */
+const TAG_MIN_W = 500;
+function drawTag(out, char, hp, hpFlash, fade){
+  if(W < TAG_MIN_W || fade <= 0.01) return;
+  const p = project({ x:out.head.x, y:out.head.y - 34*out.S });
+  if(p.y < 14 || p.y > H-8) return;
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.globalAlpha = fade;
+
+  ctx.font = '600 9px "JetBrains Mono", ui-monospace, monospace';
+  if('letterSpacing' in ctx) ctx.letterSpacing = '1.4px';
+  ctx.shadowColor = 'rgba(0,0,0,0.9)'; ctx.shadowBlur = 4;
+  ctx.fillStyle = 'rgba(232,232,240,0.66)';
+  ctx.fillText(char.name, p.x, p.y);
+  ctx.shadowBlur = 0;
+  if('letterSpacing' in ctx) ctx.letterSpacing = '0px';
+
+  const bw = 46, bh = 3, bx = p.x - bw/2, by = p.y + 5;
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(bx, by, bw, bh);
+  ctx.fillStyle = char.glow;
+  ctx.globalAlpha = fade*0.82;
+  ctx.fillRect(bx, by, bw*clamp(hp,0,1), bh);
+  if(hpFlash > 0.01){
+    ctx.globalAlpha = fade*hpFlash;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(bx, by, bw*clamp(hp,0,1), bh);
+  }
+  ctx.restore();
+}
+
+/* A short line over a fighter's head. Only the cocoa ending uses it today,
+   but it is generic on purpose — a taunt with a word on it is the obvious
+   next customer, and a one-off would have to be rebuilt for that. */
+function drawGag(outA, outB){
+  const g = state.gag;
+  if(!g) return;
+  const out = g.who === 'A' ? outA : outB;
+  const p = project({ x:out.head.x, y:out.head.y - 62*out.S });
+  const t = g.t/g.hold;
+  const a = clamp(Math.min(t*6, (1-t)*5), 0, 1);
+  ctx.save();
+  ctx.globalAlpha = a;
+  ctx.textAlign = 'center';
+  ctx.shadowColor = 'rgba(0,0,0,0.9)'; ctx.shadowBlur = 6;
+  if(g.big){
+    ctx.font = '700 ' + Math.round(clamp(W*0.032, 20, 46)) + 'px "Bebas Neue", sans-serif';
+    if('letterSpacing' in ctx) ctx.letterSpacing = '4px';
+    ctx.fillStyle = '#ffd966';
+  } else {
+    ctx.font = '600 12px "JetBrains Mono", ui-monospace, monospace';
+    if('letterSpacing' in ctx) ctx.letterSpacing = '1.6px';
+    ctx.fillStyle = 'rgba(238,238,244,0.9)';
+  }
+  ctx.fillText(g.text, p.x, p.y - (1-a)*8);
+  if('letterSpacing' in ctx) ctx.letterSpacing = '0px';
+  ctx.restore();
+}
+
+/* The mug. Drawn in the winner's off hand, in world space, so it travels
+   with him — it is a prop the choreography is holding, not an overlay. */
+function drawCocoa(out){
+  if(state.cocoa <= 0.01) return;
+  const S = out.S, h = out.handL;
+  ctx.save();
+  ctx.globalAlpha = clamp(state.cocoa, 0, 1);
+  ctx.translate(h.x, h.y - 4*S);
+  ctx.fillStyle = '#efe7d8';
+  ctx.beginPath();
+  ctx.moveTo(-7*S, -6*S); ctx.lineTo(7*S, -6*S);
+  ctx.lineTo(5.4*S, 6*S); ctx.lineTo(-5.4*S, 6*S);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = '#efe7d8'; ctx.lineWidth = 1.8*S;
+  ctx.beginPath(); ctx.arc(9.5*S, -0.5*S, 4.2*S, -1.1, 1.1); ctx.stroke();
+  ctx.fillStyle = '#6b4226';
+  ctx.fillRect(-6.2*S, -6*S, 12.4*S, 2.4*S);
+  // steam
+  ctx.globalAlpha = clamp(state.cocoa, 0, 1)*0.5;
+  ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.2*S;
+  for(let i=0;i<2;i++){
+    const o = (i?3:-3)*S, w = clock()*2.4 + i;
+    ctx.beginPath();
+    ctx.moveTo(o, -8*S);
+    ctx.quadraticCurveTo(o + Math.sin(w)*4*S, -14*S, o + Math.sin(w+1)*2*S, -20*S);
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 function render(dt){
@@ -1813,7 +3902,10 @@ function render(dt){
 
   ctx.save();
   if(shakeT > 0){
-    ctx.translate(rand(-1,1)*shakeMag, rand(-1,1)*shakeMag);
+    // oscillate along the blow's axis and decay with what's left of it —
+    // a constant offset would read as the camera having moved
+    const amp = shakeMag*Math.min(1, shakeT*6)*Math.sin(state.clock*104);
+    ctx.translate(shakeVX*amp, shakeVY*amp);
   }
   ctx.translate(W*0.5, H*0.55);
   ctx.scale(cam.z, cam.z);
@@ -1825,11 +3917,20 @@ function render(dt){
   const xA = worldX(state.baseXA + state.dxA);
   const xB = worldX(state.baseXB + state.dxB);
 
+  drawDecals();
+  drawProps('back');
   drawTrail(state.trailA, f.A.glow);
   drawTrail(state.trailB, f.B.glow);
 
-  const outA = drawFigure(xA, state.dyA, state.dirA*state.turnA, poseA, f.A, -state.dyA);
-  const outB = drawFigure(xB, state.dyB, state.dirB*state.turnB, poseB, f.B, -state.dyB);
+  const outA = drawFigure(xA, state.dyA, state.dirA*state.turnA, poseA, f.A, -state.dyA,
+                          { hit:state.hitA, blocking:state.blockA, effort:state.speedA });
+  const outB = drawFigure(xB, state.dyB, state.dirB*state.turnB, poseB, f.B, -state.dyB,
+                          { hit:state.hitB, blocking:state.blockB, effort:state.speedB });
+
+  // Published for the bench only — impact placement rebuilds this itself
+  // from the live pose, because last frame's geometry is not where the
+  // blade is when the blow lands.
+  state.segsA = outA.segs; state.segsB = outB.segs;
 
   if(dt > 0){
     pushTrail(state.trailA, outA.hand, outA.tip);
@@ -1844,15 +3945,25 @@ function render(dt){
     }
     state.lastTipA = { x:outA.tip.x, y:outA.tip.y };
     state.lastTipB = { x:outB.tip.x, y:outB.tip.y };
-    Sound.hum(0, state.speedA * state.poseA.weaponExtend, f.A.scale < 0.8 ? 1 : 0);
-    Sound.hum(1, state.speedB * state.poseB.weaponExtend, f.B.scale < 0.8 ? 1 : 0);
+    Sound.hum(0, state.speedA * state.poseA.weaponExtend, f.A, xA/W);
+    Sound.hum(1, state.speedB * state.poseB.weaponExtend, f.B, xB/W);
   } else {
     if(state.trailA.length) state.trailA.shift();
     if(state.trailB.length) state.trailB.shift();
   }
 
+  drawCocoa(state.fight.winA ? outA : outB);
+  drawBolts();
+  drawProps('front');
   drawParticles('action');
   ctx.restore();
+
+  // chrome, outside the camera transform so it never scales with the zoom
+  const zoomFade = clamp(1 - (cam.z - 1.16)/0.22, 0, 1);
+  const tagFade = (state.phase === 'holding' ? 0 : 1) * zoomFade;
+  drawTag(outA, f.A, state.hpA, state.hpFlashA, tagFade);
+  drawTag(outB, f.B, state.hpB, state.hpFlashB, tagFade);
+  drawGag(outA, outB);
 
   if(flash.a > 0.002){
     ctx.save();
@@ -1894,10 +4005,103 @@ document.addEventListener('visibilitychange', function(){
   if(document.hidden) Sound.silenceHums();
 });
 
+/* ============================== COSTUME CONTACT SHEET ==============================
+   `?sheet=1` draws every fighter side by side, each in their own signature
+   guard, at the size they actually render at. This is the tool for the one
+   question that matters about the costumes — can you tell them apart at a
+   glance, in a row, without labels — and it is the only honest way to
+   answer it, because comparing them one duel at a time cannot. */
+function drawSheet(){
+  const keys = FIGHTER_KEYS;
+  const cols = Math.max(3, Math.min(8, Math.floor(W/175)));
+  const rows = Math.ceil(keys.length/cols);
+  const cw = W/cols, ch = H/rows;
+  const savedGround = groundY, savedRig = rigScale;
+  rigScale = clamp(Math.min(ch/300, cw/190), 0.34, 1.1);
+
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  const bg = ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#0a0a12'); bg.addColorStop(1,'#040407');
+  ctx.fillStyle = bg; ctx.fillRect(0,0,W,H);
+
+  keys.forEach(function(k, i){
+    const char = FIGHTERS[k];
+    const cxp = (i%cols + 0.5)*cw;
+    const cyp = (Math.floor(i/cols) + 1)*ch;
+    groundY = cyp - ch*0.16;
+
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.045)'; ctx.lineWidth = 1;
+    ctx.strokeRect((i%cols)*cw + 0.5, cyp-ch + 0.5, cw-1, ch-1);
+    ctx.restore();
+
+    drawFigure(cxp, 0, 1, poseFor(char, 'guard'), char, 0, { blocking:0.6, effort:0.4 });
+
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.font = '600 9px "JetBrains Mono", ui-monospace, monospace';
+    if('letterSpacing' in ctx) ctx.letterSpacing = '1.2px';
+    ctx.fillStyle = 'rgba(226,226,236,0.55)';
+    ctx.fillText(char.name, cxp, cyp - 12);
+    ctx.fillStyle = 'rgba(150,150,166,0.5)';
+    ctx.font = '400 8px "JetBrains Mono", ui-monospace, monospace';
+    ctx.fillText(char.guard.replace('guard','') || 'Shii-Cho', cxp, cyp - 2);
+    if('letterSpacing' in ctx) ctx.letterSpacing = '0px';
+    ctx.restore();
+  });
+
+  groundY = savedGround; rigScale = savedRig;
+}
+
 /* ============================== INIT ============================== */
+const Q = new URLSearchParams(location.search);
+if(Q.get('a') && Q.get('b') && FIGHTERS[Q.get('a')] && FIGHTERS[Q.get('b')]){
+  FORCE = { a:Q.get('a'), b:Q.get('b'), arena:Q.get('arena') || null,
+            winner:Q.get('win') || null };
+}
 document.getElementById('loading').style.display = 'none';
-startFight();
-requestAnimationFrame(frame);
+
+if(Q.has('sheet')){
+  document.getElementById('controls').style.display = 'none';
+  document.getElementById('vignette').style.display = 'none';
+  const paint = function(){ drawSheet(); };
+  if(window.ResizeObserver) new ResizeObserver(paint).observe(panel);
+  // Fonts change the label metrics, so redraw once they land.
+  if(document.fonts && document.fonts.ready) document.fonts.ready.then(paint);
+  paint();
+  window.__DUEL = { sheet:paint, FIGHTERS };
+} else {
+  startFight();
+  booted = true;
+  requestAnimationFrame(frame);
+
+  /* An automated or occluded browser reports `document.hidden`, so rAF
+     parks and the fight can never be OBSERVED in one — only stepped. This
+     handle is how the engine gets reviewed at all. */
+  window.__DUEL = {
+    state, FIGHTERS, ARENAS, POSES,
+    // exported so placement can be MEASURED rather than eyeballed: animation
+    // cannot be watched in an automated browser, so the decision has to be
+    // steppable on its own
+    impactPoint, segPair,
+    metrics(){ return { W, H, DPR, rigScale, spaceScale, groundY }; },
+    resize,
+    restart: startFight,
+    setFight(a, b, arena){ FORCE = { a, b, arena:arena||null }; startFight(); },
+    step(ms, times){
+      const n = times || 1;
+      for(let i=0;i<n;i++){ tick((ms||16.7)/1000); render((ms||16.7)/1000); }
+      return { beat:state.beatIdx, of:state.fight.beats.length,
+               phase:state.phase, clock:+state.clock.toFixed(2) };
+    },
+    seek(seconds){
+      const n = Math.round(seconds*1000/16.7);
+      for(let i=0;i<n;i++){ tick(0.0167); render(0.0167); }
+      return { beat:state.beatIdx, of:state.fight.beats.length,
+               phase:state.phase, clock:+state.clock.toFixed(2) };
+    }
+  };
+}
 
 })();
 </script>
