@@ -4,6 +4,40 @@ The single ordered backlog. `CLAUDE.md` explains *why* things are the way they
 are, and `docs/DECISIONS.md` records what was decided when; this file is only
 what is left to do.
 
+---
+
+## 2026-08-19 — open, and waiting on the client
+
+Two things on `/downloads`, both blocked on something only the client has.
+
+1. **The catalogue is empty and needs his files.** The bucket exists, the
+   migration is applied, the gate is proven end to end (`docs/DECISIONS.md`
+   2026-08-19), and `docs/DOWNLOADS.md` is the runbook. Per program: the file,
+   a name, one plain sentence, platform, version, and free or code-only. The
+   `author` field is deliberately awkward — fill it in when the program is not
+   his, and check that its licence permits redistribution, which nothing here
+   can check for him.
+
+2. **The page is being redesigned outside this repo.**
+   `design/claude-design-downloads.html` is the handoff: the page as it stands
+   today, self-contained, four boards (desk locked, desk unlocked, phone, empty),
+   real class names, stylesheet rules lifted verbatim, both fonts embedded. The
+   client is taking it into Claude Design and bringing back a direction to
+   implement. **The constraints that cannot be designed away are written out in
+   the comment at the top of that file** — the safety notice's position above the
+   list, no prices, palette tokens only, an unlock that moves nothing, a plain
+   anchor for the download, and no design that implies an account. Implementing
+   means `src/components/DownloadsPage.tsx` and the `.v-dl-*` block of
+   `src/styles/chrome.css`; the handoff keeps the class names so it is a
+   translation rather than a rewrite. The file is a design artefact and ships
+   nowhere: Vite builds one entry, so `dist/` never sees it.
+
+   **Regenerate it rather than hand-editing it if the page changes first** — it
+   was built by lifting the real rules out of `src/styles/*.css`, and a
+   hand-patched copy is one that has quietly stopped matching the site.
+
+---
+
 Last updated 2026-08-18: **the animation audit, the duel rebuild, the
 phone scroll fix and the low-end performance work are all shipped.** New open
 items are in *This session's leftovers* immediately below. Previously:
