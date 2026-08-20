@@ -572,6 +572,7 @@ type Segment = { hx: number; hy: number; tx: number; ty: number };
 /** The upward kick every spark gets regardless of the blow — see `spawnSparks`. */
 const LIFT = 0.8;
 
+
 /**
  * Which way sparks leave a contact, as a unit vector in world units.
  *
@@ -3908,10 +3909,44 @@ function drawFighter(
 ): void {
   const cx = centre(f);
   const dead = f.action === "dead";
-  const bodyAlpha = 0.85 * v.dim;
   const cxFeet = BODY_H;
   /** Non-null only while this fighter's blade is in the air. */
   const thrown = thrownBlade(f);
+
+  /*
+   * ---- the hit flash ------------------------------------------------------
+   *
+   * The frames a blow lands on, the struck fighter is drawn whole in `spark`
+   * instead of `ink`, at full alpha — the outline, the limbs and the costume
+   * together. The *shape* is what has to register: at the phone slot's 61px
+   * figure a highlight on one limb is a couple of pixels, and the silhouette
+   * going a different colour for an instant is unmissable.
+   *
+   * **`spark`, not `core`.** The first version used `core` on the reasoning that
+   * it is the brightest thing the palette offers, and it was very nearly
+   * invisible — `DuelOrnament` passes `p.fg` for *both* `ink` and `core`, so the
+   * swap changed the alpha and nothing else. Only three colours ever reach this
+   * file and `spark` (`p.a2`) is the one that already means impact here: the
+   * spine glow and the force rings are drawn in it.
+   *
+   * **The length is the hit-stop's, and it is derived rather than chosen.**
+   * `damage` sets `flash` to exactly 1, `stepFighter` decays it by 1/12 a frame,
+   * and `stepFighter` does not run while `hitStop` is counting down — so
+   * `flash === 1` is precisely the set of frames the world is frozen for. The
+   * flare is the hit-stop made visible instead of a second timer that could
+   * drift out of step with it. Three frames, 50ms at 60Hz, for a `hit`.
+   *
+   * The spine flare below is the *tail* of the same decay and runs only once the
+   * silhouette has dropped, so the two are sequential — impact, then a residual
+   * glow down the body — rather than stacked on the frames where the whole
+   * figure is already flaring.
+   *
+   * Costs nothing: one comparison and a different string in style slots that
+   * were being set anyway.
+   */
+  const flashing = f.flash >= 1;
+  const ink = flashing ? v.spark : v.ink;
+  const bodyAlpha = (flashing ? 1 : 0.85) * v.dim;
 
   // The blade's smear, in world units and behind everything: its geometry
   // belongs to the last few frames rather than this one, so it cannot live
@@ -4096,8 +4131,8 @@ function drawFighter(
 
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-  ctx.strokeStyle = v.ink;
-  ctx.fillStyle = v.ink;
+  ctx.strokeStyle = ink;
+  ctx.fillStyle = ink;
 
   /** Stroke a two-bone limb and hand back the joint. */
   const limb = (
@@ -4225,7 +4260,7 @@ function drawFighter(
     airborne,
     t: st.idle,
     phase: f.phase,
-    ink: v.ink,
+    ink,
     blade,
     dim: v.dim,
     alpha: bodyAlpha,
@@ -4273,7 +4308,7 @@ function drawFighter(
   const kickReach = Math.sin(Math.PI * Math.min(1, kickP * 1.4)) * 34;
   const brace = f.action === "attacking" ? 5 : 0;
   ctx.globalAlpha = bodyAlpha;
-  ctx.strokeStyle = v.ink;
+  ctx.strokeStyle = ink;
   for (let i = 0; i < 2; i += 1) {
     const front = i === 0;
     const hipX = front ? HIP_X : -HIP_X;
@@ -4312,7 +4347,7 @@ function drawFighter(
 
   // ---- spine and head -----------------------------------------------------
   ctx.globalAlpha = bodyAlpha;
-  ctx.strokeStyle = v.ink;
+  ctx.strokeStyle = ink;
   ctx.lineWidth = lw(6);
   ctx.beginPath();
   ctx.moveTo(0, hipY);
@@ -4359,7 +4394,7 @@ function drawFighter(
   // A hollow costume has no head: the point of an empty cowl is that there is
   // nothing inside it, and a disc drawn under the hood makes it a hat.
   if (!kind.hollow) {
-    ctx.fillStyle = v.ink;
+    ctx.fillStyle = ink;
     ctx.beginPath();
     ctx.arc(neckX, headY + 6, hr, 0, TAU);
     ctx.fill();
@@ -4369,7 +4404,7 @@ function drawFighter(
   // On the grip, a little below the sword hand, unless the arm is pushing —
   // solved above, with the costume's.
   ctx.globalAlpha = bodyAlpha * 0.85;
-  ctx.strokeStyle = v.ink;
+  ctx.strokeStyle = ink;
   limb(-shX + lean, shY, offHandX, offHandY, OFF_UPPER_ARM, OFF_FOREARM, 1, lw(4.5));
 
   // ---- the sword arm ------------------------------------------------------
@@ -4413,8 +4448,12 @@ function drawFighter(
     ctx.restore();
   }
 
-  // Hit feedback: the figure flares in the spark colour.
-  if (f.flash > 0) {
+  // Hit feedback, the tail of it: a glow down the spine in the spark colour as
+  // the flash decays. Held back until the silhouette flare above has dropped, so
+  // the two run in sequence — impact, then residue — instead of on top of each
+  // other for the two frames where the whole figure is already the brightest
+  // thing on screen.
+  if (f.flash > 0 && !flashing) {
     ctx.globalAlpha = f.flash * 0.55 * v.dim;
     ctx.strokeStyle = v.spark;
     ctx.lineWidth = lw(7);

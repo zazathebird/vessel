@@ -11,6 +11,7 @@
  *   node scripts/duel-shot.mjs sheet      one guard per fighter, side by side
  *   node scripts/duel-shot.mjs strip      an exchange, every Nth frame
  *   node scripts/duel-shot.mjs move       one named move, frame by frame
+ *   node scripts/duel-shot.mjs hit        the frames around a contact, no gap
  *   node scripts/duel-shot.mjs scale      one pairing at desk and phone size
  *   node scripts/duel-shot.mjs all        all of the above
  *
@@ -91,6 +92,16 @@ function view(over) {
     core: INK, spark: SPARK, line: LINE, bars: false, dim: 1,
   }, over);
 }
+/* Step n whole frames.
+ *
+ * NOT advanceDuel(st, n): its accumulator is clamped to 4 so a stall can never
+ * teleport a match, which means one bulk call advances four frames however
+ * large the argument. Every seed-forward in this file used to be a bulk call,
+ * so 'strip 240 frames in' was in fact four frames in — the opening guard of
+ * every fight, every time. */
+function run(st, n) {
+  for (let i = 0; i < n; i += 1) D.advanceDuel(st, 1);
+}
 async function shot(name) {
   await fetch('/shot?name=' + encodeURIComponent(name), { method: 'POST', body: c.toDataURL('image/png') });
 }
@@ -117,7 +128,7 @@ function sheet(px, tag, frame) {
   ids.forEach((id, i) => {
     const foe = D.FIGHTERS[id].side === 'good' ? 'caped' : 'hooded';
     const st = D.createDuel(id, foe);
-    if (frame) D.advanceDuel(st, frame);
+    if (frame) run(st, frame);
     const col = i % cols, row = (i / cols) | 0;
     const ox = col * cw, oy = row * ch;
     ctx.save();
@@ -146,7 +157,7 @@ function sheet(px, tag, frame) {
  * and a strip is the closest this environment gets to watching one. */
 function strip(pool, seedFrames, n, gap, tag) {
   const st = D.createDuel(pool[0], pool[1]);
-  D.advanceDuel(st, seedFrames);
+  run(st, seedFrames);
   const cw = 260, ch = 220, cols = 6;
   const rows = Math.ceil(n / cols);
   bg(cw * cols, ch * rows);
@@ -167,7 +178,7 @@ function strip(pool, seedFrames, n, gap, tag) {
     label('+' + (i * gap), ox + cw / 2, oy + ch - 6);
     ctx.save(); ctx.globalAlpha = 0.18; ctx.strokeStyle = INK;
     ctx.strokeRect(ox + 0.5, oy + 0.5, cw - 1, ch - 1); ctx.restore();
-    D.advanceDuel(st, gap);
+    run(st, gap);
   }
   return shot('strip-' + tag);
 }
@@ -216,13 +227,94 @@ function moveStrip(name, mod, pool, n, gap, tag) {
     label('+' + (i * gap) + '  ' + f.move + ' ' + f.mf, ox + cw / 2, oy + ch - 6);
     ctx.save(); ctx.globalAlpha = 0.18; ctx.strokeStyle = INK;
     ctx.strokeRect(ox + 0.5, oy + 0.5, cw - 1, ch - 1); ctx.restore();
-    D.advanceDuel(st, gap);
+    run(st, gap);
   }
   return shot('move-' + tag);
 }
 
+/* The frames around a landed blow, one frame apart.
+ *
+ * Impact feedback is measured in single frames — the silhouette flash is two,
+ * the hit-stop is two, the shake decays over a handful — so every other strip
+ * here, which samples every third or seventh frame, steps straight over all of
+ * it. This one steps a real fight one frame at a time until a blow lands
+ * (flash is only ever set to exactly 1 by damage), then draws from a few
+ * frames before to a few frames after with no gap at all.
+ *
+ * The kind argument picks which contact to wait for: 'hit' a landed blow,
+ * anything else a burst thrown with no damage — a parry or a floor strike.
+ * (No backticks in here: this whole page is a template literal.) */
+function hitStrip(kind, pool, before, n, tag) {
+  // A seeded PRNG in place of Math.random, so the *same* fight can be run
+  // twice: once to find the frame a blow lands on, once to draw the frames
+  // around it. Cloning the state and replaying it does not work — advanceDuel
+  // rolls for the director on every step, so a replayed fight diverges from the
+  // one that was measured and the event being hunted may not happen again.
+  const seeded = (seed) => () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+  const real = Math.random;
+
+  const find = () => {
+    Math.random = seeded(20260820);
+    const st = D.createDuel(pool[0], pool[1]);
+    for (let i = 0; i < 400000; i += 1) {
+      const sparks = st.sparks.length;
+      const fa = st.a.flash, fb = st.b.flash;
+      D.advanceDuel(st, 1);
+      const landed = (st.a.flash === 1 && fa !== 1) || (st.b.flash === 1 && fb !== 1);
+      // A block and a floor strike both throw a burst without dealing damage.
+      const burst = st.sparks.length - sparks >= 14 && st.a.flash !== 1 && st.b.flash !== 1;
+      if (kind === 'hit' ? landed : burst) return i;
+    }
+    return -1;
+  };
+
+  const at = find();
+  const cw = 250, ch = 230, cols = 6;
+  const rows = Math.ceil(n / cols);
+  bg(cw * cols, ch * rows);
+  if (at < 0) {
+    Math.random = real;
+    label('never reached: ' + kind, cw * cols / 2, ch * rows / 2);
+    return shot('hit-' + tag);
+  }
+
+  Math.random = seeded(20260820);
+  const st = D.createDuel(pool[0], pool[1]);
+  const start = Math.max(0, at - before);
+  run(st, start);
+  for (let i = 0; i < n; i += 1) {
+    const col = i % cols, row = (i / cols) | 0;
+    const ox = col * cw, oy = row * ch;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(ox, oy, cw, ch); ctx.clip();
+    const fx = D.duelFocus(st);
+    const scale = Math.min(cw / Math.max(150, fx.width + 80), 2.2);
+    D.drawDuel(ctx, st, view({
+      x: ox + cw / 2 - fx.cx * scale,
+      y: oy + ch * 0.84 - D.FEET_Y * scale,
+      scale,
+      bladeA: D.BLADE_COLORS[pool[0]], bladeB: D.BLADE_COLORS[pool[1]],
+    }));
+    ctx.restore();
+    label((start + i - at) + '  flash ' + st.a.flash.toFixed(2) + '/' + st.b.flash.toFixed(2)
+      + '  stop ' + st.hitStop + '  sparks ' + st.sparks.length, ox + cw / 2, oy + ch - 6);
+    ctx.save(); ctx.globalAlpha = 0.18; ctx.strokeStyle = INK;
+    ctx.strokeRect(ox + 0.5, oy + 0.5, cw - 1, ch - 1); ctx.restore();
+    run(st, 1);
+  }
+  Math.random = real;
+  return shot('hit-' + tag);
+}
+
 (async () => {
   const mode = new URLSearchParams(location.search).get('mode');
+  if (mode === 'hit' || mode === 'all') {
+    await hitStrip('hit', ['hooded', 'caped'], 2, 12, 'landed');
+    await hitStrip('block', ['haloed', 'horned'], 2, 12, 'blocked');
+  }
   if (mode === 'move' || mode === 'all') {
     await moveStrip('sweep_low', 'low-sweep', ['hooded', 'caped'], 12, 3, 'sweep-hop');
     await moveStrip('roll_through', 'roll-past', ['hooded', 'caped'], 12, 4, 'roll');
@@ -241,7 +333,7 @@ function moveStrip(name, mod, pool, n, gap, tag) {
   }
   if (mode === 'scale' || mode === 'all') {
     const st = D.createDuel('maned', 'cowled');
-    D.advanceDuel(st, 420);
+    run(st, 420);
     for (const [px, tag] of [[190, 'phone'], [340, 'desk']]) {
       bg(px, px);
       const fx = D.duelFocus(st);

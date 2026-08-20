@@ -14,7 +14,49 @@ file records what happened to the codebase.
 ---
 
 
-## 2026-08-20 (latest) — duel phase 4, part one: sparks leave along the contact
+## 2026-08-20 (latest) — duel phase 4, part two: the struck fighter flares, and the bench was lying
+
+Phase 4's *"1–2 frame silhouette flash on the struck fighter"*. Two things had to be fixed before
+the change could be *seen*, and one of them was in the tool rather than in the site.
+
+**The flash is `spark`, not `core`, and that was found by looking.** The first version drew the
+struck figure in `core` on the reasoning that it is the brightest thing the palette offers. Rendered,
+it was very nearly invisible: `DuelOrnament` passes `p.fg` for **both** `ink` and `core`, so the swap
+changed the alpha and nothing else. Only three colours reach this file and `spark` (`p.a2`) is the
+one that already means impact — the spine glow and the force rings are drawn in it.
+
+**Its length is derived from the hit-stop rather than chosen.** `damage` sets `flash` to exactly 1,
+`stepFighter` decays it by 1/12 a frame, and `stepFighter` does not run while `hitStop` counts down —
+so `flash === 1` is precisely the set of frames the world is frozen for. The flare is the hit-stop
+made visible instead of a second timer that could drift out of step with it: three frames, 50ms, for
+a `hit`. A first attempt used a 0.9 threshold and a comment claiming two frames; measured, it was
+four, because the freeze holds the decay. The spine glow that already existed now runs only *after*
+the silhouette drops, so the two are sequential — impact, then residue — rather than stacked.
+
+**`scripts/duel-shot.mjs` gained a `hit` mode, and building it turned up a defect in the bench.**
+Impact feedback is measured in single frames, so every other strip in that file — which samples every
+third or seventh — steps straight over all of it. The new mode steps one frame at a time until a blow
+lands, then draws with no gap at all.
+
+Two things had to be right for it to work, and both are worth keeping:
+
+- **The replay is seeded, not cloned.** The first version deep-copied the state a few frames before
+  the event and replayed from there; `advanceDuel` rolls for the director on every step, so the
+  replayed fight diverged and the blow being hunted did not happen again. `Math.random` is replaced
+  with a seeded PRNG for the search *and* the draw, so the same fight runs twice.
+- **`advanceDuel(st, n)` does not advance `n` frames**, and every seed-forward in that file assumed
+  it did. Its accumulator is clamped to 4 so that a stall can never teleport a match — correct, and
+  documented on the function — which means one bulk call steps four frames however large the
+  argument. `strip(pool, 240, …)` was therefore drawing the opening guard of a fight, 240 frames'
+  worth of *nothing*, every time it has ever been run; `sheet(340, 'desk-moving', 300)` was the same
+  still pose as `sheet(340, 'desk', 0)`. A `run(st, n)` helper steps whole frames and every bulk call
+  now goes through it. **Nothing on the site was affected** — the site passes small per-frame deltas,
+  which is what the clamp is for — but a costume or a move reviewed through those strips was reviewed
+  at frame four.
+
+---
+
+## 2026-08-20 — duel phase 4, part one: sparks leave along the contact
 
 `docs/DUEL-ABSORB.md` phase 4's first item — *"directional sparks along the blade-contact normal
 rather than radial"*. Two things were wrong and only one of them was the one written down.
