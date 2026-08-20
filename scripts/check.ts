@@ -34,6 +34,7 @@ import {
   bladeWorld,
   carryWindow,
   contactSpray,
+  DUEL_SHAKE_MAX,
   duelFocus,
   BODY_H,
   DUEL_TABLES,
@@ -1193,7 +1194,18 @@ if (!FAST) check("duel: the ornament camera never cuts a fighter off", () => {
     const f = duelFocus(st);
     const viewLo = -shot.x / shot.scale;
     const viewHi = (ORNAMENT_PX - shot.x) / shot.scale;
-    const over = Math.max(viewLo - (f.cx - f.width / 2), f.cx + f.width / 2 - viewHi, 0);
+    /*
+     * **The kick counts against the frame.** `drawDuel` displaces the whole
+     * world by `st.shake` on a contact, and `duelFocus` — which is what the
+     * camera frames from — knows nothing about it, so every world unit of shake
+     * is a world unit the camera has not reserved. Adding it here is what keeps
+     * this gate's claim true now that the frame can move: raise `SHAKE_MAX` past
+     * what the camera's margin absorbs and this fails, rather than the site
+     * quietly cutting a fighter off on the frames a blow lands.
+     */
+    const lo = f.cx - f.width / 2 + st.shake.x;
+    const hi = f.cx + f.width / 2 + st.shake.x;
+    const over = Math.max(viewLo - lo, hi - viewHi, 0);
     if (st.over > 0) dead += 1;
     // Half a world unit of tolerance: this is about a body leaving the picture,
     // not about the last decimal of an eased scale.
@@ -1317,6 +1329,48 @@ if (!FAST) check("duel: a low sweep passes under the jump that answers it", () =
  * The fourth is new: a costume that draws nothing at all would typecheck, run,
  * and quietly make two fighters identical.
  */
+/*
+ * **The kick is bounded and always comes back to nothing.**
+ *
+ * A contact displaces the whole drawn world by a few units (`st.shake`), and two
+ * things about it are invariants rather than taste. It may never exceed
+ * `SHAKE_MAX`, because the camera's *never cut the subject in half* rule is what
+ * absorbs it and an unbounded offset would walk the pair out of the ornament.
+ * And it must decay to exactly zero, because the alternative — a residue that
+ * never quite reaches it — parks the world permanently off-centre, which is
+ * invisible frame to frame and unmistakable in a two-second victory hold.
+ *
+ * Both are the sort of thing a later "make the hits feel heavier" would undo by
+ * making `kick` additive, which is precisely why the emitter takes the larger of
+ * the two rather than summing them.
+ */
+if (!FAST) check("duel: the kick is bounded and always settles", () => {
+  const st = createDuel("hooded", "caped");
+  let worst = 0;
+  let live = 0;
+  let longest = 0;
+  let run = 0;
+  for (let i = 0; i < 200_000; i += 1) {
+    advanceDuel(st, 1);
+    const mag = Math.hypot(st.shake.x, st.shake.y);
+    worst = Math.max(worst, mag);
+    if (mag > 0) {
+      live += 1;
+      run += 1;
+      longest = Math.max(longest, run);
+    } else {
+      run = 0;
+    }
+  }
+  must(worst <= DUEL_SHAKE_MAX + 1e-9, `a kick reached ${worst.toFixed(2)}, over the ${DUEL_SHAKE_MAX} ceiling`);
+  must(live > 1_000, `only ${live} frames carried a kick — the emitters may have stopped firing`);
+  // At the documented damping a kick is spent in about eight frames. A run far
+  // longer than that is a kick being re-armed every frame, which is a shudder
+  // rather than an impact.
+  must(longest < 40, `a kick stayed live for ${longest} frames`);
+  return `200,000 frames, worst ${worst.toFixed(2)} of ${DUEL_SHAKE_MAX}, live on ${((live / 200_000) * 100).toFixed(1)}%, longest run ${longest}`;
+});
+
 /*
  * **Sparks never fly into the thing they were struck off.**
  *

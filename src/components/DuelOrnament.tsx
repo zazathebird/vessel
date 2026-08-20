@@ -234,8 +234,16 @@ export function duelCamera(
    * to choose between, so it centres on them and lets the edges fall where they
    * fall.
    */
-  const lo = focus.cx - focus.width / 2;
-  const hi = focus.cx + focus.width / 2;
+  /*
+   * The kick displaces the drawn world (see `drawDuel`), which is the same thing
+   * as the subject moving relative to the camera — so it belongs in this test,
+   * and only in this test. Elsewhere `x` is untouched, so the camera does not
+   * jitter along with the shake: this line bites only in the corner case the
+   * rule above exists for, where a few units either way is the difference
+   * between a whole fighter and most of one.
+   */
+  const lo = focus.cx - focus.width / 2 + st.shake.x;
+  const hi = focus.cx + focus.width / 2 + st.shake.x;
   if (hi - lo <= half * 2) x = Math.max(hi - half, Math.min(lo + half, x));
   else x = focus.cx;
 
@@ -312,6 +320,10 @@ export function DuelOrnament({ pairing }: { pairing: DuelPool }) {
         spark: p.a2,
         line: p.line,
         bars: true,
+        // The frame may jolt on contact here — the fight is the subject in this
+        // slot. Off in the background presentation, where it would move the page
+        // under body copy. See the translate in `drawDuel`.
+        kick: true,
         dim: 1,
       });
     };

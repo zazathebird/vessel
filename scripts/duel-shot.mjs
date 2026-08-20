@@ -90,6 +90,10 @@ function view(over) {
   return Object.assign({
     x: 0, y: 0, scale: 1, ink: INK, bladeA: '#3d9bff', bladeB: '#ff3b30',
     core: INK, spark: SPARK, line: LINE, bars: false, dim: 1,
+    // kick on, because this bench exists to review the ornament and the
+    // ornament is the presentation that opts into it. Without this the shake
+    // is simply not drawn and a strip of a contact looks like there is none.
+    kick: true,
   }, over);
 }
 /* Step n whole frames.
@@ -299,8 +303,9 @@ function hitStrip(kind, pool, before, n, tag) {
       bladeA: D.BLADE_COLORS[pool[0]], bladeB: D.BLADE_COLORS[pool[1]],
     }));
     ctx.restore();
-    label((start + i - at) + '  flash ' + st.a.flash.toFixed(2) + '/' + st.b.flash.toFixed(2)
-      + '  stop ' + st.hitStop + '  sparks ' + st.sparks.length, ox + cw / 2, oy + ch - 6);
+    label((start + i - at) + ' f' + st.a.flash.toFixed(1) + '/' + st.b.flash.toFixed(1)
+      + ' s' + st.hitStop + ' k' + st.shake.x.toFixed(1) + ',' + st.shake.y.toFixed(1)
+      + ' x' + st.sparks.length, ox + cw / 2, oy + ch - 6);
     ctx.save(); ctx.globalAlpha = 0.18; ctx.strokeStyle = INK;
     ctx.strokeRect(ox + 0.5, oy + 0.5, cw - 1, ch - 1); ctx.restore();
     run(st, 1);

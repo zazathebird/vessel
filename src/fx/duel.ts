@@ -256,6 +256,12 @@ export interface DuelState {
   /** Frames until the blades may throw sparks again — see the clash test. */
   clash: number;
   /**
+   * The world's displacement this frame, in world units — see *the kick* above.
+   * Simulation rather than presentation, so it advances on the fixed timestep
+   * and cannot depend on frame rate, and so a bench can read it.
+   */
+  shake: { x: number; y: number };
+  /**
    * Frames of hit-stop still owed. Both fighters' move clocks freeze while this
    * is above zero; the sparks and `idle` deliberately do not, because sparks
    * flying past two locked bodies *is* the effect.
@@ -329,6 +335,7 @@ export function createDuel(left: FighterStyle, right: FighterStyle): DuelState {
     b: makeFighter(START_B, -1, right),
     sparks: [],
     clash: 0,
+    shake: { x: 0, y: 0 },
     hitStop: 0,
     dir: { seq: null, f: 0, next: 0, att: "a", chain: 0, pressure: 0 },
     matches: 0,
@@ -572,6 +579,62 @@ type Segment = { hx: number; hy: number; tx: number; ty: number };
 /** The upward kick every spark gets regardless of the blow — see `spawnSparks`. */
 const LIFT = 0.8;
 
+/*
+ * ---- the kick ---------------------------------------------------------------
+ *
+ * A contact displaces the whole world by a few units along the direction the
+ * blow was travelling, and that displacement inverts and shrinks every frame —
+ * so it is a *shake* rather than a lurch, and it is directional rather than the
+ * usual random jitter. A random shake says "something happened"; one along the
+ * blow says which way it went, which is the same argument `contactSpray` makes
+ * about the sparks and the same information for free.
+ *
+ * **It had to be taught to the camera, and that is why the ceiling is a taste
+ * number rather than a safety one.** `duelFocus` frames the two bodies and knows
+ * nothing about this offset, so every world unit of kick is a world unit the
+ * camera has not reserved: at 4.5 it cut a fighter off on 3 frames of 200,000,
+ * worst by 6px of 700. The fix is in `duelCamera`'s existing *never cut the
+ * subject in half* rule, which now adds the live kick to the subject's extent —
+ * so the ornament clips on nothing again, and the honest consequence is that the
+ * camera pans slightly against a kick delivered in a corner, damping the shake
+ * exactly where the arena has no room for it.
+ *
+ * The consequence for anyone retuning this: **`npm run check` will not stop you
+ * raising it.** The camera absorbs any value now, and 12 passes the clipping
+ * gate as cleanly as 4.5 does. What is gated is that a kick never exceeds this
+ * constant and always returns to nothing — the invariants — not that the number
+ * is the right one. That one wants an eye.
+ */
+export const DUEL_SHAKE_MAX = 4.5;
+/**
+ * Sign-flipping decay, so 4.5 becomes -2.8, 1.7, -1.1, 0.7, -0.4 — about six
+ * frames of visible shake. A decay without the flip is a drift, which reads as
+ * the page having moved rather than as an impact.
+ */
+const SHAKE_DAMP = 0.62;
+
+
+/**
+ * Which way this fighter's blade tip is travelling, as a unit vector.
+ *
+ * From `f.trail`, the same few frames of blade positions the smear is drawn
+ * from, so the smear, the spray it throws and the kick it delivers cannot
+ * disagree about which way a sword went. A blade barely moving has no direction
+ * to give and falls back to forward and slightly up, which is where a resting
+ * guard points.
+ */
+function swingDir(f: Fighter): { x: number; y: number } {
+  const n = f.trail.length;
+  let sx = n >= 2 ? f.trail[n - 1].tx - f.trail[n - 2].tx : 0;
+  let sy = n >= 2 ? f.trail[n - 1].ty - f.trail[n - 2].ty : 0;
+  let m = Math.hypot(sx, sy);
+  if (m < 0.6) {
+    sx = f.facing;
+    sy = -0.35;
+    m = Math.hypot(sx, sy);
+  }
+  return { x: sx / m, y: sy / m };
+}
 
 /**
  * Which way sparks leave a contact, as a unit vector in world units.
@@ -602,17 +665,7 @@ const LIFT = 0.8;
  * orientation rather than waiting for a fight to produce them.
  */
 export function contactSpray(f: Fighter, struck: Segment): { x: number; y: number } {
-  const n = f.trail.length;
-  let sx = n >= 2 ? f.trail[n - 1].tx - f.trail[n - 2].tx : 0;
-  let sy = n >= 2 ? f.trail[n - 1].ty - f.trail[n - 2].ty : 0;
-  let m = Math.hypot(sx, sy);
-  if (m < 0.6) {
-    sx = f.facing;
-    sy = -0.35;
-    m = Math.hypot(sx, sy);
-  }
-  sx /= m;
-  sy /= m;
+  const { x: sx, y: sy } = swingDir(f);
 
   const ex = struck.tx - struck.hx;
   const ey = struck.ty - struck.hy;
@@ -629,6 +682,21 @@ export function contactSpray(f: Fighter, struck: Segment): { x: number; y: numbe
 
   const out = Math.hypot(tx + rx, ty + ry);
   return out < 1e-6 ? { x: sx, y: sy } : { x: (tx + rx) / out, y: (ty + ry) / out };
+}
+
+/**
+ * Displace the world along `dir` by `mag` world units — see *the kick* above.
+ *
+ * The larger kick wins rather than the two summing: a match reset arriving on a
+ * killing blow, or a clash landing in the frame after a hit, would otherwise
+ * stack into a lurch that no single blow ever produces and that the camera has
+ * no margin for. Clamped to `DUEL_SHAKE_MAX` at the one place a kick can be set.
+ */
+function kick(st: DuelState, dir: { x: number; y: number }, mag: number): void {
+  const m = Math.min(DUEL_SHAKE_MAX, mag);
+  if (m <= Math.hypot(st.shake.x, st.shake.y)) return;
+  st.shake.x = dir.x * m;
+  st.shake.y = dir.y * m;
 }
 
 /** The victim's torso as a surface, for a blow that lands on a body. */
@@ -689,6 +757,9 @@ function damage(st: DuelState, foe: Fighter, amount: number): void {
     foe.drive = 0;
     st.over = DEATH_HOLD;
     spawnSparks(st, centre(foe), foe.y + BODY_H * 0.4, 15);
+    // The heaviest kick in the fight, and the only one with no direction to it:
+    // the match ending is not a blow travelling anywhere.
+    kick(st, { x: 0, y: 1 }, DUEL_SHAKE_MAX);
   }
 }
 
@@ -3114,6 +3185,9 @@ function resolveContact(st: DuelState, f: Fighter, foe: Fighter, m: Move): void 
     // for a thrust — see `contactSpray`.
     const spray = contactSpray(f, torsoSegment(foe));
     spawnSparks(st, hx, hy, 14, spray.x * 1.35, spray.y * 1.35);
+    // The kick goes along the *blow*, not along the spray: the sparks follow the
+    // surface they were struck off, the world follows the sword.
+    kick(st, swingDir(f), 2.6 + m.power * f.beatPower * 1.4);
     // Hit-stop: both fighters' move clocks freeze for two frames while the
     // sparks keep flying. Two frames is nothing to describe and a great deal to
     // watch — it is the cheapest weight cue available.
@@ -3170,6 +3244,9 @@ function resolveContact(st: DuelState, f: Fighter, foe: Fighter, m: Move): void 
      */
     const spray = contactSpray(f, bladeWorld(foe));
     spawnSparks(st, near.ax, near.ay, 18, spray.x * 1.25, spray.y * 1.25);
+    // Smaller than a landed blow's, and that ordering is the point: a parry
+    // absorbs a strike and a strike that gets through does not.
+    kick(st, swingDir(f), 1.8);
 
     /*
      * **The bounce is deferred, because switching move on the contact frame
@@ -3228,6 +3305,9 @@ function resolveContact(st: DuelState, f: Fighter, foe: Fighter, m: Move): void 
       ty: FEET_Y,
     });
     spawnSparks(st, tip.tx, FLOOR_Y + BODY_H, 16, spray.x * 2.4, spray.y * 2.4);
+    // A sword into the ground kicks the ground, so this one is vertical whatever
+    // the swing was doing — the floor is what moved.
+    kick(st, { x: 0, y: 1 }, 2.2);
   }
 }
 
@@ -3431,6 +3511,18 @@ function stepLock(st: DuelState): void {
 /** One fixed 60Hz step. */
 function step(st: DuelState): void {
   st.idle += 1;
+
+  /*
+   * The kick, inverted and shrunk. Up here with `idle` on purpose: the two
+   * branches below both return early — the death hold and the hit-stop — and a
+   * kick that stopped decaying during either would leave the world parked off
+   * its centre for the two seconds of a victory hold, which is the one moment
+   * anybody is looking at a still image of this fight.
+   */
+  st.shake.x *= -SHAKE_DAMP;
+  st.shake.y *= -SHAKE_DAMP;
+  if (Math.abs(st.shake.x) < 0.01) st.shake.x = 0;
+  if (Math.abs(st.shake.y) < 0.01) st.shake.y = 0;
 
   if (st.over > 0) {
     st.over -= 1;
@@ -3793,6 +3885,13 @@ export interface DuelView {
   line: string;
   /** Health bars: right in the ornament slot, wrong behind body copy. */
   bars: boolean;
+  /**
+   * Whether a contact may displace the frame — see *the kick* and the translate
+   * in `drawDuel`. Same split as `bars` and for the same reason, and a separate
+   * flag on purpose: defaults to off, so a presentation that has not thought
+   * about it does not move under a reader.
+   */
+  kick?: boolean;
   /**
    * Fades the bars independently of `dim`, 0–1, defaulting to 1.
    *
@@ -4695,6 +4794,26 @@ export function drawDuel(ctx: CanvasRenderingContext2D, st: DuelState, v: DuelVi
   ctx.save();
   ctx.translate(v.x, v.y);
   ctx.scale(v.scale, v.scale);
+  /*
+   * The kick, in world units so it is the same shake at every size the fight is
+   * drawn at, and inside the scale so it needs no knowledge of the camera.
+   *
+   * **Opt-in, and it travels with the ornament for the same reason the health
+   * bars do** (`docs/DUEL.md`): in the slot the fight is the subject and a jolt
+   * on contact belongs to it, whereas full-bleed behind body copy this would
+   * displace the entire backdrop under somebody who is reading. Calm hides the
+   * canvas outright and is the escape hatch for motion, but a visitor who has
+   * not asked for calm should not have to, and a background is by definition the
+   * thing that holds still.
+   *
+   * **Its own flag rather than a read of `bars`**, though the two are set
+   * together today. They are two decisions — "this fight carries a readout" and
+   * "this fight may move its frame" — and a third presentation could reasonably
+   * want one without the other. Defaulting to *off* is the safe direction: a new
+   * caller that forgets it loses a flourish, where the opposite default would
+   * shake a page under a reader.
+   */
+  if (v.kick) ctx.translate(st.shake.x, st.shake.y);
 
   ctx.globalAlpha = 0.3 * v.dim;
   ctx.strokeStyle = v.line;

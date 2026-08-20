@@ -14,7 +14,44 @@ file records what happened to the codebase.
 ---
 
 
-## 2026-08-20 (latest) — duel phase 4, part two: the struck fighter flares, and the bench was lying
+## 2026-08-20 (latest) — duel phase 4, part three: the frame kicks, and the camera had to be told
+
+Phase 4's *"directional shake"*. A contact displaces the whole drawn world by a few units **along the
+direction the blow was travelling**, and the displacement inverts and shrinks every frame — so it is
+a shake rather than a lurch, and it carries information rather than merely announcing that something
+happened. That is the same argument `contactSpray` makes about the sparks, and the direction comes
+from the same `swingDir` both now share, so the smear, the spray it throws and the kick it delivers
+cannot disagree about which way a sword went.
+
+Four decisions in it are worth keeping:
+
+- **It is opt-in and the ornament is the only caller, on the same split as the health bars.** In the
+  slot the fight is the subject and a jolt belongs to it; full-bleed behind body copy it would
+  displace the entire backdrop under somebody reading. It is its **own flag** rather than a read of
+  `bars`, because those are two decisions, and it defaults to *off* — a caller that forgets it loses
+  a flourish, where the other default shakes a page under a reader.
+- **The larger kick wins; kicks do not sum.** A killing blow landing on the same frame as a clash
+  would otherwise stack into a lurch no single blow produces.
+- **The decay runs above both early returns in `step`.** The death hold and the hit-stop each return
+  early, and a kick that stopped decaying inside either would park the world off-centre for the two
+  seconds of a victory hold — the one moment anybody looks at a still image of this fight.
+- **The camera had to be taught about it, and that changed what the gate can promise.** `duelFocus`
+  frames the two bodies and knows nothing about the offset, so at 4.5 units the kick cut a fighter
+  off on **3 frames of 200,000, worst by 6px of 700**. The fix went into `duelCamera`'s existing
+  *never cut the subject in half* rule, which now adds the live kick to the subject's extent — and
+  because it bites only in the corner case that rule exists for, the camera does not jitter along
+  with the shake in ordinary play. The honest consequence is that a kick delivered against a wall is
+  damped by the camera panning to keep the pair in shot.
+
+  **That fix removed the clipping gate's ability to bound the constant**, and the comment on
+  `DUEL_SHAKE_MAX` says so: 12 now passes it as cleanly as 4.5. What is gated instead is the pair of
+  invariants — a kick never exceeds the constant, and it always returns to exactly zero rather than
+  leaving a residue that parks the world off-centre. Measured: live on **9.7%** of frames, worst
+  4.50, longest unbroken run 24 frames. Whether 4.5 is the right number wants an eye.
+
+---
+
+## 2026-08-20 — duel phase 4, part two: the struck fighter flares, and the bench was lying
 
 Phase 4's *"1–2 frame silhouette flash on the struck fighter"*. Two things had to be fixed before
 the change could be *seen*, and one of them was in the tool rather than in the site.
