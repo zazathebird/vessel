@@ -2509,6 +2509,108 @@ async function main(): Promise<void> {
     const stillReadable = await api.downloadPage(slug, oneClaim.ticket);
     check("but the page itself still renders for them", stillReadable.locked === false);
 
+    /*
+     * ---- the redemption invariants -------------------------------------
+     *
+     * Added 2026-08-20 after a review pointed out that this section drove only
+     * happy paths: the module's longest comment defends "every failure gives the
+     * same message", the `uses < max_uses` re-check in the UPDATE's WHERE clause
+     * is the last-way-in guard, and neither had ever been executed here.
+     */
+
+    // A code of the right shape that was never minted.
+    asBrowser(stranger);
+    const fabricated = await api.downloadClaim("ZZZZ-ZZZZ-ZZZZ").then(
+      () => null,
+      (thrown: unknown) => thrown as { status?: number; message?: string },
+    );
+    check("a fabricated code is refused", fabricated?.status === 403, `status ${fabricated?.status}`);
+
+    // Exhaustion: one use, spent, then tried again.
+    asBrowser(opSession);
+    const once = await api.adminDownloadMint({ label: "harness-once", item: null, slug, maxUses: 1, days: 0 });
+    asBrowser(stranger);
+    const spent = await api.downloadClaim(once.code);
+    check("a one-use code reports nothing left after its only use", spent.usesLeft === 0, `usesLeft ${spent.usesLeft}`);
+    const exhausted = await api.downloadClaim(once.code).then(
+      () => null,
+      (thrown: unknown) => thrown as { status?: number; message?: string },
+    );
+    check("an exhausted code is refused", exhausted?.status === 403);
+    check(
+      "and is indistinguishable from a code that never existed",
+      exhausted?.status === fabricated?.status && exhausted?.message === fabricated?.message,
+      `${exhausted?.message} vs ${fabricated?.message}`,
+    );
+
+    // Revocation: minted, revoked, then tried.
+    asBrowser(opSession);
+    const doomed = await api.adminDownloadMint({ label: "harness-revoked", item: null, slug, maxUses: 5, days: 0 });
+    const listed = await api.adminDownloadsList();
+    const doomedRow = listed.codes.find((c) => c.label === "harness-revoked");
+    check("a minted code appears in the list with a handle", Boolean(doomedRow?.ref));
+    check(
+      "and the handle is wide enough to be unique",
+      (doomedRow?.ref ?? "").length === 16,
+      `ref length ${(doomedRow?.ref ?? "").length}`,
+    );
+    await api.adminDownloadRevoke(doomedRow!.ref);
+    asBrowser(stranger);
+    const revoked = await api.downloadClaim(doomed.code).then(
+      () => null,
+      (thrown: unknown) => thrown as { status?: number; message?: string },
+    );
+    check(
+      "a revoked code is refused, in the same words as every other failure",
+      revoked?.status === fabricated?.status && revoked?.message === fabricated?.message,
+    );
+
+    /*
+     * ---- ranges ---------------------------------------------------------
+     *
+     * The whole design rests on a plain GET so the browser's own manager can
+     * resume a 300MB file. Nothing here had ever sent a `Range`.
+     */
+    const partial = await fetch(`/api/downloads/file?item=${freeId}`, {
+      headers: { range: "bytes=0-99" },
+    });
+    const partialBytes = new Uint8Array(await partial.arrayBuffer());
+    check("a range request is answered as a partial", partial.status === 206, `status ${partial.status}`);
+    check(
+      "with a content-range naming exactly those bytes",
+      partial.headers.get("content-range") === `bytes 0-99/${freeBytes.length}`,
+      partial.headers.get("content-range") ?? "(none)",
+    );
+    check(
+      "and the bytes are the right hundred",
+      partialBytes.length === 100 && partialBytes.every((b, i) => b === freeBytes[i]),
+    );
+
+    const headProbe = await fetch(`/api/downloads/file?item=${freeId}`, { method: "HEAD" });
+    check(
+      "a HEAD probe is answered, so a download manager can resume",
+      headProbe.status === 200,
+      `status ${headProbe.status}`,
+    );
+    check(
+      "and it advertises ranges",
+      headProbe.headers.get("accept-ranges") === "bytes",
+    );
+
+    /*
+     * ---- the existence oracle -------------------------------------------
+     *
+     * An unknown id and a real id the caller may not have must be one refusal.
+     * They were 404 and 403, which made the status code a map of the table.
+     */
+    const unknownId = await fetch(`/api/downloads/file?item=harness-no-such-${RUN}`);
+    const knownLocked = await fetch(`/api/downloads/file?item=${siblingId}`);
+    check(
+      "an unknown file and a forbidden one are the same refusal",
+      unknownId.status === knownLocked.status && unknownId.status === 403,
+      `${unknownId.status} vs ${knownLocked.status}`,
+    );
+
     // A ticket for this page must not open a different one. The scope is the
     // whole security of a code, so it is asserted rather than assumed.
     const otherSlug = `harness-other-${RUN}`;
@@ -2654,13 +2756,77 @@ async function main(): Promise<void> {
       badFilename?.message,
     );
 
-    // ---- deleting takes the bytes with it --------------------------------
+    // ---- deleting takes the bytes, the rows and the codes with it --------
+    //
+    // A code minted for this page, kept until after the delete. A slug is a
+    // re-usable primary key, so a code outliving its page would spring back to
+    // life the day the operator reuses the address for a different customer.
+    asBrowser(opSession);
+    // The grants section above left this page on "granted", which codes cannot
+    // open — and `mintCode` now refuses that outright rather than handing over a
+    // code that redeems and opens nothing. Put it back to a code-gated page,
+    // which is what the rest of this block is about.
+    await api.adminPageSave({
+      slug,
+      title: "Harness downloads",
+      layout: "list",
+      visibility: "code",
+      status: "live",
+    });
+    const orphan = await api.adminDownloadMint({
+      label: "harness-orphan",
+      item: null,
+      slug,
+      maxUses: 5,
+      days: 0,
+    });
+
     await api.adminPageDelete(slug);
     asBrowser(stranger);
     const gone = await refusal(() => api.downloadPage(slug));
     check("a deleted page is gone", gone?.status === 404);
+
+    /*
+     * **Asserted against the cascade, not against the route.**
+     *
+     * This used to check the byte route answered 404 — which it did whether the
+     * `ON DELETE CASCADE` fired or the row was orphaned, because `file()` looks
+     * up the *page* first and fails there either way. So the check could not
+     * fail, and proved nothing about the thing it was named after.
+     *
+     * The row is now re-created under a fresh page at the same id: if the
+     * cascade did not fire, the old row is still there and `saveFile` would be
+     * updating it rather than inserting, leaving the stale `size_bytes` behind.
+     */
+    asBrowser(opSession);
+    await api.adminPageSave({
+      slug,
+      title: "Reused address",
+      layout: "list",
+      visibility: "code",
+      status: "live",
+    });
+    const rebuilt = await api.downloadPage(slug);
+    check(
+      "the files really cascaded — a re-created page starts empty",
+      (rebuilt.files ?? []).length === 0,
+      `${(rebuilt.files ?? []).length} files survived the delete`,
+    );
+
+    // And the code minted for the old page must not open the new one.
+    asBrowser(stranger);
+    const resurrected = await api.downloadClaim(orphan.code).then(
+      () => null,
+      (thrown: unknown) => thrown as { status?: number },
+    );
+    check(
+      "a code for a deleted page does not come back when the address is reused",
+      resurrected?.status === 403,
+      `status ${resurrected?.status}`,
+    );
+
     const goneBytes = await fetch(`/api/downloads/file?item=${freeId}`);
-    check("and its files go with it", goneBytes.status === 404);
+    check("and its bytes are refused", goneBytes.status === 403);
 
     asBrowser(opSession);
     await api.adminPageDelete(otherSlug).catch(() => undefined);

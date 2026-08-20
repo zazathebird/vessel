@@ -16,9 +16,9 @@ choose to."*
 | Table | Fields |
 |---|---|
 | `download_codes` | an HMAC of the code, a note you type, an optional item or page scope, four timestamps, two counters |
-| `download_pages` | a page you wrote: address, title, prose, which look, who can see it, draft or live |
+| `download_pages` | a page you wrote: address, title, prose, which look, who can see it, draft or live, and how it presents its files |
 | `download_blocks` | the free-form blocks on such a page |
-| `download_files` | a file's name, blurb, platform, version, filename, size and free/paid flag |
+| `download_files` | a file's name, blurb, category, platform, version, filename, size, price and free/paid flag |
 | `download_grants` | an account id, and which page or file it opens |
 
 No name. No email. No address. No payment reference. No IP. No purchase record. `SPEC-ACCOUNTS.md`
@@ -73,6 +73,16 @@ deploy that includes them, or every downloads route answers with a database erro
 additive — four new tables and one nullable column on `download_codes` — so it cannot lose anything
 that is already there.
 
+**`0007_download_catalogue.sql` is the categories-and-prices migration** (2026-08-20) and has the
+same rule: apply it *before* the deploy that includes it, or every downloads route errors. Also
+purely additive — two columns on `download_files`, four on `download_pages`, one index — and every
+default is the behaviour the page already had, so applying it on its own changes nothing anybody
+sees.
+
+```sh
+npm run db:migrate:remote     # wrangler d1 migrations apply vessel --remote
+```
+
 ---
 
 ## Building a page
@@ -96,6 +106,18 @@ client's request). Sign in → **Admin** → *Downloads pages*.
 Switching between looks never destroys anything: the structured intro and the free-form blocks are
 stored separately, so you can move back and forth and find your text where you left it.
 
+5. **Set how the files are shown** — the *How the files are shown* box. Four settings, and each
+   default is what the page did before the setting existed, so leaving them alone changes nothing:
+   - **Order they come out in** — *My order* (the order you put them in), Name, Newest, Oldest,
+     Largest, Price, Category. This is the order the page **arrives** in. A visitor can re-sort what
+     they are looking at; that never changes what anybody else sees.
+   - **Let visitors filter** — off by default. Even on, the row only appears when there is actually
+     a choice: two kinds of program, or two platforms. On a short page it stays hidden.
+   - **Show the category icon** — on by default.
+   - **Show prices** — off by default. See *Prices* below.
+6. **Order the pages themselves** — the *Order on /downloads* list, with ↑ and ↓. Only appears once
+   you have more than one page.
+
 ### Putting a file on it
 
 Fill in the row under *Files on this page* and pick the file. It uploads straight into the private
@@ -106,7 +128,13 @@ wait rather than a mystery. Nothing about it is capped by the size of the file.
   appears in links people keep. Add ids; never rename one.
 - **Filename** — what the visitor's computer saves it as, and the one place the extension is
   decided. A name with no extension is refused, because it would arrive as a file Windows does not
-  know how to open.
+  know how to open. You never type it: it comes from the file you pick.
+- **What it does** — one line, in plain words. It is the only thing most people read before deciding
+  whether to click, so it is the field worth spending a minute on.
+- **Kind of program** — one of twenty-one categories, each with its own drawn icon. This is what the
+  filter filters on and what "sort by category" sorts by. Picking one shows you its icon and its
+  one-line description right there, so you can see what you are choosing.
+- **Price** — in dollars, and see *Prices* below.
 - **Free** — one click, no code. Leave it off and the file needs a code or a grant.
 - **Group** — only used by the free-form look, to say which *files* block a file belongs under.
 - **Size is measured from the uploaded object**, not typed. (The old catalogue could not do this and
@@ -114,6 +142,80 @@ wait rather than a mystery. Nothing about it is capped by the size of the file.
 
 If an upload fails halfway the row stays but the file is not offered to anybody — you will see it
 listed and nobody else will. Upload it again.
+
+**Picking the file fills in the blanks.** Choose the file first and the id, the name and *Runs on*
+fill themselves in from its name — `Boot Repair v2.1.exe` becomes id `boot-repair-v2-1`, name
+"Boot repair v2 1", Windows. Anything you have already typed is left alone, so the guess can only
+ever save you work. It does **not** guess the category, on purpose: an extension tells you what a
+file is, never what it is for, and a confident wrong label is worse than *Everything else*.
+
+### Handing somebody the link
+
+Under the page settings there is **The link** — the full address, a **Copy** button, and a **QR**
+button. The QR is for somebody standing next to you: they point a phone at your screen instead of
+typing an address into it.
+
+If the page is still a draft it says so there, because that is the easiest mistake to make on this
+screen: the link works perfectly *for you*, because you are signed in, and gives everybody else a
+"no such page".
+
+### Changing one afterwards
+
+Press **Edit** on the row. The form fills in and the file picker becomes optional:
+
+- **Leave the picker empty** to change only the details — name, description, category, price, free,
+  group. The program itself is untouched and the link keeps working.
+- **Pick a file** and it *replaces the bytes* at the same id, so everyone holding the old link gets
+  the new version. Use this for a new build of the same program.
+
+The **id cannot be changed**, ever, on the same grounds the page address cannot: it is in links
+people keep. If you need a different id, add a new file.
+
+**↑ and ↓** move a file up and down. That is the order *My order* renders, so it is the order most
+pages come out in.
+
+**Code** on a paid file mints an access code that opens **just that file** — five uses, no expiry.
+Shown once, same as every other code.
+
+---
+
+## Prices
+
+**This reverses a decision, on your word.** The site names no figures except your own rate on the
+front page, and this page used to name none at all. It can now, and the switch is yours:
+
+- A price is stored **per file**, in dollars.
+- It is shown to visitors **only** when the page it sits on has *Show prices* ticked, which is
+  **off by default**. So nothing changed on any page you already have until you turn it on, one page
+  at a time.
+- **Blank means no price**, which is not the same as free. A paid file with no figure shows no
+  figure — you can price some files on a page and not others.
+- **A free file never shows a price**, whatever is stored against it. "Free" and "$40" on the same
+  row, next to a working download button, is a contradiction. The figure is kept, and comes back the
+  moment you untick free.
+- Sorted by price, files with no price come **last**, not first — otherwise a price-sorted page
+  would open with everything that has no figure on it, which reads as a page of free programs.
+
+Nothing here takes money. A price is a number on a page; the payment is still an e-transfer and a
+code, which is what keeps this whole feature free of personal data.
+
+---
+
+## Categories
+
+Twenty-one, each with a drawn icon. They are the shelves of a repair toolkit rather than an app
+store's taxonomy, because that is what somebody arriving here is actually looking for:
+
+> Diagnostics · Data recovery · Backup & imaging · Malware removal · Cleanup & tune-up ·
+> Drivers & updates · Network & Wi-Fi · Remote access · Disks & partitions · Boot & rescue media ·
+> Benchmarks & stress · Monitoring & sensors · Passwords & accounts · Security & privacy ·
+> Photo, video & audio · Documents & office · Developer & scripts · System utilities ·
+> Firmware & BIOS · Phones & tablets · Everything else
+
+**Ask for more if something you have does not fit.** Adding one is a small change here and a deploy;
+what cannot happen is renaming or reordering the existing ones, because the names are stored against
+your files and pointed at by links. *Everything else* is the honest answer in the meantime, and it
+draws a neutral mark rather than pretending to be a kind of program.
 
 ### If you did not write it
 
@@ -188,7 +290,18 @@ Two ways, and they answer different questions:
   one**. It says the SmartScreen warning is real and doing its job, and draws the one honest
   distinction: *you came here and clicked it; nobody rang you.* This page must never become the
   counterexample to `/scams` — do not soften it, and do not move it below the list.
-- The files as a manifest: name, blurb, and then platform · version · size in mono.
+- The files as a manifest: a category icon, the name, the blurb, and then
+  kind · platform · version · size · price in mono. The price only if you turned it on; the icon
+  only if you left it on.
+- A filter row above the list, if you turned it on and there is more than one kind or platform on the
+  page: category chips with their icons, and *Runs on* / *Order* dropdowns. On a phone the chips
+  become a dropdown too — eight of them stacked took more screen than the list they filter. A
+  **search box** joins them once a page has eight files or more. It searches the words on screen —
+  names, descriptions, versions, and the kind and platform as they are written — so what somebody
+  types matches what they can see.
+- **New** beside anything added in the last thirty days, for somebody who looked last month.
+- **The Windows notice and the code box are decided by the whole page, never by what is filtered.**
+  A warning that disappears when somebody narrows to "Scripts" is a warning with a hole in it.
 - A code box, shown only when there is something on the page still locked.
 - Rows marked open with an accent rule. Every row reserves that rule's width, so unlocking changes
   a colour and moves nothing.
@@ -211,9 +324,12 @@ Two ways, and they answer different questions:
   bits, which nobody guesses — but only because guessing is throttled.
 - **Every failure gives the same message.** Unknown, expired, revoked and exhausted are one
   refusal, because distinguishing them tells somebody feeding in guesses that a code *exists*.
-- **No prices on the page.** The site names no figures except the client's own rate on `/home`, and
-  a price list would be the first. Prices are settled in the conversation that ends in an
-  e-transfer.
+- ~~**No prices on the page.**~~ **Reversed 2026-08-20 at the client's request**, and only halfway.
+  The reasoning still stands for the *default*: the site names no figures except the client's own
+  rate on `/home`, and a price list would be the first. So the figure is stored per file and shown
+  only where the operator has ticked *Show prices*, which is off. Every page behaves as it did until
+  they decide otherwise, page by page — and the payment is still settled in the conversation that
+  ends in an e-transfer, because nothing here takes money.
 
 ---
 

@@ -227,6 +227,19 @@ export function DownloadsPage() {
             >
               <h2 className="v-dl-card-title">{p.title}</h2>
               {p.summary ? <p className="v-dl-card-summary">{p.summary}</p> : null}
+              {/*
+                * How much is on it — the one fact a card can add that its own
+                * title does not already say, and the one a visitor deciding
+                * whether to follow it actually wants. Counted server-side and
+                * only for files whose bytes arrived, so a card never promises
+                * more than the page delivers. Absent from an older Worker's
+                * response, in which case the line simply does not appear.
+                */}
+              {p.files ? (
+                <p className="v-dl-card-count">
+                  {p.files} file{p.files === 1 ? "" : "s"}
+                </p>
+              ) : null}
             </a>
             {p.status !== "live" ? <p className="v-dl-draft">Draft — only you can see this</p> : null}
           </li>

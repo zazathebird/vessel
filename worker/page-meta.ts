@@ -1,5 +1,5 @@
 import { PAGES } from "../src/data/pages";
-import { pageFromPath } from "../src/data/pageIds";
+import { PATHS, pageFromPath, subFromPath } from "../src/data/pageIds";
 import type { PageId } from "../src/data/pageIds";
 
 /**
@@ -90,16 +90,36 @@ export function metaForPath(pathname: string): {
   title: string;
   description: string;
   unlisted: boolean;
+  /** True for `/downloads/<name>`, whose canonical is the index above it. */
+  sub: boolean;
 } {
   const id = pageFromPath(pathname);
   const page = PAGES[id];
+  /*
+   * **An operator-authored sub-page is unlisted, and its canonical is the index.**
+   *
+   * This file already argues at length that `notfound` is in `UNLISTED` because
+   * the SPA fallback answers unknown paths with 200, "which makes every mistyped
+   * URL a *soft 404*: a page a crawler is entitled to index". Adding the
+   * `/downloads/<name>` prefix route re-opened exactly that, without limit —
+   * every one of an infinite family of addresses came back 200 with the
+   * downloads title and a canonical pointing **at itself**.
+   *
+   * The Worker cannot tell a real sub-page from a typo without a D1 read on a
+   * path that must stay cheap, and it should not try: the pages are operator
+   * pages, several of them deliberately unlisted or code-gated, and none of them
+   * wants to be in an index. So the whole family is `noindex` with the index as
+   * its canonical, which is true of the real ones and of the typos alike.
+   */
+  const sub = subFromPath(pathname) !== null;
   return {
     id,
     // Matches `App.tsx`'s `document.title` exactly, so the served head and the
     // rendered tab never disagree.
     title: `${page.title} · ${SITE}`,
     description: clamp(page.lede),
-    unlisted: UNLISTED.has(id),
+    unlisted: UNLISTED.has(id) || sub,
+    sub,
   };
 }
 
@@ -120,7 +140,13 @@ export function withPageMeta(response: Response, url: URL): Response {
   // would nominate `/typo` as the preferred URL for the 404 copy. It gets no
   // canonical at all, and `noindex` above.
   const canonical =
-    meta.id === "notfound" ? null : `https://${SITE}${meta.id === "home" ? "/" : url.pathname}`;
+    meta.id === "notfound"
+      ? null
+      : meta.sub
+        // A sub-page's canonical is the index it hangs off, never itself: it is
+        // one of an unbounded family of addresses and none of them is preferred.
+        ? `https://${SITE}${PATHS.downloads}`
+        : `https://${SITE}${meta.id === "home" ? "/" : url.pathname}`;
   const title = esc(meta.title);
   const description = esc(meta.description);
 

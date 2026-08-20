@@ -370,7 +370,18 @@ async function route(
     // mints, or is open when the catalogue marks an item free.
     case "POST /api/downloads/claim":
       return downloads.claim(request, env);
+    /*
+     * `HEAD` as well as `GET`, and it is not cosmetic. `curl -C -`, `wget -c`,
+     * aria2 and most download managers probe with a `HEAD` first to learn the
+     * size and whether ranges are supported — and this route advertises
+     * `accept-ranges: bytes` precisely so that resuming works, on 300MB files
+     * going to people whose connection is the reason they rang. Without this
+     * case they got `404 No such endpoint.` and either gave up or fell back to a
+     * transfer that cannot resume. The runtime strips the body from a `HEAD`
+     * response itself, so the same handler is correct for both.
+     */
     case "GET /api/downloads/file":
+    case "HEAD /api/downloads/file":
       return downloads.file(request, env, url);
 
     /*
@@ -398,6 +409,8 @@ async function route(
       return pages.saveFile(request, env);
     case "POST /api/admin/downloads/file/delete":
       return pages.deleteFile(request, env);
+    case "POST /api/admin/downloads/file/order":
+      return pages.reorderFiles(request, env);
 
     // The upload, in parts. See `downloadPages.beginUpload` for why it is
     // multipart even for a small file.

@@ -52,6 +52,16 @@ const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const CODE_LENGTH = 12;
 
 /**
+ * How much of the stored hash is the operator's handle for a code.
+ *
+ * Sixteen hex characters — 64 bits. It was eight, which is 32 bits with no
+ * uniqueness check, and a collision silently revoked the wrong row. `mintCode`
+ * now refuses a colliding handle outright, so this only has to be wide enough
+ * that it never happens.
+ */
+const REF_LENGTH = 16;
+
+/**
  * Fold the shapes a human types into the one the operator was given.
  *
  * Somebody reading a code off a text message will send back lower case, will
@@ -136,11 +146,48 @@ async function opened(
       ? { open: [], visible: [item.slug], items: [row.item_id] }
       : { open: [], visible: [], items: [] };
   }
-  if (row.slug) return { open: [row.slug], visible: [], items: [] };
+  if (row.slug) {
+    /*
+     * **The page is re-read, exactly as the file is above, and for a worse
+     * reason than symmetry.**
+     *
+     * `download_codes.slug` has no foreign key and no cascade, so deleting a
+     * page leaves every code minted for it alive — and a slug is a re-usable
+     * `TEXT PRIMARY KEY`. Deleting `acme` and later creating a new page at the
+     * same address for a different customer handed every old code the new
+     * customer's page and every paid file on it, because `canRead` and
+     * `canDownload` both key on `ticketPages.has(page.slug)`. Checking the page
+     * still exists does not fix that on its own — `deletePage` now deletes the
+     * codes too — but it is the half that cannot be forgotten by a future
+     * delete path.
+     */
+    const page = await env.DB.prepare("SELECT slug FROM download_pages WHERE slug = ?")
+      .bind(row.slug)
+      .first<{ slug: string }>();
+    return page ? { open: [row.slug], visible: [], items: [] } : { open: [], visible: [], items: [] };
+  }
 
-  // Unscoped: every live page, and with it every file on them.
+  /*
+   * Unscoped: every live page it could possibly open, and with it every file on
+   * them.
+   *
+   * **`granted` is excluded, and its absence is the point.** `canRead`'s
+   * `granted` branch consults `granted()` alone and never looks at a ticket, so
+   * such a page can *never* be opened by a code — including it did nothing but
+   * hand the redeemer a list of slugs, and `claim` returns that list to them.
+   * The whole reason `granted` 404s rather than saying "locked" is that the
+   * existence of a page named after a customer is itself the thing being kept
+   * quiet, and this was the one route that read it out loud.
+   *
+   * **`unlisted` stays, deliberately.** An unscoped code is the operator's
+   * "opens everything paid" code, handed to somebody they have decided to trust
+   * with everything; withholding the unlisted pages from it would make the
+   * widest scope narrower than the page-scoped one. The secret there is the
+   * address and this is the operator choosing to share it.
+   */
   const { results } = await env.DB.prepare(
-    "SELECT slug FROM download_pages WHERE status = 'live'",
+    `SELECT slug FROM download_pages
+      WHERE status = 'live' AND visibility IN ('public', 'unlisted', 'code')`,
   ).all<{ slug: string }>();
   return { open: results.map((p) => p.slug), visible: [], items: [] };
 }
@@ -193,13 +240,24 @@ export async function claim(request: Request, env: Env): Promise<Response> {
   // redemptions of a code on its final use would both pass a pre-check and both
   // write. Zero `meta.changes` is the refusal.
   const day = Math.floor(now / 86_400_000) * 86_400_000;
+  /*
+   * `RETURNING uses` so the count reported back is the one this redemption
+   * actually produced. It used to be derived from `row.uses`, read *before* the
+   * increment — so two concurrent redemptions of the same code both read 3, both
+   * incremented, and both told their customer one use remained when none did.
+   * The ceiling itself was always safe (it is re-checked in the WHERE clause and
+   * zero changes is the refusal); it was only the number on screen that lied, on
+   * exactly the race the WHERE clause exists to survive.
+   */
   const update = await env.DB.prepare(
     `UPDATE download_codes SET uses = uses + 1, last_used_at = ?
-      WHERE code_hash = ? AND revoked_at IS NULL AND uses < max_uses`,
+      WHERE code_hash = ? AND revoked_at IS NULL AND uses < max_uses
+      RETURNING uses`,
   )
     .bind(day, toBlob(hash))
-    .run();
-  if (!update.meta.changes) throw refused;
+    .all<{ uses: number }>();
+  const spent = update.results?.[0]?.uses;
+  if (typeof spent !== "number") throw refused;
 
   await recordSuccess(env, names);
 
@@ -221,7 +279,7 @@ export async function claim(request: Request, env: Env): Promise<Response> {
       // same question again for every byte it serves.
       pages: [...opens.open, ...opens.visible],
       items: opens.items,
-      usesLeft: Math.max(0, row.max_uses - row.uses - 1),
+      usesLeft: Math.max(0, row.max_uses - spent),
     }),
   );
 }
@@ -287,15 +345,34 @@ export function rangePlan(asked: boolean, served: R2Range | undefined, size: num
  * not personal data, expires in half an hour and names no one.
  */
 export async function file(request: Request, env: Env, url: URL): Promise<Response> {
+  /*
+   * **One refusal for "no such file" and for "not yours", and it is the same
+   * one.**
+   *
+   * This route used to answer 404 for an unknown id and 403 for a known one the
+   * caller could not have — which makes the status code an existence oracle over
+   * the whole table, unauthenticated and unthrottled. Ids are lowercase-kebab
+   * and the operator names files after what they are and who they are for, so
+   * walking `?item=acme-corp-build` told an attacker exactly which files exist,
+   * **including files on draft and `granted` pages whose ids appear in no
+   * response they are entitled to**.
+   *
+   * That is the rule this module states three times over — "the shape of the
+   * failure is itself information about what exists" — and `readPage` has always
+   * honoured it by answering the same 404 for a missing page and a refused one.
+   * This route did not.
+   */
+  const denied = new BadRequest("That download isn't available to you. Check your code and try again.", 403);
+
   const id = url.searchParams.get("item") ?? "";
   const item = await env.DB.prepare("SELECT * FROM download_files WHERE id = ?")
     .bind(id)
     .first<FileRow>();
-  if (!item) throw new BadRequest("No such download.", 404);
+  if (!item) throw denied;
   const page = await env.DB.prepare("SELECT * FROM download_pages WHERE slug = ?")
     .bind(item.slug)
     .first<PageRow>();
-  if (!page) throw new BadRequest("No such download.", 404);
+  if (!page) throw denied;
 
   /*
    * **The same question the page render asked, asked by the same function.**
@@ -309,12 +386,11 @@ export async function file(request: Request, env: Env, url: URL): Promise<Respon
    * escape through a page the caller was refused.
    */
   const access = await resolveAccess(request, env, url);
-  if (!canDownload(page, item, access)) {
-    // One message for every refusal — expired ticket, wrong scope, no grant, a
-    // draft page — for the reason `claim`'s refusal is one message: the shape of
-    // the failure is itself information about what exists.
-    throw new BadRequest("That download isn't available to you. Check your code and try again.", 403);
-  }
+  // One message for every refusal — expired ticket, wrong scope, no grant, a
+  // draft page, an id that never existed — for the reason `claim`'s refusal is
+  // one message: the shape of the failure is itself information about what
+  // exists.
+  if (!canDownload(page, item, access)) throw denied;
 
   // RANGE REQUESTS ARE PASSED STRAIGHT TO R2, and this is the one piece of this
   // module that is about the client's actual customers rather than about
@@ -333,10 +409,32 @@ export async function file(request: Request, env: Env, url: URL): Promise<Respon
   const headers = new Headers();
   object.writeHttpMetadata(headers);
   headers.set("content-type", "application/octet-stream");
-  // `attachment` and an explicit filename: without it the browser may render
-  // a script or a text file in the tab instead of saving it, and the name would
-  // otherwise be the opaque object key.
-  headers.set("content-disposition", `attachment; filename="${item.filename.replace(/"/g, "")}"`);
+  /*
+   * `attachment` and an explicit filename: without it the browser may render a
+   * script or a text file in the tab instead of saving it, and the name would
+   * otherwise be the opaque object key.
+   *
+   * **BOTH FORMS, AND THE ASCII ONE IS NOT OPTIONAL.** `headers.set` performs a
+   * WebIDL `ByteString` conversion, so a single character above U+00FF throws
+   * `TypeError: … greater than 255` — which is not a 400 on the upload, it is a
+   * **500 on every click, for ever**, on a row that saved cleanly and lists
+   * normally with a working button. `Réparation.exe` is an entirely ordinary
+   * name for this operator's files, so the answer is to encode it rather than to
+   * refuse it: `filename` carries a flattened ASCII version for anything that
+   * only understands RFC 6266's original form, and `filename*` carries the real
+   * one per RFC 5987. Modern browsers prefer `filename*`, so the customer gets
+   * the accents and nobody gets a 500.
+   *
+   * `saveFile` refuses control characters, quotes and backslashes on the way in,
+   * so the quoted form cannot be broken out of; this strips them again anyway,
+   * because a value stored by an earlier, laxer version of that guard is exactly
+   * the one nobody re-checks.
+   */
+  const ascii = item.filename.replace(/[^\x20-\x7E]/g, "_").replace(/["\\]/g, "");
+  headers.set(
+    "content-disposition",
+    `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(item.filename)}`,
+  );
   headers.set("cache-control", "private, no-store");
   // Advertised unconditionally, because a browser only *asks* for a range when
   // it has been told ranges are available.
@@ -349,6 +447,29 @@ export async function file(request: Request, env: Env, url: URL): Promise<Respon
   // partial — and one that never asked gets a plain 200, as it must.
   const plan = rangePlan(request.headers.has("range"), object.range, object.size);
   if (plan) {
+    /*
+     * **A zero-length plan is 416, not 206.** `rangePlan` clamps rather than
+     * rejecting, so a range starting at or past the end comes back as
+     * `{ offset: size, length: 0 }` — and the old arithmetic then emitted
+     * `content-range: bytes 300000-299999/300000`, a last-byte-pos *below* the
+     * first, which RFC 9110 §14.4 does not permit. A resuming download manager
+     * that parses it computes a negative length; a strict proxy drops the
+     * response. `Range: bytes=300000-` against a file already complete is the
+     * everyday way to produce it, and these are 300MB files on connections that
+     * drop — resuming is the whole reason ranges are advertised here.
+     *
+     * The check suite asserted this shape as *correct* (`{offset: size, length:
+     * 0}`) and only ever tested `offset + length <= size`, so it blessed the
+     * bug. It has a `length === 0` row now.
+     */
+    if (plan.length <= 0) {
+      const refuse = new Headers();
+      refuse.set("content-range", `bytes */${object.size}`);
+      refuse.set("accept-ranges", "bytes");
+      refuse.set("cache-control", "private, no-store");
+      return new Response(null, { status: 416, headers: refuse });
+    }
+
     const end = plan.offset + plan.length - 1;
     headers.set("content-range", `bytes ${plan.offset}-${end}/${object.size}`);
     headers.set("content-length", String(plan.length));
@@ -407,8 +528,27 @@ export async function mintCode(request: Request, env: Env): Promise<Response> {
     if (!has) throw new BadRequest("No such download.", 404);
   }
   if (slug) {
-    const has = await env.DB.prepare("SELECT slug FROM download_pages WHERE slug = ?").bind(slug).first();
+    const has = await env.DB.prepare("SELECT slug, visibility FROM download_pages WHERE slug = ?")
+      .bind(slug)
+      .first<{ slug: string; visibility: string }>();
     if (!has) throw new BadRequest("No such page.", 404);
+    /*
+     * **A code can never open a `granted` page, so minting one is refused.**
+     *
+     * `canRead`'s `granted` branch consults the account's grants alone and never
+     * looks at a ticket — by design, because that visibility exists for people
+     * who sign in. So a code minted for such a page is not merely weak, it is
+     * inert: it redeems successfully, reports the page as opened, and then opens
+     * nothing. That is precisely the failure the existence check above was added
+     * to prevent, with a forgotten visibility in place of a typo, and the
+     * customer is who finds out. A draft is deliberately still allowed — minting
+     * before publishing is a normal order of work.
+     */
+    if (has.visibility === "granted") {
+      throw new BadRequest(
+        "That page is set to “Only people I've named”, which codes cannot open. Give them access by name, or change the page to “Needs an access code”.",
+      );
+    }
   }
 
   const maxUses = Number.isInteger(body.maxUses) ? Math.min(50, Math.max(1, body.maxUses as number)) : 5;
@@ -416,6 +556,38 @@ export async function mintCode(request: Request, env: Env): Promise<Response> {
 
   const code = generateCode();
   const now = Date.now();
+
+  /*
+   * **The revoke handle has to be unique or revoking is a coin flip.**
+   *
+   * `listCodes` shows, and `revokeCode` matches on, a prefix of the stored hash.
+   * At the old eight hex characters that is 32 bits with no uniqueness check
+   * anywhere — birthday-bound, so a few hundred codes make a collision a real
+   * possibility, and `revokeCode`'s `UPDATE … WHERE substr(...) = ?` has no
+   * `LIMIT`. Two rows sharing a prefix meant revoking one silently revoked the
+   * other, with two identical-looking rows in the list and no way to tell them
+   * apart. The direction is fail-safe and the failure is silent, which is the
+   * bad combination: the paying customer whose working code stopped is who finds
+   * out.
+   *
+   * Sixteen characters is 64 bits, and it is checked anyway — the cost of one
+   * indexed-ish read per mint, against a class of bug nobody could diagnose from
+   * the symptom.
+   */
+  const ref = (await codeHash(env, code))
+    .reduce((s, b) => s + b.toString(16).padStart(2, "0"), "")
+    .slice(0, REF_LENGTH)
+    .toUpperCase();
+  const clash = await env.DB.prepare(
+    `SELECT 1 FROM download_codes WHERE substr(hex(code_hash), 1, ${REF_LENGTH}) = ?`,
+  )
+    .bind(ref)
+    .first();
+  if (clash) {
+    // Astronomically unlikely, and an honest refusal beats a silent collision.
+    throw new BadRequest("Couldn't mint that one — try again.", 503);
+  }
+
   await env.DB.prepare(
     `INSERT INTO download_codes (code_hash, label, item_id, slug, created_at, expires_at, max_uses, uses)
      VALUES (?, ?, ?, ?, ?, ?, ?, 0)`,
@@ -441,7 +613,7 @@ export async function listCodes(request: Request, env: Env): Promise<Response> {
   // — that is the design — so the operator sees the whole row.
   const { results } = await env.DB.prepare(
     `SELECT label, item_id, slug, created_at, expires_at, max_uses, uses, revoked_at, last_used_at,
-            substr(hex(code_hash), 1, 8) AS ref
+            substr(hex(code_hash), 1, ${REF_LENGTH}) AS ref
        FROM download_codes ORDER BY created_at DESC LIMIT 200`,
   ).all();
 
@@ -458,10 +630,11 @@ export async function revokeCode(request: Request, env: Env): Promise<Response> 
 
   const body = await readBody(request);
   const ref = typeof body.ref === "string" ? body.ref.toUpperCase() : "";
-  if (!/^[0-9A-F]{8}$/.test(ref)) throw new BadRequest("Which code?");
+  if (!new RegExp(`^[0-9A-F]{${REF_LENGTH}}$`).test(ref)) throw new BadRequest("Which code?");
 
   const result = await env.DB.prepare(
-    "UPDATE download_codes SET revoked_at = ? WHERE substr(hex(code_hash), 1, 8) = ? AND revoked_at IS NULL",
+    `UPDATE download_codes SET revoked_at = ?
+      WHERE substr(hex(code_hash), 1, ${REF_LENGTH}) = ? AND revoked_at IS NULL`,
   )
     .bind(Date.now(), ref)
     .run();

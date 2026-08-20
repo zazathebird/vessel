@@ -39,7 +39,15 @@ import { json, noStore, requireAccount } from "./accounts";
 import { BadRequest } from "./encoding";
 import type { Env } from "./env";
 import { verify } from "./session";
-import { BLOCK_KINDS, PAGE_LAYOUTS, PAGE_VISIBILITY, PLATFORMS } from "../src/data/downloads";
+import {
+  BLOCK_KINDS,
+  CATEGORY_IDS,
+  DEFAULT_CATEGORY,
+  FILE_SORTS,
+  PAGE_LAYOUTS,
+  PAGE_VISIBILITY,
+  PLATFORMS,
+} from "../src/data/downloads";
 
 /*
  * The closed sets, imported from `src/data/downloads.ts` rather than declared
@@ -88,6 +96,28 @@ export interface PageRow {
   position: number;
   created_at: number;
   updated_at: number;
+  /** How the files come out before a visitor touches anything (0007). */
+  sort: string;
+  show_filters: number;
+  show_prices: number;
+  show_icons: number;
+}
+
+/**
+ * The presentation switches a page carries, resolved once and shaped the same
+ * way for the renderer and for the editor.
+ *
+ * They travel together because they are one decision — *how this page presents
+ * its files* — and splitting them across the response would let the editor and
+ * the page drift into disagreeing about which are set.
+ */
+function shapePage(page: PageRow) {
+  return {
+    sort: FILE_SORTS.includes(page.sort as never) ? page.sort : "manual",
+    showFilters: page.show_filters === 1,
+    showPrices: page.show_prices === 1,
+    showIcons: page.show_icons === 1,
+  };
 }
 
 /**
@@ -246,9 +276,24 @@ export function canRead(page: PageRow, access: Access): boolean {
   }
 }
 
-/** Does it appear in the list on /downloads, given it can be read at all? */
+/**
+ * Does it appear in the list on /downloads?
+ *
+ * **A `code` page is listed even to somebody who cannot open it, and that is the
+ * asymmetry the whole visibility scheme turns on** (fixed 2026-08-20). `unlisted`
+ * hides, `granted` and a draft 404, and `code` *says it exists* — because
+ * somebody holding a code has to be told where to type it, whereas the existence
+ * of a page named after a customer is itself the thing being kept quiet.
+ * `readPage` has always honoured that and answered a locked stub; this function
+ * did not, so a code-gated page was missing from the index entirely and the only
+ * way to reach it was a direct link. That made `code` a second `unlisted` with a
+ * lock on it, and the tell was in `listPages`: its `locked` line tested
+ * `!canRead(...)`, a branch nothing that got past here could ever satisfy.
+ */
 function canList(page: PageRow, access: Access): boolean {
-  if (page.visibility === "unlisted" && !access.operator) return false;
+  if (access.operator) return true;
+  if (page.visibility === "unlisted") return false;
+  if (page.visibility === "code") return page.status === "live";
   return canRead(page, access);
 }
 
@@ -267,7 +312,11 @@ export interface FileRow {
   caveat: string;
   group_name: string;
   position: number;
+  created_at: number;
   uploaded_at: number | null;
+  /** Which kind of program this is, and what it costs (0007). */
+  category: string;
+  price_cents: number;
 }
 
 /**
@@ -296,7 +345,17 @@ export function canDownload(page: PageRow, item: FileRow, access: Access): boole
   return false;
 }
 
-/** Everything a page needs to render, minus anything the caller may not have. */
+/**
+ * Everything a page needs to render, minus anything the caller may not have.
+ *
+ * **The price is sent whatever the page's `showPrices` setting says, and the
+ * renderer is what withholds it.** That is the opposite of how the gates on this
+ * module work and it is deliberate: a price is not a secret. It is a figure the
+ * operator would say out loud on the telephone, and stripping it here would mean
+ * the sort-by-price the same response enables could not agree with itself. The
+ * rule this module actually enforces — nothing the caller may not *have* — is
+ * about bytes, and it is `unlocked` that carries it.
+ */
 function shapeFile(f: FileRow, unlocked: boolean) {
   return {
     id: f.id,
@@ -309,6 +368,55 @@ function shapeFile(f: FileRow, unlocked: boolean) {
     author: f.author,
     caveat: f.caveat,
     group: f.group_name,
+    category: CATEGORY_IDS.includes(f.category) ? f.category : DEFAULT_CATEGORY,
+    /*
+     * **A free file has no price, whatever is stored against it.**
+     *
+     * The two fields are independent in the table on purpose — `free` is the
+     * gate and `price_cents` is a figure — so the operator can price something,
+     * give it away for a while, and put the price back by unticking one box.
+     * But to a visitor "free" and "$12.50" on the same row is a contradiction,
+     * and the row also carries a Download button, so the price is the half that
+     * is untrue.
+     *
+     * Resolved **here** rather than in the renderer, because the same response
+     * feeds the sort: hiding it in `FileRow` alone would leave a free file
+     * sorting among the paid ones by a figure the page never showed. One place
+     * decides, and the render and the order cannot disagree.
+     */
+    price: f.free === 1 ? 0 : f.price_cents,
+    /*
+     * The stored figure, unresolved — **and the editor must read this one.**
+     *
+     * `price` above is the *rendered* price and is zeroed for a free file. The
+     * editor loads its form from this same public response, so without a raw
+     * field it read the zero, put an empty box in front of the operator, and
+     * wrote that emptiness back on the next save: ticking "free", saving, then
+     * later fixing a typo in the blurb silently destroyed the price. The form's
+     * own hint promised the exact opposite — that the figure is kept and comes
+     * back when free is unticked — so the interface was lying in the one
+     * direction that costs money.
+     *
+     * Safe to publish for the same reason `price` is: a price is not a secret,
+     * it is a figure the operator would say out loud on the telephone. What is
+     * withheld from a caller is bytes, and `unlocked` carries that.
+     */
+    priceCents: f.price_cents,
+    // The day rather than the moment, and coarse on purpose: "newest first" only
+    // needs an order, and a precise upload time on a public response is a fact
+    // about the operator's working hours that nobody asked to publish.
+    added: Math.floor((f.created_at ?? 0) / 86_400_000) * 86_400_000,
+    /*
+     * Whether the bytes are actually in the bucket.
+     *
+     * `readPage` hides an unfinished row from everybody but the operator, and
+     * this is what lets the operator's own screen *say so*. Without it a
+     * replacement upload that died halfway looked completely normal in the
+     * editor — same name, and `size` still printing the old file's size — while
+     * being invisible to every visitor. A comment in `beginUpload` claimed the
+     * admin screen showed it; it could not, because nothing sent it.
+     */
+    uploaded: f.uploaded_at !== null,
     // Whether *this* caller can take it right now, so the page can say "locked"
     // without the client re-deriving a rule the server already applied.
     unlocked,
@@ -321,10 +429,28 @@ function shapeFile(f: FileRow, unlocked: boolean) {
 
 export async function listPages(request: Request, env: Env, url: URL): Promise<Response> {
   const access = await resolveAccess(request, env, url);
+  /*
+   * The file count comes back with the page, as a correlated subquery rather
+   * than a second round trip: the index renders a card per page and "how much is
+   * on this" is the one fact a card can carry that the title does not already
+   * say. Counting only rows whose bytes arrived, because an unfinished upload is
+   * not something anybody but the operator can have — a card promising four
+   * files that opens onto three is worse than a card promising nothing.
+   */
   const { results } = await env.DB.prepare(
-    `SELECT * FROM download_pages ORDER BY position, created_at`,
-  ).all<PageRow>();
+    `SELECT p.*,
+            (SELECT COUNT(*) FROM download_files f
+              WHERE f.slug = p.slug AND f.uploaded_at IS NOT NULL) AS file_count
+       FROM download_pages p
+      ORDER BY p.position, p.created_at`,
+  ).all<PageRow & { file_count: number }>();
 
+  /*
+   * `locked` is "you cannot walk straight in", asked of this caller rather than
+   * of the page — so a page the operator has granted you reads as open, and the
+   * same page reads as locked to a stranger. It drives the accent edge on the
+   * index card and nothing else; every real decision is `canRead`/`canDownload`.
+   */
   const pages = results.filter((p) => canList(p, access)).map((p) => ({
     slug: p.slug,
     title: p.title,
@@ -332,7 +458,8 @@ export async function listPages(request: Request, env: Env, url: URL): Promise<R
     layout: p.layout,
     visibility: p.visibility,
     status: p.status,
-    locked: !canRead(p, access) || p.visibility === "code" || p.visibility === "granted",
+    files: p.file_count ?? 0,
+    locked: !canRead(p, access),
   }));
 
   return noStore(json({ pages }));
@@ -357,7 +484,13 @@ export async function readPage(request: Request, env: Env, url: URL): Promise<Re
     if (page.visibility === "code" && page.status === "live") {
       return noStore(
         json({
-          page: { slug: page.slug, title: page.title, summary: page.summary, layout: page.layout },
+          page: {
+            slug: page.slug,
+            title: page.title,
+            summary: page.summary,
+            layout: page.layout,
+            ...shapePage(page),
+          },
           locked: true,
         }),
       );
@@ -385,6 +518,7 @@ export async function readPage(request: Request, env: Env, url: URL): Promise<Re
         layout: page.layout,
         visibility: page.visibility,
         status: page.status,
+        ...shapePage(page),
       },
       locked: false,
       blocks: blocks.results.map((b) => ({ kind: b.kind, body: b.body, group: b.group_name })),
@@ -417,6 +551,21 @@ export async function savePage(request: Request, env: Env): Promise<Response> {
     ? (b.visibility as string)
     : "public";
   const status = b.status === "live" ? "live" : "draft";
+
+  /*
+   * The presentation switches (0007). Each one falls back to the behaviour the
+   * page had before this existed, so an older client that does not send them —
+   * or a field that arrives as something other than a boolean — leaves the page
+   * looking exactly as it did. `sort` falls to `manual`, which is the operator's
+   * own hand order.
+   */
+  const sort = FILE_SORTS.includes(b.sort as never) ? (b.sort as string) : "manual";
+  const showFilters = b.showFilters === true ? 1 : 0;
+  const showPrices = b.showPrices === true ? 1 : 0;
+  // The only one whose default is on, so absent must decode to 1 — the same
+  // shape as the `entrances` share-code bit, and for the same reason.
+  const showIcons = b.showIcons === false ? 0 : 1;
+
   const now = Date.now();
 
   /*
@@ -427,13 +576,17 @@ export async function savePage(request: Request, env: Env): Promise<Response> {
    */
   await env.DB.prepare(
     `INSERT INTO download_pages
-       (slug, title, summary, intro, notice, layout, visibility, status, position, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT position FROM download_pages WHERE slug = ?),
+       (slug, title, summary, intro, notice, layout, visibility, status, sort,
+        show_filters, show_prices, show_icons, position, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+             COALESCE((SELECT position FROM download_pages WHERE slug = ?),
              (SELECT COALESCE(MAX(position), 0) + 1 FROM download_pages)), ?, ?)
      ON CONFLICT (slug) DO UPDATE SET
        title = excluded.title, summary = excluded.summary, intro = excluded.intro,
        notice = excluded.notice, layout = excluded.layout, visibility = excluded.visibility,
-       status = excluded.status, updated_at = excluded.updated_at`,
+       status = excluded.status, sort = excluded.sort, show_filters = excluded.show_filters,
+       show_prices = excluded.show_prices, show_icons = excluded.show_icons,
+       updated_at = excluded.updated_at`,
   )
     .bind(
       slug,
@@ -444,6 +597,10 @@ export async function savePage(request: Request, env: Env): Promise<Response> {
       layout,
       visibility,
       status,
+      sort,
+      showFilters,
+      showPrices,
+      showIcons,
       slug,
       now,
       now,
@@ -476,6 +633,23 @@ export async function deletePage(request: Request, env: Env): Promise<Response> 
   // grant is a statement about a person and outliving its page is harmless.
   await env.DB.prepare("DELETE FROM download_grants WHERE slug = ?").bind(slug).run();
 
+  /*
+   * **The codes go too, and this is the half that is not housekeeping.**
+   *
+   * `download_codes.slug` carries no foreign key and no cascade, and a slug is a
+   * re-usable `TEXT PRIMARY KEY`. So deleting `acme` and later creating a new
+   * page at the same address — for a different customer — handed every code ever
+   * minted for the old one the new one's page and every paid file on it, because
+   * `canRead` and `canDownload` both key on the slug. Deleting a page is the
+   * only "withdraw" control this feature has, so it has to mean it.
+   *
+   * Codes scoped to this page's *files* are left alone deliberately: those rows
+   * name an `item_id` whose file has just cascaded away, and `opened` already
+   * resolves a missing file to "opens nothing" — the id is not re-usable the way
+   * a slug is, because `saveFile` would have to be given the same id by hand.
+   */
+  await env.DB.prepare("DELETE FROM download_codes WHERE slug = ?").bind(slug).run();
+
   for (const f of results) await env.DOWNLOADS.delete(f.id).catch(() => {});
   return noStore(json({ ok: true }));
 }
@@ -490,6 +664,35 @@ export async function reorderPages(request: Request, env: Env): Promise<Response
   await env.DB.batch(
     order.map((slug, i) =>
       env.DB.prepare("UPDATE download_pages SET position = ? WHERE slug = ?").bind(i, slug),
+    ),
+  );
+  return noStore(json({ ok: true }));
+}
+
+/**
+ * The files on one page, reordered.
+ *
+ * Scoped to a slug and not merely to a list of ids: `position` is per page, so a
+ * request naming ids from two pages would interleave two orders into one
+ * sequence and quietly reshuffle a page the operator was not looking at. The
+ * `WHERE slug = ?` is what makes that unrepresentable rather than merely
+ * unlikely, and it costs nothing.
+ *
+ * This is the order `sort = 'manual'` renders, which is the default — so without
+ * it the operator's "my order" was whatever order the rows happened to be
+ * created in, with no way to change it. `reorderPages` had the same shape and
+ * the same gap on the index; both have a control now.
+ */
+export async function reorderFiles(request: Request, env: Env): Promise<Response> {
+  await operator(request, env);
+  const b = await body(request);
+  const slug = str(b.slug, 64);
+  const order = Array.isArray(b.ids) ? b.ids.filter((s): s is string => typeof s === "string") : [];
+  if (!slug || !order.length) throw new BadRequest("Nothing to reorder.");
+
+  await env.DB.batch(
+    order.map((id, i) =>
+      env.DB.prepare("UPDATE download_files SET position = ? WHERE id = ? AND slug = ?").bind(i, id, slug),
     ),
   );
   return noStore(json({ ok: true }));
@@ -544,35 +747,102 @@ export async function saveFile(request: Request, env: Env): Promise<Response> {
     .first<{ slug: string }>();
   if (!page) throw new BadRequest("No such page.", 404);
 
-  const filename = str(b.filename, 160);
+  /*
+   * The filename, and **an absent one means "keep the one this row has"**.
+   *
+   * That distinction is what makes an edit possible without a re-upload
+   * (2026-08-20). The editor sends a filename only when the operator has picked
+   * actual bytes; changing a blurb sends none, and the row keeps the name its
+   * bytes were uploaded under. Without this the screen would have to know the
+   * stored filename to send it back — and `shapeFile` deliberately does not
+   * publish it, so the only value the form had to hand was the *display* name,
+   * which would have silently renamed every download it touched.
+   *
+   * A row that does not exist yet has nothing to keep, so there it is required.
+   */
+  const existing = await env.DB.prepare("SELECT filename FROM download_files WHERE id = ?")
+    .bind(id)
+    .first<{ filename: string }>();
+  const supplied = str(b.filename, 160);
+  const filename = supplied || existing?.filename || "";
+  if (!filename) throw new BadRequest("A new file needs the file itself.");
+
   /*
    * The filename is handed to `content-disposition` verbatim, so it decides what
    * the visitor's computer calls the thing and whether it opens. A name with no
    * extension arrives as a file Windows does not know how to run, and the
    * operator finds out from a customer — which is exactly the failure the old
    * build-time check existed to prevent, moved to the only place it can now live.
+   *
+   * Re-checked even when it came from the row rather than the request: a value
+   * stored by an earlier, laxer version of this function is exactly the one
+   * nobody would think to re-validate.
    */
   if (!/\.[A-Za-z0-9]{1,12}$/.test(filename)) {
     throw new BadRequest("The filename needs an extension — that is what makes it open.");
   }
-  if (/["\\/\r\n]/.test(filename)) throw new BadRequest("That filename has characters it cannot have.");
+  /*
+   * **Control characters are refused; accented letters are not.**
+   *
+   * This guard was `/["\\/\r\n]/`, which let a NUL, a stray control character
+   * and any non-Latin-1 letter straight through — and every one of those makes
+   * the *download* throw rather than the save. `headers.set` performs a WebIDL
+   * `ByteString` conversion, so `filename="日本語.exe"` raises
+   * `TypeError: … greater than 255` and a NUL raises "invalid header value", in
+   * `file()`, on every click, for ever. The operator saves happily, the row
+   * lists normally with a working button, and a customer finds out.
+   *
+   * Unicode is *allowed* rather than refused, because `Réparation.exe` is a
+   * perfectly ordinary name for this operator's files and refusing it would be
+   * solving the wrong half. `file()` encodes it properly on the way out
+   * (RFC 5987), which is what should have been happening all along.
+   */
+  // eslint-disable-next-line no-control-regex
+  if (/["\\/\u0000-\u001F\u007F]/.test(filename)) {
+    throw new BadRequest("That filename has characters it cannot have.");
+  }
 
   const name = str(b.name, LIMITS.title) || filename;
   const platform = PLATFORMS.includes(b.platform as never) ? (b.platform as string) : "any";
+  /*
+   * An unknown category resolves to the default rather than being refused. It is
+   * a label on a shelf, not a wire format anybody's link depends on, and a row
+   * written by a newer deploy should keep working against an older one — the
+   * same reasoning the `FX` fallback uses, applied to something much less
+   * consequential.
+   */
+  const category = CATEGORY_IDS.includes(str(b.category, 40)) ? str(b.category, 40) : DEFAULT_CATEGORY;
+  /*
+   * The price, in whole cents.
+   *
+   * Refused rather than clamped when it is not a number the operator could have
+   * meant: a price silently rounded, floored to zero or turned into a hundred
+   * times itself is discovered by a customer, and a wrong figure on a public
+   * page is worse than a refusal on a form the operator is standing in front of.
+   * The ceiling is a sanity rail, not a business rule.
+   */
+  const rawPrice = b.priceCents;
+  if (rawPrice !== undefined && rawPrice !== null && !Number.isInteger(rawPrice)) {
+    throw new BadRequest("A price has to be a whole number of cents.");
+  }
+  const priceCents = Number.isInteger(rawPrice) ? (rawPrice as number) : 0;
+  if (priceCents < 0 || priceCents > 100_000_000) throw new BadRequest("That price is out of range.");
+
   const now = Date.now();
 
   await env.DB.prepare(
     `INSERT INTO download_files
        (id, slug, name, blurb, platform, version, filename, free, author, caveat, group_name,
-        position, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+        category, price_cents, position, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
              COALESCE((SELECT position FROM download_files WHERE id = ?),
                       (SELECT COALESCE(MAX(position), 0) + 1 FROM download_files WHERE slug = ?)), ?)
      ON CONFLICT (id) DO UPDATE SET
        slug = excluded.slug, name = excluded.name, blurb = excluded.blurb,
        platform = excluded.platform, version = excluded.version, filename = excluded.filename,
        free = excluded.free, author = excluded.author, caveat = excluded.caveat,
-       group_name = excluded.group_name`,
+       group_name = excluded.group_name, category = excluded.category,
+       price_cents = excluded.price_cents`,
   )
     .bind(
       id,
@@ -586,6 +856,8 @@ export async function saveFile(request: Request, env: Env): Promise<Response> {
       str(b.author, LIMITS.title),
       str(b.caveat, LIMITS.summary),
       str(b.group, 64),
+      category,
+      priceCents,
       id,
       slug,
       now,
@@ -683,11 +955,24 @@ export async function finishUpload(request: Request, env: Env): Promise<Response
    * somebody starts. A client-reported size is a number nobody checked.
    */
   const head = await env.DOWNLOADS.head(id);
+  /*
+   * **No object, no `uploaded_at`.** This used to write `size_bytes = 0` and
+   * stamp the row as finished anyway, which is the one outcome the whole
+   * write-row-then-mark-usable dance exists to prevent: the file would be
+   * offered to customers, print its size as "—", and 404 on the click. An
+   * unfinished row is invisible to everybody but the operator, who is the person
+   * who can act on it — so failing here leaves exactly the state a browser that
+   * closed mid-upload leaves, and the fix is the same one: upload it again.
+   */
+  if (!head) {
+    throw new BadRequest("The upload completed but the file isn't in the bucket. Try it again.", 502);
+  }
+
   await env.DB.prepare("UPDATE download_files SET size_bytes = ?, uploaded_at = ? WHERE id = ?")
-    .bind(head?.size ?? 0, Date.now(), id)
+    .bind(head.size, Date.now(), id)
     .run();
 
-  return noStore(json({ ok: true, size: head?.size ?? 0 }));
+  return noStore(json({ ok: true, size: head.size }));
 }
 
 export async function abortUpload(request: Request, env: Env): Promise<Response> {
@@ -727,6 +1012,50 @@ export async function addGrant(request: Request, env: Env): Promise<Response> {
 
   const slug = str(b.slug, 64) || null;
   const itemId = str(b.item, 64) || null;
+  /** Filled in below when a file is named without its page — see the note there. */
+  let scope = slug;
+
+  /*
+   * Both scopes are checked against the database, exactly as `mintCode` checks
+   * its own two — and for the same reason: a typo here produces a grant that
+   * looks right in the list, opens nothing, and is discovered by the person it
+   * was given to. `mintCode` had this care and this route did not.
+   *
+   * The pair is checked *together*: an item id that exists but sits on a
+   * different page is the interesting mistake, because `grantedFile` tests both
+   * halves of one row, so such a grant can never match anything at all.
+   */
+  if (slug) {
+    const has = await env.DB.prepare("SELECT slug FROM download_pages WHERE slug = ?").bind(slug).first();
+    if (!has) throw new BadRequest("No such page.", 404);
+  }
+  if (itemId) {
+    const item = await env.DB.prepare("SELECT slug FROM download_files WHERE id = ?")
+      .bind(itemId)
+      .first<{ slug: string }>();
+    if (!item) throw new BadRequest("No such download.", 404);
+    if (slug && item.slug !== slug) {
+      throw new BadRequest("That file is not on that page, so the grant would open nothing.");
+    }
+    /*
+     * **A grant naming a file must also name that file's page.**
+     *
+     * `granted()` reads a null `slug` as "every page", so a row of
+     * `(slug: null, item: "some-file")` is a one-file grant that quietly confers
+     * *read* on every `granted` and `code` page on the site. The bytes stay
+     * correctly scoped — `grantedFile` tests both halves of the row, which is the
+     * 2026-08-20 review's fix and is untouched — but read access is not nothing:
+     * a `granted` page is one whose very existence is the secret.
+     *
+     * Nothing in the editor produces such a row (it always sends the page's own
+     * slug), so this is belt and braces. It is written as a *completion* rather
+     * than a refusal because the page is not ambiguous: the file is on exactly
+     * one page and we have just read it. Narrowing an over-broad row beats
+     * refusing a request whose intent is clear.
+     */
+    scope = item.slug;
+  }
+
   const days = Number.isInteger(b.days) ? Math.min(3650, Math.max(0, b.days as number)) : 0;
   const now = Date.now();
 
@@ -734,7 +1063,7 @@ export async function addGrant(request: Request, env: Env): Promise<Response> {
     `INSERT INTO download_grants (account_id, slug, item_id, label, created_at, expires_at)
      VALUES (?, ?, ?, ?, ?, ?)`,
   )
-    .bind(account.id, slug, itemId, str(b.label, LIMITS.label), now, days ? now + days * 86_400_000 : null)
+    .bind(account.id, scope, itemId, str(b.label, LIMITS.label), now, days ? now + days * 86_400_000 : null)
     .run();
 
   return noStore(json({ ok: true }));

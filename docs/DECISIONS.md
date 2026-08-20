@@ -14,7 +14,396 @@ file records what happened to the codebase.
 ---
 
 
-## 2026-08-20 (latest) — duel phase 4, part five: the blade lights the body, and a trap nothing was catching
+## 2026-08-20 (latest) — a review of the recent work: sixteen more bugs, twelve of them in code already committed
+
+Client: *"yes, have prices as a toggle. and whatever else you can think of for a
+downloads page. also please review all recent work for bugs."*
+
+Prices were already a per-page toggle, so nothing changed there. The rest is
+additions and a review of the last week's commits — the duel's phases 3 and 4,
+and the downloads Worker.
+
+### What was added
+
+- **The upload portal fills itself in.** Picking a file derives the id, the name
+  and the platform from the filename. Every field is a suggestion into an *empty*
+  box and nothing already typed is overwritten, which is what makes a guess safe:
+  at worst it saves nothing. **It deliberately does not guess a category** — the
+  migration already argued that a confident wrong label with nothing to notice it
+  by is worse than `other`, and an extension says what a file *is*, never what it
+  is *for*. Gated: every suggestion must satisfy the Worker's `KEY`, or the
+  operator is refused in front of the form that just filled itself in.
+- **The page's own link, with a QR.** The whole feature exists so the operator can
+  build a page while on the phone to the person who wants it, and the last step of
+  that call is reading them a link — which until now meant retyping it out of the
+  hint text. The QR reuses the encoder already gated against the ISO worked
+  example, for the customer standing at the bench rather than on the telephone.
+  It says out loud when the page is still a draft, because the link works
+  perfectly for the signed-in operator and 404s for everybody else.
+- **A search box**, on pages of eight files or more, matching the words a visitor
+  can see — names, descriptions, versions, and the category and platform *labels*.
+  Never the ids: searching "antimalware" and matching a row that reads "Malware
+  removal" on screen is a result nobody can account for.
+- **A "new" marker** for thirty days, for the returning visitor, inside the name
+  rather than as a sixth fact in the manifest line.
+- **A file count on each index card** — the one fact a card can add that its own
+  title does not already say.
+
+`QrCode` also had a hardcoded `aria-label` announcing every symbol as "the
+authenticator secret"; it is a prop now, defaulted so the original caller is
+unchanged.
+
+### Twelve bugs in the downloads Worker
+
+1. **A non-Latin-1 filename was a 500 on every click, for ever.** `headers.set`
+   performs a WebIDL `ByteString` conversion, so one character above U+00FF
+   throws — and the write-side guard checked only `["\\/\r\n]`. `Réparation.exe`
+   saved cleanly, listed normally with a working button, and every download
+   raised. Fixed on *both* sides and in opposite directions: the guard now refuses
+   control characters, and the response carries `filename` (flattened to ASCII)
+   **and** `filename*=UTF-8''…` per RFC 5987, so the accents survive rather than
+   being refused.
+2. **An unsatisfiable range answered `206` with `content-range: bytes
+   300000-299999/300000`** — a last-byte-pos below the first, which RFC 9110
+   §14.4 does not permit. `Range: bytes=300000-` against an already-complete file
+   is the everyday way to produce it, from exactly the resuming download managers
+   this route advertises `accept-ranges` for. **The check suite asserted that
+   shape as correct** and tested only `offset + length <= size`, so it blessed the
+   bug; it has a `length === 0 ⇒ 416` row now.
+3. **`HEAD` on the byte route answered `404 No such endpoint.`** Download managers
+   probe with `HEAD` to learn the size and whether ranges work, so the
+   resumability the entire design is justified by was unavailable to the tools
+   that use it.
+4. **The byte route was an existence oracle.** 404 for an unknown id, 403 for a
+   known one the caller could not have — unauthenticated, unthrottled, and
+   covering ids on draft and `granted` pages that appear in no response the caller
+   is entitled to. Ids are lowercase-kebab and named after what a file is and who
+   it is for. One refusal now, thrown from all three places.
+5. **A page-scoped code survived its page and resurrected on a re-created slug.**
+   `download_codes.slug` has no foreign key and a slug is a re-usable
+   `TEXT PRIMARY KEY`, so deleting `acme` and later creating a new page at the
+   same address for a *different customer* handed every old code the new
+   customer's page and every paid file on it. Deleting a page is the only
+   "withdraw" control this feature has, so it now deletes the codes too — and
+   `opened` re-reads the page regardless, which is the half a future delete path
+   cannot forget. Proven both ways in the harness: removing the delete makes the
+   old code redeem against the new page.
+6. **An unscoped code read out the slug of every `granted` page.** `canRead` can
+   never honour a ticket for that visibility, so including them in the "opens
+   everything" list leaked their names and nothing else — and the name is the
+   whole secret there. `unlisted` stays in deliberately.
+7. **`mintCode` would mint a code for a `granted` page**, which redeems, reports
+   the page as opened, and opens nothing — the failure the existence check beside
+   it exists to prevent, with a forgotten visibility in place of a typo.
+8. **The revoke handle was 32 bits, unchecked, behind an unbounded `UPDATE`.** Two
+   codes sharing an 8-hex prefix meant revoking one silently revoked the other,
+   with two identical-looking rows and no way to tell them apart. Sixteen
+   characters now, and checked for collision at mint.
+9. **`usesLeft` was read before the increment**, so two concurrent redemptions
+   both told their customer one use remained when none did. `RETURNING uses`.
+10. **`pageFromPath` and `subFromPath` disagreed about `/downloads/a/b`** — prefix
+    match said `downloads`, the second-slash guard said `null` — so the index
+    rendered at an address that is not the index, and `go()`'s early return
+    (page and sub both already matching) meant nothing ever corrected the URL.
+    The address bar kept the broken path for the whole visit.
+11. **Every `/downloads/<anything>` was an indexable soft-404 with a
+    self-canonical.** `page-meta.ts` argues at length that `notfound` is
+    `UNLISTED` because the SPA fallback answers 200; the prefix route re-opened
+    that without limit. Sub-pages are `noindex` and canonicalise to the index.
+12. **The harness drove only happy paths.** The single-message refusal invariant —
+    the thing the module's longest comment defends — the `uses < max_uses`
+    last-way-in guard, revocation, `usesLeft`, ranges, `HEAD` and the oracle were
+    all untested, and the cascade check could not fail (it asserted a 404 the
+    route returned whether the cascade fired or not). All added; **342 → 357**.
+
+### Four in the duel
+
+1. **The hit flash was lost on 48.7% of blows.** The decay sat on `stepFighter`'s
+   first line, which made it a casualty of the fairness coin: with the attacker
+   stepped first, the victim's own step ran later in the same call and decayed
+   the flash below `drawFighter`'s `flash >= 1` before anything drew. Measured at
+   854 of 1,755; the renderer gate's flash count went **336 → 627** on the fix.
+2. **`runDirector` ran above the hit-stop return**, so the exchange clock advanced
+   while both move clocks were frozen and director-time drifted ahead of
+   move-time. **20 of 2,200 reaction starts began before their cause** — the one
+   bug class this effect has a rule about. The sequence gate asserts that ordering
+   in beat space, where the skew cannot exist.
+3. **`duelFocus` under-reported a rolling fighter by a constant** where the
+   renderer tucks by a sine over the window, so the entry and exit of every roll
+   told the camera the body was 24% narrower than it is drawn — 2,080 of 10,963
+   turning frames, worst 11.1 units a side. The camera gate cannot see this: it
+   compares the view against `duelFocus`'s own output.
+4. **`spawnSparks` sheared the contact bias** with two independent multipliers
+   instead of one, injecting ±27° of direction error immediately after the
+   function whose purpose is to fix the direction.
+
+Both duel fixes were gated in a new check and **each half verified by putting the
+bug back**: 48.3% of blows lose their flash, and 12 reactions invert.
+
+### What was not fixed
+
+The `duel: fairness` gate still asserts `sigma < 3` on an unseeded run, so it
+trips about once in 370 runs on correct code — and `npm run check` is `predeploy`.
+Unchanged deliberately, for the reason recorded below: the tempting repair
+weakens the gate, and sampling fresh randomness every run is arguably the point.
+
+### What could not be observed
+
+The `416` branch does not fire against local R2 — miniflare declines an
+unsatisfiable range and sends the whole object, which `rangePlan` correctly reads
+as "not a partial" and answers 200. That is a documented, safe path, and the 416
+arithmetic is covered by the unit gate rather than by a live request. Everything
+else in the list above was confirmed against a running Worker.
+
+
+## 2026-08-20 — downloads: categories, prices, filters and sort, and eight bugs found on the way in
+
+Client: *"please review the downloads page. make sure there are no bugs. I need complete control of
+everything about this page from my admin panel/page. descriptions/prices, categories, filters, sort
+by, with an icon for each category. please anticipate all types of software so I have a list to
+choose from when uploading to cloudflare bucket… or just have an upload portal for me as well."*
+
+The upload portal already existed (`FileManager`, 2026-08-20 earlier the same day). What did not was
+any way to change a file after uploading it, and that turned out to be the theme of the review: a
+lot of this feature had a working Worker route with no control wired to it.
+
+### The reversal: prices, and why it is only half a reversal
+
+`docs/DOWNLOADS.md` listed *"No prices on the page"* under *Things that are decisions*, on the
+grounds that the site names no figures except the client's own rate on `/home`. The client has now
+asked for prices. That settles it — but the reasoning was about the *site*, not about the client's
+freedom to name a figure, so the reversal is scoped to preserve it: `price_cents` is stored per file
+and rendered only where `download_pages.show_prices` is set, and that column defaults to **0**. Every
+page that exists renders exactly as it did until the operator ticks a box. The decision moved from
+being made once, here, to being made per page, by them.
+
+Three consequences that are decisions rather than plumbing:
+
+- **Cents, not a decimal.** 19.99 is not representable in binary floating point and a sort on it
+  eventually disagrees with itself. The form takes dollars and rounds once, in `toCents`; the Worker
+  **refuses** a non-integer rather than clamping, because a price silently floored to zero or
+  multiplied by a hundred is discovered by a customer.
+- **Zero is "no price", never "free".** They are different columns answering different questions —
+  `free` is the gate, a price is a figure. So `sortFiles` puts unpriced files **last**: letting 0
+  lead puts everything with no figure at the top of a price-sorted list, which reads as a page of
+  free programs on the one page where things are sold. Gated.
+- **A free file is sent `price: 0` whatever is stored**, resolved in `shapeFile`. Found in the
+  browser: after editing a file to have a price and leaving it ticked free, the row read
+  `free · $12.50` next to a working download button. Resolving it in the renderer would have been
+  the obvious fix and would have been wrong — the same response feeds the sort, so the file would
+  have sorted among the paid ones by a figure the page never showed. One place decides.
+
+### Categories
+
+Twenty-one, in `src/data/downloads.ts`, append-only, with `PICKABLE_CATEGORIES` beside them — the
+`FX`/`PICKABLE_FX` split, applied a third time. Written as the shelves of a repair toolkit rather
+than an app-store taxonomy, which is why *Boot & rescue media* is one and *Productivity* is not.
+`categoryOf` never returns undefined: an unknown id resolves to `other`, which is honest, where
+falling to index 0 would silently claim every stray row is a diagnostic tool.
+
+`CategoryIcon.tsx` draws all twenty-one — the third answer to `SPEC.md`'s no-images rule, after the
+favicon and `FileIcon`, and deliberately shaped like `FileIcon` so the two read as one family. One
+ink per mark, and the ink is an accent: a category has no container, so `FileIcon`'s outline/glyph
+split has nothing to split and a second colour would be pure decoration. **Every mark is one
+silhouette with no interior detail**, because they render at 16–20px — the duel-costume lesson
+(*at this size the edge of the shape is the whole recognition*) applied to something much smaller.
+A broom was drawn for *Cleanup* first and lost its bristles at 18px; it is two sparks now.
+
+### The filter row, and the phone measurement
+
+Chips for categories, native selects for platform and order. The asymmetry is the point: the
+category is the thing with a mark against it, so it is the one worth showing all of at once — a row
+of marks is a picture of what the page holds. Two more rows of chips would bury the row that
+matters.
+
+**On a phone the chips become a select too, and that is measured.** At a real 420px in the sitelab
+iframe, eight categories at the 44px touch minimum wrapped to five rows and occupied 260px — more
+vertical space than the list they filter, so the page opened on its own filter with the first
+program below the fold. As three selects the whole row is 162px. Rendered as one control or the
+other, never both hidden by CSS: two controls for one setting is two entries in the accessibility
+tree and two things to keep in step.
+
+Also moved after first seeing it: **the row belongs below the operator's prose and directly above
+the files.** Rendered above the intro it reads as a toolbar the page is wearing and pushes the one
+thing on the page written by a person below a row of widgets. The free-form look keeps it at the top
+because there the prose and the file groups are interleaved and there is no "below the prose".
+
+And two things are asked of **every** file rather than of the filtered view: the unsigned-Windows
+notice and the code box. A safety notice that disappears when somebody narrows to "Scripts" is a
+notice with a hole in it, and a code box that vanishes under a filter is a page with no way in.
+
+### The eight bugs
+
+1. **`DownloadPage` carried its own copy of the layout list.** `["list","cards","sheet","blocks"]`,
+   hardcoded, against the imported `PAGE_LAYOUTS` everything else uses. A fifth layout would have
+   been offered by the editor, stored by the Worker, demanded of the stylesheet by `npm run check` —
+   and rendered as a list by this one line. The exact second-copy bug this codebase keeps a rule
+   about.
+2. **A page-scoped code displayed as "everything paid".** `DownloadCodeRow` had no `slug` field
+   while `listCodes` had been selecting one since sub-pages landed, so every code minted from the
+   mint form on that very screen — which scopes to a page — rendered as the widest possible scope.
+   On the one screen whose job is to say what a code opens. Found by reading the type against the
+   SQL.
+3. **There was no way to mint a file-scoped code.** `DownloadCodes` said *"mint it from that file's
+   row in the downloads editor"*; no such control existed anywhere, and had not since the feature
+   shipped. The Worker, the API and the ticket format all supported it. There is a **Code** button on
+   each paid row now.
+4. **There was no way to edit a file.** `saveFile` was written as insert-or-update and only ever
+   sent inserts: changing a blurb meant re-uploading the program. The form now fills from a row and
+   the picker becomes optional. Which exposed the next one.
+5. **The edit would have renamed every download it touched.** `shapeFile` deliberately does not
+   publish `filename`, so the only value the editor had to hand for that field was the *display*
+   name — a different string, usually with no extension. Fixed in the Worker rather than by
+   publishing the filename: an absent filename now means "keep the one this row has", and the
+   extension rule is re-checked even when the value came from the row, because a value stored by an
+   earlier laxer version is the one nobody thinks to re-validate. Verified in the browser: after
+   editing name, category and price, `filename` in D1 is still `drive-check.exe` and `size_bytes` is
+   unchanged.
+6. **A code-gated page was not listed on `/downloads` at all.** `canList` deferred to `canRead`,
+   which is false for a `code` page without a ticket — so the page that is supposed to *say it
+   exists and is locked* was indistinguishable from `unlisted`, reachable only by direct link. That
+   asymmetry is the whole point of having both settings: a draft and a `granted` page 404 because the
+   existence of a page named after a customer is itself the secret, whereas somebody holding a code
+   has to be told where to type it. **The tell was already in the file**: `listPages` computed
+   `locked: !canRead(...) || …`, a branch nothing that got past `canList` could ever satisfy.
+7. **`finishUpload` stamped a row usable when the object was not there.** `head` returning null wrote
+   `size_bytes = 0` and set `uploaded_at` anyway — the one outcome the whole write-row-then-mark-
+   usable dance exists to prevent, because the file is then offered to customers, prints its size as
+   "—", and 404s on the click. It refuses now, leaving exactly the invisible-draft state a browser
+   that closed mid-upload leaves.
+8. **`addGrant` did not check its scopes while `mintCode` did.** A typo'd handle was refused and a
+   typo'd page or file was not, so the grant appeared in the list, opened nothing, and was discovered
+   by the person it was given to. Both are checked now, and **as a pair**: an item id that exists but
+   sits on a different page is the interesting mistake, because `grantedFile` tests both halves of
+   one row, so such a grant can never match anything at all.
+
+### Two dead CSS tokens, and the gate that is the real outcome
+
+`.v-dl-name`, `.v-dl-card-title`, `.v-dl-title` and `.v-dl-block-head` asked for
+`var(--display-weight, 600)`. The token is `--type-display-weight`. So four of the downloads
+surface's headings ignored the typeset's own display weight and rendered at a hardcoded 600 — on the
+one surface added *after* the webfont work whose entire point (deviation 14) was that every heading
+had been the user-agent's `bold` in all five typesets. And `.dl-sheet .v-dl-name` asked for
+`var(--mono, ui-monospace, monospace)` against a token called `--font-mono`, so the layout whose name
+is literally "dense and mono" was the one place on the site not using the site's mono.
+
+**A `var()` with a fallback never fails and never logs.** It renders something plausible for ever.
+That is a class of bug this codebase could not otherwise detect at all, so the fix is a gate:
+`npm run check` now collects every `var(--x)` any stylesheet reads and every `--x` anything writes —
+stylesheet declarations, `@property` registrations, and any TypeScript that names one, with `var()`
+reads stripped from the TypeScript first so a typo in a template string cannot declare itself.
+
+It found a third instance the moment it was written: **`--ent-ease`**, read twice in
+`entrances.css` and written nowhere. Not a typo — a real per-layout knob, like `--ent-dur` and
+`--ent-stagger`, that no layout has ever set. Its value was therefore the fallback curve, spelled out
+identically in the base rule and again in Deck's longhands. Two copies of a curve is the shape of bug
+that file already documents twice: retune one and Deck's arrival silently stops matching everything
+else's, on the one layout whose entrance rule exists *because* it was already clobbered once. It is
+declared once on `.has-entrances` now, and the fallbacks stay as belt and braces.
+
+### One tooling change
+
+`vite.config.ts` gained a dev-server proxy for `/api` to `127.0.0.1:8787`. **This is what makes an
+API-backed page reviewable at the phone band at all.** The verify-site skill reaches a band by
+framing `sitelab.html`, and framing only works against Vite — production and `wrangler dev` both send
+`x-frame-options: DENY` from `harden()`. So before this, any page that fetches (the account pages,
+`/machines`, `/share`, and `/downloads`) could be seen at desk width or not at all, and the phone
+band was checked by reading CSS and hoping. `vite build` never reads `server`, so it ships nothing.
+
+### Ten more, from a correctness review after the security one
+
+The security review came back clean. A separate correctness pass over the same diff
+found ten, and the first four are the ones worth carrying:
+
+1. **A free file's price was destroyed by any edit at all.** `shapeFile` zeroes
+   the price for a free file — correct for rendering — and the editor loaded its
+   form from that same public response. So the box came up blank and the next
+   save wrote the blank back. Ticking free, saving, then later fixing a typo in
+   the blurb silently deleted the figure, **while the form's own hint promised
+   "the figure is kept, and comes back if you untick it"**. The interface was
+   lying in the one direction that costs money. `shapeFile` now sends `price`
+   (rendered, zeroed when free) *and* `priceCents` (stored, raw); the editor
+   reads the second. Two fields because they answer two questions.
+2. **Switching pages mid-edit moved the file to the other page.** `FileManager`
+   is inside a `{slug ? … : …}` ternary that stays on the same branch when the
+   page select changes, so React kept the instance and `editing` with it. Press
+   Save changes and `saveFile`'s `slug = excluded.slug` moved that file, keeping
+   the old page's `position`. Reproduced against a production build.
+
+   **`key={slug}` was the obvious fix and it is not the one that shipped.** It
+   fixes the logic — the fiber tree comes out with exactly one instance, keyed
+   correctly, reset — but React leaves the outgoing `<div>` connected to the
+   document, so the operator sees **two** file managers and the stale one still
+   offers to save. Verified in a production build by walking the fiber tree: the
+   fragment had two children, both keyed `second`, while two `.v-dledit-files`
+   nodes were `isConnected`. Both children reset on `[slug]` the ordinary way
+   instead, which cannot duplicate anything — and `submit` additionally refuses a
+   file that is not in the list being rendered, which is a guard no state
+   confusion can get past. **Do not "simplify" this back to a key.**
+3. **A failed replacement took a live file offline with nothing saying so.**
+   `beginUpload` nulls `uploaded_at`, which is right for a new file and
+   un-publishes an existing one; the editor showed no marker, still printing the
+   *old* file's size, so the row looked entirely normal while being invisible to
+   every visitor. A comment in `beginUpload` claimed the admin screen showed it —
+   it could not, because `shapeFile` never sent the field. It does now.
+4. **Metadata was committed before the bytes, on the replace path.** Saving the
+   new filename first and then failing to upload leaves the row pointing at the
+   **old bytes under the new name**, and `content-disposition` hands that name to
+   the browser verbatim — a customer downloads `tool-v2.exe` and gets v1. The two
+   paths now run in opposite orders, and the comment says why: a *new* file must
+   have its row first, because `beginUpload` refuses an id it cannot find, while
+   a *replacement* uploads first so the worst case is new bytes under the old
+   name — wrong in the obvious, harmless direction.
+
+The rest: the free-form look had no filtered-to-nothing state and its comment
+cited a count line that has never existed; **Price** was offered as a sort on
+pages that hide prices (and `savePage` will happily store `sort: "price"` next to
+`show_prices = 0`, so `activeSort` refuses it too); the sort control was gated on
+the *filter's* precondition, so a page of twelve files that are all Windows
+diagnostics — exactly the page that most wants sorting — could not sort; Sheet
+lost its dense row gap to the icon rule's 0-3-0 `gap`, on the layout whose whole
+description is "dense and mono"; and two actions did not clear a stale error.
+
+**And the new custom-property gate was itself too loose.** Its TypeScript scan
+matched any `--token` anywhere in a `.ts`/`.tsx` file, comments included — and
+this codebase discusses CSS tokens by name in prose constantly, so a typo that
+happened to be mentioned in a comment would have declared itself and the gate
+would have passed while claiming otherwise. It matches only writing positions
+now: an object key, a `setProperty` argument, a declaration in a template
+string. It still passes, which means nothing was being propped up by prose.
+
+### One flaky gate, reported rather than changed
+
+`duel: fairness` asserts `sigma < 3` on an **unseeded** run, so a genuinely fair
+process trips it about once in every 370 runs — observed once here, at 3.21σ, on
+a branch that touches nothing in `src/fx`. Three re-runs gave 1.93σ, 0.37σ and
+0.46σ with the match count drifting 119/120, confirming it is unseeded.
+
+**Left alone deliberately.** `npm run check` is `predeploy`, so this can fail a
+deploy at random, and the tempting repair — loosening the threshold — would weaken
+the one gate standing behind the role coin's fairness guarantee. But sampling
+fresh randomness every run is arguably the point of a fairness test, and a fixed
+seed would make it prove less. That is a judgement about how the duel is verified,
+not about downloads, so it is written down here for whoever owns that decision.
+
+### What was verified, and what was not
+
+Verified in a real browser against a seeded local D1, at the desk and phone bands with calm off: the
+page renders with icons, prices and the filter row in the right order; the category filter narrows
+the list; sort-by-price returns `$15, $25, $40, $65` then the four unpriced files in name order; the
+phone band collapses the chips and has zero horizontal overflow; the editor loads a file into the
+form, saves name/category/price **without touching the bytes or the filename**, reorders with ↑/↓,
+and mints a file-scoped code. That code was then redeemed against the real Worker: the file it bought
+came back `unlocked` and passed `canDownload`, and a *different* paid file on the same page answered
+**403** — the `ticketVisible`-versus-`ticketPages` boundary from the 2026-08-20 review, still holding
+under a new set of fields.
+
+**Not verified:** whether the twenty-one marks are the right twenty-one, and whether any of them is
+ambiguous to somebody who did not draw it. That wants an eye, and specifically the client's — they
+are the person who knows what is actually on the memory stick.
+
+
+## 2026-08-20 — duel phase 4, part five: the blade lights the body, and a trap nothing was catching
 
 Phase 4's last item — *"real blade lighting (offset from blade midpoint to each limb, intensity by
 inverse distance) replacing the fixed-offset rim"*. There was no fixed-offset rim to replace: the

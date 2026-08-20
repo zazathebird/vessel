@@ -160,10 +160,24 @@ const BY_PATH = new Map<string, PageId>(
  */
 const SUB_PREFIX = `${PATHS.downloads}/`;
 
-/** Unknown URLs land on the 404 page, which is a real page here rather than a fallback. */
+/**
+ * Unknown URLs land on the 404 page, which is a real page here rather than a
+ * fallback.
+ *
+ * **A `/downloads/…` path is only the downloads page if `subFromPath` agrees.**
+ * These two used to disagree about `/downloads/a/b`: this one matched the prefix
+ * and said `downloads`, while `subFromPath` refused the second slash and said
+ * `null` — so the *index* rendered at an address that is not the index, and
+ * `ConfigContext`'s `go()` then early-returned (page and sub both already
+ * matched) and never corrected the URL. The address bar kept `/downloads/a/b`
+ * for the rest of the visit, and every Back landed on it again.
+ *
+ * Deferring to `subFromPath` makes one function the authority on what a
+ * sub-path is, and turns a two-segment probe into an honest 404.
+ */
 export function pageFromPath(pathname: string): PageId {
   const clean = pathname.replace(/\/+$/, "") || "/";
-  if (clean.startsWith(SUB_PREFIX)) return "downloads";
+  if (clean.startsWith(SUB_PREFIX)) return subFromPath(pathname) ? "downloads" : "notfound";
   return BY_PATH.get(clean) ?? "notfound";
 }
 

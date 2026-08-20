@@ -307,6 +307,8 @@ export const api = {
   adminFileSave: (body: Record<string, unknown>) =>
     post<{ ok: true; id: string }>("/api/admin/downloads/file", body),
   adminFileDelete: (id: string) => post<{ ok: true }>("/api/admin/downloads/file/delete", { id }),
+  adminFileOrder: (slug: string, ids: string[]) =>
+    post<{ ok: true }>("/api/admin/downloads/file/order", { slug, ids }),
   adminUploadBegin: (id: string, contentType: string) =>
     post<{ uploadId: string }>("/api/admin/downloads/upload/begin", { id, contentType }),
   adminUploadFinish: (id: string, uploadId: string, parts: { part: number; etag: string }[]) =>
@@ -360,6 +362,8 @@ export interface DownloadPageSummary {
   layout: string;
   visibility: string;
   status: string;
+  /** How many finished files sit on it. Optional — an older Worker sends none. */
+  files?: number;
   locked: boolean;
 }
 
@@ -381,6 +385,37 @@ export interface DownloadFileInfo {
   caveat: string;
   group: string;
   unlocked: boolean;
+  /**
+   * Category, price in cents, and the day it was added (2026-08-20).
+   *
+   * Optional on the type because a response from a Worker deployed before the
+   * migration genuinely does not carry them — and the failure of assuming
+   * otherwise is a page that sorts everything to one end and prints "$NaN".
+   * Every consumer defaults rather than asserting.
+   */
+  category?: string;
+  /** The price to *render*. Zero for a free file, whatever is stored. */
+  price?: number;
+  /**
+   * The price as *stored*, which is what an editing form must load.
+   *
+   * Two fields rather than one because they answer different questions, and
+   * collapsing them cost a real bug: the editor read the rendered price, found
+   * the zero a free file always reports, and wrote that back on the next save —
+   * destroying a figure the interface had just promised to keep.
+   */
+  priceCents?: number;
+  added?: number;
+  /** False while an upload has not finished. Visitors never see such a row. */
+  uploaded?: boolean;
+}
+
+/** How a page presents its files. All operator-set; see `migrations/0007`. */
+export interface DownloadPagePresentation {
+  sort?: string;
+  showFilters?: boolean;
+  showPrices?: boolean;
+  showIcons?: boolean;
 }
 
 export interface DownloadPageBody {
@@ -393,7 +428,7 @@ export interface DownloadPageBody {
     layout: string;
     visibility?: string;
     status?: string;
-  };
+  } & DownloadPagePresentation;
   locked: boolean;
   blocks?: DownloadBlock[];
   files?: DownloadFileInfo[];
@@ -417,6 +452,14 @@ export interface DownloadCodeRow {
   ref: string;
   label: string;
   item_id: string | null;
+  /**
+   * The page scope (2026-08-20). **This was missing from the type while the
+   * Worker was already selecting it**, so the operator's code list rendered
+   * every page-scoped code as "everything paid" — the widest possible reading of
+   * the narrowest scope, on the one screen whose job is to say what a code
+   * opens.
+   */
+  slug: string | null;
   created_at: number;
   expires_at: number | null;
   max_uses: number;

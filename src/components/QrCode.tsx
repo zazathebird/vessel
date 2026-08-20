@@ -38,7 +38,24 @@ import { qrMatrix } from "../auth/qr";
  * sizes are the usual reason a generated QR scans on a phone held still and
  * fails on one held by a person.
  */
-export function QrCode({ value, size = 260 }: { value: string; size?: number }) {
+export function QrCode({
+  value,
+  size = 260,
+  label = "QR code for the authenticator secret",
+}: {
+  value: string;
+  size?: number;
+  /**
+   * What the symbol is *of*, for a screen reader.
+   *
+   * Defaulted to the enrolment wording because that was this component's only
+   * caller for months and the string was hardcoded — which meant the second
+   * caller would have announced a downloads link as an authenticator secret.
+   * A wrong accessible name is worse than a generic one, so it is a prop now
+   * and the default keeps the original caller unchanged.
+   */
+  label?: string;
+}) {
   const modules = useMemo(() => qrMatrix(value), [value]);
 
   const QUIET = 4;
@@ -61,7 +78,7 @@ export function QrCode({ value, size = 260 }: { value: string; size?: number }) 
       viewBox={`0 0 ${span} ${span}`}
       shapeRendering="crispEdges"
       role="img"
-      aria-label="QR code for the authenticator secret"
+      aria-label={label}
     >
       <rect width={span} height={span} fill="#ffffff" />
       <path d={path} fill="#000000" />

@@ -47,9 +47,23 @@ import type { DuelCam } from "../src/components/DuelOrnament";
 import { BLADE_COLORS, DUEL_POOLS, FIGHTERS, rollPairing } from "../src/fx/fighters";
 import type { CostumeCtx, FighterKind, FighterStyle } from "../src/fx/fighters";
 import { PAGES } from "../src/data/pages";
-import { PAGE_LAYOUTS } from "../src/data/downloads";
+import {
+  CATEGORIES,
+  DEFAULT_CATEGORY,
+  FILE_SORTS,
+  PAGE_LAYOUTS,
+  PLATFORMS,
+  SORT_LABEL,
+  SORT_LABEL_PUBLIC,
+  matchesQuery,
+  sortFiles,
+  suggestFromFilename,
+} from "../src/data/downloads";
+import type { SortableFile } from "../src/data/downloads";
+import { DRAWN_CATEGORIES } from "../src/components/CategoryIcon";
 import { rangePlan } from "../worker/downloads";
-import { PATHS } from "../src/data/pageIds";
+import { PATHS, pageFromPath, pathFor, subFromPath } from "../src/data/pageIds";
+import { metaForPath } from "../worker/page-meta";
 import { LAYOUTS, FX, PICKABLE_FX, TYPESETS, SCOPES } from "../src/data/catalog";
 import type { LayoutId } from "../src/data/catalog";
 import { PALETTES } from "../src/data/palettes";
@@ -527,6 +541,380 @@ check("the downloads catalogue and its container hold together", () => {
   return `${PAGE_LAYOUTS.length} page layouts, all styled; container owns its width`;
 });
 
+// ---- 2b-i. Every category is drawn, and every drawing is a category ---------
+//
+// 2026-08-20, with the categories. The client asked for "an icon for each
+// category", and the way that claim goes quietly false is a category added to
+// `CATEGORIES` without a mark in `CategoryIcon` — which does not fail to
+// compile, because the lookup is a `Record<string, JSX.Element>` and a miss
+// falls back to the neutral mark. Every uncategorised-looking file on the page
+// would then be a file whose category simply has no picture, and the two are
+// indistinguishable on screen.
+//
+// The reverse is checked too: a mark for a category that no longer exists is
+// dead weight that reads as evidence the catalogue still has that shelf.
+
+check("every download category is drawn, and nothing is drawn twice", () => {
+  const ids = CATEGORIES.map((c) => c.id);
+
+  must(new Set(ids).size === ids.length, "two download categories share an id");
+  must(ids.includes(DEFAULT_CATEGORY), `DEFAULT_CATEGORY "${DEFAULT_CATEGORY}" is not in CATEGORIES`);
+
+  for (const c of CATEGORIES) {
+    // The id is stored on every row and named by a filter, so it obeys the same
+    // rule as every other wire value here: lowercase kebab, nothing else.
+    must(/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(c.id), `category id "${c.id}" is not lowercase-kebab`);
+    must(c.label.trim().length > 0, `category "${c.id}" has no label`);
+    must(c.hint.trim().length > 0, `category "${c.id}" has no hint — the picker would offer it blind`);
+    must(
+      DRAWN_CATEGORIES.includes(c.id),
+      `category "${c.id}" is offered in the picker but has no mark in CategoryIcon — it would silently draw the neutral one`,
+    );
+  }
+
+  for (const drawn of DRAWN_CATEGORIES) {
+    must(ids.includes(drawn), `CategoryIcon draws "${drawn}", which is not a category any more`);
+  }
+
+  // Both label maps are exhaustive. `SORT_LABEL_PUBLIC` spreads `SORT_LABEL`, so
+  // this catches the case where the base map itself gains a hole.
+  for (const s of FILE_SORTS) {
+    must(Boolean(SORT_LABEL[s]), `sort "${s}" has no operator label`);
+    must(Boolean(SORT_LABEL_PUBLIC[s]), `sort "${s}" has no visitor label`);
+  }
+
+  return `${CATEGORIES.length} categories, all drawn; ${FILE_SORTS.length} sorts, all labelled`;
+});
+
+// ---- 2b-ii. The sort a visitor picks is total, stable and honest ------------
+//
+// 2026-08-20. Three of these rules are decisions somebody would reasonably
+// reverse by accident, and none of them fails loudly.
+//
+// **`manual` must not touch the array.** It is the operator's own hand order,
+// already applied by the Worker's `ORDER BY position`. A comparator here — even
+// one that looks like a no-op — would turn "the order I put them in" into
+// whatever that comparator says, on the default setting, on every page.
+//
+// **Zero is "no price", not "free".** A file with no figure set has
+// `price_cents = 0`, and free-versus-paid is a different column entirely. Sorted
+// by price ascending, letting 0 lead puts every unpriced file at the top of the
+// list — which reads as a page of free programs, on the page where the client is
+// selling things.
+//
+// **Every comparator ties on the name.** Without it, `sort` being stable means a
+// page of same-sized files comes back in `position` order, which is correct and
+// looks exactly like the control having done nothing.
+
+check("the downloads sort is total, stable and puts unpriced files last", () => {
+  const f = (name: string, extra: Partial<SortableFile> = {}): SortableFile => ({
+    name,
+    size: 0,
+    ...extra,
+  });
+
+  // `manual` is identity, element for element.
+  const hand = [f("zebra"), f("apple"), f("mango")];
+  const kept = sortFiles(hand, "manual");
+  must(
+    kept.length === hand.length && kept.every((x, i) => x.name === hand[i].name),
+    "`manual` reordered the operator's own hand order",
+  );
+
+  // Every sort returns every file exactly once — a comparator that drops or
+  // duplicates a row is a download nobody can find.
+  const many = CATEGORIES.slice(0, 6).map((c, i) =>
+    f(`file-${i}`, { category: c.id, size: i * 100, price: i % 2 ? i * 500 : 0, added: i * 86_400_000 }),
+  );
+  for (const sort of FILE_SORTS) {
+    const out = sortFiles(many, sort);
+    must(out.length === many.length, `sort "${sort}" changed the number of files`);
+    must(
+      new Set(out.map((x) => x.name)).size === many.length,
+      `sort "${sort}" dropped or duplicated a file`,
+    );
+  }
+
+  // Unpriced last, priced ascending.
+  const priced = [f("free-ish", { price: 0 }), f("dear", { price: 9900 }), f("cheap", { price: 500 })];
+  const byPrice = sortFiles(priced, "price").map((x) => x.name);
+  must(
+    byPrice[0] === "cheap" && byPrice[1] === "dear" && byPrice[2] === "free-ish",
+    `price sort put them in ${byPrice.join(", ")} — an unpriced file must sort last, not first`,
+  );
+
+  // Ties break on the name, not on arrival order, for every sort that can tie.
+  const tied = [f("beta", { size: 10, price: 100 }), f("alpha", { size: 10, price: 100 })];
+  for (const sort of ["size", "price", "category", "newest", "oldest"] as const) {
+    must(
+      sortFiles(tied, sort)[0].name === "alpha",
+      `sort "${sort}" left a tie in arrival order — indistinguishable from the control doing nothing`,
+    );
+  }
+
+  // Category sorts in catalogue order, which is the order a repair job goes in.
+  const shelves = [f("z", { category: "other" }), f("a", { category: "diagnostics" })];
+  must(
+    sortFiles(shelves, "category")[0].name === "a",
+    "category sort is not following catalogue order",
+  );
+
+  return `${FILE_SORTS.length} sorts, all total; manual untouched, unpriced last, ties on name`;
+});
+
+// ---- 2b-iii. The upload portal's guesses are always saveable ----------------
+//
+// 2026-08-20. Picking a file fills in the id, the name and the platform, and the
+// id it produces has to satisfy the Worker's `KEY` — `^[a-z0-9]+(-[a-z0-9]+)*$`
+// — or `saveFile` answers 400 and the operator is refused in front of the form
+// that just filled itself in. **A guess that cannot be saved is worse than no
+// guess**, because it looks like the interface's own suggestion being rejected.
+//
+// The interesting inputs are all the ones a real filename actually has in it:
+// spaces, brackets, versions with dots, unicode, leading and trailing junk,
+// double extensions, and names that reduce to nothing at all.
+
+check("a filename always suggests a saveable id", () => {
+  // The Worker's rule, copied deliberately rather than imported: this asserts
+  // the two agree, and importing it would assert only that it equals itself.
+  const KEY = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+  const names = [
+    "boot-repair.exe",
+    "Boot Repair v2.1.exe",
+    "  spaced  out .msi",
+    "UPPER_CASE_TOOL.EXE",
+    "tool(1).zip",
+    "my.tool.v1.2.3.tar.gz",
+    "весёлый.exe",
+    "---.exe",
+    "...",
+    "",
+    ".gitignore",
+    "a.exe",
+    "réparation-disque.deb",
+    "x".repeat(200) + ".exe",
+    "trailing-hyphen-.exe",
+    "double--hyphen.exe",
+    "100% working!!.bat",
+  ];
+
+  let guessed = 0;
+  for (const name of names) {
+    const g = suggestFromFilename(name);
+    // An id is either empty — "I could make nothing of this, you type it" — or
+    // it is one the Worker will accept. There is no third answer.
+    must(
+      g.id === "" || KEY.test(g.id),
+      `"${name}" suggested the id "${g.id}", which the Worker's KEY refuses`,
+    );
+    must(g.id.length <= 64, `"${name}" suggested an id longer than the Worker's 64-char cap`);
+    // The platform is either nothing or a real one — never a string the
+    // `<select>` has no option for, which would silently show the wrong choice.
+    must(
+      g.platform === "" || PLATFORMS.includes(g.platform as never),
+      `"${name}" suggested the platform "${g.platform}", which is not in PLATFORMS`,
+    );
+    if (g.id) guessed += 1;
+  }
+
+  // The ordinary cases must actually produce something, or the whole feature is
+  // a no-op that still passes every assertion above.
+  must(suggestFromFilename("boot-repair.exe").id === "boot-repair", "a plain filename lost its id");
+  must(
+    suggestFromFilename("Boot Repair v2.1.exe").id === "boot-repair-v2-1",
+    "spaces and dots did not collapse to single hyphens",
+  );
+  must(
+    suggestFromFilename("my.tool.v1.tar.gz").id === "my-tool-v1",
+    "a .tar.gz kept its .tar and would have produced an id ending -tar",
+  );
+  must(suggestFromFilename("thing.exe").platform === "windows", ".exe did not imply Windows");
+  must(suggestFromFilename("thing.apk").platform === "android", ".apk did not imply Android");
+  // Silence is the correct answer for an extension that says nothing.
+  must(suggestFromFilename("thing.zip").platform === "", ".zip claimed to imply a platform");
+
+  return `${names.length} filenames, ${guessed} usable ids, none the Worker would refuse`;
+});
+
+// ---- 2b-iv. Search matches what the visitor can see -------------------------
+//
+// 2026-08-20. The search filters on rendered *labels*, never on ids: typing
+// "antimalware" and matching a row that says "Malware removal" on screen is a
+// result nobody can account for, and the id is a URL rather than a word anybody
+// read. Every term must match, so typing more words can only ever narrow.
+
+check("the downloads search matches labels, not ids", () => {
+  const file = {
+    name: "Drive check",
+    blurb: "Reads the SMART numbers off every disk.",
+    version: "2.1",
+    category: "antimalware",
+    platform: "windows",
+  };
+
+  must(matchesQuery(file, ""), "an empty query excluded a file");
+  must(matchesQuery(file, "   "), "a whitespace query excluded a file");
+  must(matchesQuery(file, "drive"), "a name term did not match");
+  must(matchesQuery(file, "SMART"), "a blurb term did not match case-insensitively");
+  must(matchesQuery(file, "2.1"), "a version term did not match");
+  must(matchesQuery(file, "malware removal"), "the category's label did not match");
+  must(matchesQuery(file, "windows"), "the platform's label did not match");
+  must(!matchesQuery(file, "antimalware"), "the search matched a category *id* rather than a label");
+  must(!matchesQuery(file, "linux"), "a platform it is not matched");
+  // Every term, not any term.
+  must(matchesQuery(file, "drive smart"), "two terms that both match were rejected");
+  must(!matchesQuery(file, "drive linux"), "a query matched on one term when the other failed");
+
+  return "labels match, ids do not, and every term must match";
+});
+
+// ---- 2b-vi. The one prefix route agrees with itself -------------------------
+//
+// 2026-08-20. `/downloads/<name>` is the only route on the site with anything
+// after it, and it is resolved by two functions that have to agree.
+//
+// They did not. `pageFromPath` matched the prefix and answered `downloads` for
+// *any* depth, while `subFromPath` refused a second slash and answered `null` —
+// so `/downloads/a/b` rendered the index at an address that is not the index.
+// That is worse than cosmetic: `ConfigContext`'s `go()` early-returns when the
+// page and sub both already match, so clicking "Downloads" from there changed
+// nothing and never pushed a corrected URL. The address bar kept the broken path
+// for the rest of the visit, and every Back landed on it again.
+//
+// It also made every such path an indexable soft-404 with a self-canonical, the
+// exact thing `page-meta.ts` puts `notfound` in `UNLISTED` to prevent.
+
+check("the downloads sub-route resolves consistently", () => {
+  const cases: Array<[string, PageId, string | null]> = [
+    ["/downloads", "downloads", null],
+    ["/downloads/", "downloads", null],
+    ["/downloads/tools", "downloads", "tools"],
+    ["/downloads/tools/", "downloads", "tools"],
+    // Two segments is a typo or a probe, not a deeper page — and both functions
+    // have to say so, or the pair disagrees.
+    ["/downloads/a/b", "notfound", null],
+    ["/downloads/a/b/c", "notfound", null],
+    ["/scams", "scams", null],
+    ["/nonsense", "notfound", null],
+  ];
+
+  for (const [path, wantPage, wantSub] of cases) {
+    const page = pageFromPath(path);
+    const sub = subFromPath(path);
+    must(page === wantPage, `${path}: expected page "${wantPage}", got "${page}"`);
+    must(sub === wantSub, `${path}: expected sub ${JSON.stringify(wantSub)}, got ${JSON.stringify(sub)}`);
+    // The invariant behind both: a sub only exists on the page that has subs,
+    // and a path under that prefix with no valid sub is not that page.
+    must(
+      sub === null || page === "downloads",
+      `${path}: reported a sub on page "${page}", which has none`,
+    );
+    must(
+      !path.replace(/\/+$/, "").startsWith("/downloads/") || (sub === null) === (page !== "downloads"),
+      `${path}: pageFromPath and subFromPath disagree`,
+    );
+  }
+
+  // Round trip: a resolved pair must regenerate the path it came from.
+  for (const [path, , wantSub] of cases) {
+    const page = pageFromPath(path);
+    if (page === "notfound") continue;
+    const back = pathFor(page, wantSub);
+    must(
+      back === path.replace(/\/+$/, "") || back === path,
+      `${path}: pathFor round-tripped to "${back}"`,
+    );
+  }
+
+  // The meta layer must refuse to canonicalise a sub-page at itself.
+  const subMeta = metaForPath("/downloads/tools");
+  must(subMeta.unlisted, "a downloads sub-page is not marked unlisted — it would be indexed");
+  must(subMeta.sub, "metaForPath did not recognise a downloads sub-page");
+  must(!metaForPath("/downloads").sub, "the downloads index was mistaken for a sub-page");
+
+  return `${cases.length} paths, both resolvers agreeing, sub-pages unlisted`;
+});
+
+// ---- 2b-v. No stylesheet reads a custom property nothing writes -------------
+//
+// 2026-08-20, and this is the general form of two live bugs found the same day,
+// both on the downloads page and both invisible in every way a build can see.
+//
+// `.v-dl-name` and three other headings asked for `var(--display-weight, 600)`.
+// The token is `--type-display-weight`. So four of the site's headings ignored
+// the typeset's own display weight and rendered at a hardcoded 600 — on the one
+// surface added after the webfont work whose entire point (deviation 14) was
+// that every heading had been the user-agent's `bold` in all five typesets.
+// `.dl-sheet .v-dl-name` asked for `var(--mono, ui-monospace, monospace)`
+// against a token called `--font-mono`, so the layout whose name is "dense and
+// mono" was the one place on the site not using the site's mono.
+//
+// **The fallback is what hides it.** A `var()` with a fallback never fails, and
+// never logs; it renders something plausible for ever. That is why this is a
+// gate and not a code review note — a typo in a token name is a class of bug
+// this codebase cannot otherwise detect at all.
+//
+// A property counts as written if any stylesheet declares it, `@property`
+// registers it, or any TypeScript names it (the theme writes most of them, and
+// a few — `--mx`, `--my`, `--i` — are set on style attributes). `var(...)`
+// occurrences in TypeScript are stripped before that scan, or a typo inside a
+// template string would declare itself.
+
+check("every custom property a stylesheet reads is one something writes", () => {
+  const styles = readdirSync("src/styles").filter((f) => f.endsWith(".css"));
+  const css = styles.map((f) => readFileSync(join("src/styles", f), "utf8")).join("\n");
+
+  const written = new Set<string>();
+  const note = (source: string) => {
+    for (const m of source.matchAll(/(--[a-z][a-z0-9-]*)\s*:/gi)) written.add(m[1]);
+    for (const m of source.matchAll(/@property\s+(--[a-z][a-z0-9-]*)/gi)) written.add(m[1]);
+  };
+  note(css);
+
+  /*
+   * Every TypeScript file under `src/`, because the theme writes most of these
+   * from `themeVars()` and a few — `--mx`, `--my`, `--i`, `--n` — are set on
+   * style attributes.
+   *
+   * **Matched only in writing positions, never as a bare mention.** The first
+   * version took any `--token` anywhere in the file, and this codebase is
+   * unusually comment-heavy *about* CSS tokens: every one of the bugs this gate
+   * exists for is discussed by name in a comment somewhere, so a typo that
+   * happened to be mentioned in prose would have declared itself and the gate
+   * would have passed while claiming otherwise. The three forms below are the
+   * three ways a property is actually written here — an object key, a
+   * `setProperty` argument, and a declaration inside a template string.
+   */
+  const walk = (dir: string): string[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) return walk(path);
+      return /\.tsx?$/.test(entry.name) ? [path] : [];
+    });
+  for (const path of walk("src")) {
+    const source = readFileSync(path, "utf8");
+    // `"--x":` / `'--x':` — a key in a style object or a token map.
+    for (const m of source.matchAll(/["'](--[a-z][a-z0-9-]*)["']\s*:/gi)) written.add(m[1]);
+    // `setProperty("--x", …)`.
+    for (const m of source.matchAll(/setProperty\(\s*["'](--[a-z][a-z0-9-]*)["']/gi)) written.add(m[1]);
+    // `--x:` inside a template literal or an inline style string.
+    for (const m of source.matchAll(/[;{`\s](--[a-z][a-z0-9-]*)\s*:/g)) written.add(m[1]);
+  }
+
+  const missing = new Set<string>();
+  for (const m of css.matchAll(/var\(\s*(--[a-z][a-z0-9-]*)/gi)) {
+    if (!written.has(m[1])) missing.add(m[1]);
+  }
+
+  must(
+    missing.size === 0,
+    `stylesheets read ${[...missing].join(", ")}, which nothing ever writes — a var() with a fallback renders something plausible for ever and never logs`,
+  );
+
+  return `${styles.length} stylesheets, ${written.size} properties written, none read that are not`;
+});
+
 // ---- 2c. The download's partial-response arithmetic -------------------------
 //
 // 2026-08-19, the first time the bucket was made to hand over a byte, and the
@@ -569,7 +957,24 @@ check("a download is a 206 only when it is genuinely partial", () => {
     ["unsatisfiable, R2 declined and sent everything", true, { offset: 0, length: size }, null],
     ["a length past the end is clamped", true, { offset: 299_000, length: 9_000 }, { offset: 299_000, length: 1_000 }],
     ["an offset past the end claims nothing", true, { offset: size + 10, length: 50 }, { offset: size, length: 0 }],
+    ["a zero-length suffix claims nothing", true, { suffix: 0 }, { offset: size, length: 0 }],
   ];
+
+  /*
+   * **A zero-length plan is an unsatisfiable range, and the caller must answer
+   * 416 — this table used to bless it as a 206.**
+   *
+   * `rangePlan` clamps rather than refusing, which is the right split: it
+   * reports what the response would *be*, and `file()` decides the status. But
+   * the row above was asserted as correct and the only arithmetic check was
+   * `offset + length <= size`, so a plan of `{ offset: size, length: 0 }` passed
+   * — and `file()` turned it into `content-range: bytes 300000-299999/300000`,
+   * a last-byte-pos below the first, which RFC 9110 §14.4 does not permit.
+   * `Range: bytes=300000-` against an already-complete file is the everyday way
+   * to produce it, from exactly the resuming download managers this route
+   * advertises `accept-ranges` for.
+   */
+  let unsatisfiable = 0;
 
   for (const [name, asked, served, want] of rows) {
     const got = rangePlan(asked, served, size);
@@ -586,9 +991,25 @@ check("a download is a 206 only when it is genuinely partial", () => {
     // not have; a `content-range` past the end is how a stitched file ends up
     // the wrong length.
     must(got!.offset + got!.length <= size, `${name}: content-range would run past the object`);
+
+    if (got!.length === 0) {
+      unsatisfiable += 1;
+      // The one thing a zero-length plan may never become is a 206. Asserted
+      // against the arithmetic `file()` actually performs, so this fails if
+      // anybody deletes the 416 branch and lets the subtraction run.
+      const end = got!.offset + got!.length - 1;
+      must(
+        end < got!.offset,
+        `${name}: a zero-length plan produced a coherent content-range, which hides the bug`,
+      );
+    } else {
+      must(got!.length > 0, `${name}: a served 206 must carry at least one byte`);
+    }
   }
 
-  return `${rows.length} range shapes, and a plain GET is a 200`;
+  must(unsatisfiable === 2, `expected 2 unsatisfiable rows, saw ${unsatisfiable}`);
+
+  return `${rows.length} range shapes, ${unsatisfiable} unsatisfiable (416), and a plain GET is a 200`;
 });
 
 // ---- 3. The QR encoder -----------------------------------------------------
@@ -796,6 +1217,107 @@ check("qr: output decodes back to its input", () => {
 //
 // The fight cannot be watched here (rAF parks), so its guarantees are checked by
 // stepping it. Each of these was a shipped bug at some point.
+
+// ---- The hit flash survives the fairness coin, and reactions follow causes ---
+//
+// 2026-08-20, two bugs the existing duel gates could not see.
+//
+// **The flash.** `damage()` sets the victim's `flash` to exactly 1 and
+// `drawFighter` tests `flash >= 1`, so the flare is meant to last precisely the
+// frozen hit-stop frames. The decay lived on `stepFighter`'s first line, which
+// made it a casualty of the fairness coin: with the attacker stepped first, the
+// victim's own step ran later in the same call and decayed the flash below the
+// test before anything drew. Measured: **854 of 1,755 blows (48.7%) never
+// flashed.** The renderer gate asserts only "more than 100 flashes in 40,000
+// frames", which passes comfortably with half of them gone.
+//
+// **The ordering.** `runDirector` ran *above* the hit-stop early return, so the
+// exchange clock advanced while both move clocks were frozen — and a reaction
+// beat placed by `lands(move, at)` is in director frames while the damage it
+// answers is dealt on the attacker's own `mf`. Any hit-stop between the two put
+// the reaction first: **20 of 2,200 reaction starts began before their cause.**
+// The sequence gate asserts that ordering in *beat* space, where the skew does
+// not exist by construction.
+
+if (!FAST) check("duel: a blow always flashes, and no reaction precedes its cause", () => {
+  /*
+   * `recoil` is deliberately absent: it answers a *block*, which deals no
+   * damage, so it has no cause in the health record to be ahead of.
+   */
+  const REACTIONS = new Set(["stagger", "knockdown", "stumble_in"]);
+  const st = createDuel("hooded", "caped");
+
+  let blows = 0;
+  let flashed = 0;
+  let inverted = 0;
+  let reactions = 0;
+
+  /*
+   * **Every** damage frame per fighter, not merely the most recent one.
+   *
+   * Keeping a single `last` was this gate's own first bug: a reaction whose
+   * cause was five frames behind it, followed by an unrelated second hit ten
+   * frames later, read as inverted because `last` had moved past it. It reported
+   * 296 violations where there were none.
+   */
+  const hits: { a: number[]; b: number[] } = { a: [], b: [] };
+  const pending: Array<{ who: "a" | "b"; frame: number }> = [];
+
+  let hpA = st.a.health;
+  let hpB = st.b.health;
+
+  const FRAMES = 300_000;
+  for (let i = 0; i < FRAMES; i += 1) {
+    const movingA = st.a.move;
+    const movingB = st.b.move;
+    advanceDuel(st, 1);
+
+    // A blow is a health drop. Checked immediately after the step that caused
+    // it, which is the frame the flare has to be on screen for.
+    if (st.a.health < hpA) {
+      blows += 1;
+      hits.a.push(i);
+      if (st.a.flash >= 1) flashed += 1;
+    }
+    if (st.b.health < hpB) {
+      blows += 1;
+      hits.b.push(i);
+      if (st.b.flash >= 1) flashed += 1;
+    }
+    hpA = st.a.health;
+    hpB = st.b.health;
+
+    // A reaction beginning. Recorded rather than judged, because its cause may
+    // legitimately be a frame or two behind it in the same step.
+    if (st.a.move !== movingA && REACTIONS.has(st.a.move)) pending.push({ who: "a", frame: i });
+    if (st.b.move !== movingB && REACTIONS.has(st.b.move)) pending.push({ who: "b", frame: i });
+
+    // Resolve anything old enough to judge.
+    while (pending.length && i - pending[0].frame > 40) {
+      const r = pending.shift()!;
+      const mine = hits[r.who];
+      const before = mine.some((f) => f <= r.frame && r.frame - f <= 40);
+      const after = mine.some((f) => f > r.frame && f - r.frame <= 40);
+      reactions += 1;
+      /*
+       * A reaction with no damage anywhere near it is one the director
+       * reassigned inside its own window — documented, and not this bug. What is
+       * refused is a reaction whose damage arrives *after* it started: effect
+       * before cause.
+       */
+      if (!before && after) inverted += 1;
+    }
+  }
+
+  must(blows > 500, `only ${blows} blows in ${FRAMES} frames — the fight is not landing anything`);
+  must(
+    flashed === blows,
+    `${blows - flashed} of ${blows} blows (${(((blows - flashed) / blows) * 100).toFixed(1)}%) never flashed`,
+  );
+  must(inverted === 0, `${inverted} of ${reactions} reactions began before the damage they answer`);
+
+  return `${blows} blows, all flashed; ${reactions} reactions, none before its cause`;
+});
 
 if (!FAST) check("duel: fairness, reachability, stability", () => {
   const styles = ["hooded", "caped", "haloed", "horned"] as const;
@@ -2223,6 +2745,10 @@ const UNCHECKABLE = [
   "whether any layout is beautiful, or the copy sounds right",
   "whether a QR actually scans on a phone",
   "the operator surfaces, which need a signed-in session",
+  // The gate above proves every category *has* a mark and that no mark is
+  // orphaned. It cannot prove the mark is the right one, or that two of them are
+  // not the same idea drawn twice — and at 18px that is the whole question.
+  "whether a category's icon reads as that category, and whether any two are alike",
 ];
 
 // ---- report ----------------------------------------------------------------

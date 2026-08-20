@@ -792,10 +792,22 @@ function spawnSparks(
   for (let i = 0; i < n; i += 1) {
     const ang = Math.random() * TAU;
     const speed = 1.5 + Math.random() * 4;
+    /*
+     * **One draw, used for both components.**
+     *
+     * These were two independent `1 + Math.random() * 2` multipliers, one per
+     * axis — which does not *scale* the bias `contactSpray` computed, it
+     * **shears** it. A 45° spray came out anywhere between 18.4° and 71.6° per
+     * spark, so ±27° of direction error was injected immediately after the
+     * function whose whole purpose is to get the direction right. Scaling the
+     * vector spreads the cone along the direction it was given; shearing it
+     * spreads it *across*.
+     */
+    const push = 1 + Math.random() * 2;
     st.sparks.push({
       x,
       y,
-      vx: Math.cos(ang) * speed + bx * (1 + Math.random() * 2),
+      vx: Math.cos(ang) * speed + bx * push,
       /*
        * `LIFT` is an unconditional upward kick on every spark ever spawned, and
        * it used to be **2** — against a mean bias magnitude of about 2.5, so it
@@ -807,7 +819,7 @@ function spawnSparks(
        * that to 0.899. It is kept, small, because a spark with no lift at all
        * leaves on a flat line and dies without ever arcing.
        */
-      vy: Math.sin(ang) * speed - LIFT + by * (1 + Math.random() * 2),
+      vy: Math.sin(ang) * speed - LIFT + by * push,
       // The renderer sizes and fades a spark by its own life, so a burst spawned
       // short is *smaller and dimmer for its whole flight*, not merely briefer.
       // That is what lets the lock emit two or three every frame for a second
@@ -3383,7 +3395,6 @@ function resolveContact(st: DuelState, f: Fighter, foe: Fighter, m: Move): void 
 }
 
 function stepFighter(st: DuelState, f: Fighter, foe: Fighter): void {
-  f.flash = Math.max(0, f.flash - 1 / 12);
   if (f.action === "dead") return;
 
   /*
@@ -3638,8 +3649,6 @@ function step(st: DuelState): void {
     }
   }
 
-  runDirector(st);
-
   /*
    * Hit-stop. Both move clocks hold for a frame or two on contact while the
    * sparks keep going — two frames is nothing to write down and a great deal to
@@ -3655,6 +3664,24 @@ function step(st: DuelState): void {
   }
 
   /*
+   * **The director runs BELOW the hit-stop return, so the exchange clock freezes
+   * with the fighters it is scripting.**
+   *
+   * It used to run above it. `st.dir.f` therefore kept advancing while both move
+   * clocks were held, so director-time drifted ahead of fighter-move-time by the
+   * accumulated hit-stop — and a beat placed at `lands(move, at)` is in director
+   * frames while the damage it answers is dealt when the attacker's own `mf`
+   * reaches `m.contact`. Any hit-stop between the two put the reaction first.
+   *
+   * Measured over 400,000 frames: of 2,200 reaction starts, **20 began before
+   * the damage they were answering, by up to 2 frames.** That is the bug class
+   * this effect has a rule about — *a damage reaction may never precede its
+   * cause* — and the gate could not see it, because it asserts the ordering in
+   * beat space, where the skew does not exist.
+   */
+  runDirector(st);
+
+  /*
    * Whose turn resolves first is decided by a coin, every step.
    *
    * Stepping `a` then `b` unconditionally is a genuine, silent advantage to the
@@ -3666,6 +3693,26 @@ function step(st: DuelState): void {
    * — the powers were already drawn from one distribution for both sides, but
    * this was not fair, and it biased the photo finishes.
    */
+  /*
+   * **The hit flash decays here, above the coin, and not inside `stepFighter`.**
+   *
+   * It used to be `stepFighter`'s first line, which made it a casualty of the
+   * fairness coin: when the attacker was stepped first, `resolveContact` set the
+   * victim's `flash` to 1 and the victim's own `stepFighter` — later in the same
+   * call — immediately decayed it below `drawFighter`'s `flash >= 1` test. The
+   * flare then never rendered at all, because `stepFighter` does not run again
+   * while `hitStop` counts down. Measured over 300,000 frames: 1,755 damage
+   * events, **854 of them (48.7%) lost the flash** — exactly the coin.
+   *
+   * Decaying both fighters once per step, below the hit-stop return and above
+   * the coin, keeps the property the flash is built on — `flash === 1` is
+   * precisely the frozen frames — and makes it true for every blow rather than
+   * for half of them. The renderer gate only asserted "more than 100 flashes in
+   * 40,000 frames", which passed comfortably with half of them missing.
+   */
+  st.a.flash = Math.max(0, st.a.flash - 1 / 12);
+  st.b.flash = Math.max(0, st.b.flash - 1 / 12);
+
   if (Math.random() < 0.5) {
     stepFighter(st, st.a, st.b);
     stepFighter(st, st.b, st.a);
@@ -4886,9 +4933,24 @@ export function duelFocus(st: DuelState): { cx: number; width: number; top: numb
       // The furthest the drawing reaches from the pivot along the body's own
       // axis: the crown of the head one way, the heels the other.
       const reach = Math.max(pivot + HEAD_TOP, BODY_H - pivot);
-      // A roll draws itself smaller, so it needs less room, and saying otherwise
-      // pulls the camera back for nothing.
-      const shrink = m.carry === "roll" ? 1 - ROLL_TUCK_SCALE : 1;
+      /*
+       * A roll draws itself smaller, so it needs less room, and saying otherwise
+       * pulls the camera back for nothing.
+       *
+       * **It must be the same curve the renderer uses, not a constant.**
+       * `drawFighter` tucks by `sin(π·min(1, p·1.08))·ROLL_TUCK_SCALE`, which is
+       * zero at the start of the roll, reaches full tuck near the middle, and is
+       * back to zero from `p ≥ 0.926`. A flat `1 - ROLL_TUCK_SCALE` therefore
+       * told the camera the body was 24% narrower than it is drawn for the
+       * entry and the exit of *every* `roll_through`. Measured over 300,000
+       * frames: 2,080 of 10,963 turning fighter-frames under-reported, worst by
+       * 11.1 world units a side, which left 5 frames with a body over the edge.
+       *
+       * The camera gate cannot catch this by construction — it compares the view
+       * against `duelFocus`'s own output, so an under-report is invisible to it.
+       */
+      const shrink =
+        m.carry === "roll" ? 1 - Math.sin(Math.PI * Math.min(1, p * 1.08)) * ROLL_TUCK_SCALE : 1;
       const at = (th: number) =>
         (Math.abs(Math.cos(th)) * (BODY_W / 2) + Math.abs(Math.sin(th)) * reach) * shrink;
       /*

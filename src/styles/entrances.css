@@ -78,7 +78,20 @@
  * exclusion is stated where it applies: Console already streams its blocks in
  * chrome.css and its kicker wipe inherits that delay — replacing its animation
  * here would orphan the wipe.
+ *
+ * **`--ent-ease` is written here rather than living in two `var()` fallbacks**
+ * (2026-08-20). It is a per-layout knob like `--ent-dur` and `--ent-stagger`,
+ * and no layout has ever set it — so its value was the fallback curve, spelled
+ * out identically in this rule and again in Deck's longhands below. Two copies
+ * of a curve is the shape of bug this file already documents twice: retune one
+ * and Deck's arrival silently stops matching everything else's, on the one
+ * layout whose entrance rule exists because it was already clobbered once.
+ * Declared once, read twice, and the fallbacks stay as belt and braces.
  */
+.has-entrances {
+  --ent-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
 .has-entrances:not(.layout-console) .v-block {
   animation: v-ent var(--ent-dur, 0.5s) var(--ent-ease, cubic-bezier(0.2, 0.8, 0.2, 1)) backwards;
   animation-delay: calc(var(--i, 0) * var(--ent-stagger, 50ms));

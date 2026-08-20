@@ -28,6 +28,31 @@ function day(ms: number | null): string {
   return new Date(ms).toISOString().slice(0, 10);
 }
 
+/**
+ * What a code opens, in the operator's words.
+ *
+ * **This row used to read `row.item_id ?? "everything paid"`, which was wrong in
+ * the one direction that matters** (fixed 2026-08-20). Codes gained a page scope
+ * when sub-pages landed, and the mint form on this very screen has minted
+ * page-scoped codes ever since — but the row only ever looked at `item_id`, so
+ * every one of them displayed as "everything paid". The list whose entire job is
+ * to say what a code opens was reporting the widest possible scope for the
+ * narrowest one, and the operator would have found out by revoking the wrong
+ * row.
+ *
+ * The page's title rather than its slug where we have it, because that is what
+ * the operator called it; the slug is the fallback for a page since deleted,
+ * which is worth saying out loud rather than showing as a bare word.
+ */
+function scopeOf(row: DownloadCodeRow, pages: DownloadPageSummary[]): string {
+  if (row.item_id) return `one file: ${row.item_id}`;
+  if (row.slug) {
+    const page = pages.find((p) => p.slug === row.slug);
+    return page ? `page: ${page.title}` : `page: ${row.slug} (deleted)`;
+  }
+  return "everything paid";
+}
+
 /** What a row is *doing*, in one word, because six columns of state is a report. */
 function state(row: DownloadCodeRow): { label: string; tone: string } {
   if (row.revoked_at) return { label: "revoked", tone: "is-dead" };
@@ -247,7 +272,7 @@ export function DownloadCodes() {
                 <div className="v-admin-who">
                   <span className="v-admin-handle">{row.label || "(no note)"}</span>
                   <span className="v-admin-facts">
-                    {row.ref} · {row.item_id ?? "everything paid"} · made {day(row.created_at)}
+                    {row.ref} · {scopeOf(row, pages)} · made {day(row.created_at)}
                     {row.last_used_at ? ` · last used ${day(row.last_used_at)}` : ""}
                   </span>
                 </div>

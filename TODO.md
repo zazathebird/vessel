@@ -6,6 +6,87 @@ what is left to do.
 
 ---
 
+## 2026-08-20 — a review of the recent work, and sixteen more bugs
+
+**Client:** *"yes, have prices as a toggle. and whatever else you can think of
+for a downloads page. also please review all recent work for bugs."*
+
+**Prices were already a per-page toggle**, off by default, so nothing changed
+there.
+
+**Added:** picking a file now fills in its id, name and platform from the
+filename; the editor has the page's link with a Copy button and a QR for
+somebody standing next to you; a search box appears on pages of eight files or
+more; anything added in the last thirty days is marked **new**; and each card on
+`/downloads` says how many files are on it.
+
+**Reviewed the last week of commits and found sixteen bugs**, twelve in the
+downloads Worker and four in the duel. All fixed, all gated. The ones worth
+knowing about as the person who runs this:
+
+- A file with an accent or a non-Latin character in its name — `Réparation.exe` —
+  **saved fine and then failed to download, for ever.** It now works properly.
+- Resuming a big download was broken for the tools that do it (`HEAD` answered
+  "no such endpoint"), and an already-finished download could get a malformed
+  reply. Both fixed — these matter for the 300MB files going to people on poor
+  connections.
+- **Deleting a page did not delete the codes minted for it.** Since a page
+  address can be reused, an old customer's code could come back to life on a new
+  page at the same address and open somebody else's files. Deleting now means it.
+- Minting a code for a page set to *Only people I've named* used to succeed and
+  then open nothing. It is refused, with a message saying what to do instead.
+- The revoke handle was short enough that two codes could collide, which would
+  have revoked the wrong one silently. It is wider now and checked.
+
+**Nothing here changes anything you have already set up**, and migration `0007`
+is still the only one that needs applying.
+
+**One thing I left alone and want you to know about:** the duel's fairness check
+fails at random about once in every 370 runs, on correct code, because it samples
+a fresh fight each time. `npm run check` runs before every deploy, so a deploy can
+fail for no reason. The fix that looks obvious — loosening the threshold — would
+weaken the check that guarantees neither fighter is favoured, so I have not
+touched it. Say the word if you would rather it were made deterministic.
+
+---
+
+## 2026-08-20 — downloads: categories, prices, filters, sort, and eight bugs
+
+**Client:** *"review the downloads page. make sure there are no bugs. I need
+complete control of everything about this page from my admin panel/page.
+descriptions/prices, categories, filters, sort by, with an icon for each
+category. anticipate all types of software… or just have an upload portal."*
+
+**Built.** Twenty-one categories with a drawn icon each, a price per file, a
+filter row and a sort control, and — the gap the review turned up — the ability
+to **edit a file after uploading it**, reorder files and pages, and mint a code
+for one file. `docs/DOWNLOADS.md` is the runbook and has the whole loop.
+
+**Migration `0007` must be applied to production D1 before or with the deploy.**
+Additive only, and every default is the behaviour the page already had:
+`npm run db:migrate:remote`.
+
+**Two things want your decision, not mine:**
+
+1. **Prices are off by default, per page.** This reverses the "no prices on the
+   page" rule, deliberately and on your word — but only as far as giving you the
+   switch. Nothing shows a figure until you tick *Show prices* on a page. There
+   is still no Buy button and nothing takes money; a price is a fact in the same
+   mono line as the file's size.
+2. **A `code`-gated page is now listed on `/downloads`** as locked, showing its
+   title and one-line summary to a stranger. It was silently invisible before,
+   which made it a second *unlisted* — and somebody holding a code has to be told
+   where to type it. If you would rather a paid page be invisible, that setting
+   already exists and is *Only people I've named*.
+
+**Still wants your eye**, because I cannot judge it for you: whether the
+twenty-one categories are the right twenty-one for what is actually on your
+memory stick, and whether any of the icons is ambiguous to somebody who did not
+draw it. Ask for more categories if something does not fit — adding one is
+cheap; renaming one is not, because the names are stored against your files.
+
+---
+
 ## 2026-08-20 — downloads sub-pages, built
 
 **Client:** *"i am going to have a few subpages in it… i want to be able to
@@ -51,12 +132,23 @@ Two things on `/downloads`, one now closed.
    client is taking it into Claude Design and bringing back a direction to
    implement. **The constraints that cannot be designed away are written out in
    the comment at the top of that file** — the safety notice's position above the
-   list, no prices, palette tokens only, an unlock that moves nothing, a plain
-   anchor for the download, and no design that implies an account. Implementing
-   means `src/components/DownloadsPage.tsx` and the `.v-dl-*` block of
-   `src/styles/chrome.css`; the handoff keeps the class names so it is a
-   translation rather than a rewrite. The file is a design artefact and ships
-   nowhere: Vite builds one entry, so `dist/` never sees it.
+   list, **a price that is a fact and never a Buy button**, palette tokens only,
+   an unlock that moves nothing, a plain anchor for the download, and no design
+   that implies an account. Implementing means `src/components/DownloadsPage.tsx`
+   and the `.v-dl-*` block of `src/styles/chrome.css`; the handoff keeps the
+   class names so it is a translation rather than a rewrite. The file is a design
+   artefact and ships nowhere: Vite builds one entry, so `dist/` never sees it.
+
+   **Constraint 2 changed on 2026-08-20 and was rewritten rather than deleted.**
+   It read *"NO PRICES, ANYWHERE"*; the client has since asked for prices they
+   control, so a figure may now appear on a page whose operator has ticked *Show
+   prices* — off by default. The half that still holds absolutely is that there
+   is **no Buy button**, because nothing on this page takes money.
+
+   **The handoff now predates categories, the drawn icons, the filter row and the
+   price**, so it is a picture of a slightly older page. Every class name in it is
+   still correct; the four it does not know about are `.v-caticon`,
+   `.v-dl-filters`, `.v-dl-chip` and `.v-dl-price`.
 
    **Regenerate it rather than hand-editing it if the page changes first** — it
    was built by lifting the real rules out of `src/styles/*.css`, and a

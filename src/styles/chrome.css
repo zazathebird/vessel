@@ -3271,6 +3271,99 @@
   border-bottom: 1px solid var(--line);
 }
 
+/*
+ * With category icons on, the mark takes a column of its own to the left of
+ * everything (2026-08-20).
+ *
+ * A GRID COLUMN AND NOT A FLOAT OR AN INLINE MARK, because the whole value of
+ * the icon is that a column of them can be read down: the meta line has to start
+ * on the same vertical as the name, and an inline icon would indent one and not
+ * the other. `.has-icons` is on the page section rather than on the row, so
+ * every row in a list gets the column whether or not its own category draws
+ * something — the same reserved-space rule the accent edge follows, for the same
+ * reason. Nothing may move because a neighbour differs.
+ *
+ * THE SELECTORS ARE DELIBERATELY OVER-QUALIFIED, and this is the trap. Both the
+ * things that re-shape a row — `.band-phone .v-dl-item` and
+ * `.dl-cards .v-dl-item` — are 0-2-0, so a plain `.has-icons .v-dl-item` would
+ * tie with them and be decided by which happened to be written later in the
+ * file. It would have lost to Cards and won against nothing, and the icon would
+ * have been auto-placed into whichever cell the grid had spare. Qualifying with
+ * `.v-dl-page` takes the base rule to 0-3-0 and the two exceptions to 0-4-0, so
+ * the cascade is decided by what each rule is *about* rather than by its line
+ * number.
+ */
+.v-dl-page.has-icons .v-dl-item {
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas:
+    "icon main action"
+    "icon meta action";
+  gap: 4px 14px;
+}
+
+/*
+ * Cards, and both narrow bands, put the action under the row instead of beside
+ * it — so the mark keeps its column and the button spans. One rule for all
+ * three: they are the same shape and the three selectors are all 0-4-0, so
+ * writing them apart would be three chances to let them drift.
+ *
+ * `band-tablet` is here for the touch convention this file uses throughout: a
+ * phone in landscape reports as tablet, so a phone-only rule reaches portrait
+ * alone.
+ */
+.v-dl-page.has-icons.dl-cards .v-dl-item,
+.band-phone .v-dl-page.has-icons .v-dl-item,
+.band-tablet .v-dl-page.has-icons .v-dl-item {
+  grid-template-columns: auto 1fr;
+  grid-template-areas:
+    "icon main"
+    "icon meta"
+    "action action";
+  gap: 8px 12px;
+}
+
+/*
+ * Sheet keeps its dense row gap when icons are on, which is the default.
+ *
+ * The base rule above sets `gap` as well as the grid, at 0-3-0 — which outranks
+ * `.dl-sheet .v-dl-item`'s 0-2-0, so **every sheet page silently lost its tight
+ * rows** the moment icons existed, on the one layout whose entire description is
+ * "dense and mono". Cards and the two narrow bands are covered by the 0-4-0
+ * rules above; this is the fourth exception and the only one that is purely
+ * about spacing.
+ */
+.v-dl-page.has-icons.dl-sheet .v-dl-item {
+  gap: 2px 14px;
+}
+
+.v-dl-icon {
+  grid-area: icon;
+  /* Optically aligned to the name's cap height rather than to the row box: the
+     name is 18px on a 1.0 line, so a 20px mark sits a touch low without this. */
+  margin-top: 2px;
+}
+
+.v-caticon {
+  display: block;
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  /* The mark is one ink and the ink is an accent, so it bleeds with the palette
+     at the palette's own 0.9s rather than the interaction layer's 140ms. */
+  transition: stroke 0.9s ease;
+}
+
+.v-caticon-a1 {
+  stroke: var(--a1);
+}
+
+.v-caticon-a2 {
+  stroke: var(--a2);
+}
+
 .v-dl-item:first-child {
   border-top: 1px solid var(--line);
 }
@@ -3282,7 +3375,7 @@
 .v-dl-name {
   margin: 0 0 5px;
   font-size: 18px;
-  font-weight: var(--display-weight, 600);
+  font-weight: var(--type-display-weight, 600);
   color: var(--fg);
   letter-spacing: -0.01em;
 }
@@ -3549,7 +3642,7 @@
 .v-dl-card-title {
   margin: 0 0 6px;
   font-size: 17px;
-  font-weight: var(--display-weight, 600);
+  font-weight: var(--type-display-weight, 600);
   color: var(--fg);
   letter-spacing: -0.01em;
 }
@@ -3580,7 +3673,7 @@
 .v-dl-title {
   margin: 0 0 8px;
   font-size: clamp(24px, 3.4vw, 34px);
-  font-weight: var(--display-weight, 600);
+  font-weight: var(--type-display-weight, 600);
   color: var(--fg);
   letter-spacing: -0.02em;
 }
@@ -3609,7 +3702,7 @@
 .v-dl-block-head {
   margin: 30px 0 12px;
   font-size: 19px;
-  font-weight: var(--display-weight, 600);
+  font-weight: var(--type-display-weight, 600);
   color: var(--fg);
   letter-spacing: -0.01em;
 }
@@ -3680,7 +3773,7 @@
 
 .dl-sheet .v-dl-name {
   font-size: 15px;
-  font-family: var(--mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
   letter-spacing: 0;
 }
 
@@ -3701,11 +3794,299 @@
   margin: 6px 0 24px;
 }
 
+/* ---------------------------------------------------------------------------
+ * The filter row (2026-08-20, client request: "categories, filters, sort by").
+ *
+ * THE DESIGN, and why it is not a sidebar of checkboxes.
+ *
+ * The row above a manifest is a *header*, and this site already has a register
+ * for facts about files: mono, tracked, `--muted`, separated by a dot. So the
+ * controls are drawn in that register rather than as a filter panel bolted onto
+ * a page that has none — a shop's faceted sidebar would be the template answer
+ * and it would be the first thing on this page that is not about the files.
+ *
+ * The chips are the one place any weight is spent, because the category is the
+ * thing with a drawn mark against it and a row of marks is a picture of what
+ * this page holds. Platform and order get native controls: they have nothing to
+ * show, and two more rows of chips would bury the row that does.
+ * ------------------------------------------------------------------------- */
+
+.v-dl-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px 22px;
+  margin-bottom: 22px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.v-dl-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/*
+ * A chip is a hairline box that fills with the accent when it is on.
+ *
+ * `--edge`, not `--line`: this is an interactive control and 1.4.11 wants 3:1 on
+ * its boundary, which `--line` does not carry on any palette (1.22–1.61:1). That
+ * is the same correction the 2026-08-17 pass made to buttons, inputs and the
+ * hero CTA, and a new control must not reintroduce it.
+ *
+ * The border is on every state so turning one on changes a colour and moves
+ * nothing — the rule the file rows and the index cards both follow.
+ */
+.v-dl-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 11px;
+  border: 1px solid var(--edge);
+  border-radius: 3px;
+  background: none;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  /* Colour to the palette's 0.9s; the press itself belongs to interaction.css. */
+  transition: color 0.9s ease, border-color 0.9s ease, background-color 0.9s ease;
+}
+
+.v-dl-chip.is-on {
+  color: var(--fg);
+  border-color: var(--a1);
+  background: color-mix(in oklab, var(--a1) 10%, transparent);
+}
+
+.v-dl-chip-icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* The count is a fact about the chip, so it is quieter than the label it
+   qualifies — but still `--muted`, because `--faint` fails AA everywhere. */
+.v-dl-chip-count {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.v-dl-chip.is-on .v-dl-chip-count {
+  color: var(--a1);
+}
+
+.v-dl-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+}
+
+.v-dl-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.v-dl-control-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* `auto` rather than the input's full width: these sit inline in a header row,
+   and a select stretched to a form field's width would read as a form. */
+.v-dl-select {
+  width: auto;
+  min-width: 9rem;
+  padding-block: 6px;
+  font-size: 13px;
+}
+
+/* The search box sits in the same utility row as the two selects, so it takes
+   the same quiet register. Wider than a select because it holds words. */
+.v-dl-search {
+  width: auto;
+  min-width: 12rem;
+  padding-block: 6px;
+  font-size: 13px;
+}
+
+/*
+ * The "new" marker.
+ *
+ * Inside the name, in the mono utility face at the size of a fact rather than
+ * the size of a heading — it is an annotation on the row, not a second title.
+ * `--a2`, the site's second accent: `--a1` is already carrying the unlocked edge
+ * and the platform, and `--a3` is the danger token, which this is not.
+ *
+ * `vertical-align` rather than a negative margin so it cannot alter the line
+ * box: this sits in an `h3` in a grid row whose height every neighbouring row
+ * has to match.
+ */
+.v-dl-new {
+  margin-left: 9px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--a2);
+  vertical-align: 0.15em;
+  transition: color 0.9s ease;
+}
+
+/* The count on an index card. The same mono register as a file's own facts,
+   because that is what it is — a fact about the thing the card points at. */
+.v-dl-card-count {
+  margin: 8px 0 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* The category, in the manifest line. `--muted` like the rest of the facts —
+   the platform keeps `--a1` because it is the one that answers "can I run
+   this", and two accented facts in one line is neither of them emphasised. */
+.v-dl-cat {
+  color: var(--muted);
+}
+
+/*
+ * The price.
+ *
+ * `--fg` and nothing else: no size bump, no accent, no badge. It is the last
+ * fact in a line of facts, and the moment it is drawn as a *label* this page
+ * becomes a shop — which the whole design of `/downloads` refuses to be, and
+ * which is why prices are off until the operator turns them on.
+ */
+.v-dl-price {
+  color: var(--fg);
+}
+
 /* Both narrow bands, per the touch convention: a phone in landscape is
    `band-tablet`, so a phone-only rule would reach portrait alone. */
 .band-phone .v-dl-index,
 .band-tablet .v-dl-index {
   grid-template-columns: 1fr;
+}
+
+/* On a phone the row becomes two stacked groups rather than a header: the chips
+   need the full width to wrap into, and the two selects sit under them. */
+.band-phone .v-dl-filters,
+.band-tablet .v-dl-filters {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+/* 44px targets on touch, the same floor the download button takes. */
+.band-phone .v-dl-chip,
+.band-tablet .v-dl-chip {
+  min-height: 44px;
+}
+
+/* ---------------------------------------------------------------------------
+ * The editor's own additions (2026-08-20). Operator-only, so it reuses
+ * `.v-admin-*` and `.v-field-*` wholesale and only styles what has no
+ * equivalent.
+ * ------------------------------------------------------------------------- */
+
+/* The presentation switches, grouped as a real `<fieldset>` because they are
+   one decision — how this page shows its files — and a legend says so to a
+   screen reader without a heading that would compete with the panel's own. */
+.v-dledit-fieldset {
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 16px 18px;
+  margin: 4px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.v-dledit-fieldset legend {
+  padding: 0 8px;
+}
+
+.v-dledit-order {
+  margin-bottom: 20px;
+}
+
+/* The row a file occupies in the editor: its mark, then its name and facts. */
+.v-dledit-file-who {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* The row currently loaded into the form below, so the operator can see which
+   one they are editing without scrolling back up. An accent edge, reserved on
+   every row so nothing shifts — the file list's own rule, restated. */
+.v-admin-row {
+  border-left: 2px solid transparent;
+  padding-left: 10px;
+  margin-left: -12px;
+  transition: border-left-color 0.9s ease;
+}
+
+.v-admin-row.is-editing {
+  border-left-color: var(--a1);
+}
+
+/* The chosen category's own line, with its mark beside it — so the operator
+   sees the icon they are picking at the moment they pick it, rather than after
+   saving and opening the page. */
+.v-dledit-cathint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Sits on the "Editing …" heading, so cancelling is where the state is named
+   rather than at the far end of the form. */
+.v-dledit-cancel {
+  margin-left: 12px;
+}
+
+/* The page's own link, with the QR beside it. Bordered like the presentation
+   fieldset above it, because it is the same kind of thing: a box of controls
+   about the page as a whole rather than about one file. */
+.v-dledit-share {
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 16px 18px;
+  margin: 20px 0;
+}
+
+/* The symbol is a fixed light-on-dark block by necessity (see `QrCode`), so it
+   gets a little air rather than sitting flush against a dark panel. */
+.v-dledit-qr {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+/* An upload that never finished. `--a3` is the danger token and this is the one
+   state in the editor that genuinely is one: the file is live-looking here and
+   invisible to everybody else. It is also the draft-link warning, which is the
+   same kind of "this looks fine to you and is broken for them". */
+.v-dledit-unfinished {
+  margin: 4px 0 0;
+  color: var(--a3);
+  font-size: 12px;
+  line-height: 1.5;
+  max-width: 52ch;
 }
 
 .band-phone .dl-cards .v-dl-list,
