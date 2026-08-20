@@ -18,6 +18,7 @@ import * as accounts from "./accounts";
 import * as admin from "./admin";
 import * as machines from "./machines";
 import * as downloads from "./downloads";
+import * as pages from "./downloadPages";
 import * as passkeys from "./passkeys";
 import * as setups from "./setups";
 import { clientKey } from "./crypto";
@@ -371,6 +372,51 @@ async function route(
       return downloads.claim(request, env);
     case "GET /api/downloads/file":
       return downloads.file(request, env, url);
+
+    /*
+     * The operator's own sub-pages (2026-08-20). The two reads are public in
+     * the same sense `/api/site-config`'s is — they serve whatever the caller is
+     * allowed to see and nothing else, which for a signed-out visitor is the
+     * live public pages. Every decision about *what that is* lives in
+     * `resolveAccess`; none of it is repeated here.
+     */
+    case "GET /api/downloads/pages":
+      return pages.listPages(request, env, url);
+    case "GET /api/downloads/page":
+      return pages.readPage(request, env, url);
+
+    // Authoring. Operator only, every one of them.
+    case "POST /api/admin/downloads/page":
+      return pages.savePage(request, env);
+    case "POST /api/admin/downloads/page/delete":
+      return pages.deletePage(request, env);
+    case "POST /api/admin/downloads/page/order":
+      return pages.reorderPages(request, env);
+    case "POST /api/admin/downloads/blocks":
+      return pages.saveBlocks(request, env);
+    case "POST /api/admin/downloads/file":
+      return pages.saveFile(request, env);
+    case "POST /api/admin/downloads/file/delete":
+      return pages.deleteFile(request, env);
+
+    // The upload, in parts. See `downloadPages.beginUpload` for why it is
+    // multipart even for a small file.
+    case "POST /api/admin/downloads/upload/begin":
+      return pages.beginUpload(request, env);
+    case "PUT /api/admin/downloads/upload/part":
+      return pages.uploadPart(request, env, url);
+    case "POST /api/admin/downloads/upload/finish":
+      return pages.finishUpload(request, env);
+    case "POST /api/admin/downloads/upload/abort":
+      return pages.abortUpload(request, env);
+
+    // Per-account access.
+    case "GET /api/admin/downloads/grants":
+      return pages.listGrants(request, env);
+    case "POST /api/admin/downloads/grant":
+      return pages.addGrant(request, env);
+    case "POST /api/admin/downloads/grant/delete":
+      return pages.removeGrant(request, env);
 
     // Minting, listing and revoking access codes. Operator only.
     case "POST /api/admin/downloads/mint":

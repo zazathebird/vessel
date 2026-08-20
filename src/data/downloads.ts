@@ -1,31 +1,38 @@
 /**
- * The downloads catalogue — the operator's own programs, offered free or behind
- * an access code (2026-08-19, client request).
+ * The downloads vocabulary — the small closed sets the Worker validates against
+ * and the page renders from.
  *
- * WHY THIS IS A TYPESCRIPT FILE AND NOT A DATABASE TABLE. The site already
- * keeps its content in `src/data/*.ts` and its *appearance* in D1, and the
- * split is deliberate: appearance changes on a whim and copy changes with a
- * deploy. A catalogue entry is copy. Adding a program is therefore: upload the
- * file, add an entry here, deploy — three steps, none of which can half-happen.
- * The alternative (an editable table plus an upload interface) is a second
- * content system for a list that will have a dozen rows in it.
+ * **THIS FILE USED TO BE THE CATALOGUE, AND THAT DECISION WAS REVERSED ON
+ * 2026-08-20 AT THE CLIENT'S REQUEST.** The reasoning it carried is worth
+ * keeping, because it was right about the thing it was answering: the site keeps
+ * content in `src/data/*.ts` and appearance in D1, on the grounds that copy
+ * changes with a deploy. A one-line catalogue of a dozen programs genuinely is
+ * copy.
+ *
+ * What was asked for is not that. It is several pages the operator names, lays
+ * out, fills with their own files and publishes **while they are on the phone to
+ * somebody** — plus per-account access. None of that can be a deploy step, and
+ * an upload interface is not a second content system when the alternative is the
+ * client opening a terminal. So the rows moved to D1
+ * (`migrations/0006_download_pages.sql`) and this file kept the parts that are
+ * genuinely constants: the notice, the labels, and the closed sets below.
+ *
+ * The catalogue was **empty** on the day it moved, so no id in circulation
+ * changed and there was nothing to migrate.
  *
  * WHAT LIVES WHERE, because getting this wrong is the whole security of it:
  *
- *   - This file is **public**. It ships in the bundle. It holds names, blurbs,
- *     versions and sizes — never a URL, never a key, never a code.
+ *   - This file is **public**. It ships in the bundle and holds no data.
+ *   - The **rows** live in D1 and are served by `worker/downloadPages.ts`, which
+ *     decides per request what the caller may see.
  *   - The **bytes** live in a private R2 bucket the Worker alone can read
  *     (`DOWNLOADS` in wrangler.toml). There is no public URL to guess at, which
- *     is what makes the gate real rather than decorative. A file dropped in
- *     `public/` would be fetchable by anyone who typed its name, and the code
- *     entry in front of it would be theatre.
+ *     is what makes the gate real rather than decorative.
  *   - The **codes** live in D1 as HMACs (`migrations/0005_downloads.sql`).
  *
- * THE PAYMENT IS DELIBERATELY NOT HERE. The client takes payment out of band —
+ * THE PAYMENT IS DELIBERATELY NOWHERE. The client takes payment out of band —
  * e-transfer, then they hand over a code by hand. That is not a limitation
  * worked around; it is the reason this design stores no personal data at all.
- * There is no checkout, no processor, no card, no name, no email, no invoice
- * table. See `docs/DOWNLOADS.md` for the operator's side of the loop.
  */
 
 /**
@@ -35,53 +42,52 @@
  */
 export type DownloadPlatform = "windows" | "linux" | "android" | "script" | "any";
 
-export interface DownloadItem {
-  /**
-   * Stable id. It is the R2 object key *and* the URL fragment, so renaming one
-   * breaks any link already handed out. Treat it as a wire format: add, never
-   * rename.
-   */
-  id: string;
-  name: string;
-  /** One or two sentences, in the site's voice. What it does, plainly. */
-  blurb: string;
-  platform: DownloadPlatform;
-  /** Shown as-is. No parsing, no comparison — a human reads it. */
-  version: string;
-  /**
-   * Human-readable size, written by hand rather than measured at runtime: the
-   * catalogue renders before any request to the Worker, and a size that arrives
-   * late makes the list reflow under the reader's thumb.
-   */
-  size: string;
-  /**
-   * The exact filename the visitor receives. Also what the Worker puts in
-   * `content-disposition`, so it is the one place the extension is decided.
-   */
-  filename: string;
-  /**
-   * Free items need no code and download on one click. Paid items need one.
-   *
-   * This is the whole free/paid switch: the client can give any item away by
-   * flipping this and deploying, or give it to *one* person by minting a code
-   * scoped to it. Both were asked for.
-   */
-  free?: boolean;
-  /**
-   * Set when the item is not the operator's own work, naming who wrote it.
-   *
-   * It exists to make the question impossible to skip. Redistributing somebody
-   * else's software is their licence's call and not this site's, and a field
-   * that has to be filled in is a better reminder than a note in a document
-   * nobody re-reads. Rendered as an attribution line.
-   */
-  author?: string;
-  /**
-   * Anything the visitor should know *before* clicking: an unsigned binary, a
-   * dependency, a "this needs administrator". Rendered as a warning line.
-   */
-  caveat?: string;
-}
+export const PLATFORMS: readonly DownloadPlatform[] = [
+  "windows",
+  "linux",
+  "android",
+  "script",
+  "any",
+];
+
+/**
+ * The looks a page can wear, and **the single definition of them**.
+ *
+ * `worker/downloadPages.ts` validates against this list and `DownloadPage.tsx`
+ * renders from it, importing the same array rather than each holding a copy —
+ * which is the shape of bug this codebase has been bitten by often enough to
+ * have a rule about it (`FX` and the share code; `duelFocus` and the camera).
+ * A second copy here would mean an operator could save a layout that renders as
+ * the default and be told nothing.
+ *
+ * Each one is a class on the page's own section, so a layout is CSS and never a
+ * different set of facts. `npm run check` fails if one of these has no rule.
+ */
+export const PAGE_LAYOUTS = ["list", "cards", "sheet", "blocks"] as const;
+export type PageLayout = (typeof PAGE_LAYOUTS)[number];
+
+/**
+ * Who can reach a page.
+ *
+ * - `public` — listed on /downloads for anyone.
+ * - `unlisted` — reachable only by its address. The secret is the link, which
+ *   is the only thing it ever claims to be.
+ * - `code` — the whole page is behind an access code.
+ * - `granted` — only accounts the operator has named.
+ *
+ * Per-*file* gating is separate and unchanged: a file's own free/paid switch
+ * still decides whether the bytes need a ticket, so a public page full of paid
+ * files is the shape the site already had.
+ */
+export const PAGE_VISIBILITY = ["public", "unlisted", "code", "granted"] as const;
+export type PageVisibility = (typeof PAGE_VISIBILITY)[number];
+
+/**
+ * The free-form vocabulary. Four kinds, no nesting, no markup — see the
+ * migration for why raw HTML from an admin box is not on offer.
+ */
+export const BLOCK_KINDS = ["heading", "text", "list", "files"] as const;
+export type BlockKind = (typeof BLOCK_KINDS)[number];
 
 /**
  * THE UNSIGNED-BINARY LINE IS NOT PER-ITEM AND MUST NOT BECOME PER-ITEM.
@@ -100,7 +106,9 @@ export interface DownloadItem {
  *
  * Kept as a constant rather than in `pages.ts` because it is a safety notice
  * that happens to be copy, and burying it among nine pages of blocks is how it
- * would eventually be edited for tone by somebody skimming.
+ * would eventually be edited for tone by somebody skimming. It is **not**
+ * operator-editable for the same reason: the per-page `notice` field is for the
+ * operator's own warnings and sits beside this one, never instead of it.
  */
 export const UNSIGNED_NOTICE = {
   title: "Windows will warn you about some of these",
@@ -112,27 +120,6 @@ export const UNSIGNED_NOTICE = {
     "came here on purpose and clicked it yourself. Nobody rang you. If anyone ever phones and talks " +
     "you through getting past that box, hang up.",
 } as const;
-
-/**
- * The catalogue.
- *
- * EMPTY ON PURPOSE at the time of writing — the page, the gate and the storage
- * are built and the client's own files have not been uploaded yet. An empty
- * list renders an honest "nothing here yet" rather than a broken grid, and the
- * check suite asserts the shape of whatever is added rather than the count.
- *
- * To add one:
- *   1. `wrangler r2 object put vessel-downloads/<id> --file ./thing.exe`
- *   2. add an entry here whose `id` matches that key exactly
- *   3. `npm run deploy`
- * `docs/DOWNLOADS.md` has the full loop, including minting a code.
- */
-export const DOWNLOADS: DownloadItem[] = [];
-
-/** Resolve an id to its entry. Unknown ids are not errors here — the Worker refuses them. */
-export function downloadById(id: string): DownloadItem | undefined {
-  return DOWNLOADS.find((d) => d.id === id);
-}
 
 export const PLATFORM_LABEL: Record<DownloadPlatform, string> = {
   windows: "Windows",

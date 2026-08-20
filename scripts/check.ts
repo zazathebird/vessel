@@ -43,7 +43,7 @@ import type { DuelCam } from "../src/components/DuelOrnament";
 import { BLADE_COLORS, DUEL_POOLS, FIGHTERS, rollPairing } from "../src/fx/fighters";
 import type { CostumeCtx, FighterKind, FighterStyle } from "../src/fx/fighters";
 import { PAGES } from "../src/data/pages";
-import { DOWNLOADS } from "../src/data/downloads";
+import { PAGE_LAYOUTS } from "../src/data/downloads";
 import { rangePlan } from "../worker/downloads";
 import { PATHS } from "../src/data/pageIds";
 import { LAYOUTS, FX, PICKABLE_FX, TYPESETS, SCOPES } from "../src/data/catalog";
@@ -502,23 +502,25 @@ check("the downloads catalogue and its container hold together", () => {
     "Side-scroll's stage no longer opts out of its track for the downloads catalogue",
   );
 
-  const seen = new Set<string>();
-  for (const item of DOWNLOADS) {
+  /*
+   * **The id and filename rules moved into the Worker on 2026-08-20 and this is
+   * the note that says where.** They used to be checked here, over a TypeScript
+   * catalogue. The catalogue is D1 now — the operator types these into a form —
+   * so a build-time check has nothing to read and the same two rules are
+   * enforced by `worker/downloadPages.ts` as 400s (`KEY`, and the extension test
+   * in `saveFile`). What *can* still be checked at build time is that every
+   * layout the operator is offered actually exists in the stylesheet, which is
+   * the new failure this feature introduced: a layout saved from a picker and
+   * rendering as the default, silently.
+   */
+  for (const layout of PAGE_LAYOUTS) {
     must(
-      /^[a-z0-9][a-z0-9-]*$/.test(item.id),
-      `download id "${item.id}" is not lowercase-kebab — it is an R2 object key and a URL value`,
+      new RegExp(`\\.dl-${layout}\\b`).test(css),
+      `page layout "${layout}" is offered in the editor but has no \`.dl-${layout}\` rule — it would render as the default and say nothing`,
     );
-    must(!seen.has(item.id), `duplicate download id "${item.id}"`);
-    seen.add(item.id);
-    must(
-      /\.[a-z0-9]{1,6}$/i.test(item.filename),
-      `download "${item.id}" has a filename with no extension ("${item.filename}") — it is handed to the browser verbatim`,
-    );
-    must(item.name.trim().length > 0, `download "${item.id}" has no name`);
-    must(item.blurb.trim().length > 0, `download "${item.id}" has no blurb`);
   }
 
-  return `${DOWNLOADS.length} catalogue entries, container owns its width`;
+  return `${PAGE_LAYOUTS.length} page layouts, all styled; container owns its width`;
 });
 
 // ---- 2c. The download's partial-response arithmetic -------------------------

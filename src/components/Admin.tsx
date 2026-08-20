@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { DownloadCodes } from "./DownloadCodes";
+import { DownloadEditor } from "./DownloadEditor";
 
 import { useConfig } from "../config/ConfigContext";
 import { useSession } from "../auth/SessionContext";
@@ -264,6 +265,7 @@ export function Admin() {
           panel: the panel is *appearance*, and this is neither appearance nor
           an account. It is the third operator surface, and admin is where the
           other operator-only lists already are. */}
+      <DownloadEditor />
       <DownloadCodes />
     </section>
   );

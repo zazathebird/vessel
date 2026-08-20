@@ -476,7 +476,15 @@ ones most likely to be "fixed" by accident:
   `/admin`, and (phase 2) `/machines` and `/share`. The phase-2 pair follow the account pages'
   unlinked convention — typed routes (`machines`, `share`) and links from the `/signin` summary,
   nothing in the public nav. **Adding a content page moves the 404's page count** — see *Copy
-  changes* below
+  changes* below.
+
+  **One route has something after it, and exactly one** (2026-08-20): `/downloads/<name>`, whose
+  names are rows in D1 and change while the site is running, so they cannot be in the table.
+  `subFromPath` returns it and `ConfigContext` carries it as `sub` — **deliberately not in
+  `config`**, which is validated field by field on load, published to every visitor and packed into
+  share codes; a transient URL fragment would have to be excluded from all three and remembered as
+  excluded by everyone who touches them. Resist making the router general: `PATHS` being a total map
+  from a closed union is what makes every other link on the site checkable by the compiler
 - **The 404 pill left the public nav on 2026-08-13, by client decision.** "404 genuinely in the
   nav" was the spec's joke; the client pulled it behind sign-in. It now leads `OPERATOR_NAV`
   (404 / Account / Admin), the operator-only tabs the header appends for a signed-in operator,
@@ -1671,6 +1679,52 @@ the four things that are easy to undo by accident.
   rule: R2 may *decline* a range and send everything, and announcing that as a partial makes a
   resuming client write bytes at the wrong offset. A served range that is not a genuine subset is a
   200. Gated as a truth table; `docs/DECISIONS.md` 2026-08-19 has the measurements.
+- **The catalogue is a database table now, and that reverses what `src/data/downloads.ts` used to
+  argue at length** (2026-08-20, client: *"i want to be able to design and name them as i want…
+  each page will be able to host files"*). The old file's reasoning — content is TypeScript,
+  appearance is D1, so a catalogue entry is copy and belongs in a deploy — was right about a single
+  flat list and wrong about what was asked for: several operator-named pages, laid out by them,
+  published **while they are on the phone to somebody**, with per-person access. None of that can be
+  a deploy step. It was free to reverse because the catalogue was empty on the day, so no id in
+  circulation moved.
+- **`resolveAccess` is the only thing that decides who may see what, and every read goes through
+  it.** Listing pages, reading one, and serving bytes all ask the same function the same question.
+  The `file` route used to carry its own rule (free, or a ticket naming the item) and that is no
+  longer sufficient — a file also sits on a page that may be a draft, unlisted, code-gated or
+  granted. `canDownload` starts by calling `canRead` on the page, so **bytes cannot escape through a
+  page the caller was refused**. Do not give any route a second opinion about access; two checks
+  that agree today are two checks that disagree after the next change.
+- **A ticket's subject carries three kinds of thing, and the difference between two of them is a
+  security boundary.** `@slug` opens a page and everything on it; **`~slug` makes a page merely
+  *readable***; a bare string is one file. A code scoped to one file has to open the page that file
+  is on — the download button lives there — but "you may look at this" is not "you may take
+  everything on it", and conflating them let a customer who bought one program fetch every other
+  paid file on the page by editing one query parameter (found in review, 2026-08-20, before it
+  shipped; the ids are in the page response they legitimately receive, so there was nothing to
+  guess). **`canDownload` reads `ticketPages` and must never read `ticketVisible`.** Gated by the
+  harness, and that gate was verified by re-introducing the bug.
+- **Grants are evaluated as rows, never as two sets.** A grant is a `(page, file)` pair in which
+  either may be null, meaning "any". Shredding those into a set of pages and a set of files loses
+  the pairing, and a null in one row then attaches its wildcard to *every other row's* scope: an
+  account with a whole-page grant on one page and a one-file grant on another could take every file
+  on the second (same review). `grantedFile` tests both halves of one row. Also gated, also verified
+  by breaking it.
+- **A draft and a `granted` page both 404; a `code` page says it exists.** That asymmetry is the
+  point: somebody holding a code has to be told where to type it, whereas the existence of a page
+  named after a customer is itself the thing being kept quiet.
+- **Validation moved from `npm run check` to the Worker, because the data moved.** The id rule
+  (lowercase-kebab: it is an R2 object key *and* a URL value) and the filename rule (it must have an
+  extension: `content-disposition` hands it to the browser verbatim) are the same two rules that
+  were gated at build time; they are 400s in `saveFile` now. What the check suite gates instead is
+  that **every layout offered in the editor has a CSS rule**, which is the new way this feature can
+  fail silently — a look saved from a picker that renders as the default and says nothing.
+- **An upload writes the row before the bytes and marks it usable after.** `uploaded_at` is null in
+  between and a page hides those rows, so an upload that dies halfway leaves an invisible draft
+  rather than a link that 404s at a customer. The size is read from the object with `head`, never
+  from the browser — which the old catalogue could not do, and is why sizes used to be typed.
+- **The upload is multipart even for a small file.** A single PUT is less code and carries a
+  ceiling; one path that always works beats two where the second is discovered by a 413 on the day a
+  file gets big.
 - **The table holds no personal data, and the free-text `label` is the one field that could change
   that.** No name, no email, no payment reference, no IP — which is what keeps `SPEC-ACCOUNTS.md`
   §9's inventory unchanged by this whole feature, and it is why payment stays out of band. A code is

@@ -3499,3 +3499,364 @@
 .v-dlcodes-state.is-dead {
   color: var(--muted);
 }
+
+/* ---------------------------------------------------------------------------
+ * Downloads sub-pages (2026-08-20, client request).
+ *
+ * The client asked for several looks they could switch between and publish live.
+ * **A layout here is a class and nothing else**: every one renders the same
+ * title, prose, notice and files, and the difference is spacing and grouping.
+ * That is the only version of "choose a design" that cannot produce a page
+ * missing its safety notice, which matters more here than anywhere else on the
+ * site — this is the page that hands somebody an executable.
+ *
+ * `npm run check` fails if a layout offered in the editor has no rule here, so
+ * a picker can never save a look that silently renders as the default.
+ * ------------------------------------------------------------------------- */
+
+/* The index: one card per page. Cards *are* right here, unlike in the file list
+   — a page is a place you go, and a row of hairlines would read as a manifest
+   of things to download rather than as a way in. */
+.v-dl-index {
+  list-style: none;
+  margin: 0 0 34px;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: 14px;
+}
+
+.v-dl-card {
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  /* The same reserved-space trick the file rows use: the accent edge exists on
+     every card so an unlocked one does not resize its neighbours. */
+  border-left: 2px solid transparent;
+  transition: border-color 0.9s ease;
+}
+
+.v-dl-card.is-open {
+  border-left-color: var(--a1);
+}
+
+.v-dl-card-link {
+  display: block;
+  padding: 16px 18px;
+  text-decoration: none;
+  color: inherit;
+}
+
+.v-dl-card-title {
+  margin: 0 0 6px;
+  font-size: 17px;
+  font-weight: var(--display-weight, 600);
+  color: var(--fg);
+  letter-spacing: -0.01em;
+}
+
+.v-dl-card-summary {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* A draft is the operator's own state and says so in their own colour. `--a3`
+   is the danger token and this is not danger; `--a2` is the site's second
+   accent and reads as "not finished" without shouting. */
+.v-dl-draft {
+  margin: 0;
+  padding: 0 18px 14px;
+  color: var(--a2);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.v-dl-head {
+  margin-bottom: 26px;
+}
+
+.v-dl-title {
+  margin: 0 0 8px;
+  font-size: clamp(24px, 3.4vw, 34px);
+  font-weight: var(--display-weight, 600);
+  color: var(--fg);
+  letter-spacing: -0.02em;
+}
+
+.v-dl-summary {
+  margin: 0;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.6;
+  max-width: 56ch;
+}
+
+.v-dl-intro p,
+.v-dl-block-text p {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.7;
+  max-width: 62ch;
+}
+
+.v-dl-intro {
+  margin-bottom: 26px;
+}
+
+.v-dl-block-head {
+  margin: 30px 0 12px;
+  font-size: 19px;
+  font-weight: var(--display-weight, 600);
+  color: var(--fg);
+  letter-spacing: -0.01em;
+}
+
+.v-dl-block-list {
+  margin: 0 0 18px;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.7;
+  max-width: 62ch;
+}
+
+.v-dl-back {
+  margin-top: 34px;
+}
+
+/* ---- the four looks ------------------------------------------------------ */
+
+/* `list` — the manifest the page shipped with. The default, and deliberately
+   the plainest: it is the one that reads as a directory listing. */
+.dl-list .v-dl-list {
+  gap: 2px;
+}
+
+/*
+ * `cards` — each file in its own bordered box, two across where there is room.
+ * For a page of a few substantial programs, where the list's hairlines make
+ * three things look like a fragment of a longer list.
+ */
+.dl-cards .v-dl-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr));
+  gap: 14px;
+}
+
+.dl-cards .v-dl-item {
+  border: 1px solid var(--line);
+  border-left: 2px solid transparent;
+  border-radius: 3px;
+  padding: 16px 18px;
+  margin-left: 0;
+  grid-template-columns: 1fr;
+  grid-template-areas:
+    "main"
+    "meta"
+    "action";
+  gap: 10px 0;
+}
+
+.dl-cards .v-dl-item:first-child {
+  border-top: 1px solid var(--line);
+}
+
+.dl-cards .v-dl-action {
+  align-self: start;
+}
+
+/*
+ * `sheet` — dense, mono, one line of facts per file. For a page that is a
+ * reference rather than a shop: many small scripts where the name and the
+ * version are the whole story.
+ */
+.dl-sheet .v-dl-item {
+  padding: 11px 0 11px 14px;
+  gap: 2px 20px;
+}
+
+.dl-sheet .v-dl-name {
+  font-size: 15px;
+  font-family: var(--mono, ui-monospace, monospace);
+  letter-spacing: 0;
+}
+
+.dl-sheet .v-dl-blurb {
+  font-size: 13px;
+}
+
+.dl-sheet .v-dl-meta {
+  font-size: 12px;
+}
+
+/*
+ * `blocks` — the free-form one. The files sit inside the operator's own prose
+ * rather than under it, so the list needs a little air above it to read as part
+ * of the paragraph it follows.
+ */
+.dl-blocks .v-dl-list {
+  margin: 6px 0 24px;
+}
+
+/* Both narrow bands, per the touch convention: a phone in landscape is
+   `band-tablet`, so a phone-only rule would reach portrait alone. */
+.band-phone .v-dl-index,
+.band-tablet .v-dl-index {
+  grid-template-columns: 1fr;
+}
+
+.band-phone .dl-cards .v-dl-list,
+.band-tablet .dl-cards .v-dl-list {
+  grid-template-columns: 1fr;
+}
+
+.band-phone .v-dl-card-link,
+.band-tablet .v-dl-card-link {
+  /* The touch rule: a card is the whole target, so it gets the full height
+     rather than the title alone. */
+  min-height: 44px;
+}
+
+/* ---------------------------------------------------------------------------
+ * The downloads editor — operator only (2026-08-20).
+ *
+ * Sits under Accounts on the admin page and reuses `.v-field`, `.v-input`,
+ * `.v-admin-list` and `.v-admin-row` wholesale, so a row of files and a row of
+ * accounts read as the same kind of object. Only the things with no equivalent
+ * are styled here.
+ * ------------------------------------------------------------------------- */
+
+.v-dledit {
+  margin-top: 40px;
+  padding-top: 30px;
+  border-top: 1px solid var(--line);
+}
+
+.v-dledit-bar {
+  margin-bottom: 18px;
+}
+
+.v-dledit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* A row of fields that collapses on the narrow bands, both of them — a phone in
+   landscape is `band-tablet`, so a phone-only rule would reach portrait alone. */
+.v-dledit-row {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.v-dledit-row .v-field {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.band-phone .v-dledit-row,
+.band-tablet .v-dledit-row {
+  flex-direction: column;
+  gap: 14px;
+}
+
+.v-dledit-area {
+  resize: vertical;
+  min-height: 3lh;
+  font: inherit;
+  line-height: 1.6;
+}
+
+.v-dledit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.v-dledit-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+}
+
+.v-dledit-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.v-dledit-block:last-of-type {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.v-dledit-block-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.v-dledit-block-bar .v-input {
+  flex: 1 1 auto;
+}
+
+.v-dledit-files,
+.v-dledit-grants {
+  margin-top: 34px;
+  padding-top: 24px;
+  border-top: 1px solid var(--line);
+}
+
+.v-dledit-file-meta {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* The upload's own line. `--a1` because it is progress rather than a warning,
+   and because it wants to be the one thing moving on a screen full of forms. */
+.v-dledit-progress {
+  margin: 0;
+  color: var(--a1);
+  font-size: 14px;
+}
+
+/* A plain checkbox with its label, for the one place on the site that has a
+   real one. The panel's controls are `aria-pressed` buttons because they are
+   settings; this is a form field being filled in, and a checkbox is what that
+   is. */
+.v-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--fg);
+  font-size: 15px;
+  /* The touch rule applies to every band: this is a control, and 44px is the
+     floor the rest of the site holds to. */
+  min-height: 44px;
+}
+
+.v-check input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--a1);
+}
+
+/* The third button weight: quieter than `.v-btn`, for the moves that undo or
+   reorder rather than commit. Border only, so it recedes without becoming
+   unreadable — `--edge` rather than `--line`, which is not a contrast-bearing
+   colour and fails 1.4.11 on a control. */
+.v-btn-quiet {
+  background: transparent;
+  border-color: var(--edge);
+  color: var(--muted);
+}

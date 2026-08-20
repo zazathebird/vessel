@@ -14,7 +14,105 @@ file records what happened to the codebase.
 ---
 
 
-## 2026-08-20 (latest) — phase 3: four ways to get out of the way, and a camera that stopped cutting people in half
+## 2026-08-20 (latest) — the downloads catalogue becomes a thing the operator builds
+
+Client, the same day: *"i am going to have a few subpages in it. but i want to be able to design and
+name them as i want. so please make some kind of engine that allows my admin panel to create
+subpages for the downloads page. each page will be able to host files."* Then, asked how much design
+control and who should see them: *"but with option in admin panel to be able to free form as well.
+and please have a few different styles/layouts for the page that i can edit and publish and make
+live on the site in real time"* and *"even more granularized options that i can set, for each user
+on what they can see."*
+
+### It reverses a decision this file recorded a day earlier, and that is the right call
+
+`src/data/downloads.ts` argued that the catalogue is a TypeScript file *because* an editable table
+plus an upload interface is "a second content system for a list that will have a dozen rows in it".
+That is a good argument about a single flat list and it is the wrong argument about what was asked
+for. The value of every part of this request is that it happens **without a deploy** — a page named,
+laid out and published while the client is on the phone to the person who is about to download from
+it. A deploy step is not a slower version of that; it is a different feature.
+
+It was free to reverse **because the catalogue was empty**. Nothing had to be migrated and no id in
+circulation moved. A month from now the same change costs a data migration and a careful look at
+every link already handed out, which is worth knowing the next time a "this belongs in code"
+decision is made about something the client will want to edit.
+
+### What is load-bearing
+
+**One function decides access, and every read goes through it.** `resolveAccess` resolves the three
+independent routes in — operator, granted account, redeemed code — and `canRead`/`canDownload` are
+the only two answers. The `file` route used to carry its own rule (free, or a ticket naming the
+item), which was right when a file's only gate was its own flag and is not right now that it also
+sits on a page which may be a draft, unlisted, code-gated or named to particular accounts.
+`canDownload` opens by calling `canRead` on the page, so bytes cannot escape through a page the
+caller was refused. Two checks that agree today are two checks that disagree after the next change.
+
+**A draft and a `granted` page 404; a `code` page admits it exists.** Somebody holding a code has to
+be told where to type it. The existence of a page named after a customer is itself the thing being
+kept quiet.
+
+**Validation moved from the check suite into the Worker, because the data moved.** The two rules
+that mattered — an id is lowercase-kebab (it is an R2 object key *and* a URL value) and a filename
+must have an extension (`content-disposition` hands it over verbatim) — were build-time gates over a
+TypeScript array and are 400s now. What `npm run check` gates instead is the failure this feature
+newly makes possible: **a layout offered in the editor with no CSS rule**, which would save fine,
+render as the default, and say nothing.
+
+**A page is HTML the site renders, never HTML the operator supplies.** The free-form look is four
+kinds of block with no markup. An HTML box would be an XSS hole the first time something was pasted
+in from a website, and it would let one page opt out of the palette system that keeps every surface
+on this site recolouring together.
+
+**The upload is multipart even for a small file**, and the row is written before the bytes and
+marked usable after. `uploaded_at` is null in between and the page hides those rows, so an upload
+that dies halfway leaves an invisible draft rather than a link that 404s at a customer. The size is
+read back from the object with `head` — the old catalogue typed sizes by hand *because* the page
+rendered from the bundle before any request, and that objection died with the catalogue.
+
+### The security review found two real holes, and both were mine
+
+`CLAUDE.md`'s standing instruction is a security review before any deploy touching `worker/`. It
+earned its place twice on one change, and the interesting part is that **the property I had written
+down was true and insufficient**: `resolveAccess` genuinely was the single place that decided
+access. The bugs were both in the *representation inside it*, where the shape of the data quietly
+threw away a distinction the rules depended on.
+
+**A code scoped to one file opened every paid file on its page.** A file-scoped code has to open the
+page its file is on — the download button lives there — so `opened()` put that page in the ticket.
+But `canDownload` read the same list, so "you may look at this page" and "you may take everything on
+it" were one fact. A customer who bought one program could fetch the rest by changing one query
+parameter, with the ids handed to them in the page response they were entitled to. There is now a
+third kind of ticket entry: `@slug` opens a page, `~slug` merely makes it readable, and only the
+first reaches the bytes. This directly regressed a guarantee the code it replaced had stated out
+loud — *"a ticket for one item cannot be re-pointed at another by editing the query string"* — which
+is a good argument for reading what you are deleting.
+
+**Two grants of different shapes combined into one wider grant.** Every `(page, file)` row was shred
+into two independent sets with `NULL` collapsing to `"*"` in each, so an account holding a whole-page
+grant on one page and a single-file grant on another had the first row's wildcard satisfy the second
+row's item test — and could take every file on the private page. Two grants of different shapes for
+one returning customer is the ordinary case, not a contrived one. The rows are kept as rows now and
+evaluated pairwise.
+
+Both were caught before anything shipped, both have a harness check, and **both checks were verified
+by re-introducing the bugs and watching them fail** — 340 passed with 2 failures, exactly the two.
+
+### Proven, not assumed
+
+The harness gained 26 checks and runs against a real Worker, real D1 and real R2: a page authored,
+two files uploaded through the chunked path, the **served bytes compared against the uploaded
+bytes**, and each of the four visibilities asserted twice — the operator can, and a stranger with no
+session and no ticket cannot. A ticket minted for one page is checked against another and refused.
+`npm run test:auth` reports **342 checks, no failures.**
+
+One of those runs failed first, informatively: the signup rate limiter refused the *rate-limiting
+section's own fixture*, because this section had added two accounts to a harness whose signups were
+already "sized just above" an allowance of twelve. The fix was to want fewer accounts — the new
+section reuses an account an earlier section already made — rather than to widen a live anti-abuse
+control so a test would pass.
+
+## 2026-08-20 — phase 3: four ways to get out of the way, and a camera that stopped cutting people in half
 
 `docs/DUEL-ABSORB.md` phase 3, on the client's *"keep going with the engine and the graphical
 overhaul of all the characters."* Everything above answers pressure by blocking it, stepping out of

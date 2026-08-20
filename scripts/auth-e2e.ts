@@ -21,7 +21,7 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 
-import { api, ApiError } from "../src/auth/api";
+import { api, ApiError, uploadPart } from "../src/auth/api";
 import { deriveFromPassword, deriveFromRecoveryCode, newKdfParams } from "../src/auth/derive";
 import { fromBase64Url, toBase64Url } from "../src/auth/encoding";
 import {
@@ -2325,6 +2325,350 @@ async function main(): Promise<void> {
   // shares the single bucket named "local". Tripping the backoff therefore
   // blocks the whole run. That is the rate limiter working correctly rather than
   // a flaw in it — but it does mean nothing can follow this section.
+  /*
+   * Downloads sub-pages (2026-08-20). The operator authors a page, uploads a
+   * real file into local R2, and every one of the four visibilities is checked
+   * from the *outside* — a second browser with no session and no ticket.
+   *
+   * The outside view is the whole point. Everything in this feature is a
+   * decision about who may see what, and a test that only drives the admin
+   * routes proves the admin routes work while telling you nothing about the
+   * thing that matters. So each state is asserted twice: the operator can, and
+   * the stranger cannot.
+   */
+  section("Downloads sub-pages (2026-08-20) — authoring, uploading, and who may see it");
+  {
+    const opHandle = `harness-dl-${RUN}`;
+    const opSession = asBrowser(new BrowserSession());
+    await signUpFlow(opHandle, password);
+    await d1(`UPDATE accounts SET is_operator = 1 WHERE handle = '${opHandle}'`);
+
+    const slug = `harness-page-${RUN}`;
+    const freeId = `harness-free-${RUN}`;
+    const paidId = `harness-paid-${RUN}`;
+
+    // A stranger: no account, no cookie, no ticket. Re-selected whenever the
+    // outside view is the thing being asserted.
+    const stranger = new BrowserSession();
+
+    await api.adminPageSave({
+      slug,
+      title: "Harness page",
+      summary: "Written by the end-to-end test.",
+      intro: "First paragraph.\n\nSecond paragraph.",
+      notice: "",
+      layout: "list",
+      visibility: "public",
+      status: "draft",
+    });
+
+    asBrowser(stranger);
+    const draftHidden = await refusal(() => api.downloadPage(slug));
+    check("a draft page is 404 to a stranger", draftHidden?.status === 404, draftHidden?.message);
+    const draftUnlisted = (await api.downloadPages()).pages.some((p) => p.slug === slug);
+    check("a draft page is not in the public list", draftUnlisted === false);
+
+    asBrowser(opSession);
+    const draftVisible = await api.downloadPage(slug);
+    check("the operator sees their own draft", draftVisible.page.title === "Harness page");
+
+    // ---- the files, and the bytes -----------------------------------------
+    //
+    // Two files: one free, one not. The bytes are compared byte for byte on the
+    // way out, because "the download worked" and "the download returned the
+    // file you uploaded" are different claims and only the second one is worth
+    // making.
+    const freeBytes = new Uint8Array(2048).map((_, i) => (i * 7 + 11) % 251);
+    const paidBytes = new Uint8Array(4096).map((_, i) => (i * 13 + 3) % 251);
+
+    async function upload(id: string, bytes: Uint8Array, free: boolean, name: string) {
+      await api.adminFileSave({
+        id,
+        slug,
+        name,
+        blurb: "A file the harness made.",
+        platform: "any",
+        version: "1.0",
+        filename: `${id}.bin`,
+        free,
+        author: "",
+        caveat: "",
+        group: "",
+      });
+      const begun = await api.adminUploadBegin(id, "application/octet-stream");
+      // One part, which is legal for the final part at any size — see the
+      // note on CHUNK in the editor. A second part would have to be 5MiB.
+      const part = await uploadPart(id, begun.uploadId, 1, bytes.buffer as ArrayBuffer);
+      await api.adminUploadFinish(id, begun.uploadId, [part]);
+    }
+
+    await upload(freeId, freeBytes, true, "Free thing");
+    await upload(paidId, paidBytes, false, "Paid thing");
+
+    const withFiles = await api.downloadPage(slug);
+    check("both files are on the page", (withFiles.files ?? []).length === 2);
+    check(
+      "the size is measured from the object, not reported by the browser",
+      (withFiles.files ?? []).find((f) => f.id === freeId)?.size === freeBytes.byteLength,
+      String((withFiles.files ?? []).find((f) => f.id === freeId)?.size),
+    );
+
+    // ---- public --------------------------------------------------------
+    await api.adminPageSave({ slug, title: "Harness page", layout: "list", visibility: "public", status: "live" });
+
+    asBrowser(stranger);
+    const live = await api.downloadPage(slug);
+    check("a live public page is readable by a stranger", live.locked === false);
+    check(
+      "the free file is unlocked and the paid one is not",
+      live.files?.find((f) => f.id === freeId)?.unlocked === true &&
+        live.files?.find((f) => f.id === paidId)?.unlocked === false,
+    );
+
+    const freeResponse = await fetch(`/api/downloads/file?item=${freeId}`);
+    const served = new Uint8Array(await freeResponse.arrayBuffer());
+    check("a free file downloads without a code", freeResponse.status === 200);
+    check(
+      "the bytes served are the bytes uploaded",
+      served.length === freeBytes.length && served.every((b, i) => b === freeBytes[i]),
+    );
+    check(
+      "it is sent as an attachment with its own filename",
+      (freeResponse.headers.get("content-disposition") ?? "").includes(`${freeId}.bin`),
+    );
+
+    const paidRefused = await fetch(`/api/downloads/file?item=${paidId}`);
+    check("a paid file is refused without a code", paidRefused.status === 403);
+
+    // ---- a code --------------------------------------------------------
+    asBrowser(opSession);
+    const minted = await api.adminDownloadMint({
+      label: "harness",
+      item: null,
+      slug,
+      maxUses: 5,
+      days: 0,
+    });
+
+    asBrowser(stranger);
+    const claimed = await api.downloadClaim(minted.code);
+    check("a page-scoped code opens that page", claimed.pages.includes(slug));
+    const paidOpened = await fetch(
+      `/api/downloads/file?item=${paidId}&t=${encodeURIComponent(claimed.ticket)}`,
+    );
+    const paidServed = new Uint8Array(await paidOpened.arrayBuffer());
+    check("the paid file downloads with the ticket", paidOpened.status === 200);
+    check(
+      "and its bytes are the ones uploaded",
+      paidServed.length === paidBytes.length && paidServed.every((b, i) => b === paidBytes[i]),
+    );
+
+    /*
+     * **A file-scoped code opens its page to LOOK AT, not to take from.**
+     *
+     * This is the security review's finding of 2026-08-20, turned into the check
+     * that would have caught it. The first version put the file's page into the
+     * same list a page-scoped code uses, and `canDownload` honoured that list —
+     * so buying one program bought every paid file on the page, by editing one
+     * query parameter, with the ids handed over in the page response the
+     * customer was entitled to. Both halves are asserted: the page must render,
+     * and the sibling file must not come out.
+     */
+    asBrowser(opSession);
+    const oneFile = await api.adminDownloadMint({
+      label: "harness-onefile",
+      item: paidId,
+      slug: null,
+      maxUses: 5,
+      days: 0,
+    });
+
+    asBrowser(stranger);
+    const oneClaim = await api.downloadClaim(oneFile.code);
+    check("a file-scoped code names the page its file is on", oneClaim.pages.includes(slug));
+    const itsOwn = await fetch(
+      `/api/downloads/file?item=${paidId}&t=${encodeURIComponent(oneClaim.ticket)}`,
+    );
+    check("the file it was minted for downloads", itsOwn.status === 200);
+    await itsOwn.arrayBuffer();
+
+    // The sibling. `freeId` is free, so a second *paid* file is needed to make
+    // the claim mean anything.
+    const siblingId = `harness-sib-${RUN}`;
+    asBrowser(opSession);
+    await upload(siblingId, new Uint8Array(512).fill(9), false, "Sibling");
+    asBrowser(stranger);
+    const sibling = await fetch(
+      `/api/downloads/file?item=${siblingId}&t=${encodeURIComponent(oneClaim.ticket)}`,
+    );
+    check(
+      "a file-scoped code does NOT open another paid file on the same page",
+      sibling.status === 403,
+      `status ${sibling.status}`,
+    );
+    const stillReadable = await api.downloadPage(slug, oneClaim.ticket);
+    check("but the page itself still renders for them", stillReadable.locked === false);
+
+    // A ticket for this page must not open a different one. The scope is the
+    // whole security of a code, so it is asserted rather than assumed.
+    const otherSlug = `harness-other-${RUN}`;
+    asBrowser(opSession);
+    await api.adminPageSave({ slug: otherSlug, title: "Other", layout: "list", visibility: "code", status: "live" });
+    asBrowser(stranger);
+    const wrongPage = await api.downloadPage(otherSlug, claimed.ticket);
+    check("a ticket does not open a page it was not minted for", wrongPage.locked === true);
+
+    // ---- code-gated ------------------------------------------------------
+    asBrowser(opSession);
+    await api.adminPageSave({ slug, title: "Harness page", layout: "list", visibility: "code", status: "live" });
+
+    asBrowser(stranger);
+    const locked = await api.downloadPage(slug);
+    check("a code-gated page tells a stranger it exists and is locked", locked.locked === true);
+    check("and hands over none of its files", (locked.files ?? []).length === 0);
+    const stillOpen = await api.downloadPage(slug, claimed.ticket);
+    check("the ticket opens it", stillOpen.locked === false);
+
+    // ---- granted ---------------------------------------------------------
+    //
+    // The one route in that needs an account. A code is a bearer token and a
+    // grant is a statement about a person, and they are deliberately separate.
+    /*
+     * **The named account is the machines section's owner, reused rather than
+     * created.** The signup bucket allows twelve per client per window and is
+     * documented as "sized just above the harness's own signups" — so a section
+     * that adds two of its own spends the headroom the *rate-limiting* section
+     * needs to create its fixture before it deliberately exhausts the bucket.
+     * That is a real refusal by a real control, and the answer is to want fewer
+     * accounts rather than to widen a limit so a test passes.
+     *
+     * All this needs is a signed-in non-operator, which that account already is.
+     */
+    const guestHandle = ownerHandle;
+    const guestSession = ownerSession;
+
+    asBrowser(opSession);
+    await api.adminPageSave({ slug, title: "Harness page", layout: "list", visibility: "granted", status: "live" });
+
+    asBrowser(guestSession);
+    const beforeGrant = await refusal(() => api.downloadPage(slug));
+    check("a signed-in stranger is refused a granted page", beforeGrant?.status === 404);
+
+    asBrowser(opSession);
+    await api.adminGrantAdd({ handle: guestHandle, slug, item: null, label: "harness", days: 0 });
+
+    asBrowser(guestSession);
+    const afterGrant = await api.downloadPage(slug);
+    check("the named account can read it", afterGrant.locked === false);
+    check(
+      "and its files are unlocked to them without a code",
+      afterGrant.files?.find((f) => f.id === paidId)?.unlocked === true,
+    );
+    const grantedBytes = await fetch(`/api/downloads/file?item=${paidId}`);
+    check("a grant is enough to download the bytes", grantedBytes.status === 200);
+    await grantedBytes.arrayBuffer();
+
+    /*
+     * **One grant's wildcard may not attach to another grant's scope.**
+     *
+     * The review's second finding, as a check. `resolveAccess` used to shred
+     * every `(page, file)` row into two independent sets, so an account holding
+     * a whole-page grant on one page and a single-file grant on another had the
+     * first row's "any file" satisfy the second row's item test — and could take
+     * every file on the private page. Two grants of different shapes for one
+     * returning customer is the ordinary case, not a contrived one.
+     */
+    asBrowser(opSession);
+    const narrowSlug = `harness-narrow-${RUN}`;
+    await api.adminPageSave({
+      slug: narrowSlug,
+      title: "Narrow",
+      layout: "list",
+      visibility: "granted",
+      status: "live",
+    });
+    const wantedId = `harness-want-${RUN}`;
+    const offLimitsId = `harness-off-${RUN}`;
+    const savedSlug = slug;
+    // `upload` closes over the page it was defined against, so these two are
+    // written directly rather than through it.
+    for (const [fid, label] of [
+      [wantedId, "Wanted"],
+      [offLimitsId, "Off limits"],
+    ] as const) {
+      await api.adminFileSave({
+        id: fid,
+        slug: narrowSlug,
+        name: label,
+        blurb: "",
+        platform: "any",
+        version: "1",
+        filename: `${fid}.bin`,
+        free: false,
+        author: "",
+        caveat: "",
+        group: "",
+      });
+      const b = await api.adminUploadBegin(fid, "application/octet-stream");
+      const part = await uploadPart(fid, b.uploadId, 1, new Uint8Array(64).fill(1).buffer as ArrayBuffer);
+      await api.adminUploadFinish(fid, b.uploadId, [part]);
+    }
+    // The guest already holds a whole-page grant on `savedSlug` from above.
+    await api.adminGrantAdd({ handle: guestHandle, slug: narrowSlug, item: wantedId, label: "one file", days: 0 });
+
+    asBrowser(guestSession);
+    const wanted = await fetch(`/api/downloads/file?item=${wantedId}`);
+    check("a one-file grant opens that file", wanted.status === 200);
+    await wanted.arrayBuffer();
+    const offLimits = await fetch(`/api/downloads/file?item=${offLimitsId}`);
+    check(
+      "a whole-page grant elsewhere does not widen a one-file grant here",
+      offLimits.status === 403,
+      `status ${offLimits.status}`,
+    );
+
+    asBrowser(opSession);
+    await api.adminPageDelete(narrowSlug).catch(() => undefined);
+    void savedSlug;
+
+    // ---- the operator's own guards ---------------------------------------
+    asBrowser(guestSession);
+    const notOperator = await refusal(() =>
+      api.adminPageSave({ slug: `nope-${RUN}`, title: "No", layout: "list", visibility: "public", status: "live" }),
+    );
+    check("a non-operator cannot author a page", notOperator?.status === 403, notOperator?.message);
+    const noUpload = await refusal(() => api.adminUploadBegin(freeId, "application/octet-stream"));
+    check("a non-operator cannot start an upload", noUpload?.status === 403, noUpload?.message);
+
+    asBrowser(opSession);
+    const badSlug = await refusal(() =>
+      api.adminPageSave({ slug: "Not A Slug", title: "x", layout: "list", visibility: "public", status: "live" }),
+    );
+    check("a malformed address is refused", badSlug?.status === 400, badSlug?.message);
+    const badFilename = await refusal(() =>
+      api.adminFileSave({ id: `x-${RUN}`, slug, name: "x", filename: "noextension", free: true }),
+    );
+    check(
+      "a filename with no extension is refused — it is handed to the browser verbatim",
+      badFilename?.status === 400,
+      badFilename?.message,
+    );
+
+    // ---- deleting takes the bytes with it --------------------------------
+    await api.adminPageDelete(slug);
+    asBrowser(stranger);
+    const gone = await refusal(() => api.downloadPage(slug));
+    check("a deleted page is gone", gone?.status === 404);
+    const goneBytes = await fetch(`/api/downloads/file?item=${freeId}`);
+    check("and its files go with it", goneBytes.status === 404);
+
+    asBrowser(opSession);
+    await api.adminPageDelete(otherSlug).catch(() => undefined);
+    await api.adminDownloadRevoke(
+      (await api.adminDownloadsList()).codes.find((c) => c.label === "harness")?.ref ?? "",
+    ).catch(() => undefined);
+  }
+
   section("Rate limiting (§4) — the RateLimiter's backoff path, exercised at last");
   {
     // A handle of its own, so tripping the backoff cannot lock out an account

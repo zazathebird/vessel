@@ -263,14 +263,153 @@ export const api = {
    * `blob:`, which is the one construct still blocking the CSP flip.
    */
   downloadClaim: (code: string) =>
-    post<{ ticket: string; items: string[]; usesLeft: number }>("/api/downloads/claim", { code }),
+    post<{ ticket: string; pages: string[]; items: string[]; usesLeft: number }>(
+      "/api/downloads/claim",
+      { code },
+    ),
+
+  /*
+   * The operator's sub-pages (2026-08-20). Both reads take an optional ticket,
+   * because a code is how somebody with no account opens a gated page — it rides
+   * in the query string for the same reason the file route's does, and is safe
+   * there for the same reason: it names nobody and expires in half an hour.
+   */
+  downloadPages: (ticket?: string | null) =>
+    call<{ pages: DownloadPageSummary[] }>(
+      ticket ? `/api/downloads/pages?t=${encodeURIComponent(ticket)}` : "/api/downloads/pages",
+    ),
+  downloadPage: (slug: string, ticket?: string | null) =>
+    call<DownloadPageBody>(
+      `/api/downloads/page?page=${encodeURIComponent(slug)}${
+        ticket ? `&t=${encodeURIComponent(ticket)}` : ""
+      }`,
+    ),
 
   adminDownloadsList: () => call<{ codes: DownloadCodeRow[] }>("/api/admin/downloads"),
-  adminDownloadMint: (body: { label: string; item: string | null; maxUses: number; days: number }) =>
-    post<{ code: string }>("/api/admin/downloads/mint", body),
+  adminDownloadMint: (body: {
+    label: string;
+    item: string | null;
+    slug: string | null;
+    maxUses: number;
+    days: number;
+  }) => post<{ code: string }>("/api/admin/downloads/mint", body),
   adminDownloadRevoke: (ref: string) =>
     post<{ ok: true }>("/api/admin/downloads/revoke", { ref }),
+
+  adminPageSave: (body: Record<string, unknown>) =>
+    post<{ ok: true; slug: string }>("/api/admin/downloads/page", body),
+  adminPageDelete: (slug: string) =>
+    post<{ ok: true }>("/api/admin/downloads/page/delete", { slug }),
+  adminPageOrder: (slugs: string[]) =>
+    post<{ ok: true }>("/api/admin/downloads/page/order", { slugs }),
+  adminBlocksSave: (slug: string, blocks: DownloadBlock[]) =>
+    post<{ ok: true }>("/api/admin/downloads/blocks", { slug, blocks }),
+  adminFileSave: (body: Record<string, unknown>) =>
+    post<{ ok: true; id: string }>("/api/admin/downloads/file", body),
+  adminFileDelete: (id: string) => post<{ ok: true }>("/api/admin/downloads/file/delete", { id }),
+  adminUploadBegin: (id: string, contentType: string) =>
+    post<{ uploadId: string }>("/api/admin/downloads/upload/begin", { id, contentType }),
+  adminUploadFinish: (id: string, uploadId: string, parts: { part: number; etag: string }[]) =>
+    post<{ ok: true; size: number }>("/api/admin/downloads/upload/finish", { id, uploadId, parts }),
+  adminUploadAbort: (id: string, uploadId: string) =>
+    post<{ ok: true }>("/api/admin/downloads/upload/abort", { id, uploadId }),
+  adminGrants: () => call<{ grants: DownloadGrantRow[] }>("/api/admin/downloads/grants"),
+  adminGrantAdd: (body: {
+    handle: string;
+    slug: string | null;
+    item: string | null;
+    label: string;
+    days: number;
+  }) => post<{ ok: true }>("/api/admin/downloads/grant", body),
+  adminGrantRemove: (id: number) =>
+    post<{ ok: true }>("/api/admin/downloads/grant/delete", { id }),
 };
+
+/**
+ * One part of an upload, sent as raw bytes.
+ *
+ * Not in the object above because it is not JSON in either direction: base64ing
+ * an 8MB chunk would cost a third more bandwidth on exactly the connections this
+ * feature exists for. It still goes through `call`'s cousin rather than a bare
+ * fetch so the credentials and the error shape stay identical.
+ */
+export async function uploadPart(
+  id: string,
+  uploadId: string,
+  part: number,
+  chunk: ArrayBuffer | Blob,
+): Promise<{ part: number; etag: string }> {
+  const url = `/api/admin/downloads/upload/part?id=${encodeURIComponent(id)}&upload=${encodeURIComponent(
+    uploadId,
+  )}&part=${part}`;
+  const response = await fetch(url, {
+    method: "PUT",
+    credentials: "same-origin",
+    headers: { "content-type": "application/octet-stream" },
+    body: chunk,
+  });
+  const data = (await response.json().catch(() => ({}))) as { part?: number; etag?: string; error?: string };
+  if (!response.ok) throw new ApiError(response.status, data.error ?? "That part didn't upload.");
+  return { part: data.part ?? part, etag: data.etag ?? "" };
+}
+
+export interface DownloadPageSummary {
+  slug: string;
+  title: string;
+  summary: string;
+  layout: string;
+  visibility: string;
+  status: string;
+  locked: boolean;
+}
+
+export interface DownloadBlock {
+  kind: "heading" | "text" | "list" | "files";
+  body: string;
+  group: string;
+}
+
+export interface DownloadFileInfo {
+  id: string;
+  name: string;
+  blurb: string;
+  platform: string;
+  version: string;
+  size: number;
+  free: boolean;
+  author: string;
+  caveat: string;
+  group: string;
+  unlocked: boolean;
+}
+
+export interface DownloadPageBody {
+  page: {
+    slug: string;
+    title: string;
+    summary: string;
+    intro?: string;
+    notice?: string;
+    layout: string;
+    visibility?: string;
+    status?: string;
+  };
+  locked: boolean;
+  blocks?: DownloadBlock[];
+  files?: DownloadFileInfo[];
+}
+
+/** One row of the operator's grant list. */
+export interface DownloadGrantRow {
+  id: number;
+  account_id: string;
+  handle: string;
+  slug: string | null;
+  item_id: string | null;
+  label: string;
+  created_at: number;
+  expires_at: number | null;
+}
 
 /** One row of the operator's code list. Holds nothing that identifies a person. */
 export interface DownloadCodeRow {

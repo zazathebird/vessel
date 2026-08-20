@@ -20,9 +20,8 @@
 
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../auth/api";
-import type { DownloadCodeRow } from "../auth/api";
+import type { DownloadCodeRow, DownloadPageSummary } from "../auth/api";
 import { useConfig } from "../config/ConfigContext";
-import { DOWNLOADS } from "../data/downloads";
 
 function day(ms: number | null): string {
   if (!ms) return "—";
@@ -44,7 +43,13 @@ export function DownloadCodes() {
   const [busy, setBusy] = useState(false);
 
   const [label, setLabel] = useState("");
+  /*
+   * The scope, which is now a **page** rather than a catalogue entry: the
+   * catalogue moved to D1 on 2026-08-20 and pages are the unit an operator
+   * thinks in when they are minting a code for somebody.
+   */
   const [item, setItem] = useState("");
+  const [pages, setPages] = useState<DownloadPageSummary[]>([]);
   const [maxUses, setMaxUses] = useState(5);
   const [days, setDays] = useState(0);
 
@@ -61,6 +66,15 @@ export function DownloadCodes() {
   }
 
   useEffect(() => {
+    // The operator sees every page, live or draft, because `listPages` answers
+    // with whatever the caller may see and they may see everything.
+    void api
+      .downloadPages()
+      .then((r) => setPages(r.pages))
+      .catch(() => setPages([]));
+  }, []);
+
+  useEffect(() => {
     void refresh();
   }, []);
 
@@ -71,7 +85,8 @@ export function DownloadCodes() {
     try {
       const result = await api.adminDownloadMint({
         label: label.trim(),
-        item: item || null,
+        item: null,
+        slug: item || null,
         maxUses,
         days,
       });
@@ -170,12 +185,17 @@ export function DownloadCodes() {
             onChange={(e) => setItem(e.target.value)}
           >
             <option value="">Everything paid</option>
-            {DOWNLOADS.filter((d) => !d.free).map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.name}
+            {pages.map((p) => (
+              <option key={p.slug} value={p.slug}>
+                {p.title}
               </option>
             ))}
           </select>
+          <p className="v-field-hint">
+            A whole page, or everything. To scope a code to one single file, mint it from that
+            file's row in the downloads editor — that is the screen where the file is in front of
+            you, and a code pointed at the wrong id is only discovered by the customer.
+          </p>
         </div>
 
         <div className="v-dlcodes-row">

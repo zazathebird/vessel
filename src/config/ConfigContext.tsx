@@ -15,7 +15,7 @@ import { MAIL } from "../data/mail";
 import { MODES } from "../data/catalog";
 import type { ModeId } from "../data/catalog";
 import { PALETTES, paletteIndexForHour } from "../data/palettes";
-import { PATHS, pageFromPath } from "../data/pageIds";
+import { pageFromPath, pathFor, subFromPath } from "../data/pageIds";
 import type { PageId } from "../data/pageIds";
 import { adaptLayout, bandForWidth, isAdapted } from "./bands";
 import type { Band } from "./bands";
@@ -45,7 +45,18 @@ interface ConfigContextValue {
   /** Merge a partial update into config. */
   update: (patch: Partial<Config>) => void;
   /** Navigate — pushes a real URL, dives the stage, and applies per-page rolls. */
-  go: (page: PageId) => void;
+  go: (page: PageId, sub?: string | null) => void;
+  /**
+   * The sub-page name, for the one route that has one: `/downloads/<name>`.
+   *
+   * **Routing state, and deliberately not part of `config`.** `config` is
+   * validated field by field on load, published to every visitor, and packed
+   * into share codes — so a field that is a transient URL fragment would have to
+   * be excluded from three of those and remembered as excluded by everyone who
+   * touches them. `page` lives there for historical reasons; this does not
+   * follow it in.
+   */
+  sub: string | null;
   /** Operator shuffle. Announces the result; a blocked roll toasts instead. */
   shuffle: () => void;
   band: Band;
@@ -191,6 +202,15 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   const [mailShown, setMailShown] = useState(false);
   const [saverHeld, setSaverHeld] = useState(false);
 
+  /*
+   * The sub-page name for `/downloads/<name>`, read from the URL on the first
+   * render so a cold load of a sub-page renders it rather than the index.
+   * Separate from `config` — see the note on `sub` in the context type.
+   */
+  const [sub, setSub] = useState<string | null>(() =>
+    typeof window === "undefined" ? null : subFromPath(window.location.pathname),
+  );
+
   const toastTimer = useRef<number | undefined>(undefined);
   const saveTimer = useRef<number | undefined>(undefined);
   const diveTimer = useRef<number | undefined>(undefined);
@@ -201,9 +221,9 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   // that armed it, so it reads current state from a ref rather than a closure.
   // `go` reads the same ref: a setConfig updater has to be pure, and StrictMode
   // double-invokes it, so the branch it takes cannot live inside one.
-  const live = useRef({ config, panelOpen, doorOpen, saverHeld });
+  const live = useRef({ config, panelOpen, doorOpen, saverHeld, sub });
   useEffect(() => {
-    live.current = { config, panelOpen, doorOpen, saverHeld };
+    live.current = { config, panelOpen, doorOpen, saverHeld, sub };
   });
 
   // The synth is tuned by the palette, the same way everything visible is
@@ -490,17 +510,22 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   // stage — scale up with blur while fading out, then an instant cut and a resolve
   // back to 1. The page swap itself commits at the 300ms mark, mid-blur, so the
   // ugly transition is hidden. Calm mode skips the dive and cuts instantly.
-  const go = useCallback((page: PageId) => {
+  const go = useCallback((page: PageId, sub: string | null = null) => {
     poke();
-    if (live.current.config.page === page) return;
+    // The sub-page counts as part of "where we are": without it, moving between
+    // two downloads pages would be a no-op and the URL would change under a
+    // screen that never re-rendered.
+    if (live.current.config.page === page && live.current.sub === sub) return;
     // Fired here, not in `commit`: the dive takes 300ms before the page swaps,
     // and a sound that waited for it would land after the motion it belongs to.
     chime("nav");
 
     const commit = () => {
-      if (window.location.pathname !== PATHS[page]) {
-        window.history.pushState({}, "", PATHS[page]);
+      const path = pathFor(page, sub);
+      if (window.location.pathname !== path) {
+        window.history.pushState({}, "", path);
       }
+      setSub(sub);
       // Rolled out here rather than inside the updater: roll() is random, and a
       // double-invoked updater would spend two rolls to apply one.
       const current = live.current.config;
@@ -577,6 +602,9 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const onPop = () => {
       setConfig((previous) => ({ ...previous, page: pageFromPath(window.location.pathname) }));
+      // Back and forward have to move the sub-page too, or the browser's own
+      // buttons leave the URL and the screen disagreeing.
+      setSub(subFromPath(window.location.pathname));
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
@@ -589,6 +617,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       chooseMotion,
       update,
       go,
+      sub,
       shuffle,
       band,
       layout: adaptLayout(config.layout, band),
@@ -620,6 +649,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       chooseMotion,
       update,
       go,
+      sub,
       shuffle,
       band,
       toast,

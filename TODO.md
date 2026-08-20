@@ -6,17 +6,43 @@ what is left to do.
 
 ---
 
+## 2026-08-20 — downloads sub-pages, built
+
+**Client:** *"i am going to have a few subpages in it… i want to be able to
+design and name them as i want… each page will be able to host files… even more
+granular options that i can set, for each user on what they can see."*
+
+**Built and proven end to end** — the harness drives it against a real Worker,
+real D1 and real R2, comparing the served bytes against the uploaded ones and
+checking every one of the four visibilities from the outside, as a stranger with
+no session (336 checks, `npm run test:auth`).
+
+What it does: pages you name and address yourself, four switchable looks (one of
+them free-form blocks), files uploaded from the browser in chunks with no size
+ceiling, draft/publish, and access by **either** an anonymous code **or** a named
+account — the two answer different questions and both are there.
+
+**Migration `0006` must be applied to production D1 before or with the deploy.**
+It is additive only.
+
+**Still wants your eye**, because it is an operator surface and I cannot sign in:
+whether the four looks are actually distinct enough to be worth four, and whether
+the editor is laid out the way you want to work.
+
+---
+
 ## 2026-08-19 — open, and waiting on the client
 
-Two things on `/downloads`, both blocked on something only the client has.
+Two things on `/downloads`, one now closed.
 
-1. **The catalogue is empty and needs his files.** The bucket exists, the
-   migration is applied, the gate is proven end to end (`docs/DECISIONS.md`
-   2026-08-19), and `docs/DOWNLOADS.md` is the runbook. Per program: the file,
-   a name, one plain sentence, platform, version, and free or code-only. The
-   `author` field is deliberately awkward — fill it in when the program is not
-   his, and check that its licence permits redistribution, which nothing here
-   can check for him.
+1. ~~**The catalogue is empty and needs his files.**~~ — **it is no longer a
+   deploy step** (2026-08-20). Pages, files and uploads are all in the admin
+   panel now, so this is the client's to do whenever he likes, with no session
+   of mine involved: Admin → *Downloads pages* → New page → add files.
+   `docs/DOWNLOADS.md` is the runbook and has been rewritten for it. The
+   `author` field is still deliberately awkward — fill it in when the program is
+   not his, and check that its licence permits redistribution, which nothing
+   here can check for him.
 
 2. **The page is being redesigned outside this repo.**
    `design/claude-design-downloads.html` is the handoff: the page as it stands

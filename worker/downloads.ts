@@ -36,8 +36,9 @@ import { assertAttempt, buckets, json, noStore, recordSuccess, requireAccount } 
 import { hmac, timingSafeEqual } from "./crypto";
 import { BadRequest, fromBlob, toBlob } from "./encoding";
 import type { Env } from "./env";
-import { mint, verify } from "./session";
-import { DOWNLOADS, downloadById } from "../src/data/downloads";
+import { mint } from "./session";
+import { canDownload, resolveAccess, ticketSubject } from "./downloadPages";
+import type { FileRow, PageRow } from "./downloadPages";
 
 /**
  * Crockford base32 minus the letters that are read wrong off a screen or over
@@ -94,12 +95,54 @@ interface CodeRow {
   code_hash: unknown;
   label: string;
   item_id: string | null;
+  /** Page scope (2026-08-20). NULL alongside a NULL `item_id` means everything. */
+  slug: string | null;
   created_at: number;
   expires_at: number | null;
   max_uses: number;
   uses: number;
   revoked_at: number | null;
   last_used_at: number | null;
+}
+
+/**
+ * What a redeemed code opens, as the three lists a ticket carries.
+ *
+ * **A code scoped to one file also opens the page that file is on** — the page
+ * is where the download button is, so a ticket that opened the bytes and not the
+ * page would be a code that works and appears not to.
+ *
+ * **But it opens it to look at, not to take from, and the distinction is the
+ * whole security of a file-scoped code** (found in review, 2026-08-20, before it
+ * shipped). The first version put that page in the same list a page-scoped code
+ * uses, and `canDownload` honoured that list — so a customer who bought one
+ * program could fetch every other paid file on the page by changing one query
+ * parameter, with the ids handed to them in the page response they were entitled
+ * to. `visible` is the weaker grant and `open` is the stronger one; only `open`
+ * reaches the bytes.
+ */
+async function opened(
+  env: Env,
+  row: CodeRow,
+): Promise<{ open: string[]; visible: string[]; items: string[] }> {
+  if (row.item_id) {
+    const item = await env.DB.prepare("SELECT slug FROM download_files WHERE id = ?")
+      .bind(row.item_id)
+      .first<{ slug: string }>();
+    // A scope naming a file that has since been deleted opens nothing. That is
+    // the honest outcome; falling back to "everything" is how a withdrawn item
+    // gets handed out.
+    return item
+      ? { open: [], visible: [item.slug], items: [row.item_id] }
+      : { open: [], visible: [], items: [] };
+  }
+  if (row.slug) return { open: [row.slug], visible: [], items: [] };
+
+  // Unscoped: every live page, and with it every file on them.
+  const { results } = await env.DB.prepare(
+    "SELECT slug FROM download_pages WHERE status = 'live'",
+  ).all<{ slug: string }>();
+  return { open: results.map((p) => p.slug), visible: [], items: [] };
 }
 
 /**
@@ -126,7 +169,7 @@ export async function claim(request: Request, env: Env): Promise<Response> {
 
   const hash = await codeHash(env, code);
   const row = await env.DB.prepare(
-    `SELECT code_hash, label, item_id, created_at, expires_at, max_uses, uses, revoked_at, last_used_at
+    `SELECT code_hash, label, item_id, slug, created_at, expires_at, max_uses, uses, revoked_at, last_used_at
        FROM download_codes WHERE code_hash = ?`,
   )
     .bind(toBlob(hash))
@@ -160,22 +203,24 @@ export async function claim(request: Request, env: Env): Promise<Response> {
 
   await recordSuccess(env, names);
 
-  // A code scoped to one item opens that item; an unscoped one opens everything
-  // that is not already free. A scope naming an item that has since left the
-  // catalogue opens nothing, which is the honest outcome — better than falling
-  // back to "everything", which is how a withdrawn item gets handed out.
-  const opens = DOWNLOADS.filter((d) => !d.free).filter(
-    (d) => row.item_id === null || row.item_id === d.id,
-  );
+  const opens = await opened(env, row);
 
   // The TTL rides on the purpose (`session.ts`), not on this call — one place
   // decides how long each kind of token lives, so none of them can drift.
-  const ticket = await mint(env.SESSION_SECRET, "download", opens.map((d) => d.id).join(","));
+  const ticket = await mint(
+    env.SESSION_SECRET,
+    "download",
+    ticketSubject(opens.open, opens.visible, opens.items),
+  );
 
   return noStore(
     json({
       ticket,
-      items: opens.map((d) => d.id),
+      // Both kinds, so the page can navigate somebody to what their code opened.
+      // The client uses this to *point*, never to decide — the Worker asks the
+      // same question again for every byte it serves.
+      pages: [...opens.open, ...opens.visible],
+      items: opens.items,
       usesLeft: Math.max(0, row.max_uses - row.uses - 1),
     }),
   );
@@ -243,18 +288,32 @@ export function rangePlan(asked: boolean, served: R2Range | undefined, size: num
  */
 export async function file(request: Request, env: Env, url: URL): Promise<Response> {
   const id = url.searchParams.get("item") ?? "";
-  const item = downloadById(id);
+  const item = await env.DB.prepare("SELECT * FROM download_files WHERE id = ?")
+    .bind(id)
+    .first<FileRow>();
   if (!item) throw new BadRequest("No such download.", 404);
+  const page = await env.DB.prepare("SELECT * FROM download_pages WHERE slug = ?")
+    .bind(item.slug)
+    .first<PageRow>();
+  if (!page) throw new BadRequest("No such download.", 404);
 
-  if (!item.free) {
-    const ticket = url.searchParams.get("t") ?? "";
-    const token = await verify(env.SESSION_SECRET, "download", ticket);
-    if (!token) throw new BadRequest("That download link has expired. Enter your code again.", 403);
-    // The subject is the list the code opened, so a ticket for one item cannot
-    // be re-pointed at another by editing the query string.
-    if (!token.subject.split(",").includes(item.id)) {
-      throw new BadRequest("That code doesn't cover this download.", 403);
-    }
+  /*
+   * **The same question the page render asked, asked by the same function.**
+   *
+   * This route used to carry its own rule — free, or a ticket naming the item —
+   * which was right when a file's only gate was its own `free` flag. It is not
+   * enough now: a file also sits on a page that may be a draft, unlisted, code-
+   * gated or granted to particular accounts, and two places deciding that
+   * independently is two places that agree until one of them is edited.
+   * `canDownload` starts by asking `canRead` about the page, so bytes can never
+   * escape through a page the caller was refused.
+   */
+  const access = await resolveAccess(request, env, url);
+  if (!canDownload(page, item, access)) {
+    // One message for every refusal — expired ticket, wrong scope, no grant, a
+    // draft page — for the reason `claim`'s refusal is one message: the shape of
+    // the failure is itself information about what exists.
+    throw new BadRequest("That download isn't available to you. Check your code and try again.", 403);
   }
 
   // RANGE REQUESTS ARE PASSED STRAIGHT TO R2, and this is the one piece of this
@@ -333,7 +392,24 @@ export async function mintCode(request: Request, env: Env): Promise<Response> {
   const body = await readBody(request);
   const label = typeof body.label === "string" ? body.label.slice(0, 120) : "";
   const itemId = typeof body.item === "string" && body.item ? body.item : null;
-  if (itemId && !downloadById(itemId)) throw new BadRequest("No such download.", 404);
+  /*
+   * A code may now be scoped to a whole **page** as well as to one file
+   * (2026-08-20), which is what makes a `code`-gated page usable: one code opens
+   * the page and everything on it, and that is the natural unit when the page
+   * *is* the product. Both scopes are checked against the database rather than
+   * accepted, so a typo in the admin screen is a refusal now instead of a code
+   * that opens nothing and is discovered by the customer.
+   */
+  const slug = typeof body.slug === "string" && body.slug ? body.slug : null;
+  if (itemId && slug) throw new BadRequest("Scope a code to a page or to one file, not both.");
+  if (itemId) {
+    const has = await env.DB.prepare("SELECT id FROM download_files WHERE id = ?").bind(itemId).first();
+    if (!has) throw new BadRequest("No such download.", 404);
+  }
+  if (slug) {
+    const has = await env.DB.prepare("SELECT slug FROM download_pages WHERE slug = ?").bind(slug).first();
+    if (!has) throw new BadRequest("No such page.", 404);
+  }
 
   const maxUses = Number.isInteger(body.maxUses) ? Math.min(50, Math.max(1, body.maxUses as number)) : 5;
   const days = Number.isInteger(body.days) ? Math.min(3650, Math.max(0, body.days as number)) : 0;
@@ -341,10 +417,18 @@ export async function mintCode(request: Request, env: Env): Promise<Response> {
   const code = generateCode();
   const now = Date.now();
   await env.DB.prepare(
-    `INSERT INTO download_codes (code_hash, label, item_id, created_at, expires_at, max_uses, uses)
-     VALUES (?, ?, ?, ?, ?, ?, 0)`,
+    `INSERT INTO download_codes (code_hash, label, item_id, slug, created_at, expires_at, max_uses, uses)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 0)`,
   )
-    .bind(toBlob(await codeHash(env, code)), label, itemId, now, days ? now + days * 86_400_000 : null, maxUses)
+    .bind(
+      toBlob(await codeHash(env, code)),
+      label,
+      itemId,
+      slug,
+      now,
+      days ? now + days * 86_400_000 : null,
+      maxUses,
+    )
     .run();
 
   return noStore(json({ code: formatCode(code) }));
@@ -356,7 +440,7 @@ export async function listCodes(request: Request, env: Env): Promise<Response> {
   // Everything except the hash. There is nothing here that identifies a person
   // — that is the design — so the operator sees the whole row.
   const { results } = await env.DB.prepare(
-    `SELECT label, item_id, created_at, expires_at, max_uses, uses, revoked_at, last_used_at,
+    `SELECT label, item_id, slug, created_at, expires_at, max_uses, uses, revoked_at, last_used_at,
             substr(hex(code_hash), 1, 8) AS ref
        FROM download_codes ORDER BY created_at DESC LIMIT 200`,
   ).all();

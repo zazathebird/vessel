@@ -145,8 +145,39 @@ const BY_PATH = new Map<string, PageId>(
   (Object.entries(PATHS) as [PageId, string][]).map(([id, path]) => [path, id]),
 );
 
+/**
+ * The one route with something after it: `/downloads/<name>` (2026-08-20).
+ *
+ * The operator authors sub-pages, so their addresses cannot be in the table
+ * above — they are rows in D1 and they change while the site is running. This is
+ * deliberately the *only* prefix route: a general pattern router would be the
+ * wrong trade for one case, and `PATHS` being a total map from a closed union is
+ * what makes every other link on the site checkable by the compiler.
+ *
+ * The name is not validated here. Whether a page exists is the Worker's answer,
+ * and asking twice would mean two definitions of a valid name — the client's,
+ * which cannot see the database, and the real one.
+ */
+const SUB_PREFIX = `${PATHS.downloads}/`;
+
 /** Unknown URLs land on the 404 page, which is a real page here rather than a fallback. */
 export function pageFromPath(pathname: string): PageId {
   const clean = pathname.replace(/\/+$/, "") || "/";
+  if (clean.startsWith(SUB_PREFIX)) return "downloads";
   return BY_PATH.get(clean) ?? "notfound";
+}
+
+/** The sub-page name in a path, or null. Only `/downloads` has one. */
+export function subFromPath(pathname: string): string | null {
+  const clean = pathname.replace(/\/+$/, "") || "/";
+  if (!clean.startsWith(SUB_PREFIX)) return null;
+  const rest = clean.slice(SUB_PREFIX.length);
+  // A second slash is not a deeper page, it is a typo or a probe. One level is
+  // the whole design.
+  return rest && !rest.includes("/") ? rest : null;
+}
+
+/** Where a page — and optionally one of its sub-pages — lives. */
+export function pathFor(page: PageId, sub?: string | null): string {
+  return sub ? `${PATHS[page]}/${sub}` : PATHS[page];
 }
