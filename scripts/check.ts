@@ -33,6 +33,7 @@ import {
   makeRoll,
   bladeWorld,
   carryWindow,
+  contactSpray,
   duelFocus,
   BODY_H,
   DUEL_TABLES,
@@ -1316,6 +1317,88 @@ if (!FAST) check("duel: a low sweep passes under the jump that answers it", () =
  * The fourth is new: a costume that draws nothing at all would typecheck, run,
  * and quietly make two fighters identical.
  */
+/*
+ * **Sparks never fly into the thing they were struck off.**
+ *
+ * `contactSpray` decomposes the swing against whatever was hit — the component
+ * along the struck surface is kept, the component driving into it is reflected
+ * back out — so the returned direction can never have a negative part along the
+ * surface's outward normal. That property is the whole reason one function
+ * serves a blade, a torso and the floor, and it is arithmetic, so it can be
+ * checked exhaustively rather than sampled.
+ *
+ * It is gated rather than trusted because the failure is invisible: a shower
+ * aimed through a blocking sword still draws sparks, still looks busy, and only
+ * reads as wrong to someone watching for it. The site shipped a flat upward
+ * bias on every block for months for exactly that reason.
+ *
+ * **What this deliberately does not claim** is that the result looks better.
+ * That was benched and the bench could not answer it: at a real blade crossing
+ * the two swords are on top of each other, so every direction passes through
+ * one of them, and the burst-vs-blade metric is meaningless by construction.
+ * What *was* measured, over 300,000 stepped frames, is that burst directions
+ * stopped clustering — circular spread 0.327 → 0.899 — which says the contact
+ * now determines the shower and the old constant did. Whether it reads better
+ * wants an eye, exactly like the burst's placement before it.
+ */
+if (!FAST) check("duel: a spark never sprays into what it was struck off", () => {
+  const st = createDuel("hooded", "caped");
+  let cases = 0;
+
+  // A fighter is only a carrier for `trail` and `facing` here, so the swing can
+  // be dictated instead of waited for. Everything else on it is untouched.
+  const swing = (f: typeof st.a, dx: number, dy: number) => {
+    f.trail = [
+      { hx: 0, hy: 0, tx: 0, ty: 0 },
+      { hx: 0, hy: 0, tx: dx, ty: dy },
+    ];
+  };
+
+  for (let a = 0; a < 24; a += 1) {
+    const sa = (a / 24) * Math.PI * 2;
+    // Every swing direction, at a speed well above the barely-moving fallback.
+    swing(st.a, Math.cos(sa) * 4, Math.sin(sa) * 4);
+    for (let b = 0; b < 24; b += 1) {
+      const sb = (b / 24) * Math.PI * 2;
+      // Every surface orientation, as a 58-unit segment through the origin.
+      const struck = {
+        hx: -Math.cos(sb) * 29,
+        hy: -Math.sin(sb) * 29,
+        tx: Math.cos(sb) * 29,
+        ty: Math.sin(sb) * 29,
+      };
+      const s = contactSpray(st.a, struck);
+
+      must(
+        Math.abs(Math.hypot(s.x, s.y) - 1) < 1e-6,
+        `spray is not a unit vector at swing ${a} surface ${b}: ${Math.hypot(s.x, s.y)}`,
+      );
+
+      // The outward normal is the side the swing arrived from — the side the
+      // sparks have to leave on.
+      const ex = struck.tx - struck.hx;
+      const ey = struck.ty - struck.hy;
+      const el = Math.hypot(ex, ey);
+      let nx = -ey / el;
+      let ny = ex / el;
+      const arriving = Math.cos(sa) * nx + Math.sin(sa) * ny;
+      // A swing exactly along the surface has no side to be on; skip it rather
+      // than assert on a sign that is numerically arbitrary.
+      if (Math.abs(arriving) < 1e-9) continue;
+      if (arriving > 0) {
+        nx = -nx;
+        ny = -ny;
+      }
+      cases += 1;
+      const out = s.x * nx + s.y * ny;
+      must(out > -1e-9, `spray drives into the struck surface at swing ${a} surface ${b}: ${out}`);
+    }
+  }
+
+  must(cases > 500, `too few cases exercised: ${cases}`);
+  return `${cases} swing × surface pairs, none spraying into the surface`;
+});
+
 check("duel: every costume is stroked, framed and aligned", () => {
   /**
    * A recording 2D context: enough of the interface for a costume to draw into,

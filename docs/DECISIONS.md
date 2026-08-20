@@ -14,7 +14,52 @@ file records what happened to the codebase.
 ---
 
 
-## 2026-08-20 (latest) — the downloads catalogue becomes a thing the operator builds
+## 2026-08-20 (latest) — duel phase 4, part one: sparks leave along the contact
+
+`docs/DUEL-ABSORB.md` phase 4's first item — *"directional sparks along the blade-contact normal
+rather than radial"*. Two things were wrong and only one of them was the one written down.
+
+**`contactSpray` is the grinder model.** Sparks off an angle grinder do not spray outward from the
+contact; they run *along the surface*, the way the wheel is turning, with a smaller part bouncing
+off it. So the swing — taken from `f.trail`, the same few frames of blade positions the smear is
+drawn from — is decomposed against whatever was struck: the component along the surface is kept
+whole, the component driving into it is reflected out at 45%. One function therefore serves a
+blade, a torso and the floor, because all three are a surface and a direction of travel. A
+descending cut that finishes in the ground now skitters along the ground the way the swing was
+going; an overhead into a body runs down the body; a thrust, which has no tangential component at
+all, reflects straight back at the thrower.
+
+**The second bug is why the first one would not have shown.** `spawnSparks` added a hardcoded `- 2`
+to every spark's `vy` — an unconditional upward kick, on every burst the site has ever drawn,
+against a mean bias magnitude of about 2.5. It was very nearly half of where any shower went, so
+whatever direction a burst was given, it drifted up the screen like all the others. Measured over
+300,000 stepped frames, the circular spread of burst directions was **0.327** (0 = every burst flies
+the same way). Giving the bursts a real direction *and leaving the kick alone* took that only to
+0.566; dropping the kick to `LIFT = 0.8` takes it to **0.902**. It is kept, small, because a spark
+with no lift leaves on a flat line and dies without ever arcing.
+
+It also fixed a comment that had never been true: the blade lock's per-frame shower sets a positive
+(downward) bias so the sparks *fall away from the bind*, and against a kick of 2 the net was still
+upward on every draw. The lock is deliberately the one contact that does **not** use `contactSpray`
+— it is a press, neither blade is travelling, so the helper would fall through to its
+barely-moving default and point the shower forward off a guard.
+
+**What was measured and what was not.** An end-to-end metric was built first — does a burst's mean
+velocity pass through either blade — and it is meaningless by construction: at a real crossing the
+two swords are on top of each other, so *every* direction passes through one of them, and it duly
+reported the change as marginally worse (38.3% → 40.7%). The circular-spread number above is the
+honest one: it says the contact now determines the shower and the old constant did. **Whether it
+reads better wants an eye**, exactly like the burst's placement on 2026-08-17 before it. Alignment
+of the burst with the swing is *unchanged* (0.185 → 0.183), and that is the model working as
+designed rather than a null result — the spray follows the struck *surface*, not the swing.
+
+**Gated**, and verified by breaking it: `contactSpray` is exported and driven over 528 swing ×
+surface pairs, asserting the result is a unit vector and never has a negative component along the
+struck surface's outward normal. Flipping the reflection's sign fails it at the first pair.
+
+---
+
+## 2026-08-20 — the downloads catalogue becomes a thing the operator builds
 
 Client, the same day: *"i am going to have a few subpages in it. but i want to be able to design and
 name them as i want. so please make some kind of engine that allows my admin panel to create

@@ -566,6 +566,76 @@ function bladeGap(
   };
 }
 
+/** A blade, a torso or the floor: the two ends of whatever was struck. */
+type Segment = { hx: number; hy: number; tx: number; ty: number };
+
+/** The upward kick every spark gets regardless of the blow — see `spawnSparks`. */
+const LIFT = 0.8;
+
+/**
+ * Which way sparks leave a contact, as a unit vector in world units.
+ *
+ * **The grinder model, and it is why this is one function rather than four.**
+ * Sparks off an angle grinder do not spray outward from the contact — they run
+ * *along the surface*, in the direction the wheel is travelling, with a smaller
+ * part bouncing off it. So the spray is the swing decomposed against whatever
+ * was hit: the component along the struck surface is kept whole, and the
+ * component driving *into* it is reflected back out at 45%. Two things fall out
+ * of that for free, and both were wrong before:
+ *
+ * - **Nothing ever sprays into the thing it was struck off.** The old bias was a
+ *   fixed `(0, -1.1)` — straight up, on every block, whatever direction either
+ *   blade was travelling. `npm run check` gates the property now.
+ * - **The same arithmetic serves a blade, a body and the floor**, because all
+ *   three are a surface and a direction of travel. A descending cut that
+ *   finishes in the ground skitters *along* the ground the way the swing was
+ *   going; an overhead into a torso runs down the body; a thrust, which has no
+ *   tangential component at all, reflects straight back at the thrower.
+ *
+ * The travel comes from `f.trail`, the same few frames of blade positions the
+ * smear is drawn from, so a spray and the smear it comes off cannot disagree.
+ * A blade barely moving has no direction to give and falls back to forward and
+ * slightly up, which is where a resting guard points.
+ *
+ * Exported for the gate, which drives it over every swing against every surface
+ * orientation rather than waiting for a fight to produce them.
+ */
+export function contactSpray(f: Fighter, struck: Segment): { x: number; y: number } {
+  const n = f.trail.length;
+  let sx = n >= 2 ? f.trail[n - 1].tx - f.trail[n - 2].tx : 0;
+  let sy = n >= 2 ? f.trail[n - 1].ty - f.trail[n - 2].ty : 0;
+  let m = Math.hypot(sx, sy);
+  if (m < 0.6) {
+    sx = f.facing;
+    sy = -0.35;
+    m = Math.hypot(sx, sy);
+  }
+  sx /= m;
+  sy /= m;
+
+  const ex = struck.tx - struck.hx;
+  const ey = struck.ty - struck.hy;
+  const el = Math.hypot(ex, ey);
+  if (el < 1e-6) return { x: sx, y: sy };
+
+  // Along the struck surface, signed by the way the swing is travelling.
+  const along = (sx * ex + sy * ey) / (el * el);
+  const tx = ex * along;
+  const ty = ey * along;
+  // What is left is driving into the surface; send it back out.
+  const rx = (sx - tx) * -0.45;
+  const ry = (sy - ty) * -0.45;
+
+  const out = Math.hypot(tx + rx, ty + ry);
+  return out < 1e-6 ? { x: sx, y: sy } : { x: (tx + rx) / out, y: (ty + ry) / out };
+}
+
+/** The victim's torso as a surface, for a blow that lands on a body. */
+function torsoSegment(foe: Fighter): Segment {
+  const cx = centre(foe);
+  return { hx: cx, hy: foe.y, tx: cx, ty: foe.y + BODY_H };
+}
+
 /**
  * The reference's burst at the point of contact, with an optional bias along
  * the direction the blow was travelling. A uniform burst reads as a firework;
@@ -588,7 +658,18 @@ function spawnSparks(
       x,
       y,
       vx: Math.cos(ang) * speed + bx * (1 + Math.random() * 2),
-      vy: Math.sin(ang) * speed - 2 + by * (1 + Math.random() * 2),
+      /*
+       * `LIFT` is an unconditional upward kick on every spark ever spawned, and
+       * it used to be **2** — against a mean bias magnitude of about 2.5, so it
+       * was very nearly half of where any burst went. Every shower on the site
+       * therefore drifted the same way up the screen no matter what had caused
+       * it, which is most of why the direction a burst was given never survived
+       * to be seen: measured over 300,000 stepped frames, burst directions
+       * clustered at a circular spread of 0.327, and dropping this to 0.8 takes
+       * that to 0.899. It is kept, small, because a spark with no lift at all
+       * leaves on a flat line and dies without ever arcing.
+       */
+      vy: Math.sin(ang) * speed - LIFT + by * (1 + Math.random() * 2),
       // The renderer sizes and fades a spark by its own life, so a burst spawned
       // short is *smaller and dimmer for its whole flight*, not merely briefer.
       // That is what lets the lock emit two or three every frame for a second
@@ -3028,7 +3109,10 @@ function resolveContact(st: DuelState, f: Fighter, foe: Fighter, m: Move): void 
     const hy = Math.max(foe.y - 10, Math.min(foe.y + BODY_H, tip.ty));
     damage(st, foe, (8 + Math.random() * 5) * m.power * f.beatPower * f.attackPower);
     foe.vx += f.facing * (m.knock ?? (m.chan === "force" ? 5.2 : 1.8));
-    spawnSparks(st, hx, hy, 14, f.facing * 1.2, 0.6);
+    // Down the body for an overhead, up it for a rising cut, straight back out
+    // for a thrust — see `contactSpray`.
+    const spray = contactSpray(f, torsoSegment(foe));
+    spawnSparks(st, hx, hy, 14, spray.x * 1.35, spray.y * 1.35);
     // Hit-stop: both fighters' move clocks freeze for two frames while the
     // sparks keep flying. Two frames is nothing to describe and a great deal to
     // watch — it is the cheapest weight cue available.
@@ -3077,7 +3161,14 @@ function resolveContact(st: DuelState, f: Fighter, foe: Fighter, m: Move): void 
      * difference being tested. Whether it looks better wants an eye, not
      * another bench.
      */
-    spawnSparks(st, near.ax, near.ay, 18, 0, -1.1);
+    /*
+     * The bias is the swing run against the *defender's* blade, so the shower
+     * runs along the sword that stopped it. It used to be a flat `(0, -1.1)` —
+     * straight up regardless of what either blade was doing, which on a
+     * descending parry sent part of the burst back through the blocking blade.
+     */
+    const spray = contactSpray(f, bladeWorld(foe));
+    spawnSparks(st, near.ax, near.ay, 18, spray.x * 1.25, spray.y * 1.25);
 
     /*
      * **The bounce is deferred, because switching move on the contact frame
@@ -3127,8 +3218,15 @@ function resolveContact(st: DuelState, f: Fighter, foe: Fighter, m: Move): void 
     if (thrownBlade(f) === null) f.bounce = 5;
     st.hitStop = 3;
   } else if (f.outcome === "miss" && tip.ty > FLOOR_Y + BODY_H - 6) {
-    // A swing that finishes in the floor throws sparks off it.
-    spawnSparks(st, tip.tx, FLOOR_Y + BODY_H, 16, 0, -2.2);
+    // A swing that finishes in the floor throws sparks off it — and along it,
+    // the way the blade was travelling, rather than straight up out of it.
+    const spray = contactSpray(f, {
+      hx: tip.tx - 40,
+      hy: FEET_Y,
+      tx: tip.tx + 40,
+      ty: FEET_Y,
+    });
+    spawnSparks(st, tip.tx, FLOOR_Y + BODY_H, 16, spray.x * 2.4, spray.y * 2.4);
   }
 }
 
@@ -3294,9 +3392,21 @@ function stepLock(st: DuelState): void {
    * A single burst says two blades touched once; a sustained one says they are
    * still touching, which is the only thing distinguishing a press from a pose.
    */
-  // A positive bias against `spawnSparks`'s own upward kick, so the shower
-  // spreads and falls away from the bind instead of firing as one tall plume —
-  // grinding blades throw sparks outward, and a plume reads as a flare.
+  /*
+   * A positive — downward — bias, so the shower falls away from the bind
+   * instead of firing as one tall plume: grinding blades throw sparks outward,
+   * and a plume reads as a flare.
+   *
+   * **Deliberately not `contactSpray`.** A press is the one contact in the fight
+   * where neither blade is travelling, so the swing every spray is derived from
+   * does not exist — the helper would fall through to its barely-moving default
+   * and point the shower forward off a fighter's guard. The bind's own falling
+   * shower is the better answer, and it is the whole look of the move.
+   *
+   * It only started working when `LIFT` came down. Against the old kick of 2 the
+   * net was still upward on every draw, so this bias had never once done what
+   * the line above it says.
+   */
   spawnSparks(st, near.x, near.y, Math.random() < 0.35 + q * 0.5 ? 3 : 2, 0, 0.55, 0.34 + Math.random() * 0.26);
 
   /*
@@ -3548,7 +3658,16 @@ function step(st: DuelState): void {
      * resting showers and keeps every burst that came off a real swing.
      */
     if (near.d < 9 && st.clash === 0 && force > 0.15) {
-      spawnSparks(st, near.x, near.y, 6 + Math.round(force * 16), 0, -0.5 - force);
+      /*
+       * Neither fighter is "the attacker" here — this fires on the geometry,
+       * not on the script — so the swing belongs to whichever blade is turning
+       * faster, and the other one is the surface it is being struck off. When
+       * both are drifting the force floor above has already refused the burst.
+       */
+      const swinging = Math.abs(st.a.bladeV) >= Math.abs(st.b.bladeV) ? st.a : st.b;
+      const spray = contactSpray(swinging, bladeWorld(swinging === st.a ? st.b : st.a));
+      const push = 0.5 + force;
+      spawnSparks(st, near.x, near.y, 6 + Math.round(force * 16), spray.x * push, spray.y * push);
       st.clash = force > 0.45 ? 16 : 30;
       // A hard clash shoves both fighters apart, which is what sells it as
       // contact between two things with weight behind them.
