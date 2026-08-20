@@ -267,9 +267,19 @@ on 0.07% of frames and the per-costume one on 0.00%, for no loss of figure size.
 were rebuilt after being *looked at* — stills rendered through headless Chrome, which is the method
 worth reusing. Nametags were declined (deviation 8: a label over a 61px figure captions a fight).
 
-**Three remain, in order.** Phase 3 (new moves: rolls, aerials, spins, thrown props, blasters),
-phase 4 (VFX — directional sparks, scorch decals, real blade lighting; **no shadow-blur glow**, see
-the render-cost measurement), phase 5 (audio).
+**Phase 3 is shipped (2026-08-20).** Five moves and seven modules — a low sweep and the jump that
+answers it, a ground roll, a back handspring, a turning parry, and a thrown blade knocked out of the
+air. 36 moves, 35 modules, all reachable and gated. It also closed a defect that had been live since
+the somersault landed: the ornament camera reported a standing width for a *rotating* body, so it
+cut fighters out of frame on 8.61% of turning frames — now **zero, death holds included**, which
+also retires the 10.8% death-hold clipping the 2026-08-17 pass left open.
+
+*Thrown props* and *blasters* were **not** taken and that is a scope decision, not a deferral: both
+need a new entity in an arena that has nothing in it, and none of the eight fighters carries a gun.
+Say if you want either and it becomes a character conversation rather than an engine one.
+
+**Two remain.** Phase 4 (VFX — directional sparks, scorch decals, real blade lighting; **no
+shadow-blur glow**, see the render-cost measurement), phase 5 (audio).
 
 **One thing for the client before phase 5 starts**, flagged rather than assumed: the site's rule is
 *"every voice is fired by a gesture."* A duel clash is fired by the *animation*. The rule's purpose

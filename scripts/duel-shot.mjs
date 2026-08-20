@@ -10,8 +10,15 @@
  *
  *   node scripts/duel-shot.mjs sheet      one guard per fighter, side by side
  *   node scripts/duel-shot.mjs strip      an exchange, every Nth frame
+ *   node scripts/duel-shot.mjs move       one named move, frame by frame
  *   node scripts/duel-shot.mjs scale      one pairing at desk and phone size
  *   node scripts/duel-shot.mjs all        all of the above
+ *
+ * `move` is how a new move gets looked at. It does **not** force the move —
+ * there is no back door into the engine and there should not be one. It steps a
+ * real fight until the director happens to call for it, which also means what
+ * comes out is the move in the company it actually keeps: the sweep with a
+ * fighter jumping it, the throw with the parry that answers it.
  *
  * Output goes to `--out <dir>` (default: a temp dir it prints).
  *
@@ -165,8 +172,64 @@ function strip(pool, seedFrames, n, gap, tag) {
   return shot('strip-' + tag);
 }
 
+/* One named move, sampled from the frame the director calls for it. The second
+ * argument is an optional move the opponent has to be performing, which is how
+ * a pairing — a sweep answered by a jump, a throw answered by a parry — gets
+ * caught rather than whichever instance came up first.
+ * (No backticks in here: this whole page is a template literal.) */
+function moveStrip(name, mod, pool, n, gap, tag) {
+  const st = D.createDuel(pool[0], pool[1]);
+  let subject = null;
+  for (let i = 0; i < 400000 && !subject; i += 1) {
+    D.advanceDuel(st, 1);
+    // Waiting on the *module* rather than on the two moves coinciding: the
+    // second half of a pairing arrives frames after the first, so a test for
+    // both at once never fires on the frame either of them starts.
+    if (mod && (!st.dir.seq || st.dir.seq.id !== mod)) continue;
+    for (const k of ['a', 'b']) {
+      const f = st[k];
+      if (f.move === name && f.mf <= 2) subject = k;
+    }
+  }
+  const cw = 250, ch = 230, cols = 6;
+  const rows = Math.ceil(n / cols);
+  bg(cw * cols, ch * rows);
+  if (!subject) {
+    label('never reached: ' + name + (mod ? ' in ' + mod : ''), cw * cols / 2, ch * rows / 2);
+    return shot('move-' + tag);
+  }
+  for (let i = 0; i < n; i += 1) {
+    const col = i % cols, row = (i / cols) | 0;
+    const ox = col * cw, oy = row * ch;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(ox, oy, cw, ch); ctx.clip();
+    const fx = D.duelFocus(st);
+    const scale = Math.min(cw / Math.max(150, fx.width + 80), 2.2);
+    D.drawDuel(ctx, st, view({
+      x: ox + cw / 2 - fx.cx * scale,
+      y: oy + ch * 0.84 - D.FEET_Y * scale,
+      scale,
+      bladeA: D.BLADE_COLORS[pool[0]], bladeB: D.BLADE_COLORS[pool[1]],
+    }));
+    ctx.restore();
+    const f = st[subject];
+    label('+' + (i * gap) + '  ' + f.move + ' ' + f.mf, ox + cw / 2, oy + ch - 6);
+    ctx.save(); ctx.globalAlpha = 0.18; ctx.strokeStyle = INK;
+    ctx.strokeRect(ox + 0.5, oy + 0.5, cw - 1, ch - 1); ctx.restore();
+    D.advanceDuel(st, gap);
+  }
+  return shot('move-' + tag);
+}
+
 (async () => {
   const mode = new URLSearchParams(location.search).get('mode');
+  if (mode === 'move' || mode === 'all') {
+    await moveStrip('sweep_low', 'low-sweep', ['hooded', 'caped'], 12, 3, 'sweep-hop');
+    await moveStrip('roll_through', 'roll-past', ['hooded', 'caped'], 12, 4, 'roll');
+    await moveStrip('handspring', 'spring-away', ['maned', 'cowled'], 12, 4, 'handspring');
+    await moveStrip('parry_spin', 'whirl-and-catch', ['haloed', 'horned'], 12, 3, 'parry-spin');
+    await moveStrip('blade_throw', 'throw-deflected', ['hooded', 'caped'], 12, 5, 'throw-deflected');
+  }
   if (mode === 'sheet' || mode === 'all') {
     await sheet(190, 'phone', 0);
     await sheet(340, 'desk', 0);

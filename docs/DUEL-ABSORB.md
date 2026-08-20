@@ -1,6 +1,6 @@
 # Absorbing the duel-cycle engine
 
-**Status: phases 1 and 2 shipped 2026-08-18. Phases 3–5 planned, not started.** Client decisions
+**Status: phases 1 and 2 shipped 2026-08-18, phase 3 on 2026-08-20. Phases 4–5 planned.** Client decisions
 taken; see *Decisions* below. Phase 5 still has one product question for the client, marked in
 place; phase 2's question closed itself — no real name is used anywhere, so none ships.
 
@@ -301,17 +301,29 @@ about why interior detail is worthless on this canvas.
 
 **Still open, unchanged from phase 2:** whether they read *while moving*.
 
-### Phase 3 — new moves
+### Phase 3 — new moves — **shipped 2026-08-20**
 
-These map onto the existing `MOVES`/`SEQUENCES` model directly, and the machinery several of them
-need — `pass`, `windup`, `span`, the ground-pass separation exemption — landed on 2026-08-18.
+**Five moves and seven modules: 36 moves, 35 modules, all reachable and gated.** `sweep_low` + `hop`
+(a low sweep and the jump that is the only answer to it), `roll_through`, `handspring`, `parry_spin`,
+and `throw-deflected` — a thrown blade knocked out of the air. `docs/DECISIONS.md` 2026-08-20 has
+the measurements; `CLAUDE.md` deviation 9 has the four load-bearing rules.
 
-Rolls; more aerials (back handspring, wall-kick reversal, somersault over a low sweep, downward air
-strike); spins (spinning parries, double-spin combos); **thrown props** — the brief calls this the
-single most cinematic addition and it is right; **blasters** with deflection.
+Two of them are worth repeating here because they are about the rig rather than about this phase.
+**A low sweep cannot descend** — a falling blade travels through everything between the guard and
+the floor, so the blade drops to the low line before the distance closes and the lunge carries it
+through. And **the camera had been cutting rotating fighters out of frame since the somersault
+landed**: `duelFocus` reported a standing width for a body drawn on its side. Fixing that took
+clipping from 8.61% of turning frames to 5.29%, and yielding the arena clamp to the subject took it
+to **zero, death holds included**.
 
-Every new move gates itself to `0` weight when the geometry does not allow it, exactly as
-`leap_strike` and `flip_over` already do.
+**Not taken, and it is a scope decision rather than a deferral:** *thrown props* and *blasters with
+deflection*. Both need a new entity in an arena that has nothing in it — props would be set dressing
+this world does not have, and none of the eight fighters carries a gun, which is a character
+decision and not an engine one. The deflection image is built out of what already exists.
+
+The remaining ideas from the brief that would still fit: a wall-kick reversal (the arena has walls in
+name only, so this wants a decision about whether they are visible), and a downward air strike, which
+is close enough to `leap_strike` that it needs a reason to exist.
 
 ### Phase 4 — VFX
 

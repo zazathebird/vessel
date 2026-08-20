@@ -25,7 +25,21 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 import { qrMatrix } from "../src/auth/qr";
-import { createDuel, createDuelFrom, advanceDuel, buildSequence, makeRoll, DUEL_TABLES, GRAVITY } from "../src/fx/duel";
+import {
+  createDuel,
+  createDuelFrom,
+  advanceDuel,
+  buildSequence,
+  makeRoll,
+  bladeWorld,
+  carryWindow,
+  duelFocus,
+  BODY_H,
+  DUEL_TABLES,
+  GRAVITY,
+} from "../src/fx/duel";
+import { duelCamera, ORNAMENT_PX } from "../src/components/DuelOrnament";
+import type { DuelCam } from "../src/components/DuelOrnament";
 import { BLADE_COLORS, DUEL_POOLS, FIGHTERS, rollPairing } from "../src/fx/fighters";
 import type { CostumeCtx, FighterKind, FighterStyle } from "../src/fx/fighters";
 import { PAGES } from "../src/data/pages";
@@ -1059,44 +1073,218 @@ check("duel: every generated sequence is arithmetically sound", () => {
  * frame the revolution completes; typing that window as a constant instead is
  * how a later retune of `impulse` lands somebody mid-turn.
  */
-if (!FAST) check("duel: a pass crosses without mirroring, and lands upright", () => {
+if (!FAST) check("duel: a pass crosses without mirroring, and every turn ends upright", () => {
   const { moves } = DUEL_TABLES;
   const passes = Object.entries(moves).filter(([, m]) => m.pass);
-  must(passes.length >= 2, `only ${passes.length} pass move(s) — expected the flip and the charge`);
+  must(passes.length >= 3, `only ${passes.length} pass move(s) — expected the flip, the charge and the roll`);
 
-  const flip = moves.flip_over;
-  const at = flip.impulse?.at ?? 0;
-  const vy = Math.abs(flip.impulse?.vy ?? 0);
-  must(vy > 0, "flip_over has no vertical impulse to derive its tumble from");
-  /** The frame the revolution completes, from the ballistic flight time. */
-  const upright = Math.round(at + (2 * vy) / GRAVITY);
+  /*
+   * **Every move that turns, not just the somersault.**
+   *
+   * This gate named `flip_over` for as long as it was the only rotating move,
+   * and phase 3 added two more — a back handspring and a ground roll. A gate
+   * that knows the name of the one move it is protecting protects exactly one
+   * move; the property being asserted is *"a figure that starts a turn finishes
+   * it before the move ends"*, and that is decidable for all of them from
+   * `carryWindow`, which is the same function the renderer rotates by. A second
+   * copy of that arithmetic here would only ever confirm the second copy.
+   */
+  const turns = Object.entries(moves).filter(([, m]) => carryWindow(m) !== null);
+  must(turns.length >= 3, `only ${turns.length} turning move(s)`);
+  const tumbles: string[] = [];
+  const rolls: string[] = [];
+  for (const [id, m] of turns) {
+    const w = carryWindow(m)!;
+    /*
+     * The turn has to be over while the move still exists. Past the end the
+     * renderer clamps and the figure simply stands up mid-revolution — which is
+     * the thing this gate was built for on the somersault, and it is no less
+     * wrong on a handspring.
+     */
+    must(w.to <= m.frames, `${id}: its turn ends at ${w.to.toFixed(1)} but the move is ${m.frames} frames`);
+    must(m.spin !== undefined && m.spin !== 0, `${id} declares a turn with no revolutions`);
+    if (m.carry === "tumble") {
+      must(Math.abs(m.impulse?.vy ?? 0) > 0, `${id} tumbles with no vertical impulse to time it from`);
+      tumbles.push(id);
+    } else {
+      /*
+       * A roll is a **ground** pass, and the separation exemption keys on
+       * exactly that — a pass with no vertical impulse. Give one a `vy` and it
+       * silently becomes an airborne pass that is also exempt while it is on
+       * the floor, which is the 15.79 → 4.39 regression `overrun` measured.
+       */
+      must(!m.impulse?.vy, `${id} rolls along the ground but declares a vertical impulse`);
+      must(m.pass === true, `${id} rolls through the opponent but is not declared a pass`);
+      rolls.push(id);
+    }
+  }
 
   const st = createDuel("hooded", "caped");
   // Fighters are created standing, so this is the floor — read rather than
   // re-declared, so the checker cannot hold a stale copy of it.
   const FLOOR = st.a.y;
   let mirrored = 0;
-  let landings = 0;
+  const landings: Record<string, number> = {};
   let offBy = 0;
+  let airborneRoll = 0;
   let prev = { a: { ...st.a }, b: { ...st.b } };
-  for (let i = 0; i < 120_000; i += 1) {
+  // 240,000 rather than 120,000: the somersault has two modules behind it and
+  // the handspring one, so at the shorter length a weight-5 module's landings
+  // are a sample of about a dozen and the run-to-run spread reaches down to six.
+  // The assertion is about *every* landing being upright, so the length is only
+  // ever about having enough of them to mean something.
+  for (let i = 0; i < 240_000; i += 1) {
     advanceDuel(st, 1);
     for (const k of ["a", "b"] as const) {
       const f = st[k];
       const was = prev[k];
       if (was.move === f.move && moves[f.move]?.pass && f.facing !== was.facing) mirrored += 1;
-      // The frame the feet arrive during a somersault.
-      if (f.move === "flip_over" && was.move === "flip_over" && was.y < FLOOR - 0.5 && f.y >= FLOOR - 0.5) {
-        landings += 1;
-        if (Math.abs(f.mf - upright) > 1) offBy += 1;
+      // A ground roll that leaves the ground is not a ground roll.
+      if (rolls.includes(f.move) && f.y < FLOOR - 0.5) airborneRoll += 1;
+      // The frame the feet arrive during an airborne turn.
+      if (tumbles.includes(f.move) && was.move === f.move && was.y < FLOOR - 0.5 && f.y >= FLOOR - 0.5) {
+        landings[f.move] = (landings[f.move] ?? 0) + 1;
+        const w = carryWindow(moves[f.move])!;
+        if (Math.abs(f.mf - Math.round(w.to)) > 1) offBy += 1;
       }
     }
     prev = { a: { ...st.a }, b: { ...st.b } };
   }
+  const total = Object.values(landings).reduce((n, x) => n + x, 0);
   must(mirrored === 0, `${mirrored} mid-pass mirror(s) — facing turned while crossing`);
-  must(landings > 20, `only ${landings} somersaults in 120,000 frames — is the move reachable?`);
-  must(offBy === 0, `${offBy} of ${landings} somersaults landed mid-revolution (window ends ${upright})`);
-  return `${landings} somersaults, none mirrored, all upright at ${upright}`;
+  must(airborneRoll === 0, `${airborneRoll} frame(s) of a ground roll spent off the ground`);
+  for (const id of tumbles) {
+    must((landings[id] ?? 0) > 8, `only ${landings[id] ?? 0} landings of ${id} — is the move reachable?`);
+  }
+  must(offBy === 0, `${offBy} of ${total} airborne turns landed mid-revolution`);
+  return `${turns.length} turning moves, ${total} landings, none mirrored or mid-revolution`;
+});
+
+/*
+ * The camera, and the one question it exists to answer: **is everybody in
+ * shot?**
+ *
+ * This effect has cut a fighter out of its own frame three times, by three
+ * unrelated routes, and each was found only by measuring: a corpse reported as
+ * a standing body (84.6% of death-hold frames clipped), a rotating body reported
+ * as a standing one (8.61% of turning frames), and the arena clamp holding the
+ * view at the stage edge while somebody tumbled into the corner (427 of the 430
+ * frames that survived the first two fixes). None of them is visible in the
+ * code, all of them are decidable by driving the real camera, and the ornament
+ * is the one place on the site where the frame moves on its own — so the cost of
+ * getting it wrong is a fight you cannot see happening.
+ *
+ * It drives `duelCamera` at the buffer the component actually declares, one
+ * frame at a time, carrying the camera exactly as the render loop carries it.
+ */
+if (!FAST) check("duel: the ornament camera never cuts a fighter off", () => {
+  const st = createDuel("hooded", "caped");
+  let cam: DuelCam | null = null;
+  let clipped = 0;
+  let worst = 0;
+  let dead = 0;
+  for (let i = 0; i < 200_000; i += 1) {
+    advanceDuel(st, 1);
+    const shot = duelCamera(st, ORNAMENT_PX, ORNAMENT_PX, cam, 1);
+    cam = shot.cam;
+    const f = duelFocus(st);
+    const viewLo = -shot.x / shot.scale;
+    const viewHi = (ORNAMENT_PX - shot.x) / shot.scale;
+    const over = Math.max(viewLo - (f.cx - f.width / 2), f.cx + f.width / 2 - viewHi, 0);
+    if (st.over > 0) dead += 1;
+    // Half a world unit of tolerance: this is about a body leaving the picture,
+    // not about the last decimal of an eased scale.
+    if (over > 0.5) {
+      clipped += 1;
+      worst = Math.max(worst, over * shot.scale);
+    }
+  }
+  must(dead > 2_000, `only ${dead} death-hold frames — the fight may not be finishing matches`);
+  must(
+    clipped === 0,
+    `${clipped} frame(s) cut a fighter off, worst by ${worst.toFixed(0)}px of ${ORNAMENT_PX}`,
+  );
+  return `200,000 frames at ${ORNAMENT_PX}px, ${dead.toLocaleString()} of them a death hold, none clipped`;
+});
+
+/*
+ * The sweep and the jump over it — the second measured *pairing* in the pool,
+ * and the reason both halves of one are worth a gate.
+ *
+ * `duck` + `strike_level` are a fit between two specific blade curves: the cut
+ * holds level from frame 17 to 24 and the crouch is deepest at 19, so the blade
+ * passes over the head rather than the two merely happening at once. `sweep_low`
+ * + `hop` is the same idea upside down, and it is more fragile, because the
+ * clearance is bought by *gravity* rather than by a pose — retune the hop's
+ * impulse, slide the launch frame, or move the sweep's contact, and the blade
+ * goes through the ankles of a fighter who is visibly trying to jump it.
+ *
+ * Neither number can be reasoned about from the tables alone (the jump is a
+ * simulation), so this measures the real thing: on the frame the sweep resolves,
+ * where is its blade tip against the hopping fighter's feet?
+ */
+if (!FAST) check("duel: a low sweep passes under the jump that answers it", () => {
+  const { moves } = DUEL_TABLES;
+  const sweep = moves.sweep_low;
+  must(sweep.contact >= 0, "sweep_low cannot connect, so nothing has to clear it");
+
+  /*
+   * **The window is the frames the blade is on the low line, and it is derived
+   * from the move's own table** — from the frame it arrives (`contact`, which
+   * sits on the arrival key by construction) to the frame the plateau after it
+   * ends. Retime the sweep and this window retimes with it.
+   *
+   * What is deliberately *outside* the claim, because measuring it was what
+   * showed it is not a defect: on the way down the tip and the jumper's rising
+   * boots cross each other exactly once, so there is a frame or two where they
+   * are level. That is a near miss, it is what jumping a sweep looks like, and
+   * it cannot be designed out — the blade descends and the feet rise, so
+   * somewhere they are at the same height. The claim is about the strike, not
+   * about the approach.
+   */
+  const t = sweep.contact / sweep.frames;
+  let arrive = 0;
+  for (let i = 0; i < sweep.blade.length; i += 1) if (sweep.blade[i][0] <= t) arrive = i;
+  must(
+    sweep.blade[arrive + 1]?.[2] === "hold",
+    "sweep_low's contact is not followed by a plateau — it does not hold on the low line",
+  );
+  const active = { from: sweep.contact, to: Math.round(sweep.blade[arrive + 1][0] * sweep.frames) };
+
+  const st = createDuel("hooded", "caped");
+  const FLOOR = st.a.y;
+  /** Canvas y grows downward, so clearance is the tip being *below* the feet. */
+  const active_clear: number[] = [];
+  const atContact: number[] = [];
+  for (let i = 0; i < 240_000; i += 1) {
+    advanceDuel(st, 1);
+    for (const [f, foe] of [[st.a, st.b], [st.b, st.a]] as const) {
+      if (f.move !== "sweep_low" || foe.move !== "hop") continue;
+      // Only while they are genuinely off the ground: a landed fighter standing
+      // next to a blade is not evading anything.
+      if (foe.y >= FLOOR - 0.5) continue;
+      const tip = bladeWorld(f);
+      const clear = tip.ty - (foe.y + BODY_H);
+      if (f.mf === sweep.contact) atContact.push(clear);
+      // And only where there is a question to ask: the tip somewhere over the
+      // body's own width, plus a blade's thickness either side.
+      if (f.mf >= active.from && f.mf <= active.to && tip.tx >= foe.x - 6 && tip.tx <= foe.x + 36) {
+        active_clear.push(clear);
+      }
+    }
+  }
+  must(atContact.length > 20, `only ${atContact.length} sweeps answered by a hop in 240,000 frames — is the pairing reachable?`);
+  must(active_clear.length > 40, `the sweep never crossed the jumper at all — is it reaching them?`);
+  const worst = Math.min(...active_clear);
+  const median = atContact.slice().sort((x, y) => x - y)[atContact.length >> 1];
+  must(worst > 0, `a sweep passed through the jumper by ${(-worst).toFixed(1)} units`);
+  /*
+   * A margin, not merely a sign. The bodies are 70 units tall, so a couple of
+   * units of clearance is a blade shaving a boot — true, and indistinguishable
+   * on screen from a hit. Ten is about an ankle.
+   */
+  must(worst > 10, `worst clearance ${worst.toFixed(1)} units is too fine to read as a miss`);
+  return `${atContact.length} jumps, frames ${active.from}–${active.to}, clearance worst ${worst.toFixed(0)}, median at contact ${median.toFixed(0)}`;
 });
 
 /*

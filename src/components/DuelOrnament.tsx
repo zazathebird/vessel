@@ -92,6 +92,18 @@ const CAM_FEET = 0.82;
  * **If this canvas is ever made responsive, revisit the floor first.** It is
  * the assumption everything above rests on.
  */
+/**
+ * The buffer this ornament draws into, square and **fixed** — CSS scales the one
+ * picture down to whatever the slot is, which is why `duelCamera` is only ever
+ * asked to fit the pair into this many units regardless of the band.
+ *
+ * A constant rather than a literal on the element because `npm run check` drives
+ * the camera at this size to prove it never cuts a fighter off, and a checker
+ * that declared its own buffer size would be proving it about a canvas nobody
+ * renders — which is exactly the mistake the note on `CAM_MIN` records.
+ */
+export const ORNAMENT_PX = 700;
+
 const CAM_MIN = 1.45;
 const CAM_MAX = 2.9;
 /** Per-60Hz-frame approach rates. Zoom is slower than pan, because a zoom that
@@ -166,6 +178,24 @@ export function duelCamera(
    * This is the same reasoning that makes pulling back faster than pushing in;
    * a death is just the extreme of it, and it is known on the frame it happens.
    */
+  /*
+   * **A turn is *not* the same problem, and two plausible fixes for it were
+   * measured and thrown away** (2026-08-20). `drawFighter` rotates a tumbling or
+   * rolling body about its middle, so the pair's extent grows from 30 units to
+   * 51 over about seven frames — which looks exactly like the death case, and is
+   * not. Teaching `duelFocus` the rotated span took clipping during a turn from
+   * **8.61% of turning frames to 5.29%** (300,000 seeded frames, identical
+   * fight). The two obvious ways to spend the rest both bought nothing:
+   *
+   * - Pulling back faster while a turn runs, as a death does: **433 → 430**.
+   * - Having `duelFocus` report the widest the turn is still *going* to get,
+   *   which is what `top` already does for a jumper's apex: **433 → 429**.
+   *
+   * Because the residue is neither the rate nor the lateness. Attributed, 427 of
+   * the remaining 430 frames are the **arena clamp** below — a fighter tumbling
+   * into a corner, with the view held back at the stage edge. Three were easing.
+   * That is why the clamp is the thing that changed and this line is not.
+   */
   const next: DuelCam = cam
     ? {
         x: approach(cam.x, focus.cx, dying ? CAM_PAN * 2.4 : CAM_PAN, frames),
@@ -185,7 +215,29 @@ export function duelCamera(
    * view is wider than the arena the clamp would invert; that case centres.
    */
   const half = w / (2 * next.scale);
-  const x = half * 2 >= WORLD_W ? WORLD_W / 2 : Math.max(half, Math.min(WORLD_W - half, next.x));
+  let x = half * 2 >= WORLD_W ? WORLD_W / 2 : Math.max(half, Math.min(WORLD_W - half, next.x));
+  /*
+   * **…but never so far back that it cuts the subject in half** (2026-08-20).
+   *
+   * The clamp above is right about the ordinary case and wrong about the corner.
+   * A fighter is held inside `x ∈ [20, 650]` and a *rotating* one reaches 51
+   * units either side of its own centre, so a somersault landing against a wall
+   * genuinely occupies space the arena does not have — and the clamp answered by
+   * holding the view still and letting the body leave the frame. Measured, that
+   * was **427 of the 430 remaining clipped frames**, against three from easing.
+   *
+   * What the clamp is protecting is cheap here: the stage has no walls, only a
+   * ground line from 50 to `WORLD_W − 50`, so panning thirty units past its end
+   * shows a little more of the same background. Half a fighter is not cheap. So
+   * the arena wins unless obeying it would push the pair out of shot, and then
+   * the pair wins — and if they are wider than the whole view there is nothing
+   * to choose between, so it centres on them and lets the edges fall where they
+   * fall.
+   */
+  const lo = focus.cx - focus.width / 2;
+  const hi = focus.cx + focus.width / 2;
+  if (hi - lo <= half * 2) x = Math.max(hi - half, Math.min(lo + half, x));
+  else x = focus.cx;
 
   return { cam: next, x: w / 2 - x * next.scale, y: feet - FEET_Y * next.scale, scale: next.scale };
 }
@@ -271,8 +323,8 @@ export function DuelOrnament({ pairing }: { pairing: DuelPool }) {
   return (
     <canvas
       ref={canvasRef}
-      width={700}
-      height={700}
+      width={ORNAMENT_PX}
+      height={ORNAMENT_PX}
       className="v-duelfight"
       aria-hidden="true"
     />

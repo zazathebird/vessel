@@ -65,7 +65,12 @@ export const WORLD_H = 350;
 /** Top of a grounded body; the feet line is FLOOR_Y + BODY_H. */
 const FLOOR_Y = 200;
 const BODY_W = 30;
-const BODY_H = 70;
+/**
+ * Head-to-heel, and exported for one reason: `scripts/check.ts` measures whether
+ * a low sweep genuinely passes under a jumping fighter's *feet*, and a checker
+ * that declared its own body height would be measuring its own body height.
+ */
+export const BODY_H = 70;
 /** The feet line, exported so callers can pin it to a screen height. */
 export const FEET_Y = FLOOR_Y + BODY_H;
 /**
@@ -477,7 +482,7 @@ function thrownBlade(f: Fighter): { hx: number; hy: number; tx: number; ty: numb
  * thrown blade therefore trails, throws sparks off the opponent's guard and
  * lands its blow with no code that knows a throw exists.
  */
-function bladeWorld(f: Fighter): { hx: number; hy: number; tx: number; ty: number } {
+export function bladeWorld(f: Fighter): { hx: number; hy: number; tx: number; ty: number } {
   const thrown = thrownBlade(f);
   if (thrown) return thrown;
   const l = bladeLocal(f, 1);
@@ -657,9 +662,14 @@ type MoveId =
   | "blade_throw"
   | "duck"
   | "overrun"
+  | "sweep_low"
+  | "hop"
+  | "roll_through"
+  | "handspring"
   | "parry_high"
   | "parry_cross"
   | "parry_low"
+  | "parry_spin"
   | "recoil"
   | "stagger"
   | "knockdown"
@@ -752,6 +762,77 @@ interface Move {
    * the move ends and the next frame squares up again.
    */
   pass?: boolean;
+  /**
+   * How the *body* carries this move, for the renderer.
+   *
+   * Four moves used to be named one by one in `drawFighter` — the spin's
+   * flatten, the somersault's tumble, the crouch — as a growing `else if` chain
+   * on move ids. Naming it here instead is what let phase 3 add a ground roll
+   * and a back handspring without touching the renderer at all, and it is what
+   * makes the landing gate *general*: `scripts/check.ts` walks every move that
+   * declares a turn rather than knowing that `flip_over` is the one that does.
+   *
+   * - `flatten` — the figure turns about its own vertical axis, drawn as the
+   *   horizontal axis collapsing to a line and back. The only rotation that
+   *   survives being 60px tall.
+   * - `tumble` — a whole-body revolution in the air, timed from the move's own
+   *   ballistic flight (see `carryWindow`).
+   * - `roll` — the same revolution on the ground, tucked, timed from how far the
+   *   move's impulse has left to travel.
+   * - `crouch` — a compression about the feet.
+   */
+  carry?: "flatten" | "tumble" | "roll" | "crouch";
+  /**
+   * How big the turn is, and it means one thing in the two units the two kinds
+   * of turn are measured in.
+   *
+   * For a `tumble` or a `roll` it is **signed revolutions**: +1 goes the way the
+   * fighter is facing, −1 goes backwards, and a handspring is a somersault with
+   * this sign changed and nothing else. For a `flatten` it is **how far round**,
+   * where 1 goes fully edge-on and less stops short — a spin attack commits and
+   * all but disappears for a frame, and a *parry* must not, because a defence
+   * that vanishes reads as a fighter who was not there rather than one who
+   * turned. Defaults to 1.
+   */
+  spin?: number;
+}
+
+/**
+ * The frames a `tumble` or a `roll` spends turning, derived from the move's own
+ * impulse rather than typed — and exported, so the renderer and the check suite
+ * read the same number instead of each holding a copy.
+ *
+ * An airborne turn is a projectile: constant gravity, so the flight lasts
+ * `2·vy/g` frames and the revolution has to fill exactly that or the fighter
+ * lands mid-turn. A ground roll has no flight to borrow, so its window comes
+ * from the other end — travel under `DECAY` is asymptotic, and the turn ends
+ * when all but the last twentieth of it is behind the fighter. Both are
+ * arithmetic on numbers that already exist, which is the point: retune an
+ * impulse and the turn retimes itself.
+ */
+const ROLL_SETTLED = 0.95;
+/**
+ * The radius of the ball a rolling fighter makes of itself, in world units —
+ * i.e. how far above the floor the roll turns about. A third of a body, which
+ * is what a tucked person is.
+ */
+const ROLL_TUCK = 22;
+/** How far a rolling figure shrinks at the deepest point of its tuck. */
+const ROLL_TUCK_SCALE = 0.24;
+/**
+ * How far above the body's origin the bare head reaches — the crown of the
+ * skull, before any costume. Costume clearance is declared per fighter and
+ * handled separately in `duelFocus`; this is only what a turning body sweeps.
+ */
+const HEAD_TOP = 16;
+export function carryWindow(m: Move): { from: number; to: number } | null {
+  if (m.carry !== "tumble" && m.carry !== "roll") return null;
+  const from = m.impulse?.at ?? 0;
+  if (m.carry === "tumble") {
+    const vy = Math.abs(m.impulse?.vy ?? 0);
+    return vy > 0 ? { from, to: from + (2 * vy) / GRAVITY } : null;
+  }
+  return { from, to: from + Math.log(1 - ROLL_SETTLED) / Math.log(DECAY) };
 }
 
 /** Named blade angles. 0 is level and forward; negative is up. */
@@ -936,6 +1017,7 @@ const MOVES: Record<MoveId, Move> = {
     contact: 32,
     power: 1.25,
     chan: "attacking",
+    carry: "flatten",
   },
   /*
    * The one strike that travels *across* rather than down, and the only one a
@@ -1010,6 +1092,7 @@ const MOVES: Record<MoveId, Move> = {
     contact: -1,
     power: 0,
     chan: "neutral",
+    carry: "crouch",
   },
   /*
    * The charge that swaps the sides.
@@ -1075,6 +1158,142 @@ const MOVES: Record<MoveId, Move> = {
     pass: true,
   },
   /*
+   * The low sweep, and the second half of the `duck`/`strike_level` idea: an
+   * attack that has to be answered with the *body* rather than with the blade.
+   *
+   * **It is the only attack here that never leaves the low line, and that is a
+   * geometric requirement rather than a style** (measured 2026-08-20). The first
+   * version wound up overhead and swung down to the ankles, which is what a
+   * sweep looks like in the head and is unanswerable in this rig: a descending
+   * blade travels through everything between the guard and the floor, so on the
+   * three frames before contact its tip sat at world y 165–205 — inside the
+   * jumping fighter's torso — before arriving under their boots. A jump cannot
+   * evade a blade that comes down *through* it, and no jump this rig can make is
+   * high enough to clear a whole descent: the body would have to leave the
+   * ground by more than its own height.
+   *
+   * So the blade drops into the low line **before** the distance closes, holds
+   * there, and the **lunge** carries it through the ankles — the same division
+   * of labour `strike_level` uses at chest height, moved to the floor. The
+   * consequence to know if this is ever retuned: a blade at 1.05 rad reaches
+   * only ~60 units forward of centre against a level blade's ~88, so a low sweep
+   * that does not travel cannot reach anybody. `span` is what sizes that travel
+   * to the real gap, and without it this move whiffs from inside its own band.
+   *
+   * 32 frames with the arrival key at exactly 0.5, so `contact: 16` lands *on*
+   * the key rather than inside the plateau after it — the same arithmetic
+   * `strike_level` uses, and the reason both are even numbers.
+   */
+  sweep_low: {
+    frames: 32,
+    blade: [
+      [0, GUARD_MID, "out"],
+      // Knee height, tip ~80 forward: the wind-up happens *down here*, which is
+      // where nothing else in the pool ever goes.
+      [0.2, 0.5, "out"],
+      [0.34, 0.5, "hold"],
+      [0.5, 1.05, "in"],
+      [0.78, 1.05, "hold"],
+      [1, GUARD_MID, "out"],
+    ],
+    contact: 16,
+    power: 0.95,
+    chan: "attacking",
+    // Fires as the blade starts down, so the travel and the drop are one motion.
+    impulse: { at: 9, vx: 2.6 },
+    span: -58,
+    // A leg attack is a whole-body pose. It also drops the grip, which is what
+    // keeps the drawn blade on the same line the simulation's is on.
+    carry: "crouch",
+  },
+  /*
+   * Straight up, over the sweep. The one move in the table with no horizontal
+   * component at all, and that is what makes it read: everything else here
+   * travels, so a figure that only goes *up* is unmistakably avoiding something
+   * at floor level.
+   *
+   * No `carry` — a jump is not a turn, and tumbling over a leg sweep is a
+   * different (and much harder to time) move. The blade comes up out of the way
+   * with it, because a low guard on a fighter whose legs have left the ground is
+   * a guard pointed at nothing.
+   */
+  hop: {
+    frames: 34,
+    blade: [
+      [0, GUARD_MID, "out"],
+      [0.3, -1.1, "out"],
+      [0.7, -1.1, "hold"],
+      [1, GUARD_MID, "out"],
+    ],
+    contact: -1,
+    power: 0,
+    chan: "neutral",
+    // Apex is `vy²/2g` = 43 units, reached 12 frames after the impulse.
+    impulse: { at: 1, vx: 0, vy: -7.2 },
+  },
+  /*
+   * The roll: under the blade, past the body, up behind them.
+   *
+   * It is the somersault's idea on the ground, and the ground is the whole
+   * difference — a flip is a dodge that happens above the fight, and a roll
+   * happens *through* it, which is why this one is the answer to a cut that has
+   * already committed. Being a `pass` with no vertical impulse makes it a
+   * **ground pass**: facing freezes for the duration (or the figure mirrors
+   * halfway through, as the somersault did for its whole life) and the body
+   * separation stands down (or the pair shove each other apart in the middle of
+   * a move whose entire content is passing through).
+   *
+   * `span` is what sizes it to the gap in front of it, exactly as the leap and
+   * the somersault do. A roll that always travelled the same distance would
+   * stop short of a distant opponent and end up on top of a close one.
+   */
+  roll_through: {
+    frames: 46,
+    blade: [
+      [0, GUARD_MID, "out"],
+      [0.12, 1.5, "out"],
+      [0.7, 1.5, "hold"],
+      [1, GUARD_MID, "out"],
+    ],
+    contact: -1,
+    power: 0,
+    chan: "neutral",
+    impulse: { at: 3, vx: 5.5 },
+    // Past them, not onto them — the same reason `flip_over` carries one.
+    span: 30,
+    pass: true,
+    carry: "roll",
+    spin: 1,
+  },
+  /*
+   * The back handspring: the only way out of a corner that is not a backstep.
+   *
+   * Backwards, so `spin` is negative and `impulse.vx` is negative — both are
+   * mirrored by `facing`, which points at the opponent, so a negative impulse
+   * is away from them. It gains about 60 units, which is half a sword's reach:
+   * enough to break contact, not enough to leave the fight, and the leash closes
+   * the rest on its own.
+   *
+   * The tumble window comes from the flight, like the somersault's — see
+   * `carryWindow`. It is a shorter jump than the flip, so it is a faster turn,
+   * which is what a handspring is.
+   */
+  handspring: {
+    frames: 48,
+    blade: [
+      [0, GUARD_MID, "out"],
+      [0.1, 1.3, "out"],
+      [0.66, 1.3, "hold"],
+      [1, GUARD_MID, "out"],
+    ],
+    contact: -1,
+    power: 0,
+    chan: "neutral",
+    impulse: { at: 4, vx: -6, vy: -8.4 },
+    carry: "tumble",
+    spin: -1,
+  },
+  /*
    * The three parries are chosen for where the bright bar lands on the body,
    * not for their angles: above the head, across the chest, at the knee. At the
    * size these render nobody reads a blade angle — they read the height of the
@@ -1102,6 +1321,39 @@ const MOVES: Record<MoveId, Move> = {
     contact: -1,
     power: 0,
     chan: "neutral",
+  },
+  /*
+   * The turning parry — the fourth block, and the only one that is not a bar
+   * held in front of the body.
+   *
+   * The other three are chosen for *where the bright line lands*: above the
+   * head, across the chest, at the knee. This one is chosen for its
+   * **silhouette over time**: the figure turns through edge-on and comes out of
+   * the turn with the blade already across the chest, so what the eye reads is a
+   * body getting out of the way of a blow and taking it on the sword on the way
+   * past. It answers the same strikes `parry_cross` does and is deliberately
+   * interchangeable with it, so a module can roll between the two.
+   *
+   * The catch sits inside the 0.46–0.72 hold, which is where the body is at its
+   * narrowest — the turn and the block are the same event, not two.
+   */
+  parry_spin: {
+    frames: 30,
+    blade: [
+      [0, GUARD_MID, "out"],
+      [0.24, -2.4, "out"],
+      [0.46, -0.85, "in"],
+      [0.72, -0.85, "hold"],
+      [1, GUARD_MID, "out"],
+    ],
+    contact: -1,
+    power: 0,
+    chan: "neutral",
+    carry: "flatten",
+    // Two thirds of the way round, not all of it: at full commitment the figure
+    // is a sliver for six frames, and a *block* that disappears reads as a
+    // fighter who was never there. See `Move.spin`.
+    spin: 0.68,
   },
   // The half everyone forgets. Without it a blocked blade carries on through
   // its arc and the parry never happened.
@@ -1205,6 +1457,8 @@ const MOVES: Record<MoveId, Move> = {
     span: 40,
     // And passing through them means not turning round halfway. See `pass`.
     pass: true,
+    carry: "tumble",
+    spin: 1,
   },
   // The only move where the target closes distance involuntarily. Rings that
   // converge inward plus a body travelling the wrong way is a clear read even
@@ -2295,6 +2549,256 @@ const MODULES: Module[] = [
       };
     },
   },
+  /*
+   * ---- phase 3: the evasions that are not a backstep ------------------------
+   *
+   * Everything above answers pressure in one of three ways — block it, step out
+   * of it, or trade with it. `docs/DUEL-ABSORB.md`'s phase 3 is the fourth:
+   * *get out of the way with the whole body*. A roll, a handspring, a jump and a
+   * turn are all the same idea at four different heights, and they are what the
+   * reference engine has that this one did not.
+   *
+   * They are ranged `close` almost throughout, and that is deliberate rather
+   * than incidental: a dodge is only a dodge if something was actually coming.
+   */
+  {
+    /*
+     * Under the cut and out the other side.
+     *
+     * The somersault dodges *over* an attack and belongs to whoever has the room
+     * for it; a roll goes *through*, on the ground, where it can be seen at
+     * ornament scale — and it ends with the roller behind the attacker, who is
+     * still finishing a swing at where they used to be. The counter is
+     * therefore scripted from the roll's own end rather than typed: `pass` moves
+     * swap the sides, and a beat that assumed otherwise would answer from the
+     * wrong side of the arena.
+     */
+    id: "roll-past",
+    weight: 6,
+    range: "close",
+    hits: true,
+    build(r) {
+      const opener = r.of(CUTS);
+      const roll = r.i(2, 8);
+      const cut = r.of(["strike_rising", "strike_diagonal"] as const);
+      const at = ends("roll_through", roll) + r.i(0, 8);
+      const hit = lands(cut, at);
+      const guard = hit + r.i(24, 34);
+      return {
+        beats: [
+          { who: "ATT", move: opener, at: 0, outcome: "miss" },
+          { who: "DEF", move: "roll_through", at: roll },
+          { who: "DEF", move: cut, at, outcome: "hit", power: r.n(0.86, 1.0) },
+          { who: "ATT", move: "stagger", at: hit },
+          { who: "DEF", move: "guard", at: guard },
+        ],
+        length: guard + MOVES.guard.frames + r.i(0, 18),
+      };
+    },
+  },
+  {
+    /*
+     * Blocked, then gone — and then caught anyway.
+     *
+     * The handspring is the pool's only *committed* withdrawal: `backstep` is a
+     * hop and `retreat` is a walk, and both leave the fighter facing the fight
+     * the whole time. This one turns its back on it for half a second, which is
+     * why it is punished here rather than rewarded. The chase is a leap, because
+     * a leap is the one move whose travel sizes itself to whatever gap the
+     * spring just opened.
+     */
+    id: "spring-away",
+    weight: 5,
+    range: "close",
+    hits: true,
+    build(r) {
+      const opener = r.of(CUTS);
+      const block = lands(opener, 0) - r.i(9, 13);
+      const spring = ends(opener, 0) - r.i(0, 8);
+      const chase = ends("handspring", spring) - r.i(4, 12);
+      const hit = lands("leap_strike", chase);
+      const guard = hit + r.i(20, 30);
+      return {
+        beats: [
+          { who: "ATT", move: opener, at: 0, outcome: "blocked" },
+          { who: "DEF", move: PARRY_FOR[opener], at: block },
+          { who: "DEF", move: "handspring", at: spring },
+          { who: "ATT", move: "leap_strike", at: chase, outcome: "hit", power: r.n(0.92, 1.08) },
+          { who: "DEF", move: "stagger", at: hit },
+          { who: "ATT", move: "guard", at: guard },
+        ],
+        length: guard + MOVES.guard.frames + r.i(0, 18),
+      };
+    },
+  },
+  {
+    /*
+     * The sweep, and the jump over it — `under-the-sweep` turned upside down.
+     *
+     * The duck and the level cut are one idea; so are these two, and for the
+     * same reason: a sweep at ankle height cannot be crouched under, blocked
+     * low without opening everything above, or stepped out of in the frames
+     * available. Being in the air is the only answer, and being in the air is a
+     * silhouette a reader can see from across the room.
+     *
+     * **The launch frame does not roll**, exactly as the crouch's does not. The
+     * hop's apex is 12 frames after its impulse and the sweep arrives on frame
+     * 16, so a fixed 3 puts the feet at their highest as the blade goes under
+     * them; sliding it by even a handful of frames puts them back in its path.
+     * What rolls is the counter and the rest.
+     */
+    id: "low-sweep",
+    weight: 7,
+    range: "close",
+    hits: true,
+    build(r) {
+      const counter = r.of(["strike_diagonal", "thrust"] as const);
+      const at = r.i(26, 34);
+      const hit = lands(counter, at);
+      const guard = hit + r.i(18, 28);
+      return {
+        beats: [
+          { who: "ATT", move: "sweep_low", at: 0, outcome: "miss" },
+          { who: "DEF", move: "hop", at: 3 },
+          { who: "DEF", move: counter, at, outcome: "hit", power: r.n(0.82, 0.98) },
+          { who: "ATT", move: "stagger", at: hit },
+          { who: "DEF", move: "guard", at: guard },
+        ],
+        length: guard + MOVES.guard.frames + r.i(0, 18),
+      };
+    },
+  },
+  {
+    /*
+     * The sweep that connects. A blow to the legs puts somebody on the floor —
+     * it is the only attack in the pool where the knockdown is the *obvious*
+     * consequence rather than a heavy hit's bonus, and giving the move a landing
+     * use is what stops `hop` reading as a dodge of a thing that never lands.
+     */
+    id: "swept-down",
+    weight: 4,
+    range: "close",
+    hits: true,
+    build(r) {
+      const hit = lands("sweep_low", 0);
+      const down = hit + r.i(1, 3);
+      const follow = down + MOVES.knockdown.frames + r.i(6, 18);
+      return {
+        beats: [
+          { who: "ATT", move: "sweep_low", at: 0, outcome: "hit", power: r.n(0.9, 1.08) },
+          { who: "DEF", move: "knockdown", at: down },
+          { who: "ATT", move: r.of(["guard", "flourish", "circle"] as const), at: follow },
+          { who: "DEF", move: "guard", at: follow },
+        ],
+        length: follow + MOVES.flourish.frames + r.i(4, 20),
+      };
+    },
+  },
+  {
+    /*
+     * The turning block. `parry_spin` is interchangeable with `parry_cross` by
+     * design, so this module is the same shape as `cut-and-catch` with the
+     * defence carrying a body turn — and that is the whole content: the same
+     * exchange, read differently, which is what stops a pool of this size
+     * feeling like a pool of this size.
+     *
+     * The parry's own catch window is a hold from frame 14 to 22, so the block
+     * has to land inside it. Derived from the strike's contact rather than
+     * typed, so rolling the opener carries the parry with it.
+     */
+    id: "whirl-and-catch",
+    weight: 5,
+    range: "close",
+    hits: true,
+    build(r) {
+      const opener = r.of(["strike_overhead", "strike_diagonal"] as const);
+      const spin = lands(opener, 0) - r.i(13, 17);
+      const counter = r.of(["strike_rising", "thrust"] as const);
+      const at = ends(opener, 0) - r.i(0, 8);
+      const hit = lands(counter, at);
+      const guard = hit + r.i(20, 30);
+      return {
+        beats: [
+          { who: "ATT", move: opener, at: 0, outcome: "blocked" },
+          { who: "DEF", move: "parry_spin", at: spin },
+          { who: "DEF", move: counter, at, outcome: "hit", power: r.n(0.84, 0.98) },
+          { who: "ATT", move: "stagger", at: hit },
+          { who: "DEF", move: "guard", at: guard },
+        ],
+        length: guard + MOVES.guard.frames + r.i(0, 18),
+      };
+    },
+  },
+  {
+    /*
+     * The throw, deflected — and the pool's only exchange with no blow in it
+     * that still ends in somebody's favour.
+     *
+     * `the-throw` always lands, which quietly made the largest read in the set
+     * also the most certain thing in it. A sword arriving on its own and being
+     * *knocked out of the air* is the better half of the image, and it costs
+     * nothing to build: `bladeWorld` returns the flying segment, so the block's
+     * spark burst lands on the thrown blade with no code that knows a throw
+     * exists. The one thing it did need was the engine not bouncing a hand that
+     * is not holding anything — see the guard in `resolveContact`.
+     *
+     * The thrower's recovery is floored past the flight for the same reason
+     * `the-throw`'s is: `bladeWorld` follows the sword, so a guard scheduled
+     * inside the flight takes the hand to a rest pose while the blade is two
+     * hundred units downrange. Gated.
+     */
+    id: "throw-deflected",
+    weight: 3,
+    range: "mid",
+    hits: false,
+    build(r) {
+      const parry = r.i(17, 24);
+      const settle = MOVES.blade_throw.frames + r.i(4, 14);
+      const lag = r.i(0, 8);
+      return {
+        beats: [
+          { who: "ATT", move: "blade_throw", at: 0, outcome: "blocked" },
+          { who: "DEF", move: r.of(["parry_high", "parry_cross"] as const), at: parry },
+          { who: "ATT", move: "guard", at: settle },
+          { who: "DEF", move: r.of(["guard", "circle"] as const), at: settle + lag },
+        ],
+        length: settle + lag + MOVES.circle.frames + r.i(4, 20),
+      };
+    },
+  },
+  {
+    /*
+     * Two turns, the second one landing. The reference engine's double-spin, and
+     * it needs no new move — the spin is already the pool's most committed
+     * attack, and committing to it *twice* is a different thing to watch: the
+     * first turn is a miss the defender has bought time with, and the second
+     * arrives before that time has been spent.
+     *
+     * The second spin is entered a few frames before the first finishes, so the
+     * body never quite comes back to square between them.
+     */
+    id: "double-spin",
+    weight: 4,
+    range: "close",
+    hits: true,
+    build(r) {
+      const dodge = r.i(14, 22);
+      const second = ends("spin_attack", 0) - r.i(2, 10);
+      const hit = lands("spin_attack", second);
+      const down = hit + r.i(1, 3);
+      const guard = down + MOVES.knockdown.frames + r.i(0, 14);
+      return {
+        beats: [
+          { who: "ATT", move: "spin_attack", at: 0, outcome: "miss" },
+          { who: "DEF", move: "backstep", at: dodge },
+          { who: "ATT", move: "spin_attack", at: second, outcome: "hit", power: r.n(1.05, 1.25) },
+          { who: "DEF", move: "knockdown", at: down },
+          { who: "ATT", move: "guard", at: guard },
+        ],
+        length: guard + MOVES.guard.frames + r.i(0, 18),
+      };
+    },
+  },
 ];
 
 const TOTAL_WEIGHT = MODULES.reduce((n, m) => n + m.weight, 0);
@@ -2602,7 +3106,25 @@ function resolveContact(st: DuelState, f: Fighter, foe: Fighter, m: Move): void 
      * puts the blade's turnaround back on top of the swing, which is the bug
      * this whole change exists to fix.
      */
-    f.bounce = 5;
+    /*
+     * **A blade that is not in the hand cannot bounce out of it.**
+     *
+     * The bounce is `setMove(f, "recoil")` four frames later, and `thrownBlade`
+     * is keyed on the move — so on a *deflected throw* it would end the flight
+     * mid-air and snap the sword back into a fist a couple of hundred units
+     * away. That is the same teleport the victory flourish had to be deferred
+     * around, arriving by a different route, and it is the one thing standing
+     * between `blade_throw` and being blockable at all: everything else about a
+     * deflection already works, because `bladeWorld` returns the flying segment
+     * and so the burst lands on the thrown blade with no code that knows a throw
+     * exists.
+     *
+     * The throw carries its own recovery, so nothing is lost by staying silent
+     * here — the arc turns round and comes home on its own, which reads as the
+     * blade being knocked off its line rather better than a recoil animation on
+     * an empty hand would.
+     */
+    if (thrownBlade(f) === null) f.bounce = 5;
     st.hitStop = 3;
   } else if (f.outcome === "miss" && tip.ty > FLOOR_Y + BODY_H - 6) {
     // A swing that finishes in the floor throws sparks off it.
@@ -3231,7 +3753,11 @@ function springBlade(st: DuelState, f: Fighter, foe: Fighter): void {
   const target = bladeTarget(f, foe, st.idle);
   // A parry is stiffer than a strike: it has perhaps five frames to arrive, and
   // a block that drifts into place is not a reaction to anything.
-  const parrying = f.move === "parry_high" || f.move === "parry_cross" || f.move === "parry_low";
+  const parrying =
+    f.move === "parry_high" ||
+    f.move === "parry_cross" ||
+    f.move === "parry_low" ||
+    f.move === "parry_spin";
   /*
    * The lock is stiff for a different reason than the parry: it has to *pass a
    * tremble through*. The neutral spring is a low-pass, and at the judder's
@@ -3338,7 +3864,7 @@ function drawFighter(
     ctx.translate(0, cxFeet);
     ctx.scale(1 + f.land * 0.14, 1 - f.land * 0.14);
     ctx.translate(0, -cxFeet);
-  } else if (f.move === "spin_attack") {
+  } else if (MOVES[f.move].carry === "flatten") {
     /*
      * **The body turns with the blade** (TODO B, 2026-08-16). The spin was in
      * the sword and nowhere else: the figure stood square to the viewer while
@@ -3359,10 +3885,13 @@ function drawFighter(
      * is the difference between a person turning and a sheet of paper. The
      * floor keeps a sliver so the silhouette never quite vanishes.
      */
-    const p = Math.min(1, f.mf / MOVES.spin_attack.frames);
+    const m = MOVES[f.move];
+    const p = Math.min(1, f.mf / m.frames);
     const turn = Math.cos(p * Math.PI);
-    ctx.scale(Math.max(0.12, turn * turn * 0.86 + 0.14), 1);
-  } else if (f.move === "flip_over") {
+    // `spin` is how far round it goes — 1 commits to edge-on, less stops short.
+    const narrow = turn * turn * 0.86 + 0.14;
+    ctx.scale(Math.max(0.12, 1 - (1 - narrow) * (m.spin ?? 1)), 1);
+  } else if (MOVES[f.move].carry === "tumble" || MOVES[f.move].carry === "roll") {
     /*
      * **The somersault somersaults** (TODO B). Its own comment described "a
      * still blade under a tumbling body" and there was no tumble: the figure
@@ -3387,21 +3916,38 @@ function drawFighter(
      * It rotates about the **body's middle**, not the feet: a tumbling figure
      * turns about its own mass, and about the feet it is a pole vault.
      *
-     * Positive is forward — the head goes the way the body is travelling —
-     * because this is inside the `scale(facing, 1)` mirror, so "forward" is
-     * already whichever way the fighter faces. The mirror is also why the
-     * facing freeze in `stepFighter` matters more here than anywhere: without
-     * it the whole figure flips inside out on the frame it crosses the
-     * opponent, which is the one frame everybody is looking at.
+     * `spin` is signed and the sign is the whole difference between a
+     * somersault and a back handspring — positive is forward, the head going
+     * the way the body travels. This is inside the `scale(facing, 1)` mirror,
+     * so "forward" is already whichever way the fighter faces. The mirror is
+     * also why the facing freeze in `stepFighter` matters more here than
+     * anywhere: without it the whole figure flips inside out on the frame it
+     * crosses the opponent, which is the one frame everybody is looking at.
+     *
+     * **A ground roll turns about a lower point, and tucks.** A somersault
+     * revolves about the middle of a body that is in the air; a roll revolves
+     * about a ball of one, and that ball's centre is its own radius above the
+     * floor. Rotating a full-height figure about its middle while its feet are
+     * on the ground puts the head through the floor for a quarter of the turn —
+     * so the roll drops the pivot to the tuck's radius and shrinks the figure to
+     * match. It is the cheapest possible reading of "curls up and rolls", and at
+     * 60px it is the only one that survives.
      */
-    const m = MOVES.flip_over;
-    const at = m.impulse?.at ?? 0;
-    const flight = (2 * Math.abs(m.impulse?.vy ?? 0)) / GRAVITY;
-    const p = Math.max(0, Math.min(1, (f.mf - at) / flight));
-    ctx.translate(0, BODY_H / 2);
-    ctx.rotate(p * TAU);
-    ctx.translate(0, -BODY_H / 2);
-  } else if (f.move === "duck") {
+    const m = MOVES[f.move];
+    const w = carryWindow(m);
+    const p = w ? Math.max(0, Math.min(1, (f.mf - w.from) / (w.to - w.from))) : 0;
+    const rolling = m.carry === "roll";
+    const pivot = rolling ? BODY_H - ROLL_TUCK : BODY_H / 2;
+    ctx.translate(0, pivot);
+    ctx.rotate(p * TAU * (m.spin ?? 1));
+    if (rolling) {
+      // Only while the turn is actually running: a fighter who has come out of
+      // the roll and is standing up should be full height again.
+      const tuck = Math.sin(Math.PI * Math.min(1, p * 1.08)) * ROLL_TUCK_SCALE;
+      ctx.scale(1 - tuck, 1 - tuck);
+    }
+    ctx.translate(0, -pivot);
+  } else if (MOVES[f.move].carry === "crouch") {
     /*
      * The crouch. A whole-body compression about the feet, widening a little as
      * it drops, because that is what a body does and because at 60px tall a
@@ -3589,6 +4135,21 @@ function drawFighter(
   }
 
   // ---- legs, behind everything -------------------------------------------
+  /*
+   * **A roll is a ball, and a ball is made by the legs coming in.**
+   *
+   * Rotating a figure that is still standing in its guard gives a rigid body
+   * tipping over — which is what the first version drew, and at ornament scale
+   * it read as a fighter falling rather than rolling. The rotation was never the
+   * missing half: the *pose* was. Knees to the chest for the frames the turn is
+   * running, eased in and out so entering and leaving the roll are motions
+   * rather than switches, and the two-bone solver folds the leg for free
+   * because the target is inside its own reach.
+   */
+  const rollWindow = MOVES[f.move].carry === "roll" ? carryWindow(MOVES[f.move]) : null;
+  const tucked = rollWindow
+    ? Math.sin(Math.PI * Math.max(0, Math.min(1, (f.mf - rollWindow.from) / (rollWindow.to - rollWindow.from))))
+    : 0;
   const kickP = f.action === "kicking" ? Math.min(1, f.mf / MOVES[f.move].frames) : 0;
   const kickReach = Math.sin(Math.PI * Math.min(1, kickP * 1.4)) * 34;
   const brace = f.action === "attacking" ? 5 : 0;
@@ -3620,6 +4181,12 @@ function drawFighter(
       const ph = f.stride + (front ? 0 : Math.PI);
       footX += Math.sin(ph) * 13 * speed;
       footY -= Math.max(0, Math.cos(ph)) * 9 * speed;
+    }
+    if (tucked > 0) {
+      // In toward the hips: the knee has to break outward, which is the shape
+      // that reads as tucked rather than as folded flat.
+      footX += (10 - footX) * tucked;
+      footY += (hipY + 8 - footY) * tucked;
     }
     limb(hipX, hipY, footX, footY, THIGH, SHIN, -1, lw(front ? 5 : 4));
   }
@@ -3890,11 +4457,56 @@ export function duelFocus(st: DuelState): { cx: number; width: number; top: numb
    * So each fighter reports the span it actually occupies and the frame is
    * built from the union of the two, rather than from their centres.
    */
+  /*
+   * **A fighter in the middle of a turn is not 30 units wide, and this reported
+   * that it was** (2026-08-20). It is the corpse bug in a second costume: the
+   * renderer rotates a body about a pivot, the body is 86 units from head to
+   * heel against 30 across, and the camera was framing the standing width
+   * throughout. A somersault at the top of its arc is lying flat in the air, so
+   * the ornament clipped a fighter every time one crossed — measured below.
+   *
+   * The half-span of a rotated box is `w·|cos θ| + h·|sin θ|`, where `h` is the
+   * distance from the pivot to the furthest corner. The angle comes from
+   * `carryWindow` and `spin`, the same two things the renderer rotates by, so
+   * this cannot drift away from the drawing.
+   */
   const span = (f: Fighter) => {
     const c = centre(f);
-    if (f.action !== "dead") return { lo: c - BODY_W / 2, hi: c + BODY_W / 2 };
-    const toe = c - f.facing * (BODY_H + 17);
-    return { lo: Math.min(c, toe), hi: Math.max(c, toe) };
+    if (f.action === "dead") {
+      const toe = c - f.facing * (BODY_H + 17);
+      return { lo: Math.min(c, toe), hi: Math.max(c, toe) };
+    }
+    const m = MOVES[f.move];
+    const w = carryWindow(m);
+    let half = BODY_W / 2;
+    if (w) {
+      const p = Math.max(0, Math.min(1, (f.mf - w.from) / (w.to - w.from)));
+      const spin = m.spin ?? 1;
+      const pivot = m.carry === "roll" ? BODY_H - ROLL_TUCK : BODY_H / 2;
+      // The furthest the drawing reaches from the pivot along the body's own
+      // axis: the crown of the head one way, the heels the other.
+      const reach = Math.max(pivot + HEAD_TOP, BODY_H - pivot);
+      // A roll draws itself smaller, so it needs less room, and saying otherwise
+      // pulls the camera back for nothing.
+      const shrink = m.carry === "roll" ? 1 - ROLL_TUCK_SCALE : 1;
+      const at = (th: number) =>
+        (Math.abs(Math.cos(th)) * (BODY_W / 2) + Math.abs(Math.sin(th)) * reach) * shrink;
+      /*
+       * **The widest the turn is still going to get, not the widest it is** —
+       * the same anticipation `top` uses for a jumper's apex, and for the same
+       * reason. Reporting the instantaneous width is correct and still clips,
+       * because pulling back takes frames: measured over 300,000, the honest
+       * instantaneous span left 2.38% of turning frames with a body over the
+       * edge. A turn is monotonic and its end is known when it starts, so the
+       * whole pull-back can happen while the figure is still upright.
+       *
+       * The maximum of `w·|cos| + h·|sin|` over the remainder is `h` if the
+       * sweep still crosses a quarter turn, and otherwise sits at one of its
+       * two ends.
+       */
+      half = at(p * TAU * spin);
+    }
+    return { lo: c - half, hi: c + half };
   };
   const a = span(st.a);
   const b = span(st.b);

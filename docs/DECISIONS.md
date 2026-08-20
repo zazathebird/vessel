@@ -14,7 +14,90 @@ file records what happened to the codebase.
 ---
 
 
-## 2026-08-19 (latest) — the first byte out of the bucket, and every download was a 206
+## 2026-08-20 (latest) — phase 3: four ways to get out of the way, and a camera that stopped cutting people in half
+
+`docs/DUEL-ABSORB.md` phase 3, on the client's *"keep going with the engine and the graphical
+overhaul of all the characters."* Everything above answers pressure by blocking it, stepping out of
+it or trading with it. Phase 3 is the fourth answer — **get out of the way with the whole body** —
+and it is what the reference engine had that this one did not.
+
+**Five moves, seven modules, and one refactor that made all of it cheap.** The renderer used to name
+`spin_attack`, `flip_over` and `duck` one at a time in an `else if` chain; `Move.carry` names the
+*kind* of thing the body does (`flatten`, `tumble`, `roll`, `crouch`) and `Move.spin` says how much.
+So a ground roll and a back handspring cost no renderer changes at all, and — the part that matters
+more — the landing gate stopped naming `flip_over` and started walking every move that declares a
+turn. `carryWindow` is exported and both the renderer and the checker rotate by it, for the reason
+this codebase always extracts a decision it cannot watch.
+
+### The low sweep, and why the obvious version cannot work
+
+`sweep_low` + `hop` is `duck` + `strike_level` upside down: an attack answered with the body rather
+than the blade. The first version wound up overhead and swung down at the ankles, which is what a
+sweep looks like in the head and is **unanswerable in this rig**. Measured, its tip sat at world y
+165–205 on the three frames before contact — inside the jumping fighter's torso — and only then
+arrived under their boots. A descending blade travels through everything between the guard and the
+floor, and no jump this rig can make clears a whole descent: the body would have to leave the ground
+by more than its own height.
+
+So the blade drops into the low line **before** the distance closes, holds there, and the **lunge**
+carries it through — the same division of labour `strike_level` uses at chest height, moved to the
+floor. The consequence worth knowing if it is ever retuned: a blade at 1.05 rad reaches ~60 units
+forward against a level blade's ~88, so a low sweep that does not travel cannot reach anybody.
+`span` sizes that travel to the real gap. Measured after: 53 jumps, clearance **14 units at worst
+and 39 at the contact frame**, and the gate now derives its own window from the move's table.
+
+**What is deliberately outside the claim**, because measuring showed it is not a defect: on the way
+down the tip and the rising boots cross once, so there is a frame or two where they are level. That
+is a near miss, it is what jumping a sweep looks like, and it cannot be designed out.
+
+### The camera has cut a fighter out of frame three times, by three unrelated routes
+
+The third one shipped 2026-08-18 with the somersault and nobody saw it, because nobody could:
+`drawFighter` rotates a tumbling body about its middle, so it stops being 30 units wide and becomes
+51 — and `duelFocus` reported the standing width throughout. Driving the real `duelCamera` at the
+component's real 700px buffer over 300,000 **seeded** frames (so every variant sees the identical
+fight):
+
+| | clipped, of turning frames | worst overhang |
+|---|---|---|
+| Before | **8.61%** | 84px of 700 |
+| `duelFocus` reports the rotated span | 5.29% | 84px |
+| …plus a faster pull-back while turning | 5.26% | 84px |
+| …instead: report the widest the turn is *going* to get | 5.25% | 55px |
+| **The arena clamp yields to the subject** | **0.00%** | **0px** |
+
+**Both of the plausible fixes were wrong, and attribution is what found the real one.** Pulling back
+faster is what fixed the corpse, and here it bought three frames out of 8,179. Anticipating the
+turn's widest point is what `top` already does for a jumper's apex, and it bought four. Attributed,
+**427 of the 430 remaining frames were the arena clamp** — a fighter tumbling into a corner with the
+view held back at the stage edge. What that clamp protects is cheap (the stage has no walls, only a
+ground line, so panning past it shows more of the same background); half a fighter is not. It now
+yields to the subject, and clipping goes to zero — **including the death hold, which the 2026-08-17
+pass left at 10.8%**.
+
+The lesson is the one this file keeps re-learning: *fix the cause you measured, not the cause that
+resembles the last one.* Both wrong answers were the right answer to a different bug.
+
+### Seen, not assumed
+
+`scripts/duel-shot.mjs` gained a `move` mode: it steps a real fight until the director calls for a
+named module and then samples it, so what comes out is the move in the company it actually keeps.
+It has no back door into the engine and should not get one. Three things were rebuilt on sight —
+the roll was a rigid body tipping over until the legs tucked (the rotation was never the missing
+half, the *pose* was), the turning parry went fully edge-on and vanished for six frames until `spin`
+let it stop at two thirds, and the sweep is the one described above.
+
+**Tempo did not move**: 121 matches over 360,000 frames against 120 before, fairness 0.27σ, all 35
+modules reachable. The zero-damage share is 31% against 34%, still well inside the rail.
+
+**Not taken, and flagged rather than assumed:** the brief's *thrown props* and *blasters with
+deflection*. Both need a new entity in an arena that has none — the props would be set dressing this
+world does not have, and no fighter on a roster of eight swordsmen carries a gun. The deflection
+image is built instead out of what exists: `throw-deflected` parries a thrown blade out of the air,
+which cost one guard in `resolveContact` (a hand that is not holding anything cannot bounce) and
+nothing else, because `bladeWorld` already returns the flying segment.
+
+## 2026-08-19 — the first byte out of the bucket, and every download was a 206
 
 The client created the R2 bucket (*"i set up the cloudflare thing you requested"*), which made the
 downloads page testable for the first time: it shipped the day before with an empty catalogue and a

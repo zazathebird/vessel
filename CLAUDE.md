@@ -1152,6 +1152,48 @@ All deliberate. Add to this list rather than silently diverging.
    contact there, and manufacturing one is the "proximity is not contact" bug the
    force floor exists to kill.
 
+   **Phase 3 landed 2026-08-20: five moves, seven modules, 36 moves and 35
+   modules in the pool.** `sweep_low` + `hop`, `roll_through`, `handspring`,
+   `parry_spin`, and `throw-deflected`. Four rules there are load-bearing:
+
+   - **`Move.carry` names what the *body* does, and the renderer branches on it
+     rather than on move ids.** `flatten` / `tumble` / `roll` / `crouch`, with
+     `Move.spin` for how much — signed revolutions for a turn, and for a
+     `flatten` how far round it goes (a spin attack commits and all but
+     disappears; a *parry* may not, because a defence that vanishes reads as a
+     fighter who was never there). `carryWindow` derives a turn's frames from the
+     move's own impulse and is **exported so the renderer and the gate rotate by
+     the same number**. The landing gate no longer names `flip_over`; it walks
+     every move that declares a turn.
+   - **A low sweep cannot descend, and that is geometry rather than taste.** A
+     blade coming down travels through everything between the guard and the
+     floor: measured, the first version's tip sat inside the jumping fighter's
+     torso for three frames before arriving under their boots, and no jump this
+     rig can make clears a whole descent. The blade drops to the low line
+     *before* the distance closes and the **lunge** carries it through — which is
+     why the move needs `span`: a blade at 1.05 rad reaches ~60 units forward
+     against a level blade's ~88, so a low sweep that does not travel cannot
+     reach anybody. Gated, with the window derived from the move's own table.
+   - **A rotating fighter is 51 units wide, not 30, and the camera has to be
+     told** — the corpse bug in a second costume. But the fix that worked was
+     neither of the two that resembled it: pulling back faster (which fixed the
+     corpse) bought 3 frames of 8,179 and anticipating the turn's widest point
+     (which is what `top` does for a jumper) bought 4. **427 of the 430 remaining
+     were the arena clamp**, holding the view at the stage edge while somebody
+     tumbled into the corner. The clamp yields to the subject now and clipping is
+     **zero**, death holds included. Gated at the real 700px buffer.
+   - **A hand that is not holding anything cannot bounce.** The deferred recoil
+     off a block would have ended a throw mid-flight and snapped the sword back
+     into a fist two hundred units away — the same teleport the victory flourish
+     had to be deferred around. One guard in `resolveContact` is the whole cost
+     of making a thrown blade blockable, because `bladeWorld` already returns the
+     flying segment.
+
+   **Deliberately not taken in phase 3:** the brief's *thrown props* and
+   *blasters with deflection*. Both need a new entity in an arena that has none,
+   and no fighter on a roster of eight swordsmen carries a gun. The deflection
+   image is built out of what exists instead.
+
    **Deliberately not taken:** the loser's blade vanishes on a single frame at
    death. The fix risks a lit sword lying on the ground for two seconds, and that
    is a judgement that wants an eye rather than a measurement.
