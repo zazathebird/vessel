@@ -304,8 +304,20 @@ also retires the 10.8% death-hold clipping the 2026-08-17 pass left open.
 need a new entity in an arena that has nothing in it, and none of the eight fighters carries a gun.
 Say if you want either and it becomes a character conversation rather than an engine one.
 
-**Two remain.** Phase 4 (VFX — directional sparks, scorch decals, real blade lighting; **no
-shadow-blur glow**, see the render-cost measurement), phase 5 (audio).
+**Phase 4 is shipped (2026-08-20).** Directional sparks off the contact, a silhouette flash on the
+struck fighter lasting exactly the hit-stop, a directional kick to the frame, scorch marks on the
+ground, and per-bone blade lighting. Three gates came with it and each was verified by breaking it;
+one of them — that `drawDuel` hands the canvas back with a balanced save stack and `source-over`
+restored — is worth more than the feature that prompted it, because the file now has five additive
+passes where it had one. `docs/DECISIONS.md` has the measurements.
+
+**Two things in it are the client's, and both are in `docs/DUEL-ABSORB.md`:** the blade light washes
+bodies in the blade's colour, which widens the literal-colour carve-out that was granted for blades
+specifically; and whether the kick's 4.5 world units and the light's 0.5 strength are right, which is
+a still-image judgement made on contact sheets.
+
+**One remains.** Phase 5 (audio) — and it still needs the call below on duel audio being fired by
+animation rather than by a gesture.
 
 **One thing for the client before phase 5 starts**, flagged rather than assumed: the site's rule is
 *"every voice is fired by a gesture."* A duel clash is fired by the *animation*. The rule's purpose

@@ -14,7 +14,67 @@ file records what happened to the codebase.
 ---
 
 
-## 2026-08-20 (latest) — duel phase 4, part four: the ground remembers being hit
+## 2026-08-20 (latest) — duel phase 4, part five: the blade lights the body, and a trap nothing was catching
+
+Phase 4's last item — *"real blade lighting (offset from blade midpoint to each limb, intensity by
+inverse distance) replacing the fixed-offset rim"*. There was no fixed-offset rim to replace: the
+plan itself notes that our figures are stroked in the palette's `--fg` over the palette's background
+and so cannot disappear into a dark arena the way the reference's filled bodies can. So the item is
+the lighting on its own — a bone near the blade re-stroked in the blade's colour, additively, at an
+intensity falling off with distance.
+
+Nothing about it is authored: a guard tints the sword forearm, an overhead wind-up washes the head
+and shoulder, a low sweep lights the legs from below. It is the geometry the fight already computes,
+read a second time. Three departures from the brief, each for a reason:
+
+- **Distance to the blade *segment*, not to its midpoint.** A sword here is a line light most of a
+  body-height long, and measuring from its middle lights a fighter standing at the hilt while
+  ignoring one standing at the tip — wrong in the bind and the thrust, the two poses where the blade
+  is furthest from its owner. One extra clamp.
+- **Per bone, not per limb.** A limb is two bones with a joint that can be a long way from either
+  end; lighting the pair as one unit puts a shoulder at the brightness of a hand on the grip.
+- **`1 / (1 + (d/R)²)`, not a linear ramp.** A linear falloff has a hard edge where it reaches zero,
+  and that edge sweeps across the body as the blade moves — a travelling straight line of brightness,
+  which reads as a rendering artefact rather than as light.
+
+**Two things about it want the client's eye, and one is a rule question rather than a taste one.**
+The light is drawn in the blade's colour, and the blades are the site's one literal-colour carve-out.
+Deviation 9 says *"everything else in the duel scene (bodies, sparks, ground, blade cores,
+health-bar tracks) still reads the live palette"* — a body now carries some of that colour, which is
+what "the sword lights the person holding it" means and is also a widening of a rule the client
+granted for blades specifically. It is a *wash over*, not a recolour: the ink underneath is
+unchanged, and it is only ever additive. Flagged rather than assumed. The second is simply whether
+the strength is right — 0.5 at contact reads clearly at both the desk and the phone slot on the
+contact sheets, and that is a still.
+
+**A fighter is lit by their own blade only, and that is a deliberate stop.** Cross-lighting at the
+bind — where both blades sit between the two figures — would want the opponent's blade transformed
+into this fighter's local frame, and that frame carries the `scale(facing, 1)` mirror *and* the carry
+rotations for a tumble or a roll. Getting a transform chain subtly wrong is the bug class that has
+cost this effect the most (the mid-air mirror; the corpse's reported width), it is invisible in a
+still, and animation cannot be watched here. The gain is confined to binds. Recorded rather than
+attempted.
+
+**The gate that came out of this is worth more than the feature.** `drawDuel` now sets
+`globalCompositeOperation = "lighter"` in five places, up from one, each wrapped in
+`save`/`restore` — and one missed `restore` leaves the whole page compositing additively from that
+frame on. `CLAUDE.md` already records the transform half of this trap (`rain`, and `FxCanvas`
+re-issuing a base transform every frame) — but `FxCanvas` re-issues a *transform*, not the composite
+operation, the alpha or the styles, so this half had nothing catching it and the surface for it grew
+fivefold in one day. `npm run check` now drives `drawDuel` over 40,000 frames of a real fight through
+a recording context — including death holds, flash frames and frames with a ground mark live — and
+asserts the save stack comes back to zero and the composite operation comes back to `source-over`.
+Verified by deleting one `restore`: *"drawDuel left 18 unmatched save() at frame 0"*.
+
+**And it caught a flaky assertion of my own.** The kick gate's *settles* sub-test set a kick and
+stepped 600 frames expecting zero — but `advanceDuel` runs a real fight, so a contact in those frames
+legitimately re-arms it, and it failed on its second run. Deleted rather than loosened: the unbroken
+run length already proves the same thing and cannot be fooled (24 frames real, **3,732** with the
+zero-snap removed). A noisy test is one that gets deleted later for being noisy instead of fixed.
+
+---
+
+## 2026-08-20 — duel phase 4, part four: the ground remembers being hit
 
 Phase 4's *"scorch decals cooling white → orange → dark under the fighters, capped"*. Before this the
 floor was the one thing in the arena nothing ever happened to: a sword buried in it threw sparks and

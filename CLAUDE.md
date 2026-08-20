@@ -1197,6 +1197,51 @@ All deliberate. Add to this list rather than silently diverging.
      of making a thrown blade blockable, because `bladeWorld` already returns the
      flying segment.
 
+   **Phase 4 landed 2026-08-20: the fight's impacts.** Five things, and four rules are
+   load-bearing.
+
+   - **One function decides where sparks go, and it is the grinder model.** `contactSpray` takes the
+     swing — from `f.trail`, the same samples the smear is drawn from — and decomposes it against
+     whatever was struck: the component along the surface is kept whole, the one driving into it is
+     reflected back out at 45%. A blade, a torso and the floor are all *a surface and a direction of
+     travel*, so one function serves all four contact sites, and **nothing can spray into the thing
+     it was struck off** — gated over 528 swing × surface pairs. The old bias was a constant per
+     site, straight up on every block whatever either blade was doing.
+
+     **`LIFT` is why that would not have shown.** `spawnSparks` added a hardcoded 2 to every spark's
+     `vy`, against a mean bias magnitude of about 2.5 — so whatever direction a burst was given, half
+     of where it went was the same upward drift as every other burst. It is 0.8 now: circular spread
+     of burst directions, over 300,000 frames, **0.327 → 0.902**. Do not raise it back.
+   - **The hit flash is the hit-stop made visible, and it is `spark`.** `damage` sets `flash` to
+     exactly 1, `stepFighter` decays it, and `stepFighter` does not run while `hitStop` counts down —
+     so `flash === 1` is precisely the frozen frames and the flare needs no timer of its own.
+     **`core` is not a brighter `ink`**: `DuelOrnament` passes `p.fg` for both, so the first version
+     changed the alpha and nothing else and was invisible.
+   - **The kick is ornament-only, bounded, and the camera knows about it.** A contact displaces the
+     whole drawn world along the blow; kicks take the larger rather than summing; the decay runs
+     above both of `step`'s early returns, or a kick parks the world off-centre through a victory
+     hold. `duelFocus` frames the bodies and knows nothing about the offset, so `duelCamera`'s *never
+     cut the subject in half* rule adds the live kick — **which means `npm run check` no longer
+     bounds `DUEL_SHAKE_MAX`**. What is gated is that a kick never exceeds it and always returns to
+     exactly zero. It is its own `DuelView` flag rather than a read of `bars`, defaulting off: a
+     caller that forgets it loses a flourish, where the other default shakes a page under a reader.
+   - **The scorch ramp is the palette's, and the blade light widens a carve-out.** White → orange →
+     dark are three literal colours; `core` → `spark` → `line` is the same ramp in the three inks
+     this file already has, cross-faded by heat because two CSS colour strings cannot be interpolated
+     without parsing them. A near-by mark is **reheated, never stacked**. And the blade lights each
+     bone by its distance to the blade *segment*, inverse-square, in the blade's own colour — which
+     puts some of the literal-colour carve-out onto bodies as an additive wash. **Flagged to the
+     client, not assumed.** A fighter is lit by their own blade only; cross-lighting wants the foe's
+     blade through the mirror *and* the carry rotations, which is the transform-chain bug class this
+     effect has paid for twice and cannot be checked in a still.
+
+   **`drawDuel` must hand the canvas back as it found it, and that is now gated.** There are five
+   `globalCompositeOperation = "lighter"` passes in this file, up from one. `FxCanvas` re-issues a
+   base *transform* every frame, which is why a missed `restore()` can no longer mirror the site —
+   it does **not** reset the composite operation, the alpha or the styles. The suite drives
+   `drawDuel` over 40,000 frames of a real fight through a recording context and asserts the save
+   stack returns to zero and the composite operation to `source-over`.
+
    **Deliberately not taken in phase 3:** the brief's *thrown props* and
    *blasters with deflection*. Both need a new entity in an arena that has none,
    and no fighter on a roster of eight swordsmen carries a gun. The deflection

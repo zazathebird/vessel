@@ -325,7 +325,7 @@ The remaining ideas from the brief that would still fit: a wall-kick reversal (t
 name only, so this wants a decision about whether they are visible), and a downward air strike, which
 is close enough to `leap_strike` that it needs a reason to exist.
 
-### Phase 4 — VFX
+### Phase 4 — VFX — **shipped 2026-08-20**
 
 **The blade's bloom shipped 2026-08-19**, ahead of the rest of this phase, because it was one line
 of composite state and the smear was actively reading wrong: drawn normally, a 13%-alpha fan over a
@@ -333,12 +333,32 @@ near-black arena is *darker* than the background, so a swing dragged a transluce
 The smear and the blade's outer pass are additive now — the second-additive-stroke bloom this
 section already specifies, not a shadow.
 
-Still to do: directional sparks along the blade-contact normal rather than radial; scorch decals cooling
-white → orange → dark under the fighters, capped; real blade lighting (offset from blade midpoint to
-each limb, intensity by inverse distance) replacing the fixed-offset rim; directional shake; a 1–2
-frame silhouette flash on the struck fighter.
+**The other five landed 2026-08-20.** `docs/DECISIONS.md` has each one with its measurements;
+`CLAUDE.md` deviation 9 has the rules. In short:
 
-**No shadow-blur glow** — see the render-cost measurement above.
+- **Directional sparks** — `contactSpray`, the grinder model: the swing decomposed against whatever
+  was struck, keeping the component along the surface and reflecting the one driving into it back out
+  at 45%. One function serves a blade, a torso and the floor. It also turned up a second bug that
+  would have hidden the first: `spawnSparks` added a hardcoded upward kick of 2 to every spark ever
+  spawned, against a mean bias of about 2.5. Circular spread of burst directions **0.327 → 0.902**.
+- **A silhouette flash**, in `spark` rather than `core` (the ornament passes `p.fg` for both, so the
+  obvious version was invisible), lasting exactly the frames the hit-stop freezes — derived, not
+  chosen.
+- **A directional kick**, along the blow, inverting and shrinking each frame. Ornament-only on the
+  same split as the health bars, its own flag, defaulting off. `duelCamera` had to be taught about it.
+- **Scorch marks** where a blade or a body hits the ground, cooling `core` → `spark` → `line` — the
+  palette's version of the plan's white → orange → dark, since three literal colours are not
+  available here.
+- **Blade lighting**, per bone, from the blade *segment*, inverse-square. Two things flagged for the
+  client: it washes bodies in the blade's colour, which widens a carve-out granted for blades; and a
+  fighter is lit by their own blade only, because cross-lighting wants a transform chain that cannot
+  be verified in a still.
+
+**No shadow-blur glow** — see the render-cost measurement above. Still true, and the five above cost
+one extra stroke each at most.
+
+**What no bench can settle**, and it is the same open question the earlier phases left: whether any
+of it reads *while moving*. Stills are what this environment produces.
 
 ### Phase 5 — audio
 

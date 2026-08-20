@@ -37,6 +37,7 @@ import {
   DUEL_SHAKE_MAX,
   DUEL_SCORCH_MAX,
   duelFocus,
+  drawDuel,
   BODY_H,
   DUEL_TABLES,
   GRAVITY,
@@ -1389,22 +1390,121 @@ if (!FAST) check("duel: the kick and the ground marks always settle", () => {
   must(hottest <= 1 + 1e-9, `a ground mark reached heat ${hottest.toFixed(2)}`);
   must(live > 1_000, `only ${live} frames carried a kick — the emitters may have stopped firing`);
   must(marks > 0, "no ground mark was ever left — the emitters may have stopped firing");
-  // At the documented damping a kick is spent in about fourteen frames. A run
-  // far longer than that is a kick being re-armed every frame, which is a
-  // shudder rather than an impact.
+  /*
+   * **This is the assertion that proves a kick settles, and it is the whole of
+   * it.** The obvious version — set a kick, step a few hundred frames, assert it
+   * is zero — was written first and is *flaky*: `advanceDuel` runs a real fight,
+   * so a contact somewhere in those frames re-arms the kick and the last frame
+   * is legitimately non-zero. It failed on its second run, which is exactly the
+   * kind of test that gets deleted later for being noisy rather than fixed.
+   *
+   * The run length says the same thing and cannot be fooled. At the documented
+   * damping a kick is spent in about fourteen frames, so an unbroken run far
+   * past that is a kick that never reaches zero — dropping the zero-snap gives
+   * **3,732**, against a real worst of 24.
+   */
   must(longest < 40, `a kick stayed live for ${longest} frames`);
 
-  // Nothing more happens once the fight does: step a settled state and both
-  // must reach nothing rather than merely getting small.
-  const quiet = createDuel("hooded", "caped");
-  advanceDuel(quiet, 1);
-  quiet.shake.x = DUEL_SHAKE_MAX;
-  quiet.shake.y = DUEL_SHAKE_MAX;
-  quiet.scorch = [{ x: 300, r: 12, heat: 1 }];
-  for (let i = 0; i < 600; i += 1) advanceDuel(quiet, 1);
-  must(quiet.shake.x === 0 && quiet.shake.y === 0, "a kick never reached zero");
-
   return `200,000 frames, kick worst ${worst.toFixed(2)} of ${DUEL_SHAKE_MAX} on ${((live / 200_000) * 100).toFixed(1)}% of frames (longest run ${longest}), at most ${marks} of ${DUEL_SCORCH_MAX} ground marks`;
+});
+
+/*
+ * **`drawDuel` hands the canvas back exactly as it found it.**
+ *
+ * This effect draws into a canvas it shares with the rest of the site, and it
+ * now sets `globalCompositeOperation = "lighter"` in five places — the blade's
+ * bloom, the smear, the hit flash's ground mark, the scorch's hot pass and the
+ * blade light on every bone of every limb. Each is wrapped in `save`/`restore`,
+ * and a single missed `restore` would leave the whole page compositing
+ * additively from that frame on.
+ *
+ * That failure mode is already written down in `CLAUDE.md` — `rain` flips the
+ * world inside a save/restore pair, and a missed restore there "can no longer
+ * mirror the site permanently" only because `FxCanvas` re-issues a base
+ * transform every frame. It re-issues a *transform*; it does not reset the
+ * composite operation, the alpha or the styles. So this is the half of that trap
+ * nothing was catching, and the surface for it grew fivefold today.
+ *
+ * Driven rather than read: `drawDuel` is called with a recording context over
+ * frames of a real fight, including a death hold and a frame with the flash, the
+ * kick and a ground mark all live, and the depth must come back to zero with the
+ * composite operation as it started.
+ */
+if (!FAST) check("duel: the renderer leaves the canvas as it found it", () => {
+  let depth = 0;
+  let worstDepth = 0;
+  let op = "source-over";
+  const opsSeen = new Set<string>();
+  const stack: string[] = [];
+  const ctx = new Proxy(
+    {},
+    {
+      get(_t, key: string) {
+        if (key === "save") {
+          return () => {
+            stack.push(op);
+            depth += 1;
+            worstDepth = Math.max(worstDepth, depth);
+          };
+        }
+        if (key === "restore") {
+          return () => {
+            must(depth > 0, "drawDuel called restore() more often than save()");
+            depth -= 1;
+            op = stack.pop() ?? "source-over";
+          };
+        }
+        if (key === "globalCompositeOperation") return op;
+        if (key === "canvas") return { width: 700, height: 700 };
+        // Every other property read is a style slot; every other call is a draw.
+        return typeof key === "string" && /^[a-z]/.test(key) ? () => undefined : 0;
+      },
+      set(_t, key: string, value) {
+        if (key === "globalCompositeOperation") {
+          op = String(value);
+          opsSeen.add(op);
+        }
+        return true;
+      },
+    },
+  ) as unknown as CanvasRenderingContext2D;
+
+  const st = createDuel("hooded", "caped");
+  const view = {
+    x: 0,
+    y: 0,
+    scale: 1,
+    ink: "#fff",
+    bladeA: "#00f",
+    bladeB: "#f00",
+    core: "#fff",
+    spark: "#ff0",
+    line: "#333",
+    bars: true,
+    kick: true,
+    dim: 1,
+  };
+  let flashes = 0;
+  let marks = 0;
+  let deaths = 0;
+  for (let i = 0; i < 40_000; i += 1) {
+    advanceDuel(st, 1);
+    if (st.a.flash >= 1 || st.b.flash >= 1) flashes += 1;
+    if (st.scorch.length > 0) marks += 1;
+    if (st.over > 0) deaths += 1;
+    drawDuel(ctx, st, view);
+    must(depth === 0, `drawDuel left ${depth} unmatched save() at frame ${i}`);
+    must(
+      op === "source-over",
+      `drawDuel left the composite operation as "${op}" at frame ${i}`,
+    );
+  }
+  // If none of the interesting states came up, the run proved nothing.
+  must(flashes > 100, `only ${flashes} flash frames — the run did not exercise a hit`);
+  must(marks > 100, `only ${marks} frames carried a ground mark`);
+  must(deaths > 100, `only ${deaths} death-hold frames — no match finished`);
+  must(opsSeen.has("lighter"), "no additive pass ran — the run did not reach the code that risks this");
+  return `40,000 frames drawn (${flashes.toLocaleString()} with a flash, ${marks.toLocaleString()} with a ground mark, ${deaths.toLocaleString()} a death hold), stack balanced, composite restored`;
 });
 
 /*

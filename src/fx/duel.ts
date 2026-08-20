@@ -648,6 +648,16 @@ export const DUEL_SCORCH_MAX = 10;
 /** Frames a mark takes to cool from struck to gone. Three seconds at 60Hz. */
 const SCORCH_COOL = 180;
 
+/**
+ * The distance, in world units, at which the blade's light on a body has fallen
+ * to half. A body is 70 units head to heel, so this is roughly a third of one —
+ * near enough that the light says *which part of the figure the sword is beside*
+ * rather than washing the whole silhouette every frame.
+ */
+const LIGHT_RANGE = 22;
+/** How much of the blade's colour a bone touching the blade takes. */
+const LIGHT_STRENGTH = 0.5;
+
 
 /**
  * Which way this fighter's blade tip is travelling, as a unit vector.
@@ -4311,6 +4321,57 @@ function drawFighter(
   ctx.fillStyle = ink;
 
   /** Stroke a two-bone limb and hand back the joint. */
+  /*
+   * ---- the blade lights the body -------------------------------------------
+   *
+   * A bone near the blade is re-stroked in the blade's colour, additively, at an
+   * intensity that falls off with distance. So a guard tints the sword forearm,
+   * an overhead wind-up washes the head and shoulder, and a low sweep lights the
+   * legs from below — and none of that is authored anywhere: it is the geometry
+   * the fight is already computing, read a second time.
+   *
+   * **Distance to the blade *segment*, not to its midpoint** as the plan has it.
+   * A sword is a line light a full body-height long; measuring from its middle
+   * lights a fighter standing at the hilt and ignores one standing at the tip,
+   * which is wrong in the two poses — the bind and the thrust — where the blade
+   * is furthest from its owner. The segment costs one extra clamp.
+   *
+   * **Per bone rather than per limb.** A limb is two bones with a joint that can
+   * be a long way from either end; lighting the pair as one unit puts a
+   * shoulder at the brightness of a hand on the grip.
+   *
+   * `1 / (1 + (d/R)²)` rather than a linear ramp, because a linear falloff has a
+   * hard edge where it reaches zero and the edge sweeps across the body as the
+   * blade moves — a moving straight line of brightness, which reads as a
+   * rendering artefact rather than as light.
+   */
+  const lightBone = (ax: number, ay: number, bx: number, by: number, width: number): void => {
+    if (dead || thrown) return;
+    const mx = (ax + bx) / 2;
+    const my = (ay + by) / 2;
+    const ex = g.tx - g.hx;
+    const ey = g.ty - g.hy;
+    const l2 = ex * ex + ey * ey;
+    const t =
+      l2 < 1e-9 ? 0 : Math.max(0, Math.min(1, ((mx - g.hx) * ex + (my - g.hy) * ey) / l2));
+    const d = Math.hypot(mx - (g.hx + ex * t), my - (g.hy + ey * t));
+    const k = 1 / (1 + (d / LIGHT_RANGE) * (d / LIGHT_RANGE));
+    const a = k * LIGHT_STRENGTH * v.dim;
+    // Below this it is under a fiftieth of the ink it sits on: a stroke nobody
+    // can see, once per bone per frame, on every frame of the fight.
+    if (a < 0.04) return;
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    ctx.strokeStyle = blade;
+    ctx.globalAlpha = a;
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(bx, by);
+    ctx.stroke();
+    ctx.restore();
+  };
+
   const limb = (
     x0: number,
     y0: number,
@@ -4328,6 +4389,8 @@ function drawFighter(
     ctx.lineTo(j.x, j.y);
     ctx.lineTo(x1, y1);
     ctx.stroke();
+    lightBone(x0, y0, j.x, j.y, width);
+    lightBone(j.x, j.y, x1, y1, width);
     return j;
   };
 
@@ -4522,6 +4585,9 @@ function drawFighter(
   }
 
   // ---- spine and head -----------------------------------------------------
+  // The spine is not drawn through `limb`, so it asks for its own light — a
+  // blade held across the chest should reach the body it is across.
+  lightBone(0, hipY, neckX, shY - 2, lw(6));
   ctx.globalAlpha = bodyAlpha;
   ctx.strokeStyle = ink;
   ctx.lineWidth = lw(6);
