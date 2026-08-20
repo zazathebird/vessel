@@ -263,6 +263,7 @@ function hitStrip(kind, pool, before, n, tag) {
   const find = () => {
     Math.random = seeded(20260820);
     const st = D.createDuel(pool[0], pool[1]);
+    let marks = 0;
     for (let i = 0; i < 400000; i += 1) {
       const sparks = st.sparks.length;
       const fa = st.a.flash, fb = st.b.flash;
@@ -270,7 +271,9 @@ function hitStrip(kind, pool, before, n, tag) {
       const landed = (st.a.flash === 1 && fa !== 1) || (st.b.flash === 1 && fb !== 1);
       // A block and a floor strike both throw a burst without dealing damage.
       const burst = st.sparks.length - sparks >= 14 && st.a.flash !== 1 && st.b.flash !== 1;
-      if (kind === 'hit' ? landed : burst) return i;
+      const marked = st.scorch.length > marks;
+      marks = st.scorch.length;
+      if (kind === 'hit' ? landed : kind === 'ground' ? marked : burst) return i;
     }
     return -1;
   };
@@ -305,10 +308,14 @@ function hitStrip(kind, pool, before, n, tag) {
     ctx.restore();
     label((start + i - at) + ' f' + st.a.flash.toFixed(1) + '/' + st.b.flash.toFixed(1)
       + ' s' + st.hitStop + ' k' + st.shake.x.toFixed(1) + ',' + st.shake.y.toFixed(1)
-      + ' x' + st.sparks.length, ox + cw / 2, oy + ch - 6);
+      + ' x' + st.sparks.length + ' m' + st.scorch.length
+      + (st.scorch.length ? ':' + st.scorch[st.scorch.length - 1].heat.toFixed(2) : ''),
+      ox + cw / 2, oy + ch - 6);
     ctx.save(); ctx.globalAlpha = 0.18; ctx.strokeStyle = INK;
     ctx.strokeRect(ox + 0.5, oy + 0.5, cw - 1, ch - 1); ctx.restore();
-    run(st, 1);
+    // A scorch cools over three seconds, so that strip steps wider than one
+    // frame or every cell shows the same mark at the same heat.
+    run(st, kind === 'ground' ? 16 : 1);
   }
   Math.random = real;
   return shot('hit-' + tag);
@@ -319,6 +326,7 @@ function hitStrip(kind, pool, before, n, tag) {
   if (mode === 'hit' || mode === 'all') {
     await hitStrip('hit', ['hooded', 'caped'], 2, 12, 'landed');
     await hitStrip('block', ['haloed', 'horned'], 2, 12, 'blocked');
+    await hitStrip('ground', ['maned', 'cowled'], 1, 12, 'ground');
   }
   if (mode === 'move' || mode === 'all') {
     await moveStrip('sweep_low', 'low-sweep', ['hooded', 'caped'], 12, 3, 'sweep-hop');

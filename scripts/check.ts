@@ -35,6 +35,7 @@ import {
   carryWindow,
   contactSpray,
   DUEL_SHAKE_MAX,
+  DUEL_SCORCH_MAX,
   duelFocus,
   BODY_H,
   DUEL_TABLES,
@@ -1330,26 +1331,36 @@ if (!FAST) check("duel: a low sweep passes under the jump that answers it", () =
  * and quietly make two fighters identical.
  */
 /*
- * **The kick is bounded and always comes back to nothing.**
+ * **The kick and the ground marks are bounded, and both always settle.**
  *
- * A contact displaces the whole drawn world by a few units (`st.shake`), and two
- * things about it are invariants rather than taste. It may never exceed
- * `SHAKE_MAX`, because the camera's *never cut the subject in half* rule is what
- * absorbs it and an unbounded offset would walk the pair out of the ornament.
- * And it must decay to exactly zero, because the alternative — a residue that
- * never quite reaches it — parks the world permanently off-centre, which is
- * invisible frame to frame and unmistakable in a two-second victory hold.
+ * Two pieces of world state were added for the impact work, and both have the
+ * same pair of invariants — a ceiling, and a return to nothing.
  *
- * Both are the sort of thing a later "make the hits feel heavier" would undo by
- * making `kick` additive, which is precisely why the emitter takes the larger of
- * the two rather than summing them.
+ * The kick (`st.shake`) displaces the whole drawn world on a contact. It may
+ * never exceed `DUEL_SHAKE_MAX`, because what absorbs it is `duelCamera`'s
+ * *never cut the subject in half* rule and an unbounded offset would walk the
+ * pair out of the ornament. And it must decay to *exactly* zero: a residue that
+ * never quite arrives parks the world permanently off-centre, which is invisible
+ * frame to frame and unmistakable through a two-second victory hold.
+ *
+ * The ground marks (`st.scorch`) are the same shape of risk. The cap is what
+ * stops a flurry in one place filling the list with copies of itself, and the
+ * cooling is what stops a floor that has been fought on for a minute being lit
+ * end to end.
+ *
+ * Both are the sort of thing a later *"make the hits feel heavier"* undoes by
+ * making `kick` additive or by lengthening the cool without touching the cap,
+ * which is precisely why the emitter takes the larger of two kicks rather than
+ * summing them and why a near-by mark is reheated rather than stacked.
  */
-if (!FAST) check("duel: the kick is bounded and always settles", () => {
+if (!FAST) check("duel: the kick and the ground marks always settle", () => {
   const st = createDuel("hooded", "caped");
   let worst = 0;
   let live = 0;
   let longest = 0;
   let run = 0;
+  let marks = 0;
+  let hottest = 0;
   for (let i = 0; i < 200_000; i += 1) {
     advanceDuel(st, 1);
     const mag = Math.hypot(st.shake.x, st.shake.y);
@@ -1361,14 +1372,39 @@ if (!FAST) check("duel: the kick is bounded and always settles", () => {
     } else {
       run = 0;
     }
+    marks = Math.max(marks, st.scorch.length);
+    for (const s of st.scorch) {
+      hottest = Math.max(hottest, s.heat);
+      must(s.heat > 0, "a spent ground mark is still in the list");
+    }
+    must(
+      st.scorch.length <= DUEL_SCORCH_MAX,
+      `${st.scorch.length} ground marks, over the ${DUEL_SCORCH_MAX} cap`,
+    );
   }
-  must(worst <= DUEL_SHAKE_MAX + 1e-9, `a kick reached ${worst.toFixed(2)}, over the ${DUEL_SHAKE_MAX} ceiling`);
+  must(
+    worst <= DUEL_SHAKE_MAX + 1e-9,
+    `a kick reached ${worst.toFixed(2)}, over the ${DUEL_SHAKE_MAX} ceiling`,
+  );
+  must(hottest <= 1 + 1e-9, `a ground mark reached heat ${hottest.toFixed(2)}`);
   must(live > 1_000, `only ${live} frames carried a kick — the emitters may have stopped firing`);
-  // At the documented damping a kick is spent in about eight frames. A run far
-  // longer than that is a kick being re-armed every frame, which is a shudder
-  // rather than an impact.
+  must(marks > 0, "no ground mark was ever left — the emitters may have stopped firing");
+  // At the documented damping a kick is spent in about fourteen frames. A run
+  // far longer than that is a kick being re-armed every frame, which is a
+  // shudder rather than an impact.
   must(longest < 40, `a kick stayed live for ${longest} frames`);
-  return `200,000 frames, worst ${worst.toFixed(2)} of ${DUEL_SHAKE_MAX}, live on ${((live / 200_000) * 100).toFixed(1)}%, longest run ${longest}`;
+
+  // Nothing more happens once the fight does: step a settled state and both
+  // must reach nothing rather than merely getting small.
+  const quiet = createDuel("hooded", "caped");
+  advanceDuel(quiet, 1);
+  quiet.shake.x = DUEL_SHAKE_MAX;
+  quiet.shake.y = DUEL_SHAKE_MAX;
+  quiet.scorch = [{ x: 300, r: 12, heat: 1 }];
+  for (let i = 0; i < 600; i += 1) advanceDuel(quiet, 1);
+  must(quiet.shake.x === 0 && quiet.shake.y === 0, "a kick never reached zero");
+
+  return `200,000 frames, kick worst ${worst.toFixed(2)} of ${DUEL_SHAKE_MAX} on ${((live / 200_000) * 100).toFixed(1)}% of frames (longest run ${longest}), at most ${marks} of ${DUEL_SCORCH_MAX} ground marks`;
 });
 
 /*

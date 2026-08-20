@@ -244,6 +244,15 @@ interface Spark {
   life: number;
 }
 
+/** A mark on the ground, cooling. See *scorch* above. */
+interface Scorch {
+  x: number;
+  /** Half-width in world units — a boot leaves a wider mark than a blade tip. */
+  r: number;
+  /** 1 the frame it is struck, 0 when it is gone. */
+  heat: number;
+}
+
 export interface DuelState {
   /**
    * Where the next match's fighters come from, or null to keep this one's.
@@ -261,6 +270,8 @@ export interface DuelState {
    * and cannot depend on frame rate, and so a bench can read it.
    */
   shake: { x: number; y: number };
+  /** Cooling marks on the ground, oldest first — see *scorch* above. */
+  scorch: Scorch[];
   /**
    * Frames of hit-stop still owed. Both fighters' move clocks freeze while this
    * is above zero; the sparks and `idle` deliberately do not, because sparks
@@ -336,6 +347,7 @@ export function createDuel(left: FighterStyle, right: FighterStyle): DuelState {
     sparks: [],
     clash: 0,
     shake: { x: 0, y: 0 },
+    scorch: [],
     hitStop: 0,
     dir: { seq: null, f: 0, next: 0, att: "a", chain: 0, pressure: 0 },
     matches: 0,
@@ -613,6 +625,29 @@ export const DUEL_SHAKE_MAX = 4.5;
  */
 const SHAKE_DAMP = 0.62;
 
+/*
+ * ---- scorch -----------------------------------------------------------------
+ *
+ * Where a blade or a body hits the ground, the ground remembers it for a few
+ * seconds. Without this the floor is the one thing in the arena that nothing
+ * ever happens to: a sword buried in it throws sparks and leaves it pristine on
+ * the next frame, which is most of why a missed swing reads as a whiff rather
+ * than as a mistake with a cost.
+ *
+ * **The plan's ramp is white → orange → dark and this one is not, deliberately.**
+ * Those are three literal colours, and the rule here is that every colour
+ * arrives through `DuelView`. The palette's own version of that ramp is the
+ * three inks this file already has — `core` (the brightest thing offered),
+ * `spark` (the accent that already means impact), then `line` (the hairline the
+ * ground itself is drawn in) — cross-faded by heat and faded out together. A
+ * cold mark is therefore a faint smudge in the ground's own colour rather than a
+ * black hole, which is also the only honest answer on a transparent canvas: this
+ * effect does not own its background and cannot darken it.
+ */
+export const DUEL_SCORCH_MAX = 10;
+/** Frames a mark takes to cool from struck to gone. Three seconds at 60Hz. */
+const SCORCH_COOL = 180;
+
 
 /**
  * Which way this fighter's blade tip is travelling, as a unit vector.
@@ -697,6 +732,30 @@ function kick(st: DuelState, dir: { x: number; y: number }, mag: number): void {
   if (m <= Math.hypot(st.shake.x, st.shake.y)) return;
   st.shake.x = dir.x * m;
   st.shake.y = dir.y * m;
+}
+
+/**
+ * Mark the ground — see *scorch* above.
+ *
+ * A fresh mark close to an existing one **reheats it** instead of stacking a
+ * second on top: two marks a couple of units apart are two overlapping ellipses
+ * at double the alpha, which is a bright blob rather than a scuff, and a flurry
+ * in one spot would fill the cap with copies of itself and evict the rest of the
+ * fight's history. Reheating is also what a floor being struck repeatedly in one
+ * place actually looks like.
+ */
+function scorch(st: DuelState, x: number, r: number): void {
+  for (const s of st.scorch) {
+    if (Math.abs(s.x - x) < r) {
+      s.heat = 1;
+      s.r = Math.max(s.r, r);
+      return;
+    }
+  }
+  st.scorch.push({ x, r, heat: 1 });
+  // Oldest first, so the cap evicts the coldest — which is the one nobody can
+  // see going.
+  if (st.scorch.length > DUEL_SCORCH_MAX) st.scorch.shift();
 }
 
 /** The victim's torso as a surface, for a blow that lands on a body. */
@@ -3308,6 +3367,8 @@ function resolveContact(st: DuelState, f: Fighter, foe: Fighter, m: Move): void 
     // A sword into the ground kicks the ground, so this one is vertical whatever
     // the swing was doing — the floor is what moved.
     kick(st, { x: 0, y: 1 }, 2.2);
+    // …and leaves something behind. A blade tip is a narrow mark.
+    scorch(st, tip.tx, 9);
   }
 }
 
@@ -3524,6 +3585,13 @@ function step(st: DuelState): void {
   if (Math.abs(st.shake.x) < 0.01) st.shake.x = 0;
   if (Math.abs(st.shake.y) < 0.01) st.shake.y = 0;
 
+  // The ground cools. Up here for the same reason as the kick: a mark frozen at
+  // full heat through a two-second victory hold is a burning floor.
+  if (st.scorch.length > 0) {
+    for (const s of st.scorch) s.heat -= 1 / SCORCH_COOL;
+    st.scorch = st.scorch.filter((s) => s.heat > 0);
+  }
+
   if (st.over > 0) {
     st.over -= 1;
     if (st.over === 0) {
@@ -3614,6 +3682,15 @@ function step(st: DuelState): void {
     } else {
       // A fall arrested is worth a squash; a foot resting on the floor is not.
       if (f.vy > 2) f.land = 1;
+      /*
+       * A *hard* landing scuffs the ground, and the threshold is well above the
+       * squash's. Every hop, roll and handspring in the pool arrests at some
+       * speed, so marking at the squash's threshold would leave a trail of
+       * scorches behind ordinary footwork and say nothing. This is the speed a
+       * knockdown or a somersault arrives at — a body dropped rather than a
+       * fighter landing on their feet.
+       */
+      if (f.vy > 6) scorch(st, centre(f), 16);
       f.y = FLOOR_Y;
       f.vy = 0;
     }
@@ -4822,6 +4899,42 @@ export function drawDuel(ctx: CanvasRenderingContext2D, st: DuelState, v: DuelVi
   ctx.moveTo(50, FEET_Y);
   ctx.lineTo(WORLD_W - 50, FEET_Y);
   ctx.stroke();
+
+  /*
+   * The ground's memory, under everything — see *scorch* above.
+   *
+   * Three flat ellipses cross-faded by heat rather than one interpolated
+   * colour, because there is no interpolating between two CSS colour strings
+   * without parsing them, and the three inks are the palette's own version of
+   * the plan's white → orange → dark. The hot pass is additive so a fresh mark
+   * genuinely glows; the warm and cold ones are not, so a cooling mark settles
+   * into the ground rather than staying a light source.
+   *
+   * `heat²` on the hot pass and a plain `heat` on the cold one is what makes the
+   * ramp read: the brightest state is brief and the smudge is long, which is how
+   * anything that has been struck cools.
+   */
+  for (const s of st.scorch) {
+    const h = s.heat;
+    ctx.beginPath();
+    ctx.ellipse(s.x, FEET_Y, s.r * (0.6 + h * 0.4), 4.5, 0, 0, TAU);
+    ctx.fillStyle = v.line;
+    ctx.globalAlpha = h * 0.42 * v.dim;
+    ctx.fill();
+    if (h > 0.45) {
+      ctx.fillStyle = v.spark;
+      ctx.globalAlpha = (h - 0.45) * 1.3 * v.dim;
+      ctx.fill();
+    }
+    if (h > 0.8) {
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      ctx.fillStyle = v.core;
+      ctx.globalAlpha = (h - 0.8) * (h - 0.8) * 18 * v.dim;
+      ctx.fill();
+      ctx.restore();
+    }
+  }
 
   // Both shadows before either body, or the second fighter's shadow paints over
   // the first one's legs. They shrink and fade with height, which is the only

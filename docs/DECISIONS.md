@@ -14,7 +14,52 @@ file records what happened to the codebase.
 ---
 
 
-## 2026-08-20 (latest) — duel phase 4, part three: the frame kicks, and the camera had to be told
+## 2026-08-20 (latest) — duel phase 4, part four: the ground remembers being hit
+
+Phase 4's *"scorch decals cooling white → orange → dark under the fighters, capped"*. Before this the
+floor was the one thing in the arena nothing ever happened to: a sword buried in it threw sparks and
+left it pristine on the next frame, which is most of why a missed swing read as a whiff rather than
+as a mistake with a cost.
+
+**The plan's ramp is three literal colours and this one is not, deliberately.** Every colour here
+arrives through `DuelView`, and the palette's own version of white → orange → dark is the three inks
+this file already has: `core` (the brightest thing offered), `spark` (the accent that already means
+impact) and `line` (what the ground itself is drawn in). Three flat ellipses cross-faded by heat,
+rather than one interpolated colour — there is no interpolating between two CSS colour strings
+without parsing them. The hot pass is additive so a fresh mark genuinely glows; the warm and cold
+passes are not, so a cooling mark settles into the ground instead of staying a light source. A cold
+mark is a faint smudge rather than a black hole, which is also the only honest answer available: this
+effect draws on a transparent canvas over whatever the palette is doing and cannot darken it.
+
+Three details are load-bearing:
+
+- **A new mark near an existing one reheats it rather than stacking.** Two ellipses a couple of units
+  apart at double alpha is a bright blob, not a scuff, and a flurry in one place would fill the cap
+  with copies of itself and evict the rest of the fight's history. Reheating is also what a floor
+  struck repeatedly in one place looks like.
+- **A hard landing marks the ground; an ordinary one does not.** The threshold is `vy > 6`, well
+  above the landing squash's `vy > 2` — every hop, roll and handspring in the pool arrests at some
+  speed, so marking at the squash's threshold would leave a trail behind ordinary footwork and say
+  nothing.
+- **The cooling runs above both of `step`'s early returns**, for the same reason as the kick: a mark
+  frozen at full heat through a two-second victory hold is a burning floor.
+
+**It was tuned by looking, and the first values were wrong.** At `ry` 2.6 and the initial alphas the
+mark was drawn correctly and was effectively invisible, competing with the fighter's own shadow
+ellipse directly above it. Confirmed by boosting both temporarily to prove placement, then settled at
+`ry` 4.5 with the cold pass at 42% — hot enough to read gold on the frame it lands, faint enough at
+the tail to be a scuff rather than a puddle. `scripts/duel-shot.mjs` gained a `ground` strip for it,
+stepping 16 frames a cell because a three-second cool sampled every frame is twelve identical cells.
+
+**Gated** with the kick, since both are world state with the same two invariants — a ceiling and a
+return to nothing — and both were verified by breaking them: dropping the spent-mark filter fails on
+*"a spent ground mark is still in the list"*, and dropping the kick's zero-snap fails on *"a kick
+stayed live for 3,732 frames"*. Measured over 200,000 frames the fight never holds more than **3** of
+the 10 marks allowed, so the cap is headroom rather than something that bites.
+
+---
+
+## 2026-08-20 — duel phase 4, part three: the frame kicks, and the camera had to be told
 
 Phase 4's *"directional shake"*. A contact displaces the whole drawn world by a few units **along the
 direction the blow was travelling**, and the displacement inverts and shrinks every frame — so it is
