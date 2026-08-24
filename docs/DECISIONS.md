@@ -14,7 +14,141 @@ file records what happened to the codebase.
 ---
 
 
-## 2026-08-20 (latest) — a review of the recent work: sixteen more bugs, twelve of them in code already committed
+## 2026-08-23 (latest) — `scripts/thinkcentre-setup.sh`, and the six bugs ten passes found
+
+Client: *"i have the pc ready for the linux install that will run my file sharing. pls make me the
+setup script. make sure EVERYTHING is included. then check for errors 10 times. make sure you leave
+no security holes open."*
+
+The x86/Debian sibling of `pi-setup.sh`. `docs/thinkcentre-sharing-host.md` was a manual guide that
+said, correctly, that `pi-setup.sh` hard-refuses on this hardware; it now has a **"The script"**
+section and the sections it automates are annotated. The script refuses on a Pi in turn, so the two
+cannot be run on each other's hardware.
+
+**Decisions taken while writing it, each of which could be "fixed" back into a bug:**
+
+**Chromium is excluded from unattended-upgrades and given its own timer, and the second half is
+what makes the first half safe.** On Raspberry Pi OS the exclusion is free: Chromium comes from the
+Pi archive, which Debian's stock unattended-upgrades origins do not cover, so `pi-setup.sh` gets the
+behaviour by doing nothing. On Debian, Chromium security updates arrive through
+`${distro_codename}-security` like everything else, so the same intent needs an explicit
+`Package-Blacklist` — and a blacklist on its own leaves an un-patched browser holding a handle to
+somebody's files, which is a worse outcome than an unchosen restart. Hence
+`vessel-chromium-update.timer`: Sundays at 04:00, `Persistent=false` (a missed week waits for the
+next one rather than firing at an arbitrary moment after a boot — the entire point is that the
+restart happens when the operator chose), and the kiosk is restarted **only if the package version
+actually moved**.
+
+**The kiosk unit is deliberately not systemd-hardened, and the unit file says so in a comment
+addressed to whoever hardens it later.** `NoNewPrivileges`, `PrivateUsers` and a `SystemCallFilter`
+all break Chromium's own sandbox, and the fix people reach for next is `--no-sandbox`, which is
+strictly worse than an unhardened unit on the one machine in this design that holds a directory
+handle. The security boundary that matters here is the browser sandbox, not the systemd one.
+
+**A Chromium managed policy is the answer to autologin.** Autologin is not optional — a host that
+stops sharing whenever the power flickers is not a host — but it means physical access is access to
+a signed-in browser. The policy narrows that browser to the sharing host alone, with no password
+manager, no browser sign-in, no profile sync (the profile *is* the pairing) and no DevTools.
+`DefaultFileSystemReadGuardSetting` stays at "ask" because that prompt is the folder picker this
+machine exists to answer; write access is blocked, because §8 shares read-only.
+
+**Docker comes from `docker.io`, the user is not added to the `docker` group, and every published
+port names an address.** Piping a remote script into a root shell on the machine that holds your
+files is not a thing to do casually; the `docker` group is root-equivalent on a box that autologins;
+and Docker's iptables rules are evaluated ahead of ufw's, so a bare `-p 53:53` is reachable from
+anywhere that can route to the box regardless of default-deny.
+
+**Ten verification passes against a mocked Debian** (fake root, fake HOME, stubbed `apt`,
+`systemctl`, `loginctl`, `ufw`, `sshd`, `ss`, `ip`, `docker`) ran the script end to end and drove
+every refusal, option and failure path. Six real bugs, in the order they were found:
+
+1. **`report_storage` mis-parsed `lsblk`.** `lsblk -rn` prints an empty column as nothing at all, so
+   a disk with no transport shifted every field left and the report described the wrong thing
+   confidently. One field per call now.
+2. **`$(cmd || echo fallback)` is wrong for systemctl.** It answers the negative cases by *printing*
+   the answer and exiting non-zero — `is-enabled` prints `disabled` and exits 1, `is-active` prints
+   `inactive` and exits 3 — so the fallback was appended to a perfectly good answer and every check
+   of a negative state compared against a two-line string. `first_or` substitutes only on no output.
+3. **The firewall was never enabled.** `ufw status | grep -q active` matches `Status: inactive`, so a
+   fresh machine reported a closed firewall in its own summary and had none. It compares the word now.
+4. **A hand-edited URL file reached the Chromium policy unvalidated.** The script deliberately never
+   overwrites `~/.config/vessel-kiosk/url`, so the host it interpolates into a JSON *security
+   control* may have been edited since it was validated — and a malformed policy file is silently
+   ignored by Chromium, leaving the host open while the summary said it was locked. Re-validated on
+   read-back; refuse, never repair.
+5. **`--verify` always exited 0.** An `EXIT` trap whose last command fails replaces the script's exit
+   status with its own, so `exit "${VERIFY_FAILED}"` was being overwritten by a successful `rm`. The
+   trap captures the status and re-raises it.
+6. **A silently-ineffective sshd drop-in.** In `sshd_config` the *first* value obtained wins, so a
+   setting above the `Include` line beats the drop-in: the file is written, the reload succeeds, and
+   nothing changes. After reloading, the script asks `sshd -T` whether the settings actually took and
+   warns by name if they did not — the same "did the thing it claims to do actually happen"
+   discipline as `npm run check`.
+
+**A second and third review pass, run as independent reviewers against the finished script, found
+fourteen more.** The ones that changed the design rather than a line:
+
+- **The Chromium policy could have landed where nothing reads it.** `install_packages` supports
+  Debian's `chromium` *and* a `chromium-browser` fallback, but the policy path was a constant
+  pointing at `/etc/chromium/policies/managed`. On a `chromium-browser` host the lockdown would
+  have been written to a directory the browser never opens, and every report the script prints
+  would have said the machine was locked down. It now writes to every managed-policy directory a
+  browser on the box would actually read, and names the paths it wrote.
+- **`URLAllowlist: ["mcclevarty.ca"]` is wider than it looks.** In Chromium's filter format a host
+  with no leading dot matches every subdomain, and a filter with no scheme matches every scheme —
+  so the "this browser can reach the sharing site and nothing else" rule also admitted
+  `http://anything.mcclevarty.ca`. It is `https://.mcclevarty.ca` now: the dot means this host
+  exactly.
+- **`--verify` could not fail on the things most likely to be wrong.** The firewall, the browser
+  policy and the store were reported with `note`, which by construction never fails, so a machine
+  whose firewall had been switched off since setup verified green. Those are `check`s now, plus a
+  new one that asks `sshd -T` whether root login is still refused; and the opt-outs are remembered
+  in `~/.config/vessel-kiosk/options` so `--verify` checks what this host is *meant* to be rather
+  than failing a firewall the operator disabled on purpose.
+- **The summary asserted security controls the run may have skipped.** "sshd root login off" was
+  printed even when `harden_ssh` returned early; "passwords off" was printed from the *flag* rather
+  than the outcome, so the exact case the safety check exists for — key-only asked for, no key
+  present — announced passwords were off on a box still accepting them. Three state variables now
+  carry what actually happened, and the summary reads those.
+- **The root-run updater sat in a group-writable directory.** Debian ships `/usr/local/sbin` as
+  `root:staff` mode 2775, and a weekly root timer executed a script there; the unit also inherited
+  systemd's default PATH, which begins `/usr/local/sbin:/usr/local/bin`, while the script called
+  `apt-get` unqualified. Moved to `/usr/lib/vessel-kiosk/`, PATH pinned in the unit, and the
+  launcher now prefers absolute `/usr/bin` paths for the browser.
+- **Nothing recovered a tab that loaded an error page.** If the site is unreachable when Chromium
+  starts, it renders `ERR_` and stays there — process up, systemd satisfied, nobody sharing. The
+  launcher waits for the site before starting, and `vessel-kiosk-watchdog` restarts the tab on one
+  transition only: unreachable, then reachable. Deliberately *not* solved by opening the
+  remote-debugging port, which would hand full control of the browser to anything on the LAN.
+- **"Never idles" was only true on Xfce**, and the script explicitly supports a box that already
+  runs GNOME. GNOME's lock lives inside `gnome-shell`, cannot be purged, and reads none of the four
+  mechanisms that were being configured. Its idle, lock and sleep keys are now written to the
+  system dconf database and locked.
+- **The display manager was chosen by which package was installed** rather than by
+  `/etc/X11/default-display-manager`. A box with both LightDM and gdm3 installed — routine — got a
+  LightDM drop-in nothing reads, no autologin, no session, and no kiosk.
+- **On Debian 13 `sshd -T` is not the authority on the listening port**, because openssh is
+  socket-activated and the port comes from `ssh.socket`. Opening 22 and enabling the firewall on a
+  box whose real port is elsewhere locks you out over the connection you are sitting on. The union
+  of both sources is used.
+- **A late failure aborted the run before the summary.** Pi-hole's three `die`s and the policy
+  step's `die` on a hand-edited URL file killed the script after packages, autologin, the launcher,
+  the unit and lingering were all in place — so the operator saw an error and never learned the
+  machine was mostly configured. All are warnings that return now.
+
+Also fixed and worth less: the clock step reported success unconditionally, `systemctl reload ssh`
+printed "reloaded" when it had failed on a socket-activated sshd, a pending reboot (security
+updates installed but not running) was invisible, re-running without `--ssh-key-only` silently
+re-enabled password authentication on a host that was key-only, and the store's 0750 assumed a
+per-user primary group.
+
+**Not verified from here, and it cannot be:** the script has never run on real hardware. The mocked
+run proves control flow, idempotency, exit codes and the generated files; it cannot prove that
+Debian's package names, LightDM's autologin or Chromium's policy keys behave as expected on the box.
+
+---
+
+## 2026-08-20 — a review of the recent work: sixteen more bugs, twelve of them in code already committed
 
 Client: *"yes, have prices as a toggle. and whatever else you can think of for a
 downloads page. also please review all recent work for bugs."*

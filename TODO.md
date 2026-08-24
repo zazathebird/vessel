@@ -6,6 +6,61 @@ what is left to do.
 
 ---
 
+## 2026-08-23 — the sharing host has a setup script
+
+**Client:** *"i have the pc ready for the linux install that will run my file
+sharing. pls make me the setup script. make sure EVERYTHING is included. then
+check for errors 10 times. make sure you leave no security holes open."*
+
+**`scripts/thinkcentre-setup.sh`** — the x86/Debian sibling of `pi-setup.sh`,
+which hard-refuses on anything that is not a Raspberry Pi. Run it as your
+ordinary user on the ThinkCentre once Debian is installed; it refuses if you run
+it with sudo, because the Chromium profile that holds the folder handle belongs
+to your account and in root's home the desktop would never see it. Re-running it
+is safe and is the point: every step says `(already done)` when there is nothing
+to do.
+
+`docs/thinkcentre-sharing-host.md` now has a **"The script"** section listing
+what it covers and what it still refuses to touch. The short version of the
+refusals: it does not format or mount a disk, does not write `/etc/fstab`, does
+not install Samba, does not open a port beyond SSH, does not add you to the
+`docker` group (that group is root-equivalent and this box autologins), does not
+pair the machine — §6 cannot be scripted on any hardware — and does not phone
+home.
+
+**Three things it does that the guide never did, and that matter most:**
+
+1. **The browser is locked to your site.** This machine boots into a browser
+   signed in as you, so it can now reach `mcclevarty.ca` and nothing else, with
+   no password manager, no Google sign-in, no profile sync and no DevTools.
+2. **Chromium gets its own upgrade window**, Sundays at 04:00, which restarts the
+   tab afterwards and only if the version actually moved. It is excluded from the
+   automatic security updates because those would replace the binary under a
+   running browser at an hour nobody chose. Change the hour to one you would be
+   happy for sharing to blink out in.
+3. **The clock is disciplined**, because sign-in here is password + TOTP and a
+   drifted clock fails with "wrong code" — which sends you looking at your phone
+   rather than at the machine.
+
+**Ten verification passes were run against a mocked Debian** — the script runs
+end to end there, and every refusal, option and failure path was exercised. Six
+real bugs were found and fixed; two of them mattered:
+
+- **The firewall was never actually enabled.** The test for "is ufw already on?"
+  was a substring match, and `inactive` contains `active` — so on a fresh machine
+  the script would report a closed firewall in its own summary and have none.
+- **`--verify` always exited 0**, including when a check failed. The cleanup
+  handler's own exit status was replacing the script's, so the one command whose
+  job is to report a bad state always reported a good one.
+
+**Wants your eye, because I cannot run it from here:** it has never been run on
+real hardware. Run it, read the summary it prints, then reboot and run
+`./scripts/thinkcentre-setup.sh --verify` having touched nothing — that is the
+state the machine spends its life in and the only test of it that means
+anything.
+
+---
+
 ## 2026-08-20 — a review of the recent work, and sixteen more bugs
 
 **Client:** *"yes, have prices as a toggle. and whatever else you can think of
