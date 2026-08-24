@@ -2405,6 +2405,56 @@ async function main(): Promise<void> {
     await upload(freeId, freeBytes, true, "Free thing");
     await upload(paidId, paidBytes, false, "Paid thing");
 
+    /*
+     * **An id typed with capitals must survive the whole round trip.**
+     *
+     * `saveFile` lowercases the id before it writes the row; every other route
+     * that takes one — `beginUpload`, `uploadPart`, `finishUpload`,
+     * `abortUpload`, `deleteFile` — used to take it verbatim. So an operator who
+     * typed `Boot-Repair` got a row saved as `boot-repair`, and then the very
+     * next call in the same submit went looking for `Boot-Repair`, found
+     * nothing, and answered *"Save the file's details first."* — telling them to
+     * do the thing they had just successfully done. The row was left behind as
+     * an invisible draft, so a second attempt at the same id looked identical.
+     *
+     * The id field is a free text input with a lowercase placeholder and no
+     * transform on it, which is the whole distance between this and never
+     * happening. Every id in this harness was already lowercase, which is why
+     * the suite stayed green through it.
+     */
+    const shoutedId = "Mixed-Case-Thing";
+    const shoutedBytes = new Uint8Array(512).map((_, i) => (i * 5 + 17) % 251);
+    let shoutedFailure: string | null = null;
+    try {
+      await upload(shoutedId, shoutedBytes, true, "Shouted thing");
+    } catch (thrown) {
+      shoutedFailure =
+        thrown instanceof ApiError ? `${thrown.status} ${thrown.message}` : String(thrown);
+    }
+    check(
+      "an id typed with capitals uploads instead of 404ing on the row it just wrote",
+      shoutedFailure === null,
+      shoutedFailure ?? "",
+    );
+    /*
+     * It lands under the lowercased id — the one `saveFile` wrote, the one the
+     * R2 object is keyed by and the one that will be in the link. Deleting it
+     * by the *shouted* spelling proves `deleteFile` normalises too, and leaves
+     * the page at the two files the checks below count.
+     */
+    const shoutedLanded = (await api.downloadPage(slug)).files ?? [];
+    check(
+      "and it lands under the lowercased id, which is the one in the link",
+      shoutedLanded.some((f) => f.id === shoutedId.toLowerCase()) &&
+        !shoutedLanded.some((f) => f.id === shoutedId),
+      shoutedLanded.map((f) => f.id).join(", "),
+    );
+    await api.adminFileDelete(shoutedId);
+    check(
+      "and deleting it by the shouted spelling removes it",
+      ((await api.downloadPage(slug)).files ?? []).length === 2,
+    );
+
     const withFiles = await api.downloadPage(slug);
     check("both files are on the page", (withFiles.files ?? []).length === 2);
     check(

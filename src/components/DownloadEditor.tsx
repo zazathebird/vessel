@@ -1242,7 +1242,17 @@ function FileManager({
               className="v-input"
               value={form.id}
               disabled={editing !== null}
-              onChange={(e) => patch({ id: e.target.value })}
+              /*
+               * **Lowercased as it is typed, because the Worker lowercases it
+               * on the way in.** The hint says lowercase and the placeholder is
+               * lowercase, but this is a free text field and nothing stopped an
+               * operator typing `Boot-Repair` — which used to save the row as
+               * `boot-repair` and then fail the upload against the id still
+               * sitting in this box. The Worker now agrees with itself either
+               * way; this is so the field agrees with the Worker in front of
+               * the person typing, rather than silently renaming their file.
+               */
+              onChange={(e) => patch({ id: e.target.value.toLowerCase() })}
               placeholder="boot-repair"
             />
             <p className="v-field-hint">

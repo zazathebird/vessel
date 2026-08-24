@@ -66,6 +66,27 @@ import {
  */
 const KEY = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
+/**
+ * A file id, normalised — **and every route that takes one must use this.**
+ *
+ * `saveFile` has always lowercased before writing, because `KEY` is lowercase
+ * kebab and the id is an R2 object key. The upload routes took it verbatim, so
+ * an operator who typed `Boot-Repair` in a field whose only hint is a lowercase
+ * placeholder had their row written as `boot-repair` and the very next call of
+ * the same submit went looking for `Boot-Repair`, missed, and answered *"Save
+ * the file's details first."* — instructing them to do the thing they had just
+ * done. The row survived as an unfinished draft, invisible to visitors, so the
+ * second attempt failed the same way and the screen never said why.
+ *
+ * Normalising rather than refusing, because that is what `saveFile` already did
+ * to every row now in the table: refusing here would start rejecting ids the
+ * feature has accepted since it shipped. **The two must agree — a route that
+ * reads `str(b.id, 64)` directly is this bug again.**
+ */
+function fileId(v: unknown): string {
+  return str(v, 64).toLowerCase();
+}
+
 /** Free text, bounded. Long enough for real prose, short enough not to be a store. */
 const LIMITS = { title: 120, summary: 200, intro: 4000, notice: 1200, body: 4000, label: 120 };
 
@@ -739,7 +760,7 @@ export async function saveFile(request: Request, env: Env): Promise<Response> {
   await operator(request, env);
   const b = await body(request);
 
-  const id = str(b.id, 64).toLowerCase();
+  const id = fileId(b.id);
   if (!KEY.test(id)) throw new BadRequest("A file id is lowercase letters, numbers and hyphens.");
   const slug = str(b.slug, 64);
   const page = await env.DB.prepare("SELECT slug FROM download_pages WHERE slug = ?")
@@ -870,7 +891,7 @@ export async function saveFile(request: Request, env: Env): Promise<Response> {
 export async function deleteFile(request: Request, env: Env): Promise<Response> {
   await operator(request, env);
   const b = await body(request);
-  const id = str(b.id, 64);
+  const id = fileId(b.id);
 
   const gone = await env.DB.prepare("DELETE FROM download_files WHERE id = ?").bind(id).run();
   if (!gone.meta.changes) throw new BadRequest("No such file.", 404);
@@ -896,7 +917,7 @@ export async function deleteFile(request: Request, env: Env): Promise<Response> 
 export async function beginUpload(request: Request, env: Env): Promise<Response> {
   await operator(request, env);
   const b = await body(request);
-  const id = str(b.id, 64);
+  const id = fileId(b.id);
   const row = await env.DB.prepare("SELECT id, content_type FROM download_files WHERE id = ?")
     .bind(id)
     .first<{ id: string }>();
@@ -920,7 +941,7 @@ export async function beginUpload(request: Request, env: Env): Promise<Response>
  */
 export async function uploadPart(request: Request, env: Env, url: URL): Promise<Response> {
   await operator(request, env);
-  const id = url.searchParams.get("id") ?? "";
+  const id = fileId(url.searchParams.get("id"));
   const uploadId = url.searchParams.get("upload") ?? "";
   const part = Number(url.searchParams.get("part") ?? "0");
   if (!id || !uploadId || !Number.isInteger(part) || part < 1) throw new BadRequest("Bad part.");
@@ -935,7 +956,7 @@ export async function uploadPart(request: Request, env: Env, url: URL): Promise<
 export async function finishUpload(request: Request, env: Env): Promise<Response> {
   await operator(request, env);
   const b = await body(request);
-  const id = str(b.id, 64);
+  const id = fileId(b.id);
   const uploadId = str(b.uploadId, 200);
   const parts = Array.isArray(b.parts) ? b.parts : [];
   if (!id || !uploadId || !parts.length) throw new BadRequest("Nothing to finish.");
@@ -978,7 +999,7 @@ export async function finishUpload(request: Request, env: Env): Promise<Response
 export async function abortUpload(request: Request, env: Env): Promise<Response> {
   await operator(request, env);
   const b = await body(request);
-  const id = str(b.id, 64);
+  const id = fileId(b.id);
   const uploadId = str(b.uploadId, 200);
   if (id && uploadId) {
     await env.DOWNLOADS.resumeMultipartUpload(id, uploadId).abort().catch(() => {});
