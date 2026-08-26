@@ -27,7 +27,7 @@ import type { Env } from "./env";
 import { RateLimiter } from "./rate-limit";
 import { MachineSignal } from "./signal";
 import { publishSiteConfig, readSiteConfig, withSiteConfig } from "./site-config";
-import { withPageMeta } from "./page-meta";
+import { crawlerFile, withPageMeta } from "./page-meta";
 
 export { MachineSignal, RateLimiter };
 export type { Env };
@@ -264,6 +264,14 @@ export default {
         },
       });
     }
+
+    // `/robots.txt` and `/sitemap.xml`, generated from `PATHS` so a new page
+    // cannot be left out of the index by being forgotten. Ahead of the asset
+    // fetch because neither file exists in `public/` and the SPA fallback would
+    // otherwise answer both with the app shell, 200 — a crawler reading an HTML
+    // page where a sitemap should be treats the sitemap as broken.
+    const crawler = crawlerFile(url);
+    if (crawler) return harden(crawler);
 
     if (!url.pathname.startsWith("/api/")) {
       // The app shell gets the published look inlined into it, so the first

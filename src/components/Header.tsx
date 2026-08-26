@@ -111,7 +111,7 @@ export function Header() {
       // `useAccountRoutes`'s rule, and the reason these gestures stay disjoint
       // from the door's. Signed out, /admin says what it is and offers sign-in;
       // signed in as anyone else it does the same. It is not a gate.
-      say("the corner office");
+      say("administration");
       go("admin");
       return;
     }

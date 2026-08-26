@@ -226,7 +226,17 @@ The spec's *Product decisions already made* table is binding. The ones most like
 - **Guestbook has no form.** "A form is a database is a liability."
 - **The operator door and its `authenticate` button are theatre.** Never present an unlock route as
   security.
-- **The self-deprecating copy is the point.** Rewriting it toward "professional" is the actual failure.
+- **REVERSED 2026-08-26: the self-deprecating copy is *out*, and so is the one-person framing.**
+  The client's words: *"get rid of ANYTHING and EVERYTHING that involves putting me down, saying its
+  just one person and emphasizing that… just sounds bad."* This retires the old rule, which said the
+  self-deprecation *was* the point — do not restore it from an earlier reading of this file. He is
+  independent and first-person "I" stays; what goes is smallness as the pitch or the punchline
+  ("one guy", "no shopfront", "no company, no chain", "nobody to transfer you to") and every joke at
+  his own expense ("a website nobody asked for", "not going well", "took embarrassingly long").
+  **The replacement is not corporate voice** — no "we", no "our team", no "solutions". The jokes stay
+  and point outward: chains and their depots, Microsoft, subscriptions, scammers, the machines. Where
+  a line's only content was the self-deprecation, **short and sweet beats a manufactured replacement**
+  (client, same day). The copy still refuses to oversell; it just no longer apologises.
 - **Calm is a second full aesthetic**, not a degraded first one, and it is the accessibility escape
   hatch for the deliberately low-contrast palettes.
 - **Contact is the only page with a job.** It must work correctly at every stage of the build.
@@ -321,6 +331,34 @@ The spec's *Product decisions already made* table is binding. The ones most like
   not the index and `go()` early-returns, so nothing ever corrects the URL. **A sub-page is `noindex`
   and canonicalises to `/downloads`**, since the SPA fallback answers unknown paths with 200 and would
   otherwise make an infinite family of soft 404s each canonicalising to itself.
+- **The served head carries exactly one `<meta name="description">`, and it is not the page's lede.**
+  `index.html` has a static one and `withPageMeta` appends its own, so the Worker **removes** the
+  shell's before appending — two tags shipped for months and the static one, being first, is what
+  Google quoted, which is how *"free diagnosis"* stayed in search results long after the claim was cut
+  from the copy. **The static tag stays** (Pages is the rollback and has no Worker) and must stay true.
+  The copy comes from `src/data/snippets.ts`, written for that job: a lede is read after an eyebrow and
+  a headline, a snippet arrives cold, and nine of eleven indexed routes were being cut mid-sentence at
+  155 characters. **Home rotates by the day; `scams`, `setup` and `contact` never rotate** — the first
+  is written to be forwarded, and a page about fraud that describes itself differently each time it is
+  forwarded is arguing against itself. Gated: one tag each side, length, the retired claims, the
+  no-rotate list, and that every home line names the business, since it is read alone.
+- **`/now` claims to be true today, so it may only ever contain true things.** It was six entries of
+  inherited handoff fiction until 2026-08-26 — a household file server, a screen in transit, a 486
+  restoration — on the one page a customer can disprove for free by asking how one of them went. It
+  now lists what is actually in for repair, which means **it goes stale by sitting still**, and a
+  stale `now` page is worse than no `now` page. The same rule governs `about`: there is no workshop
+  yet, there is a bin of parts, and the copy says so.
+- **Copy claims are audited separately from copy editing, and the two passes do not substitute.**
+  A rewrite invents things — a tool, a percentage, a duration — because the invention reads better
+  than the truth, having been chosen for rhythm. The 2026-08-26 pass produced 38 findings, 24 of them
+  invented that same day, ten touching money, safety or privacy. **The most dangerous shape is a
+  retired promise rebuilt without its words**: "free diagnosis" came back as *"I tell you what's
+  wrong and what it will cost, and then I fix it"* on three surfaces and the gate stayed green,
+  because the gate tested for the phrase. It now tests `PAGES` as well as the snippets, and tests for
+  the *form* — the fault established before anything starts, which is the boundary the $150 sits on.
+- **A quotation is somebody's words; an attribution is the writer's.** The guestbook's five quotes
+  may be re-attributed freely and **never reworded** — editing them for rhythm manufactures a
+  testimonial. Whether they are real at all is an open question in `TODO.md`.
 - **The 404 pill left the public nav** and now leads `OPERATOR_NAV` (404 / Account / Admin) plus a
   Config tab. **`OPERATOR_NAV` is deliberately not part of `NAV`**, which `useOperatorRoutes` cycles
   and Radial's orbit renders. The 404 *page* still renders for anyone at an unknown URL.

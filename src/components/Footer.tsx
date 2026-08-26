@@ -34,7 +34,7 @@ export function Footer() {
 
   return (
     <footer className="v-footer">
-      <span>no trackers · no cookies · no idea why you're still here</span>
+      <span>no trackers · no cookies · nothing to accept</span>
 
       <div className="v-footer-links">
         {FOOTER_NAV.map((item) => (
@@ -127,7 +127,7 @@ export function Footer() {
         sharing is and offering sign-in.
       */}
       <span className="v-clock" onClick={() => { say("this machine, then"); go("share"); }}>
-        last fiddled with · aug 2026 · {clock}
+        updated · aug 2026 · {clock}
       </span>
     </footer>
   );

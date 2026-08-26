@@ -1,4 +1,5 @@
 import { PAGES } from "../src/data/pages";
+import { snippetFor } from "../src/data/snippets";
 import { PATHS, pageFromPath, subFromPath } from "../src/data/pageIds";
 import type { PageId } from "../src/data/pageIds";
 
@@ -22,10 +23,17 @@ import type { PageId } from "../src/data/pageIds";
  * - **Search.** Google renders JS eventually, but a served description is what
  *   it quotes rather than composing a snippet out of whatever it finds first.
  *
- * The copy is not invented for this: `title` and `lede` already exist on every
- * page in `src/data/pages.ts`, written and client-approved. Importing them is
- * what keeps the head and the page from drifting apart — a hand-maintained
- * table in the Worker would be wrong the first time a lede was edited.
+ * The title is the page's own, imported, so the served head and the rendered
+ * tab cannot drift apart.
+ *
+ * **The description is not** (2026-08-26). It was the page's `lede` for the
+ * same reason — approved copy, no second table to maintain — and that was
+ * wrong about fit rather than about drift. A lede is read third, after an
+ * eyebrow naming the page and a headline; a snippet arrives cold, in a list of
+ * ten results. Nine of the eleven indexed routes were being clamped
+ * mid-sentence and losing the useful half. `src/data/snippets.ts` holds copy
+ * written for this job, one line per route and a rotating pool for home, and
+ * carries the rules it is written to.
  *
  * **No `og:image`.** `SPEC.md`'s *Assets* rule holds and there is no image to
  * point at; a preview card with a title and a description is the honest version
@@ -85,7 +93,86 @@ function clamp(text: string, max = 155): string {
   return `${cut.slice(0, lastSpace > 60 ? lastSpace : max).replace(/[,;:.\s]+$/, "")}…`;
 }
 
-export function metaForPath(pathname: string): {
+/**
+ * The crawler's two files, generated rather than kept in `public/`.
+ *
+ * **Generated, because a static file drifts** (2026-08-26). `PATHS` is a total
+ * map from a closed union and `UNLISTED` is the list above it; a hand-written
+ * `sitemap.xml` would be one more place a new page has to be remembered, and
+ * the failure is silent — a page nobody submitted is simply a page nobody
+ * finds. Here, adding a route adds a line, and `npm run check` fails if the two
+ * ever disagree.
+ *
+ * **What a sitemap does and does not do.** It tells a crawler which addresses
+ * exist and are worth its time; it does not rank them, and it cannot request a
+ * sitelink. Sitelinks — the extra pages listed under a search result — are
+ * chosen by Google from a site's own internal linking, and the way to ask for
+ * one is to link the page prominently from home, which `/scams` already is.
+ * This is the honest half of that job.
+ */
+export function sitemapXml(): string {
+  const urls = (Object.keys(PATHS) as PageId[])
+    .filter((id) => !UNLISTED.has(id))
+    .map((id) => `https://${SITE}${id === "home" ? "/" : PATHS[id]}`);
+  /*
+   * No `lastmod`, deliberately. There is no honest source for it here — the
+   * copy lives in a TypeScript module and the deploy date is not the date a
+   * page changed — and a fabricated timestamp on every URL, refreshed on every
+   * deploy, is the exact signal crawlers learn to discount. `priority` and
+   * `changefreq` are omitted for the simpler reason that Google ignores them.
+   */
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+    ...urls.map((loc) => `  <url><loc>${esc(loc)}</loc></url>`),
+    "</urlset>",
+    "",
+  ].join("\n");
+}
+
+export function robotsTxt(): string {
+  /*
+   * **Nothing under `/downloads/` is disallowed, and that is the point of this
+   * comment.** Those sub-pages are `noindex` (see `metaForPath`), and a crawler
+   * can only obey a `noindex` it is allowed to fetch and read. `Disallow` would
+   * block the fetch, leave the pages eligible to appear as bare URLs, and turn
+   * the file into a directory of exactly the addresses meant to stay quiet.
+   *
+   * `/api/` is disallowed because it is machinery, answers nothing useful to a
+   * reader, and every route on it either refuses or costs a D1 read.
+   */
+  return [
+    "User-agent: *",
+    "Allow: /",
+    "Disallow: /api/",
+    "",
+    `Sitemap: https://${SITE}/sitemap.xml`,
+    "",
+  ].join("\n");
+}
+
+/**
+ * `/robots.txt` and `/sitemap.xml`, or null for every other request.
+ *
+ * Kept to one exported function so `worker/index.ts` gains one line rather than
+ * two branches, and so the invariant it lives under stays readable: delete this
+ * call and the site serves as it did before.
+ */
+export function crawlerFile(url: URL): Response | null {
+  if (url.pathname === "/robots.txt") {
+    return new Response(robotsTxt(), {
+      headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=3600" },
+    });
+  }
+  if (url.pathname === "/sitemap.xml") {
+    return new Response(sitemapXml(), {
+      headers: { "content-type": "application/xml; charset=utf-8", "cache-control": "public, max-age=3600" },
+    });
+  }
+  return null;
+}
+
+export function metaForPath(pathname: string, at: number = Date.now()): {
   id: PageId;
   title: string;
   description: string;
@@ -117,7 +204,10 @@ export function metaForPath(pathname: string): {
     // Matches `App.tsx`'s `document.title` exactly, so the served head and the
     // rendered tab never disagree.
     title: `${page.title} · ${SITE}`,
-    description: clamp(page.lede),
+    // The clamp stays as a backstop and is expected never to fire: every
+    // snippet is gated at 155 characters by `npm run check`. It is what stands
+    // between a long line typed in a hurry and a snippet cut mid-word.
+    description: clamp(snippetFor(id, at)),
     unlisted: UNLISTED.has(id) || sub,
     sub,
   };
@@ -170,6 +260,28 @@ export function withPageMeta(response: Response, url: URL): Response {
     .on("title", {
       element(el) {
         el.setInnerContent(meta.title);
+      },
+    })
+    /*
+     * **The shell's own description is removed, not left to lose.** (2026-08-26)
+     *
+     * `index.html` carries a static `<meta name="description">` and this pass
+     * *appends* its own, so every route served two of them — the static one
+     * first. A search engine quoting the first tag is quoting the shell, which
+     * is the same string on all sixteen routes and cannot know which page it is
+     * on. Google was still showing "free diagnosis" months after that claim was
+     * cut from the site's copy, because the tag it was reading is not the one
+     * this file writes. The title never had the bug: it is *set*, in place.
+     *
+     * **The static tag stays in `index.html`** rather than being deleted, and
+     * that is deliberate: Pages still auto-deploys from `main` and is the
+     * rollback (see *Deployment*), and under Pages there is no Worker and so no
+     * injected head — the static description is then the only one there is. It
+     * must therefore stay true, but it must never outrank this one.
+     */
+    .on('meta[name="description"]', {
+      element(el) {
+        el.remove();
       },
     })
     .on("head", {

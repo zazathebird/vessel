@@ -6,6 +6,67 @@ what is left to do.
 
 ---
 
+## 2026-08-26 — the copy overhaul, and eight questions only the client can answer
+
+The whole site's text was rewritten this session (see `docs/DECISIONS.md` for
+what and why). `npm run check` is 43 green. **What is left is not work — it is
+eight facts nobody but the client can supply.** Each one is currently rendering
+the *safe* reading, so the site is publishable as it stands; every answer either
+confirms what is there or replaces it with something better.
+
+**Answered already:** the bench (there isn't one yet — a bin of parts and two
+laptops, so `/now` and `about` were rewritten to that), the privacy line (his own
+wording, now on home and in the search rotation), and the 486 (gone with `/now`).
+
+1. **Downloads: "pay once, nothing renews."** Cut. `download_codes` carries
+   `expires_at`, `max_uses` and `revoked_at`, so the page was promising something
+   the software can take back. **Does he want that promise on permanently?**
+2. **Contact: "you will usually hear back within a day."** Inherited, and a
+   service level he has to honour on his worst week. Home dropped its equivalent
+   in this session; contact kept it. **Keep, soften, or drop?**
+3. **Guestbook numbers** — "a five-year-old laptop that now starts up in nine
+   seconds" and "the sand laptop, six months on". Both predate this session and
+   neither traces to anything. **Real, or handoff placeholders?**
+4. **`work`: "It has run for two years since."** Changed to "ever since", which
+   cannot go stale. **If two years is true it is the better line** — and it will
+   need re-checking every year it stays.
+5. **"The same record I keep of what was done to your machine."** Cut from the
+   changelog lede: it advertised a per-machine record-keeping service nothing
+   else on the site mentions. **Does he keep written notes per machine?** If so
+   it is worth having, and not only on the changelog.
+6. **How many years?** The site said "twenty-odd", "over twenty", "twenty years"
+   and "twenty-plus" in four places, and one block implied paying Microsoft since
+   the nineties — nearer thirty. **One number, and it goes everywhere.**
+7. **The Kevin joke** — "no chat window operated by a man named Kevin who is not
+   named Kevin", on home and in a search snippet. It trades on offshore support
+   staff using anglicised names, which is adjacent to the accent framing the
+   client **already declined** for `/scams` ("accent is not who started the
+   call"). One agent retired that joke on the safety page in the same session
+   another put a version of it on the front page. **His call, made once already
+   in the other direction.**
+8. **Are `/work`'s six case studies his, and are the five guestbook quotes real?**
+   The flooded drive at 94%, the cracked solder joints, three routers, the
+   ransomware backup, the sand laptop, twelve office machines. **This is the most
+   important one on the list.** The bench turned out to be aspirational, so the
+   provenance of the page that tells a stranger *he can actually do this* can no
+   longer be assumed. If any of it came from the design handoff rather than from
+   real jobs, it is fabricated evidence of capability and has to go or be
+   replaced with real ones.
+
+### Also outstanding from this session, and not blocked on anybody
+
+- **`/now` has an owner's job attached to it now.** It lists two real machines. A
+  `now` page goes stale by sitting still, and a stale one is worse than none.
+- **The gallery describes a video that does not exist** — there is no clip
+  anywhere in `public/`. The copy was reworded to describe the sound rather than
+  a recording, but eight seconds of a dying fan bearing would earn its place.
+- **`/work`'s drive-shelf block says "Forty hard drives"; its `imgAlt` describes
+  five.** Pre-existing and defensible — the alt text describes the placeholder
+  photograph, not the claim — but a screen-reader user gets two different counts.
+- **Deploy.** Everything in this session is committed but not deployed. After
+  `npm run deploy`, Google re-crawls on its own schedule; Search Console's URL
+  Inspection → Request indexing forces it for the home page.
+
 ## 2026-08-23 — the sharing host has a setup script
 
 **Client:** *"i have the pc ready for the linux install that will run my file

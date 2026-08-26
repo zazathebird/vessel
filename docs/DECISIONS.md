@@ -13,6 +13,211 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-26 — Every word on the site, rewritten; and what a claim audit found in it
+
+Same day as the snippet fix below, and it started from it. With the search result
+finally quoting the right tag, the copy it was quoting turned out to be the
+problem, and the client asked for the whole site's text.
+
+### What the client asked for, in order
+
+1. *"i think a better tagline is in order… i am fine keeping it sarcastic or
+   satirical."*
+2. *"go nuts on making jokes actual jokes, and no pandering to anyone
+   whatsoever"* — with profanity and non-PC material explicitly approved.
+3. Then, mid-pass: **"get rid of ANYTHING and EVERYTHING that involves putting me
+   down, saying its just one person and emphasizing that."** *"just sounds bad…
+   make other jokes instead… either use other wording, descriptions, or just
+   leave it short and sweet."*
+
+**Point 3 reverses a standing product decision.** `CLAUDE.md` had recorded *"the
+self-deprecating copy is the point; rewriting it toward 'professional' is the
+actual failure"* since the handoff. That entry is now marked REVERSED in place
+rather than deleted, because the old rule is exactly the kind a future reader
+restores as a fix. First-person "I" stays; what left is smallness as the pitch
+("one guy", "no shopfront", "no company, no chain", "nobody to transfer you to")
+and every joke at the operator's expense. The replacement is **not** corporate
+voice — the jokes stayed and turned outward: chains and their depots, Microsoft,
+subscription software, scammers, the machines.
+
+### The pass itself
+
+Seventeen pages plus the interface furniture, run as parallel agents against one
+brief, applied by hand. `src/data/snippets.ts` was written first (see the entry
+below) and rewritten twice as the brief changed. Of the ~731 user-visible strings
+outside the page copy, **112 were joke-eligible, 331 must stay plain** (auth
+errors, the unsigned-program notice, payment wording, the whole remote-access
+interface, the reduced-motion greeting) **and 288 are operator-only.** Twelve of
+the twenty-eight interface strings actually reviewed came back KEEP — the
+self-deprecation was concentrated in five places, not spread everywhere.
+
+Two bugs fell out of that inventory rather than out of the voice work: the
+command palette's placeholder offered *"pages, setups, looks"* to signed-out
+visitors, and setups and looks only exist inside the signed-in and operator
+branches; and the greeting's toast said *"off it goes"* when motion had been
+turned **on**, in the one branch read by somebody managing vertigo or migraine.
+
+### The claim audit, which is the part worth reading
+
+A rewrite by anyone who is not the subject-matter expert invents things, and the
+invention reads *better* than the truth because it was chosen for rhythm. So a
+pass was run with a purpose-written `claim-audit` skill, over every assertion in
+`pages.ts` and `snippets.ts`, using `git diff` to separate **invented by this
+session** from **inherited**. It returned **38 findings — 24 invented, 12
+inherited, 10 of them touching money, safety or privacy.** The ten that mattered:
+
+- **"Free diagnosis", rebuilt without the words, on three surfaces.** home's lede
+  ("I tell you what's wrong and what it will cost, and then I fix it"), the new
+  "the process" block, and a home snippet all promised the *fault* established
+  before payment — three blocks above the rate block, which says the opposite,
+  and in a search snippet read with no rate block anywhere near it. All three
+  were written this session.
+- **"Microsoft does not know your name"** — false for anyone signed into a
+  Microsoft account, i.e. most Windows users, in the one front-page paragraph
+  that can stop somebody losing money. `/scams` had the careful version all
+  along: *"a warning on a web page cannot know your name."*
+- **"I have seen what is on your computer"** — written as reassurance, reads as an
+  admission of browsing customers' files. Replaced at the client's own direction
+  with *"If you are worried about privacy: I have seen enough by accident to have
+  no interest in going near anybody's files"*, and **his own sharper version went
+  into the search rotation** near-verbatim.
+- **Two wordings of one term of business** — home "a separate charge", contact
+  "its own charge". Unified; two phrasings of one price is how an invoice becomes
+  an argument.
+- **`downloads` promised "pay once, nothing renews"** — a permanent commercial
+  commitment the schema contradicts (`expires_at`, `max_uses`, `revoked_at`).
+- **`/setup` claimed no tool on the page connects unattended.** Not true of every
+  macOS path the page describes. Restated as the operator's own commitment
+  instead of a property of software he does not control.
+- **Equipment nobody had confirmed** — a drive imager, boot media for "every
+  version of Windows", screws "sorted by length". Reverted, then rewritten again
+  when the client answered: **there is no bench.** A bin of parts and two laptops.
+- **`/now` was six entries of inherited fiction** — a household file server, a
+  screen in transit, an intermittent fault sent home with a logger, a 486
+  restoration. **It is the one page that claims to be true today**, which makes it
+  the one page a customer can catch out for free. Now three entries, all real: a
+  laptop with a heat fault, a laptop with a suspected dead SSD, and the parts bin.
+- **`changelog` claimed "Most people open this on a phone."** There is no
+  analytics anywhere in `src/` or `worker/` — the claim implies measurement the
+  site refuses to do.
+- **Privacy absolutes wider than the code** — share's "never sees the folder"
+  (the label is a name the owner types and the server stores), contact's "nothing
+  about you is stored anywhere" (`rate-limit.ts` stores an HMAC of the address).
+
+Verified-good and left alone: the guestbook's five *quotations* are byte-identical
+before and after — only the attribution lines changed, which is the rule, since a
+quotation is somebody's words and an attribution is the writer's. And all eight
+files in `public/photos/` really are EXIF-free (`ffd8 ffe0`, no APP1), so the
+gallery's privacy claim holds.
+
+### The gate that let it through, and the gate now
+
+`npm run check` was **43 green with all three free-diagnosis promises in place.**
+The description gate tested `/free diagnos/i`, `/pay nothing/i`, `/no fix,? no
+fee/i` and `/guarantee/i` — **against the snippets and the shell only, never
+against `PAGES`** — and it tested for the *words*, which was never the risk. It
+now scans the page copy too, and adds `IMPLIED_FREE_DIAGNOSIS`: the fault
+established *before* anything starts, which is the boundary the $150 sits on and
+the shape all three took. Verified by re-introducing the bug, per the standing
+discipline.
+
+### Eight things the client still has to answer
+
+In `TODO.md`, at the top. The safe reading renders today in every case, so
+nothing is blocking; the most important is whether `/work`'s six case studies and
+the guestbook's five quotes are real jobs or handoff fiction. Once the bench
+turned out to be aspirational, the provenance of the page that tells a stranger
+*he can do this* stopped being safe to assume.
+
+### Skills
+
+Four skills were written for this work and live in `~/.claude/skills/`, outside
+the repo: `prose-editor`, `deadpan-comedy`, `author-voices`, `reader-psychology`,
+and then `claim-audit` when the first pass showed nothing was catching invented
+detail. They are machine-local, not checked in — noted here so the next session
+knows they exist and why the copy is shaped the way it is.
+
+---
+
+## 2026-08-26 — The search snippet: two description tags, one of them advertising a claim the client killed
+
+**Reported by the client:** *"my google search still says free diagnosis."*
+
+It did, and the cause was not a stale index. Every route was serving **two**
+`<meta name="description">` tags:
+
+```html
+<!-- index.html, static, identical on all seventeen routes -->
+<meta name="description" content="Independent computer repair. One person, no shopfront, free diagnosis." />
+...
+<!-- appended by withPageMeta at </head> -->
+<meta name="description" content="There is no product here, no newsletter, no funnel, and…" />
+```
+
+`withPageMeta` **sets** the title in place and **appends** its description. The static tag therefore
+came first and won, so the per-route description this build goes to some trouble over had never been
+the one quoted — and the shell's copy still carried *"free diagnosis"*, which the client killed in
+the page copy on 2026-08-14 (*"i dont do free diag. a mechanic will still charge you to diagnose your
+cars issues"*). One file was missed, and the one surface where a mistake is invisible to everybody
+working on the site is the one no browser renders.
+
+Two valid tags: nothing threw, nothing logged, and the site looked right from every angle anyone was
+looking from.
+
+**The fix is three parts.**
+
+1. `withPageMeta` now removes `meta[name="description"]` before appending its own, so exactly one
+   ships. The static tag **stays in `index.html`** rather than being deleted: Pages still auto-deploys
+   from `main` and is the rollback, and under Pages there is no Worker and so no injected head. It
+   must therefore stay true, and it must never outrank the route's.
+2. Its copy no longer names a term of business at all.
+3. `npm run check` gates both: exactly one description tag in the shell, exactly one injected, a
+   removal handler present, and no retired claim (`free diagnosis`, `pay nothing`, `no fix no fee`,
+   `guarantee`) in either the shell or any snippet.
+
+### And the snippets themselves, rewritten
+
+With the plumbing fixed, the description Google *would* have quoted turned out to be no better. It
+was the page's `lede`, on the reasoning that importing approved copy beats a second table in the
+Worker. That reasoning was right about drift and wrong about fit. Measured across all seventeen
+routes, **nine of the eleven indexed ones were clamped mid-sentence at 155 characters, and every one
+of them lost the useful half**:
+
+```
+contact    …or you need the photographs off a hard drive…
+scams      …polite, patient and rehearsed. Here…
+setup      …same fix, no driving, no afternoon…
+downloads  …The rest are a few dollars — send me an…
+home       …The domain was already paid for, so this exists. If you need a machine…
+```
+
+A lede is read third, after an eyebrow naming the page and a headline. A snippet arrives cold, in a
+list of ten results, next to shopfronts. Home's opened with four things the site is *not* and was cut
+before *"contact is one click away"*.
+
+`src/data/snippets.ts` now holds copy written for that job — one line per route, total over `PageId`
+so a new page is a type error — and carries the rules it is written to: no fee named, nothing
+promised the client has not said, no city, no name, nothing that advertises the site, and every line
+standing alone because a snippet is never read beside another one.
+
+**Home rotates; three pages never do.** The pool is six deadpan lines, picked by whole days from
+`Date.now()` — stable inside a crawl and inside an afternoon, different tomorrow, and reproducible,
+which is the only reason a gate can test it. A rotating description is visible exactly where a head
+is fetched fresh: a link unfurling in iMessage, WhatsApp, Slack or SMS.
+
+`scams`, `setup` and `contact` are excluded by name, and that exclusion is gated. `scams` ends by
+telling the reader to send it to whoever in their family answers the phone — it is the one page
+written to be forwarded, and a page about fraud that describes itself differently each time it is
+forwarded is arguing against itself. `setup` is read by somebody about to install remote-access
+software. `contact` is the page with the job.
+
+**Sitelinks were considered and not pursued.** Google builds those from site structure and cannot be
+told what to list, and the page most worth surfacing under the result is `scams`, which is already a
+home CTA in second position. A search result advertising downloadable executables from a nameless
+one-man operator is the shape of the thing `/scams` teaches people to distrust.
+
+---
+
 
 ## 2026-08-23 (latest) — `scripts/thinkcentre-setup.sh`, and the six bugs ten passes found
 

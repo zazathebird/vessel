@@ -107,7 +107,7 @@ export function useAccountRoutes(): void {
       const buffer = keys.current.join("");
 
       if (buffer.includes("whoami")) enter("who indeed");
-      else if (buffer.includes("login")) enter("the front door, sort of");
+      else if (buffer.includes("login")) enter("the front door");
       else if (buffer.includes("admin")) {
         // **Straight to administration, and the comment here used to say the
         // opposite** — "goes to the account page, not straight to
@@ -124,7 +124,7 @@ export function useAccountRoutes(): void {
         // The phase-2 pair (SPEC-ACCOUNTS.md §13): same unlinked convention as
         // the account pages — typed routes, and the account summary links them.
         keys.current.length = 0;
-        say("the fleet");
+        say("paired machines");
         go("machines");
       } else if (buffer.includes("share")) {
         keys.current.length = 0;

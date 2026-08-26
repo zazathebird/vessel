@@ -74,9 +74,9 @@ An "artery" sits across the header's vertical centre: `position: absolute; left/
 - **Right** — the calm toggle (chip style, label `calm` / `calm ✓`), and the `siteconfig` button **only when unlocked**.
 
 **Footer** — `border-top: 1px solid var(--line)`, `padding: 34px 0 10px`, mono 11px, `letter-spacing: .14em`, uppercase, `var(--faint)`. Three groups:
-- Left: `no trackers · no cookies · no idea why you're still here`
+- Left: `no trackers · no cookies · nothing to accept`  <!-- was `…no idea why you're still here` until 2026-08-26; the client banned copy that puts him or the site down, and the third beat now points at every site with an Accept All button -->
 - Centre: `Now`, `Changelog`, then a `·` character which is one of the unlock routes
-- Right: `last fiddled with · aug 2026 · HH:MM · local` (clock ticks live)
+- Right: `updated · aug 2026 · HH:MM · local` (clock ticks live)  <!-- was `last fiddled with`, 2026-08-26, same reason: the work is not puttering -->
 
 **Hero** — flex row, `gap: 48px`, `padding: 64px 0 50px`. Left is the valve (below), right is the text column: eyebrow, h1, lede, CTA row, then a mono metadata strip reading current palette name, layout name, effect name, and a vitals string (`pulse 47 bpm`, or `resting` in calm, or `pressure lost` on 404).
 

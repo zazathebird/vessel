@@ -201,8 +201,8 @@ export function DownloadsPage() {
     return (
       <section className="v-downloads" aria-labelledby="v-dl-empty">
         <p className="v-dl-empty" id="v-dl-empty">
-          Nothing here yet. There will be — small tools I've written for jobs that kept coming back.
-          If you're after something in particular, ask me and I'll tell you whether it exists.
+          Nothing here yet. There will be — tools I wrote for the faults that keep coming back.
+          If you're after something in particular, ask and I'll tell you whether it exists.
         </p>
       </section>
     );

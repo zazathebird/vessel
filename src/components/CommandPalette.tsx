@@ -272,7 +272,7 @@ export function CommandPalette() {
           aria-controls="v-cmd-list"
           aria-activedescendant={active ? `v-cmd-${active.id}` : undefined}
           aria-label="type a command"
-          placeholder="type — pages, setups, looks"
+          placeholder="type a page name"
           value={query}
           spellCheck={false}
           autoComplete="off"

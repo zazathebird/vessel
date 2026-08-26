@@ -63,7 +63,8 @@ import type { SortableFile } from "../src/data/downloads";
 import { DRAWN_CATEGORIES } from "../src/components/CategoryIcon";
 import { rangePlan } from "../worker/downloads";
 import { PATHS, pageFromPath, pathFor, subFromPath } from "../src/data/pageIds";
-import { metaForPath } from "../worker/page-meta";
+import { metaForPath, robotsTxt, sitemapXml } from "../worker/page-meta";
+import { NEVER_ROTATES, SNIPPETS, snippetFor } from "../src/data/snippets";
 import { LAYOUTS, FX, PICKABLE_FX, TYPESETS, SCOPES } from "../src/data/catalog";
 import type { LayoutId } from "../src/data/catalog";
 import { PALETTES } from "../src/data/palettes";
@@ -2736,6 +2737,222 @@ check("every route has copy, and the 404's page count is true", () => {
     `404 should say "${expected} other pages" (there are ${content.length}); update src/data/pages.ts`,
   );
   return `${Object.keys(PATHS).length} routes have copy; 404 says "${expected}"`;
+});
+
+check("the sitemap lists every indexed page and nothing unlisted", () => {
+  /*
+   * The site had neither file until 2026-08-26. Both are generated from `PATHS`
+   * rather than kept in `public/`, so this gate is what makes that generation
+   * worth trusting: a page added to the closed union has to appear here, and a
+   * page that is `noindex` has to not.
+   */
+  const xml = sitemapXml();
+  const locs = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]);
+  must(new Set(locs).size === locs.length, "the sitemap lists an address twice");
+
+  const account = new Set(["signup", "signin", "admin", "machines", "share", "notfound"]);
+  const routes = Object.keys(PATHS) as (keyof typeof PATHS)[];
+  for (const id of routes) {
+    // Home canonicalises to "/" rather than to its own path, exactly as
+    // `withPageMeta` does; anything else nominates two addresses for one page.
+    const want = `https://mcclevarty.ca${id === "home" ? "/" : PATHS[id]}`;
+    const listed = locs.includes(want);
+    if (account.has(id)) {
+      must(!listed, `${id} is noindex and must not be in the sitemap`);
+    } else {
+      must(listed, `${id} is an indexed page and is missing from the sitemap (${want})`);
+    }
+  }
+
+  // Named because it is the page most worth finding, and the one the client
+  // asked for by name. It is also a home CTA, which is what sitelinks are
+  // actually built from.
+  must(locs.includes("https://mcclevarty.ca/scams"), "the scams page is not in the sitemap");
+  must(!locs.some((l) => l.includes("/downloads/")), "a downloads sub-page reached the sitemap");
+  must(xml.startsWith("<?xml"), "the sitemap has no XML declaration");
+  must(!/lastmod|changefreq|priority/.test(xml), "the sitemap invents metadata it has no source for");
+
+  const robots = robotsTxt();
+  must(
+    robots.includes("Sitemap: https://mcclevarty.ca/sitemap.xml"),
+    "robots.txt does not point at the sitemap",
+  );
+  must(robots.includes("Disallow: /api/"), "robots.txt no longer keeps crawlers out of the API");
+  /*
+   * A `noindex` can only be obeyed by a crawler allowed to fetch the page.
+   * Disallowing the sub-pages would block the fetch, leave them eligible as
+   * bare URLs, and publish a list of the addresses meant to stay quiet.
+   */
+  must(
+    !/Disallow: \/downloads/.test(robots),
+    "robots.txt disallows /downloads — that hides the noindex rather than the pages",
+  );
+  return `${locs.length} indexed pages listed, ${routes.length - locs.length} withheld, robots names the sitemap`;
+});
+
+check("every snippet fits, stands alone, and the straight pages stay straight", () => {
+  /*
+   * The search snippet is the only copy on this site read by somebody who has
+   * not arrived yet, and it is the copy nobody sees while working — which is
+   * how "free diagnosis" survived in it for months after the client killed the
+   * claim, and how nine of the eleven indexed routes came to be clamped
+   * mid-sentence without anyone noticing.
+   */
+  const DAY = 86_400_000;
+  const routes = Object.keys(PATHS) as (keyof typeof PATHS)[];
+  let lines = 0;
+
+  for (const id of routes) {
+    const pool = SNIPPETS[id];
+    must(Array.isArray(pool) && pool.length > 0, `no snippet for route ${id}`);
+    for (const line of pool) {
+      lines += 1;
+      must(line.trim().length > 0, `${id} has an empty snippet`);
+      /*
+       * 155 is where `page-meta.ts`'s clamp starts cutting. Being clamped is
+       * not an error there — it is the backstop — but a snippet written for the
+       * job and then truncated mid-word is the exact failure this file replaced.
+       */
+      must(
+        line.length <= 155,
+        `${id}'s snippet is ${line.length} characters and would be cut mid-sentence: "${line}"`,
+      );
+      // Claims the client has retired. They cost nothing to check and the one
+      // place they can hide is a tag no browser renders.
+      for (const claim of [/free diagnos/i, /free diag\b/i, /pay nothing/i, /no fix,? no fee/i, /guarantee/i]) {
+        must(!claim.test(line), `${id}'s snippet makes a claim the client retired: "${line}"`);
+      }
+    }
+  }
+
+  /*
+   * **The forwarded pages never rotate.** `scams` ends by telling the reader to
+   * send it to whoever in their family answers the phone; `setup` is read by
+   * somebody about to install remote-access software; `contact` is the page
+   * with the job. A page about fraud that describes itself differently each
+   * time it is forwarded is arguing against itself.
+   */
+  for (const id of NEVER_ROTATES) {
+    must(
+      SNIPPETS[id].length === 1,
+      `${id} must not rotate — it is written to be forwarded, and it now has ${SNIPPETS[id].length} snippets`,
+    );
+  }
+
+  /*
+   * Home rotates, and every line in the pool has to survive being the only one
+   * anybody ever sees: a rotating snippet is never read beside its siblings, so
+   * each says what this is before it does anything else.
+   */
+  const home = SNIPPETS.home;
+  must(home.length >= 2, "home's snippet pool no longer rotates");
+  for (const line of home) {
+    must(
+      /\b(computers?|repair(s|ed|ing)?)\b/i.test(line),
+      `a home snippet never says what this is, and it is read alone: "${line}"`,
+    );
+  }
+
+  // Stable within a day, different across one, and every line reachable.
+  const base = 1_800_000_000_000 - (1_800_000_000_000 % DAY);
+  must(
+    snippetFor("home", base) === snippetFor("home", base + DAY - 1),
+    "home's snippet changes inside a single day — a crawl would see one line and the reader another",
+  );
+  const seen = new Set<string>();
+  for (let d = 0; d < home.length; d += 1) seen.add(snippetFor("home", base + d * DAY));
+  must(
+    seen.size === home.length,
+    `${home.length} home snippets but only ${seen.size} are reachable in a full cycle`,
+  );
+
+  // And the whole path end to end: what the Worker would actually serve today.
+  const served = metaForPath("/", base);
+  must(
+    home.includes(served.description),
+    `the served home description is not one of the pool's lines: "${served.description}"`,
+  );
+  must(
+    metaForPath(PATHS.scams, base).description === SNIPPETS.scams[0],
+    "the scams route no longer serves its own snippet",
+  );
+
+  return `${lines} snippets over ${routes.length} routes, longest ${Math.max(
+    ...routes.flatMap((id) => SNIPPETS[id].map((l) => l.length)),
+  )} chars, home rotates ${home.length} ways`;
+});
+
+check("the served head carries exactly one description", () => {
+  /*
+   * The shell's static description and the Worker's injected one both shipped,
+   * in that order, on every route (found 2026-08-26). A crawler quoting the
+   * first tag quotes the shell — one string for all sixteen routes — so Google
+   * advertised "free diagnosis" for months after that claim was cut from the
+   * copy, while the per-route description this build takes trouble over sat
+   * below it unread. Nothing failed, nothing logged: two valid tags.
+   */
+  const shell = readFileSync("index.html", "utf8");
+  const shellTags = shell.match(/<meta\s+name="description"/g) ?? [];
+  must(
+    shellTags.length === 1,
+    `index.html declares ${shellTags.length} description tags; it needs exactly one`,
+  );
+
+  const meta = readFileSync("worker/page-meta.ts", "utf8");
+  must(
+    /\.on\(\s*'meta\[name="description"\]'\s*,\s*\{[\s\S]{0,200}?el\.remove\(\)/.test(meta),
+    "withPageMeta no longer removes the shell's description — its own is appended, so the static " +
+      "one wins by being first and every route serves the same snippet",
+  );
+  // Comments stripped first: this file argues about the tag at length, and a
+  // sentence naming it is not a tag being emitted.
+  const metaCode = meta.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const injected = metaCode.match(/<meta name="description"/g) ?? [];
+  must(
+    injected.length === 1,
+    `withPageMeta injects ${injected.length} description tags; it needs exactly one`,
+  );
+
+  /*
+   * **And the same claims, over the page copy itself** (2026-08-26, second pass).
+   * The first version of this gate read `SNIPPETS` and the shell and stopped
+   * there — so a claim-audit found three fresh promises of a free diagnosis in
+   * `PAGES`, on the front page, while `npm run check` reported 34/34 green.
+   * The words were never the point; the promise is. `IMPLIED_FREE_DIAGNOSIS`
+   * catches the form all three took: the fault established *before* anything
+   * starts, which is the boundary the $150 sits on.
+   */
+  const RETIRED = [/free diagnos/i, /free diag\b/i, /pay nothing/i, /no fix,? no fee/i, /guarantee/i];
+  const IMPLIED_FREE_DIAGNOSIS =
+    /(what(?:'s| is) wrong|the (?:likely )?fault)[^.]{0,80}\b(before (?:anything|any work|I) (?:starts|start|begin|touch)|before it is taken apart)/i;
+  const copy = JSON.stringify(PAGES);
+  for (const claim of RETIRED) {
+    const hit = copy.match(new RegExp(`[^"]{0,60}${claim.source}[^"]{0,60}`, "i"));
+    must(!hit, `page copy makes a claim the client retired: "…${hit?.[0]}…"`);
+  }
+  for (const page of Object.values(PAGES)) {
+    const text = [page.lede, ...page.blocks.map((b) => b.body)].join(" ");
+    const hit = text.match(IMPLIED_FREE_DIAGNOSIS);
+    must(
+      !hit,
+      `"${page.title}" promises the fault before anything starts, which is a free diagnosis without the words: "…${hit?.[0]}…"`,
+    );
+  }
+
+  /*
+   * The static tag is the Pages rollback's only description, so it has to stay
+   * true on its own. These are the claims the client has explicitly retired —
+   * untrue of the business, and the one place they could survive unread is
+   * exactly here.
+   */
+  const content = shell.match(/<meta\s+name="description"[\s\S]*?content="([^"]*)"/)?.[1] ?? "";
+  must(Boolean(content), "index.html's description tag has no content");
+  const claimed = RETIRED.filter((r) => r.test(content));
+  must(
+    claimed.length === 0,
+    `index.html's description makes a claim the client retired: "${content}"`,
+  );
+  return `one in the shell, one injected, shell copy makes no retired claim`;
 });
 
 // ---- 6. Things only a person can judge -------------------------------------
