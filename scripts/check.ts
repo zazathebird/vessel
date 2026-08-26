@@ -2772,6 +2772,20 @@ check("the sitemap lists every indexed page and nothing unlisted", () => {
   must(xml.startsWith("<?xml"), "the sitemap has no XML declaration");
   must(!/lastmod|changefreq|priority/.test(xml), "the sitemap invents metadata it has no source for");
 
+  /*
+   * The Search Console token, which is load-bearing and invisible: remove it and
+   * the property silently un-verifies at Google's next re-check, taking the
+   * ability to request indexing with it. It lives in the Worker rather than
+   * `public/` because static assets 307 `/x.html` to `/x`.
+   */
+  const meta = readFileSync("worker/page-meta.ts", "utf8");
+  const token = meta.match(/const GOOGLE_VERIFICATION = "(google[0-9a-f]+\.html)"/)?.[1];
+  must(Boolean(token), "the Google Search Console verification token is gone from page-meta.ts");
+  must(
+    new RegExp(`url\\.pathname === \`/\\$\\{GOOGLE_VERIFICATION\\}\``).test(meta),
+    "the verification token is no longer served at its own path",
+  );
+
   const robots = robotsTxt();
   must(
     robots.includes("Sitemap: https://mcclevarty.ca/sitemap.xml"),

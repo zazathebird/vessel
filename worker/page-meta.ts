@@ -158,7 +158,30 @@ export function robotsTxt(): string {
  * two branches, and so the invariant it lives under stays readable: delete this
  * call and the site serves as it did before.
  */
+/**
+ * Google Search Console's ownership token for `https://mcclevarty.ca/`.
+ *
+ * **Served from here rather than `public/`, and that is not a preference**
+ * (2026-08-26). Workers static assets defaults to `html_handling:
+ * "auto-trailing-slash"`, so a file dropped in `public/` is answered with a
+ * **307 to the extensionless path** — `/google….html` → `/google…`. The bytes
+ * arrive if you follow the redirect; Google's verification fetch wants them at
+ * the address it asked for. Serving it here is a 200 at the exact URL and needs
+ * no `html_handling` change, which would reach every other asset on the site.
+ *
+ * The content is Google's fixed format: the literal string below, matching the
+ * filename. **Do not remove it after verification succeeds** — Search Console
+ * re-checks periodically and un-verifies a property whose token has gone, which
+ * silently drops the ability to request indexing.
+ */
+const GOOGLE_VERIFICATION = "google91f9439a4d48d72d.html";
+
 export function crawlerFile(url: URL): Response | null {
+  if (url.pathname === `/${GOOGLE_VERIFICATION}`) {
+    return new Response(`google-site-verification: ${GOOGLE_VERIFICATION}`, {
+      headers: { "content-type": "text/html; charset=utf-8" },
+    });
+  }
   if (url.pathname === "/robots.txt") {
     return new Response(robotsTxt(), {
       headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=3600" },
