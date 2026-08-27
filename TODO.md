@@ -6,231 +6,173 @@ what is left to do.
 
 ---
 
-## 2026-08-26 (evening) — rounds 4 and 5 of the copy review, run at last
+## 2026-08-26 (evening) — rounds 4 and 5 of the copy review, run and applied
 
-The copy overhaul ran three rounds and stopped. **Round 4 (voice consistency across
-all seventeen pages) and round 5 (a cold read of the two safety pages) never ran.**
-They have now. Round 5 was run as two cold readers who were given the page text and
-nothing else — no `CLAUDE.md`, no repo — and told to read as the people the pages are
-actually for.
+The copy overhaul ran three rounds and stopped at the session limit. **Round 4 (voice
+consistency across all seventeen pages) and round 5 (a cold read of the two safety pages)**
+were the two that never ran. They have now, and **everything they found that could be fixed
+without the client has been fixed.** `npm run check` is 43 green.
 
-`npm run check` is **43 green** with the three fixes below applied.
+Round 5 was run as two cold readers given the page text and nothing else — no `CLAUDE.md`,
+no repo — reading as the people the pages are actually for: somebody on the phone to a
+scammer now, the adult child deciding whether to forward the link, somebody who has already
+paid, and a non-technical customer about to install remote-access software because a
+stranger told them to. **That framing is what found the two big ones, and it is worth
+reusing.** Both cold readers also produced claims that were wrong; each was checked before
+being acted on, and one is recorded below as a false alarm.
 
-### Applied this session, no sign-off needed
+### Still needs the client — nothing else on this list does
 
-- **`gallery`, the capacitor block** — a three-turn run-on with a dashed aside inside a
-  dashed aside; the third clause was a comma splice hiding behind an em-dash. Split into
-  three sentences, every word of content kept, end-stress moved onto "got it wrong."
-- **`changelog` v2.4** — "Nothing underneath it changed — same as a new laptop" is an
-  allusion the reader has to decode, and it parses backwards on first pass. Now "…which
-  is also true of most new laptops": names the target, and points the joke outward at
-  the shops, which is where this site's jokes go.
-- **`now`'s search snippet** — it promised "what came off it this week", and the page has
-  no such section. It also said "on the bench", which is the thing that turned out not to
-  exist. Replaced with a line that describes what the page actually holds.
+1. **Which Tailscale flow does he actually use?** `/setup`'s steps were rewritten on the
+   assumption that **he emails an invite link that joins the customer's machine to his
+   tailnet**, because it is the only flow a non-technical customer can complete and the only
+   one "machines I look after" implies. The alternative is the customer sharing the device
+   out of their own tailnet, which is an admin-console trip far beyond this reader. **If it
+   is the other one, the block needs rewriting again.**
+2. **Two operator-side consequences of that flow he should know about, neither of them
+   copy.** If customers join *his* tailnet, then by default Tailscale ACLs let every device
+   on it reach every other — one customer's machine could reach another's. **The ACLs are
+   the only thing separating them and they need setting deliberately.** And the free plan is
+   limited by *user* count, which is the small number; inviting customers as users runs into
+   it quickly. Neither is on the page and neither should be, but both are real.
+3. **Was the first machine he took apart really a 486?** It is `/about`'s origin story, it
+   was rewritten (not removed) this session, and this file recorded it under *Answered
+   already* as "gone with `/now`" — it went from `/now` only. Same provenance question as
+   item 8 below. Cannot be fixed by anyone but him.
+4. **The years number.** All six surfaces now read **"over twenty years"** — his own
+   correction from 2026-08-14, applied consistently, replacing four different wordings. The
+   *number* is still item 6 below. It is now one phrase to change instead of four.
 
----
+### Applied — `/setup`
 
-### `/setup` — the cold read found a functional defect, not a copy problem
+- **The Tailscale steps did not work.** Signing in with the customer's own account put the
+  machine on the customer's own tailnet, which he is not on, and "tell me the name it gives
+  the machine" is meaningless across tailnets. Five steps followed exactly connected to
+  nothing. Rewritten around the invite link, with the invite named as the thing that does
+  the joining.
+- **Tailscale is a connection, not a screen.** The page never said so and never named the
+  program that actually shares the screen. It says both now.
+- **"Screen sharing across it still asks you first" is gone** — a promise Tailscale does not
+  make, since Remote Desktop or an unattended VNC over the same link asks nobody. So is the
+  same claim in "[what i can see]", where a claim about *software* was welded to an honest
+  personal promise; the promise is what survived, and it now carries a test the reader can
+  apply: *"if a screen ever gets shared without you agreeing to it right then, it was not
+  me."*
+- **"it stops existing the moment you close the window" was false** — the session ends, the
+  app stays installed. A reassurance built on a wrong fact, and the true version is nearly as
+  reassuring.
+- **Quick Assist is not on every machine.** True of Windows 11, often not of Windows 10,
+  where it comes from the Store. The commonest stall on the page now has an answer.
+- **The page's own scam rule fired on its own workflow.** The customer emails, then *he*
+  rings *them* and reads out a code — which is the scam script, and the page's one memorable
+  rule said so. The callback settles it: unsure, hang up and ring back on the number he gave
+  you. It appears twice more, at the two moments it will be tested.
+- **"I will never ask you for a password"** — the page had the gift-card equivalent and not
+  this one, while telling somebody to sign in to a Google or Microsoft account.
+- **Added:** the code expiring; the Windows prompt the customer must click themselves; a
+  warning before the mouse is taken; that Tailscale shows nothing while connected; the
+  **tray-icon Disconnect**, which is the off switch a nervous person wants and the page only
+  offered uninstalling; and a whole **"when we're done"** block, which did not exist —
+  including *don't type a password or open your banking while I am looking*, the single most
+  valuable line that was missing.
+- **Removed:** the free-tier claim (somebody else's pricing, it dates, not the customer's
+  problem) and Apple from the sign-in list (not certain it is offered). The Mac block now
+  says where to find the version rather than assuming they know.
 
-**1. The Tailscale instructions do not work as written. This is the top item on the page.**
-"Sign in with your Google, Microsoft or Apple account" puts the machine on **the
-customer's own tailnet**, which the operator is not on, and "Tell me the name it gives
-the machine" is meaningless across tailnets — there is no lookup by name from outside
-one. A customer who follows all five steps ends up with Tailscale installed, signed in,
-and no connection to anywhere. For it to work, one of two steps has to happen and
-neither is on the page: the customer **shares the device** out of their tailnet, or the
-operator **invites them into his**. **Which one does he actually do?** The steps cannot
-be written correctly without that answer.
+### Applied — `/scams`
 
-**2. Tailscale is a network, not a screen-sharing tool, and the page never names the
-program that actually shows the screen.** So even with the step above fixed, the
-instructions stop one program short of the goal.
+- **"None of that survives a reload. Not one pixel of it." is fixed.** Right about the
+  screen-editing refund scam, wrong about the variant where they move the victim's *own*
+  money between their *own* accounts — which survives a reload **and** a second device. A
+  reader who tested it concluded the overpayment was real. The technique stays; the absolute
+  is gone, the variant is named, and the block now lands on the rule that holds either way:
+  *you do not send money to somebody who rang you, whatever the screen says.*
+- **Everything actionable-right-now is now first.** The emergency block moved ahead of the
+  thesis, and the pop-up close sequence and the refresh counter-move came up beside it from
+  blocks 20 and 19 — both are live defences that were filed with the reference material,
+  and the eyebrow ("read this before you call anyone") is addressed to the person staring at
+  a pop-up. Block count unchanged at 33.
+- **The bank call is second, not sixth.** It was below "shut the computer down", on the one
+  list a panicking reader finishes, and the page itself says money can be stopped in the
+  first hours and almost never after.
+- **Also added to that list:** 911 if somebody is at the door for cash (it was in block 31,
+  seventeen blocks after cash-by-courier is first named), and changing the email password
+  from a different device, which was not there at all.
+- **"Switch off the Wi-Fi" pointed at a setting inside the machine the attacker is driving.**
+  It names the router now, and says what a router is.
+- **The site said no legitimate company ever asks for an e-transfer, then asked for one.**
+  `/downloads` takes e-transfers and so, presumably, does the $150. The bullet is split: gift
+  cards, crypto and courier cash stay absolute, because that absolute earns its keep; wire
+  and e-transfer get the same "to somebody who contacted you first" scoping the
+  remote-access bullet above them already had.
+- **A password change does not evict anyone from an email account.** Forwarding rules,
+  added recovery addresses and added recovery phones all survive it and are the standard
+  persistence trick after a screen share. Now covered, with signing out other devices and
+  turning on two-step. **A credit-file fraud alert with Equifax and TransUnion** was missing
+  from the page entirely.
+- **The shame surface.** The lede sorted the reader into a demographic ("older people")
+  before helping them; the block meant to absolve opened with *"People assume victims are
+  gullible"*, which is the accusation arriving in the reassurance, and a scanner reads
+  headings and first lines. And *"if you have **actually** lost money"* divided readers into
+  real victims and fussers. All three changed.
+- **The recovery trio ran least-bad → worst**, so the reader in the most trouble travelled
+  furthest. Reversed to triage order, and the one cross-reference that pointed the wrong way
+  afterwards was fixed with it.
+- **Ctrl+W throws a "Leave site?" box** on these pages, so the reader pressed the keys, saw a
+  dialog and concluded it had failed. Named now, with the blunt fallback the emergency block
+  already uses (hold the power button in) offered after Task Manager rather than leaving a
+  panicking person in a process list.
+- **"Twenty minutes that make you a hard target"** was followed by seven items including a
+  trip to the bank in person. It is an afternoon, and it says which two take a minute.
+- **The recorded-line paragraph** spent fifty-five words on a one-directional inference that
+  its own bullet contradicted nine lines later. The bullet states it flatly and is enough.
 
-**3. "Screen sharing across it still asks you first" is a promise Tailscale does not
-make.** Whether anything asks depends entirely on what is bolted on top: Remote Desktop
-asks nobody and locks the local screen, an unattended VNC asks nobody. The same
-overstatement is in "[what i can see]": *"every one of these asks you to allow it before
-it shows me anything"* is a claim about **software**, welded to *"I will not set any of
-them up to connect without asking"*, which is an honest personal promise and is the half
-doing the work. Presenting the promise as a property of the tools takes away the reader's
-ability to check it — and hands a scammer the line *"don't worry, it always asks first."*
+### Applied — round 4, voice consistency
 
-**4. "it stops existing the moment you close the window"** — false. The Quick Assist
-session ends; the app stays installed and stays in Start. The true version is nearly as
-reassuring: it can do nothing until you open it and type a fresh code.
+The voice is holding, and the reversal held with it: **there is no self-deprecation left to
+find.** Its mechanics are consistent page to page — short declaratives, concrete numbers over
+categories, first-person singular, the negative-construction pitch, and a block's last
+sentence carrying a turn that points **outward**, never at the operator. `contact` and the
+pricing block are deliberately the plainest copy on the site, which reads as judgment being
+exercised rather than as drift.
 
-**5. "Quick Assist, already on your machine" / "Nothing to install"** — true on Windows 11,
-often not on Windows 10, where it comes from the Microsoft Store. The commonest stall on
-the page ("I typed it and it just offered me a web search") has no answer on the page.
+- **`/downloads` still carried the promise this file recorded as cut** — *"pay once"*
+  survived the audit rewrite, verified as written this session. `expires_at` / `max_uses` /
+  `revoked_at` all exist, so it was a commitment the schema can take back, and item 1 below
+  asks a question the live copy had already answered on his behalf. The anti-subscription
+  joke is the true half, so the joke stayed and the promise went.
+- **`guestbook` was the last content page whose eyebrow named nothing** — "1999 revival" over
+  "Sign nothing.", both halves flavour. Now "guestbook · 1999 revival", which is the pattern
+  `notfound` is exempt under: flavour beside its own translation.
+- **"the bench" is gone from home and the `about` snippet.** Both replacements are more
+  concrete than what they replaced.
+- **`changelog`'s snippet was its own lede reworded.** A lede is read after an eyebrow and a
+  headline; a snippet arrives cold. Rewritten — and the gate caught the first attempt at 159
+  characters, which is the gate doing its job.
+- **`/gallery`'s drive-shelf alt** said "Five PATA hard drives" beside a heading claiming
+  forty, so a screen-reader user got two counts. It says "five of them" now. The photograph
+  really does show five.
+- **The empty video slot** was captioned "video · muted loop" — a muted loop of a *noise*,
+  for a clip that does not exist. The caption is operator-only and now says so.
+- **Two sentence-level defects:** `gallery`'s capacitor block was a three-turn run-on with a
+  dashed aside inside a dashed aside, the third clause a comma splice hiding behind an
+  em-dash; and `changelog` v2.4's "same as a new laptop" was an allusion that parses
+  backwards on first pass.
+- **`/now`'s snippet** promised "what came off it this week", which the page has no section
+  for, and said "on the bench".
 
-**6. The page's own scam rule fires on the page's own workflow.** The rule is *"If they
-rang you, it's a scam"* and *"The one difference that matters is who started it: you rang
-me."* But the customer **emailed** — the CTA says so — and the next thing that happens is
-the operator ringing *them* and a voice reading out a code. The one rule the reader is
-meant to apply under pressure goes off on the legitimate repair. The fix is the callback,
-which `/scams` already teaches: however the call started, hang up and ring back on the
-number you already have, and *then* the code.
+### One false alarm, checked rather than relayed
 
-**7. "I read you the code over the phone, you type it in" is the scam script verbatim,**
-now endorsed on the reader's own technician's site with no condition attached. Microsoft
-has documented criminals running Quick Assist exactly this way. One clause fixes it — the
-code is only ever given on a call the customer placed.
+A cold reader doubted **`reportcyberandfraud.canada.ca`**. It answers **HTTP 200**. The CAFC
+number (1-888-495-8501) and the OPP lines (1-888-310-1122, TTY 1-888-310-1133) all check out
+too. **The hours and that URL still want a re-check date on them**, since either can move
+without anything on the site looking wrong.
 
-**8. There is no "I will never ask you for your password."** The page has the gift-card
-equivalent and it is the best line on it. The password pledge is missing, on a page whose
-own instructions tell somebody to sign in to their Google or Microsoft account because a
-technician told them to.
+### Accepted, not fixed
 
-**9. Missing, and each one costs an email:** the Quick Assist code expires; the UAC prompt
-the customer must click themselves; whether their mouse gets taken over ("take full
-control" vs "view screen"); Tailscale's **tray-icon Disconnect**, which is the off switch a
-nervous person most wants and the page only offers uninstalling; that Tailscale shows
-nothing while idle, so the machine looks identical whether or not anyone is connected; and
-anything at all about afterwards — above all *"don't type passwords or open your bank while
-I'm looking"*, which is one line and the most valuable sentence not on the page.
-
-**10. Uncertain, flagged not asserted:** whether Apple is offered as a Tailscale sign-in;
-the exact Quick Assist code expiry; whether the free tier covers commercial use. **The free
-tier line should come out regardless** — it is a claim about somebody else's pricing, it
-dates, and it is not the customer's problem.
-
-**Genuinely right, and worth not losing:** the scam block is *second, before any
-instruction* — that ordering is the best decision on the page; *"They will talk you into
-installing exactly the kind of program this page describes — the same programs, by name"*
-buys real credibility; recommending the throwaway tool first and the persistent one only
-for repeat work is the correct order; and *"You don't have to tell me first."* settles who
-is in control better than the whole "what I can see" block does.
-
----
-
-### `/scams` — long, and four emergency instructions are in the tail
-
-`CLAUDE.md` says this page is deliberately left almost alone. **Nothing below is a
-"finish" of it** — they are an ordering problem, one wrong absolute, and one contradiction
-with another page. All want the client's nod first.
-
-**1. "None of that survives a reload. Not one pixel of it." is the one line here that can
-cost somebody money.** The DOM-editing refund scam is described correctly, but there is a
-second, well-documented variant where the scammer moves the victim's *own* money between
-their *own* accounts, so the "overpayment" is a real transaction. That survives a reload
-**and** survives checking on a second device. A reader who refreshes, sees the money still
-there, and concludes the overpayment is genuine sends it — the exact outcome the block
-exists to prevent. The absolutism is what makes it dangerous rather than merely incomplete.
-
-**2. The bank call is bullet 6 of 6, below "Shut the computer down".** The page itself says
-money "can sometimes be stopped in the first hours and almost never after that." The most
-time-critical instruction on the site is last in the only block a panicking reader finishes.
-
-**3. The site tells you no legitimate company ever asks for an e-transfer, and then asks
-you for one.** *"Things no real company will ever ask you for… There is no exception to any
-of these… not ever"* lists "wire transfer, e-transfer" — while `/downloads` says *"send an
-e-transfer and a code comes back"* and the $150 is presumably the same. The neighbouring
-remote-access bullet is already scoped ("when they contacted you first"); this one is not.
-Splitting it keeps the absolute where it is true and scopes it where it is not:
-  - *Payment in gift cards, cryptocurrency, or cash handed to a courier* — stays absolute
-  - *A wire transfer or an e-transfer to somebody who rang you* — scoped
-  The gift-card absolute earns its keep and must not be softened.
-
-**4. Changing the email password does not evict them.** Forwarding rules, added recovery
-addresses and added recovery phone numbers all survive a password change and are the
-standard persistence trick after a screen-share. Nothing says to check for them, to sign
-out other sessions, or to turn on two-factor. Also absent site-wide: a fraud alert with
-Equifax and TransUnion, which is standard Canadian advice after details are handed over.
-
-**5. The shame surface is in the scanned positions.** A scanner reads headings and first
-lines. Block 6's first line is *"People assume victims are gullible."* — the accusation
-arrives inside the reassurance. The lede opens by sorting the reader into a demographic
-("older people") before helping them. *"If you have **actually** lost money"* divides
-readers into real victims and fussers. On a page whose own thesis is that shame is the
-mechanism, these are worth an hour.
-
-**6. Three instructions a frightened non-technical reader cannot follow:**
-  - *"unplug the network cable or switch off the Wi-Fi"* — neither branch names a findable
-    physical object, and "the Wi-Fi" points at a setting **inside the machine the attacker
-    is driving**. The router is never named.
-  - *"Ctrl, Shift and Escape opens Task Manager, then End task on the browser"* — assumes
-    they know their browser's name in a process list, and puts a panicking person somewhere
-    the adjacent wrong click is worse. Block 2's own fallback (hold the power button in) is
-    not offered here.
-  - *"hold Ctrl and press W"* — these pages throw a "Leave site?" dialog, so the reader
-    presses the keys, sees a box, and concludes it did not work.
-
-**7. Order and position, in descending value:** the emergency block is *third*, behind the
-lede and two CTAs, of which the first is **"Get my machine checked →"** — a repair
-business's sales button above "hang up", which is the one thing on the page a sceptic
-would hold against it. The recovery blocks run *least bad → worst* (26→27→28), so the
-reader in the most trouble travels furthest. "Emergency, or somebody is at your door: 911"
-is block 31, seventeen blocks after cash-by-courier is first named. The pop-up close
-sequence is block 20, though the eyebrow — *"read this before you call anyone"* — is
-addressed to the person staring at a pop-up right now.
-
-**8. Verified, and the page is right:** `reportcyberandfraud.canada.ca` **is live (HTTP
-200)** — a cold reader doubted it, and the doubt was wrong. `1-888-495-8501` (CAFC),
-`1-888-310-1122` and `1-888-310-1133` (OPP non-emergency and TTY) all match. Escape
-dropping full-screen, Command-Option-Escape, declining session restore on reopen, "ask
-them to attempt a recall", and ringing gift-card issuers with the receipts are all correct.
-The grandchild block is complete and correctly ordered. **The page's hours and that URL
-want a re-check date on them**, since both can move without anything looking wrong.
-
-**9. Two small ones:** *"Twenty minutes that make you a hard target"* is followed by seven
-items including a trip to the bank in person — a careful reader clocks that. And the
-recorded-line paragraph in block 10 spends fifty-five words on a one-directional inference
-that its own bullet nine lines later states flatly, contradicting it.
-
-**The three strongest lines on the site are on this page** and should survive any edit:
-*"The problem is never the program — it is who asked you to install it, and why."*;
-*"Hang up and ring your grandchild on the number you already have… ring their parents — the
-people you were told not to ring."*; and *"My terms are on the contact page and they do not
-change because you have had a bad week."* The last is the reason none of this reads as
-fear-marketing, and it is in block 29 of 33.
-
----
-
-### Round 4 — voice consistency across the seventeen pages
-
-**The voice is holding.** Its mechanics are consistent page to page: short declaratives,
-concrete numbers over categories, first-person singular, the negative-construction pitch
-("No forms, no queue, no ticket number" / "No client names, no photographs of anybody's
-living room" / "No name, no face, no city"), and the block's last sentence carrying a turn
-that points **outward** — at chains, depots, commission, Microsoft — never at the operator.
-The reversal held: there is no self-deprecation left to find. `contact` and the pricing
-block are deliberately the plainest copy on the site, which is the right call and reads as
-judgment being exercised rather than as inconsistency.
-
-What drifted:
-
-1. **`/downloads` still carries the promise this file records as cut.** Item 1 below says
-   "Cut." It was not — it was **reworded**, and the permanence half survived: *"Shareware,
-   the old way: pay once, and nothing here turns into $9.99 a month."* Verified as written
-   *this session* (a `+` line in `b1201c9`). This is the shape `CLAUDE.md` warns about by
-   name: a retired promise rebuilt without its words. Weaker than "nothing renews" —
-   "pay once" is about recurrence, not permanence — but `expires_at` / `max_uses` /
-   `revoked_at` still exist, and item 1 asks the client a question the live copy has already
-   answered "yes, permanently" on his behalf.
-2. **The 486 is still `/about`'s origin story**, and was *rewritten* this session, not
-   removed. This file records it under *Answered already* as "gone with `/now`" — it went
-   from `/now` only. It is inherited handoff content with exactly the provenance question
-   of item 8, and it is now written down as closed. **Was the first machine he took apart
-   really a 486?**
-3. **The years number is still four phrasings over six surfaces** — "twenty-odd" (home
-   eyebrow), "Over twenty" (home block), "Twenty-odd" (about title), "Twenty-plus" ×3 and
-   "twenty years" ×1 (snippets). That is item 6, entirely unfixed. Worth unifying the
-   *wording* even before he supplies the number, so his answer is one edit instead of six.
-4. **`guestbook` is the last content page whose eyebrow does not say what the page is** —
-   "1999 revival" over "Sign nothing." Both halves are flavour, and a stranger can name
-   neither. That is the exact rule home's eyebrow was changed to satisfy (the comment above
-   it in `pages.ts` sets it out), and `notfound` is explicitly exempt because it pairs its
-   flavour with its own translation.
-5. **"the bench" survives in four places** — home ×2, and the `about` and (until this
-   session) `now` snippets — after the bench turned out to be aspirational. As a figure of
-   speech for "where I work" it may be fine; it is his call, and it should be made once.
-6. **`changelog`'s snippet is its own lede reworded** ("kept for the same reason people keep
-   receipts" against "for the same reason people keep receipts"). A lede is read after an
-   eyebrow and a headline; a snippet arrives cold and has to do a different job.
-7. **`gallery`'s video block describes a sound, and its tile label says "muted loop"** — on
-   top of the existing note that no clip exists anywhere in `public/`. The contradiction is
-   visible on the page as it stands.
+- **The `/scams` CTAs still sit above the emergency block**, and the first is
+  "Get my machine checked →". They are in the hero, so no block reordering reaches them, and
+  the page does need a route to him. Worth knowing that a sceptical reader notices it.
 
 ---
 
@@ -247,8 +189,9 @@ laptops, so `/now` and `about` were rewritten to that), the privacy line (his ow
 wording, now on home and in the search rotation), and the 486 — **but the 486 went from
 `/now` only and is still `/about`'s origin story**; see round 4 item 2 above.
 
-1. **Downloads: "pay once, nothing renews."** **Not cut — reworded, and "pay once"
-   survived**; see round 4 item 1 above. `download_codes` carries
+1. **Downloads: "pay once, nothing renews."** **Now genuinely cut** — it had been
+   reworded rather than cut, and "pay once" survived until this session. The
+   anti-subscription joke stays because it is true. `download_codes` carries
    `expires_at`, `max_uses` and `revoked_at`, so the page was promising something
    the software can take back. **Does he want that promise on permanently?**
 2. **Contact: "you will usually hear back within a day."** Inherited, and a
@@ -264,9 +207,10 @@ wording, now on home and in the search rotation), and the 486 — **but the 486 
    changelog lede: it advertised a per-machine record-keeping service nothing
    else on the site mentions. **Does he keep written notes per machine?** If so
    it is worth having, and not only on the changelog.
-6. **How many years?** The site said "twenty-odd", "over twenty", "twenty years"
-   and "twenty-plus" in four places, and one block implied paying Microsoft since
-   the nineties — nearer thirty. **One number, and it goes everywhere.**
+6. **How many years?** All six surfaces now read **"over twenty years"** — his own
+   2026-08-14 correction, applied consistently in place of four different wordings.
+   One block still implies paying Microsoft since the nineties, which is nearer
+   thirty. **The number is still his to give; it is now one phrase to change.**
 7. **The Kevin joke** — "no chat window operated by a man named Kevin who is not
    named Kevin", on home and in a search snippet. It trades on offshore support
    staff using anglicised names, which is adjacent to the accent framing the

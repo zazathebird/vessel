@@ -58,14 +58,14 @@ import type { PageId } from "./pageIds";
  */
 export const SNIPPETS: Record<PageId, readonly string[]> = {
   home: [
-    "Computer repair done properly. Dead, slow, infected, or the photographs are trapped on a drive that stopped spinning. Twenty-plus years of that.",
+    "Computer repair done properly. Dead, slow, infected, or the photographs are trapped on a drive that stopped spinning. Over twenty years of that.",
     "Independent computer repair. Laptops, desktops, failed hard drives, virus removal, and home internet that never worked properly to begin with.",
     "Computer repair without the depot. Your machine is fixed here, not boxed up and sent away to somebody who has never seen it.",
     "Board-level computer repair and data recovery. The faults other shops call terminal are often a cracked solder joint, not a dead machine.",
     "Computer repair. No forms, no queue, no ticket number, and no chat window operated by a man named Kevin who is not named Kevin.",
     // The client's own, near-verbatim — only the punch word moved to the end.
-    "Computer repair, twenty years. I stopped looking at people's stuff nineteen years ago \u2014 don't worry, I don't care enough to check.",
-    "Computer repair and data recovery, twenty-plus years. You get a rough cost before anything is taken apart.",
+    "Computer repair, over twenty years. I stopped looking at people's stuff nineteen years ago \u2014 don't worry, I don't care enough to check.",
+    "Computer repair and data recovery, over twenty years. You get a rough cost before anything is taken apart.",
   ],
 
   // The page with the job. Says what is fixed, then that a person answers.
@@ -84,7 +84,7 @@ export const SNIPPETS: Record<PageId, readonly string[]> = {
   ],
 
   about: [
-    "Twenty-plus years on the bench: board-level soldering, data recovery, and the machines other shops send away. No name, no face, no city — a preference.",
+    "Over twenty years of board-level soldering, data recovery, and the machines other shops send away. No name, no face, no city — a preference.",
   ],
 
   work: [
@@ -104,7 +104,7 @@ export const SNIPPETS: Record<PageId, readonly string[]> = {
   ],
 
   changelog: [
-    "What changed on this site and when, kept for the same reason people keep receipts.",
+    "Every change made to this computer repair site, with dates. Nobody needs it \u2014 it is here because quietly deleting things is how a site lies.",
   ],
 
   downloads: [

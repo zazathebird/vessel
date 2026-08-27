@@ -110,7 +110,7 @@ export const PAGES: Record<PageId, Page> = {
      * "one guy" rather than anything grander is the house voice, and the same
      * joke the third block lands with "No AI, just a guy".
      */
-    eyebrow: "computer repair · twenty-odd years",
+    eyebrow: "computer repair · over twenty years",
     title: "Oh. It's you.",
     lede: "Broken boards get soldered here, not boxed up and quoted as a new machine. Dead, slow, crawling with viruses, or holding the only copy of photographs of somebody who isn't around to take any more. You email me, I tell you roughly what it will cost, and then I fix it.",
     ctas: [
@@ -125,7 +125,7 @@ export const PAGES: Record<PageId, Page> = {
       // "Fifteen years" → "Over twenty years" at the client's correction
       // (2026-08-14). His number, not the spec's.
       { kicker: "the pitch", title: "Machines get fixed here", body: "Over twenty years of laptops, desktops, drives that stopped spinning and home internet that never worked properly to begin with. If you are worried about privacy: I have seen enough by accident to have no interest in going near anybody's files." },
-      { kicker: "the catch", title: "There is no catch", body: "No forms, no queue, no ticket number, and no chat window operated by a man named Kevin who is not named Kevin. You email me, I read it myself, and the reply comes from the bench rather than from a queue." },
+      { kicker: "the catch", title: "There is no catch", body: "No forms, no queue, no ticket number, and no chat window operated by a man named Kevin who is not named Kevin. You email me, I read it myself, and the reply comes from the person who will be fixing it, not from a queue." },
       // The one block on this page pointing somewhere other than the work.
       { kicker: "read this first", title: "Nobody legitimate calls you first", body: "Microsoft does not phone people about a virus. Nobody there is watching your computer, and no department anywhere rings you about one. Anyone who rings claiming otherwise is reading off a script, and there is a page here that walks through exactly which one. Send it to whoever in your family answers the phone." },
       /*
@@ -159,7 +159,7 @@ export const PAGES: Record<PageId, Page> = {
       // thing a stranger most wants to know and no repair shop ever writes down:
       // the sequence. It also sets the expectation that silence is not neglect,
       // which is the complaint every repair business actually gets.
-      { kicker: "the process", title: "What actually happens", body: "You email. I ask two or three questions, most of which sound stupid and aren't. You get a rough cost before anything starts, and the fault once I have the machine. Then it either comes to the bench or I look at it from here, and you hear from me when there is something worth saying \u2014 not daily updates engineered to feel like progress." },
+      { kicker: "the process", title: "What actually happens", body: "You email. I ask two or three questions, most of which sound stupid and aren't. You get a rough cost before anything starts, and the fault once I have the machine. Then it either comes to me or I look at it from here, and you hear from me when there is something worth saying \u2014 not daily updates engineered to feel like progress." },
       // COPY CHANGE 2026-08-14, twice in one day and the second one is the real
       // policy. First the client killed "Free diagnosis, always" ("i dont do free
       // diag. a mechanic will still charge you to diagnose your cars issues").
@@ -197,7 +197,7 @@ export const PAGES: Record<PageId, Page> = {
   },
   about: {
     eyebrow: "who",
-    title: "Twenty-odd years of other people's disasters.",
+    title: "Over twenty years of other people's disasters.",
     lede: "No name, no face, no city, and no stock photograph of a man in a headset who has never worked here. Just what came in dead and what went home working. That is the whole biography, and it is the only part that has ever fixed anything.",
     ctas: [
       { label: "See the work", to: "work", primary: true },
@@ -237,8 +237,8 @@ export const PAGES: Record<PageId, Page> = {
     blocks: [
       { kicker: "photo", title: "A laptop taken completely apart", body: "Laptop screws come in several lengths that look identical, and the long one goes straight through the mainboard. Hence the order. Every screw went back where it came from. Nothing that leaves here rattles.", hasTile: true, tile: "4:5 · photo slot", img: "/photos/thinkpad-exploded.jpg", imgAlt: "A laptop opened on a wooden bench, battery and mainboard exposed, screwdrivers alongside" },
       { kicker: "photo", title: "The exact spot a computer gave up", body: "One of the small barrels that smooth out the power inside a machine. They bulge, they vent, and they take the computer with them. For most of the 2000s they did it in their millions: the story goes that somebody stole the recipe for the liquid inside and got it wrong.", hasTile: true, tile: "16:9 · photo slot", img: "/photos/burnt-capacitor.jpg", imgAlt: "Bulged and vented electrolytic capacitors on a dusty motherboard, one shedding its sleeve" },
-      { kicker: "video", title: "A cooling fan on its way out", body: "The noise a fan bearing makes before it seizes. People live with it for a year and then ask why the machine keeps getting hot.", hasTile: true, tile: "video · muted loop" },
-      { kicker: "photo", title: "Forty hard drives, one of them working", body: "Pulled out of dead machines over the years. One still spins up. Worth remembering about the thing holding your only copy of everything.", hasTile: true, tile: "3:4 · photo slot", img: "/photos/drive-shelf.jpg", imgAlt: "Five PATA hard drives stacked on a scuffed wooden desk, connectors facing out" },
+      { kicker: "video", title: "A cooling fan on its way out", body: "The noise a fan bearing makes before it seizes. People live with it for a year and then ask why the machine keeps getting hot.", hasTile: true, tile: "video slot · nothing in it yet" },
+      { kicker: "photo", title: "Forty hard drives, one of them working", body: "Pulled out of dead machines over the years. One still spins up. Worth remembering about the thing holding your only copy of everything.", hasTile: true, tile: "3:4 · photo slot", img: "/photos/drive-shelf.jpg", imgAlt: "Five of them stacked on a scuffed wooden desk, connectors facing out" },
       { kicker: "photo", title: "A tube monitor that has outlasted everything since", body: "The heavy kind, from before flat screens, and the kind that can still hold a dangerous charge long after you unplug it. Nothing sold this year will be working in thirty.", hasTile: true, tile: "1:1 · photo slot", img: "/photos/crt-alive.jpg", imgAlt: "A CRT monitor glowing amber in a dark room, text faintly burned into the phosphor" },
       { kicker: "photo", title: "The drawer that still has your cable", body: "Every one of those is the only surviving cable for a device that no longer exists. The industry changed the plug every eighteen months for thirty years, and I kept every fucking one of them. Yours is in there.", hasTile: true, tile: "4:5 · photo slot", img: "/photos/cable-drawer.jpg", imgAlt: "A dense tangle of power and data cables jammed beneath a desk shelf" },
     ],
@@ -287,7 +287,7 @@ export const PAGES: Record<PageId, Page> = {
     // of these cost money and the way you pay is an e-transfer to a person,
     // which is unusual enough that saying so up front is less strange than
     // letting somebody discover it at the click.
-    lede: "Small programs I wrote to fix things that annoyed me, and a few I've collected over the years. Some are free. The rest cost a few dollars \u2014 send an e-transfer and a code comes back that unlocks the download. Shareware, the old way: pay once, and nothing here turns into $9.99 a month.",
+    lede: "Small programs I wrote to fix things that annoyed me, and a few I've collected over the years. Some are free. The rest cost a few dollars \u2014 send an e-transfer and a code comes back that unlocks the download. Shareware, the old way: none of it turns into $9.99 a month the moment you look away.",
     ctas: [{ label: "Ask me about one \u2192", to: "contact", primary: true }],
     blocks: [],
   },
@@ -414,58 +414,130 @@ export const PAGES: Record<PageId, Page> = {
       {
         kicker: "before any of it",
         title: "If they rang you, it's a scam",
-        body: "Microsoft does not phone people. Neither does your bank's security department, nor anyone who has found a virus on a computer they have never seen. They will talk you into installing exactly the kind of program this page describes — the same programs, by name. The one difference that matters is who started it: you rang me.",
+        body: "Microsoft does not phone people. Neither does your bank's security department, nor anyone who has found a virus on a computer they have never seen. They will talk you into installing exactly the kind of program this page describes — the same programs, by name. The difference that matters is who started it. If a call ever leaves you unsure, end it and ring me back on the number I gave you: I will never mind, and a scammer cannot survive it.",
         hasList: true,
         items: [
           "Hang up — you don't owe them the rest of the call",
           "Don't install anything they name, however official it sounds",
-          "If you already did, unplug the network cable or turn off the wifi, then ring me",
+          "If you already did, switch off the router — the box the internet comes into the house through — then ring me",
+          "I will never ask you for a password. Not for this, not for anything",
           "Nobody legitimate asks to be paid in gift cards. Nobody. Ever",
         ],
       },
+      /*
+       * REWRITTEN 2026-08-26 (round 5, the cold read). The Windows list had two
+       * defects and both would strand a real person.
+       *
+       * "it stops existing the moment you close the window" was simply false —
+       * the *session* ends, the app stays installed. It was a reassurance built
+       * on a wrong fact, which is the worst kind on this page, and the true
+       * version is nearly as reassuring.
+       *
+       * "already on your machine" is true of Windows 11 and often not of
+       * Windows 10, where Quick Assist comes from the Microsoft Store. Microsoft
+       * retired the in-box app in 2022. The commonest stall on the whole page —
+       * "I typed it and it just offered me a web search" — had no answer on it.
+       *
+       * The code line is scoped to a call the reader placed. As it stood it was
+       * the scam script verbatim ("I read you the code over the phone, you type
+       * it in"), endorsed on their own technician's site with no condition
+       * attached, and criminals run Quick Assist exactly that way.
+       */
       {
         kicker: "windows",
-        title: "Quick Assist, already on your machine",
-        body: "Nothing to install, nothing to sign up for, and it stops existing the moment you close the window. Reach for this one first.",
+        title: "Quick Assist, already on most machines",
+        body: "Nothing to sign up for, and it can do nothing at all until you open it and type in a code I have just given you on a call you rang me for. Reach for this one first.",
         hasList: true,
         items: [
           "Press Start, type Quick Assist, open it",
-          "Choose the option to get help — it asks for a code",
-          "I read you the code over the phone, you type it in",
-          "Agree to share the screen, and you watch the whole thing",
-          "Close the window when we're done. That's the end of it",
+          "If nothing comes up, it is free in the Microsoft Store — search Quick Assist, published by Microsoft",
+          "Type the code I give you into the box and press Submit. Codes do not last long, so do it while we are talking",
+          "Choose to share your screen, and you watch the whole thing",
+          "Windows may put up a prompt asking you to allow something. That one is yours to click — I cannot touch it from my side",
+          "If I need to take the mouse I will say so first, and you will see it move",
+          "Close the window when we're done. Either of us can end it, and that is the end of it",
         ],
       },
       {
         kicker: "mac",
         title: "Tell me which version you're on",
-        body: "macOS has screen sharing built in, but where it lives moved around between versions and I would rather send you the three right steps than four wrong ones. One line in an email and I'll send them back.",
+        body: "macOS has screen sharing built in, but where it lives moved around between versions and I would rather send you the three right steps than four wrong ones. Click the Apple menu, choose About This Mac, and email me the line that says macOS and a number. I'll send the steps back.",
       },
+      /*
+       * REWRITTEN 2026-08-26 (round 5). The old steps did not work, and a
+       * customer who followed all five ended up with nothing connected.
+       *
+       * "Sign in with your Google, Microsoft or Apple account" puts the machine
+       * on **the customer's own tailnet**, which the operator is not on, and
+       * "tell me the name it gives the machine" is meaningless across tailnets —
+       * there is no lookup by name from outside one. Two flows can actually
+       * work: the customer shares the device out of their own tailnet (an admin
+       * console trip, far beyond this reader), or the operator invites them into
+       * his. **This copy assumes the invite**, because it is the only one a
+       * non-technical customer can complete and the only one "machines I look
+       * after" implies. CONFIRM WITH THE CLIENT — see TODO.md.
+       *
+       * Two claims came out. "Screen sharing across it still asks you first" is
+       * a promise Tailscale does not make: it is a network layer, and Remote
+       * Desktop or an unattended VNC over the same link asks nobody. And the
+       * free-tier line was a claim about somebody else's pricing — it dates, and
+       * it is not the customer's problem.
+       *
+       * The block now says the thing the reader most needs and was never told:
+       * Tailscale is a connection, not a screen, and nothing shows on the
+       * machine while it is up. Hence the Disconnect, which is the off switch a
+       * nervous person actually wants and the page only offered uninstalling.
+       */
       {
         kicker: "if it's regular",
         title: "Tailscale, for machines I look after",
-        body: "Worth the ten minutes if I end up looking at your machine more than once. It builds a private connection between your computer and mine, encrypted end to end, and it survives a restart, so neither of us has to set it up a second time. Screen sharing across it still asks you first.",
+        body: "Worth the ten minutes if I end up looking at your machine more than once. It puts your machine and mine on one small private network, encrypted end to end, and it survives a restart, so neither of us has to set it up a second time. It is a connection and nothing else — it does not show me your screen. Seeing the screen is a separate program on top, started separately, every time.",
         hasList: true,
         items: [
-          "Install it from the Tailscale website on that machine",
-          // "an account you already have" assumed the reader knows Tailscale
-          // signs you in with somebody else's account rather than making one.
-          // Named, in prose, not linked — the page's existing rule.
-          "Sign in with your Google, Microsoft or Apple account — it uses one of those instead of making you invent another password",
-          "Tell me the name it gives the machine",
-          "Screen sharing then happens inside that private connection, not out in the open",
-          "Their free tier covers the amount of it a repair uses",
+          "Don't set this one up on your own. We do it together, on a call you rang me for",
+          "I email you an invite link, and that link is what joins your machine to mine. Installing Tailscale on its own does nothing",
+          "Install it, then sign in through my link using a Google or Microsoft account you already have — no new password to invent",
+          "Nothing pops up while it is connected, so the machine looks the same whether I am there or not. That is what the next line is for",
+          "The Tailscale icon has a Disconnect. One click and my way in is gone, and nothing is uninstalled",
         ],
       },
+      /*
+       * REWRITTEN 2026-08-26 (round 5). The old copy welded two claims together
+       * and the join was where the weight sat: "every one of these asks you to
+       * allow it before it shows me anything" is a claim about *software* and is
+       * false for Tailscale, while "I will not set any of them up to connect
+       * without asking" is an honest personal promise and is the half doing the
+       * work. Presenting the undertaking as a property of the tools takes away
+       * the reader's ability to check it, and hands a scammer the line "don't
+       * worry, it always asks you first".
+       *
+       * The last two sentences are the page's most valuable missing line. A
+       * screen share shows everything on the screen, passwords included, and the
+       * page told somebody to hand over their screen without ever saying so.
+       */
       {
         kicker: "what i can see",
         title: "Your screen, while you're watching it",
-        body: "All of these show me the screen and ask you to agree before they do. You watch the whole session and you can stop it at any point: every one of these asks you to allow it before it shows me anything, and I will not set any of them up to connect without asking. A tool that works any other way is not on this page.",
+        body: "You watch the whole session and you can stop it at any point. I ask before I connect, every single time, and I will not put anything on your machine that can reach it without asking you first — so if a screen ever gets shared without you agreeing to it right then, it was not me. While I am looking, don't type a password and don't open your banking. I can see everything you can.",
       },
       {
         kicker: "turning it off",
         title: "Whenever you feel like it",
-        body: "Quick Assist ends when you close the window. Tailscale uninstalls like any other program, and taking it off the machine takes my way in with it. You don't have to tell me first.",
+        body: "Quick Assist ends when the window closes, and either of us can close it. Tailscale has a Disconnect in its icon menu that cuts the connection without removing anything, and it uninstalls like any other program, which takes my way in with it. You don't have to tell me first.",
+      },
+      /*
+       * NEW 2026-08-26 (round 5). "Afterwards" was absent from the page
+       * entirely: nothing on whether anything changed, nothing on what a normal
+       * "we're finished" looks like so an abnormal one stands out, and nothing
+       * about a password typed mid-session. The last sentence is the callback
+       * rule again, at the moment it is most likely to be tested — a follow-up
+       * call claiming the session needs resuming is the obvious way to abuse
+       * a customer who has just been walked through a legitimate one.
+       */
+      {
+        kicker: "after",
+        title: "When we're done",
+        body: "I'll tell you we're finished and you will see the window close. If you typed anything private while I was watching — a password, a card number — change it afterwards, the same as you would if somebody had been standing behind you. And if you later get a call saying we need to connect again, hang up and ring me back on the number you already have. That will always be me, and it will never be them.",
       },
     ],
   },
@@ -489,7 +561,7 @@ export const PAGES: Record<PageId, Page> = {
     ],
   },
   guestbook: {
-    eyebrow: "1999 revival",
+    eyebrow: "guestbook · 1999 revival",
     title: "Sign nothing.",
     lede: "Nothing here to sign, deliberately. A box you can type in is a database, and a database is a breach waiting for a slow news week. Every company that has ever lost yours had one. These come out of emails, with permission, with every identifying detail taken out.",
     ctas: [{ label: "Email instead", to: "contact", primary: true }],
@@ -531,21 +603,43 @@ export const PAGES: Record<PageId, Page> = {
   scams: {
     eyebrow: "read this before you call anyone",
     title: "Nobody legitimate calls you first.",
-    lede: "Tech support scams take more money from older people than almost anything else online, and they work because they are polite, patient and rehearsed. Here is exactly how they run, in the order they run it, so you can recognise one while it is happening to you.",
+    lede: "If somebody rang you about your computer, it is a scam, and what to do about it is the first thing on this page. Below that is exactly how these calls run, in the order they run it, so you can recognise one while it is happening — and what to do if one already has.",
     ctas: [
       { label: "Get my machine checked \u2192", to: "contact", primary: true },
       { label: "Legitimate remote help", to: "setup" },
     ],
     blocks: [
-      { kicker: "the whole page in one line", title: "If they contacted you, it is a scam", body: "Microsoft does not ring you. Your bank does not ask you to install anything. A warning on a web page cannot know your name, your machine, or whether it has a virus. Every real version of this starts with you deciding to contact someone \u2014 never the other way round." },
       { kicker: "if it is happening right now", title: "Stop, in this order", body: "If you are on the phone to one of them as you read this, do these and nothing else. You do not owe them politeness, and hanging up mid-sentence is the correct thing to do.", hasList: true, items: [
         "Hang up. Do not press any number, including the one that supposedly cancels",
-        "If they are on your screen, unplug the network cable or switch off the Wi-Fi",
+        "If money has moved, ring your bank now, on the number printed on your card. This one has a clock on it",
+        "If somebody is at your door to collect cash, ring 911",
+        "If they are on your screen, switch off the router \u2014 the box the internet comes into the house through. Pulling its plug out does the same thing",
         "Shut the computer down \u2014 holding the power button in is fine",
+        "Change your email password, from a different device — a phone is fine. It is the key that resets everything else",
         "Do not ring any number they gave you, and do not answer if they ring back",
-        "Tell somebody. The secrecy is part of the attack",
-        "If money has already moved, ring your bank now, from the number on your card"
+        "Tell somebody. The secrecy is part of the attack"
       ] },
+      { kicker: "the pop-up that will not close", title: "It is a web page, not a virus", body: "A full-screen warning with a siren and a phone number is a web page doing exactly what web pages can do. It has not scanned anything, it cannot see your files, and it is not a virus. It is designed to feel unclosable so that you ring the number instead.", hasList: true, items: [
+        "Press Escape first \u2014 that alone drops most of them out of full screen",
+        "Then hold Ctrl and press W to close the tab, or Command and W on a Mac",
+        "If a box appears asking whether you really want to leave, that is the page trying it on. Say yes to leaving",
+        "If the tab still will not close: Ctrl, Shift and Escape opens Task Manager, then End task on whichever line is your browser",
+        "On a Mac: Command, Option and Escape, then Force Quit the browser",
+        "Or just hold the power button in until the machine goes off. Nothing is lost that matters",
+        "When you reopen the browser, decline any offer to restore the previous pages",
+        "Never ring the number, and never let it talk you into installing a \"cleaner\""
+      ] },
+      { kicker: "the counter-move", title: "Refresh the page. Then refresh it again.", body: "The refund scam works by changing what is on your screen, not what is in your account. Somebody with control of your computer can edit the web page you are looking at \u2014 make a balance read $20,000 instead of $200, or add a payment that never happened \u2014 and it is convincing because it is your own bank's website with your own name on it. A reload wipes all of that: the page redraws from the bank's actual servers and every change they made disappears. Do it whenever a number looks wrong, and do it without announcing it. There is one version it will not catch, and it is worth knowing \u2014 sometimes they move your own money between your own accounts, so the extra really is sitting there. Which is why the rule underneath is simpler than the trick: you do not send money to somebody who rang you, whatever the screen says.", hasList: true, items: [
+        "On Windows: press F5, or hold Ctrl and press R",
+        "On a Mac: hold Command and press R",
+        "Or click the circular arrow next to the address bar",
+        "On a phone or tablet: pull the page down and let go",
+        "Best of all, check the balance on a different device they are not connected to",
+        "If the money really is there, they may have moved it between your own accounts \u2014 ring the bank on the number on your card, and send nothing back",
+        "If a number changes back after a refresh, you were being shown a fake",
+        "If they tell you not to refresh, or refresh it themselves first, that is your answer"
+      ] },
+      { kicker: "the whole page in one line", title: "If they contacted you, it is a scam", body: "Microsoft does not ring you. Your bank does not ask you to install anything. A warning on a web page cannot know your name, your machine, or whether it has a virus. Every real version of this starts with you deciding to contact someone \u2014 never the other way round." },
       { kicker: "say it again", title: "They will never call you. Not once, not ever.", body: "Microsoft will not ring you. Windows will not ring you. Norton, McAfee, Amazon, PayPal, Apple, Geek Squad and your internet provider will not ring you about a virus, an error, a refund or a renewal. There is no department anywhere that watches your computer and telephones you about it \u2014 that department does not exist. Your bank is the one exception worth mentioning, because a bank genuinely may ring about a suspicious payment. It changes nothing: hang up and ring the number on the back of your card. A real bank will be glad you did. A scammer will do everything they can to stop you." },
       { kicker: "to be absolutely clear", title: "None of these companies are doing this", body: "Every company named on this page is named because scammers pretend to be them. Every program named is real, legitimate software that scammers talk people into installing. Microsoft, Amazon, Norton, McAfee, PayPal, Apple, the banks and the Canada Revenue Agency are not doing any of this, and neither are the makers of any tool listed here. What is described below is how criminals impersonate them \u2014 nothing else." },
       { kicker: "the tell that costs them the most", title: "They will lose their temper. A real company never does.", loud: true, body: "This is the single most reliable signal on this page. It starts small \u2014 a sigh, a bit of tutting \u2014 and it arrives the moment you stop doing exactly what you are told. No employee of any real company behaves like this, because no real company has anything to gain from it. If you catch yourself thinking \"they are getting annoyed with me\", that is your answer. Hang up.", hasList: true, items: [
@@ -559,7 +653,7 @@ export const PAGES: Record<PageId, Page> = {
         "You can hear a room full of other people running the same call behind them",
         "They break off mid-sentence to talk to a colleague in another language, then come back"
       ] },
-      { kicker: "why it works", title: "They are not stupid, and neither are you", body: "People assume victims are gullible. They are not. These are scripted operations with call centres, hold music and supervisors, and the script is built to put you under time pressure and keep you talking so that you never get a quiet minute to think. Being caught out by a professional is not the same thing as being foolish, and the shame is most of what stops people telling somebody in time." },
+      { kicker: "why it works", title: "They are not stupid, and neither are you", body: "These are scripted operations with call centres, hold music and supervisors, and the script is built to put you under time pressure and keep you talking so that you never get a quiet minute to think. People assume anyone caught by one must have been gullible. They are not, and it is the wrong question anyway. Being caught out by a professional is not the same thing as being foolish, and the shame is most of what stops people telling somebody in time." },
       { kicker: "how it starts", title: "The five ways they reach you", body: "It almost always begins in one of these ways. Nothing further down this page happens until one of them has.", hasList: true, items: [
         "A phone call out of the blue, often with a delay before they speak",
         "A pop-up filling the screen, sometimes with a siren noise or a recorded voice, and a number to call",
@@ -590,7 +684,7 @@ export const PAGES: Record<PageId, Page> = {
       // site whose whole business is the reader ringing the operator, it reads
       // for a beat as the site's own instruction. Nothing else on this page is
       // touched — see the "do not finish scams" note in CLAUDE.md.
-      { kicker: "the phone itself", title: "“Give me a call back on my mobile”", body: "How they handle the phone gives them away as clearly as what they say. A real company routes you through its own switchboard and is perfectly happy for you to hang up and ring the number on your bill instead. A real support line also opens by telling you the call is recorded, and a scam call essentially never does \u2014 but take that one the right way round: its absence tells you plenty, while hearing it proves nothing at all. It is one line of script, and script is the thing they have most of.", hasList: true, items: [
+      { kicker: "the phone itself", title: "“Give me a call back on my mobile”", body: "How they handle the phone gives them away as clearly as what they say. A real company routes you through its own switchboard and is perfectly happy for you to hang up and ring the number on your bill instead.", hasList: true, items: [
         "\"Call me back on my cell phone\" \u2014 or any direct personal mobile number",
         "They ring back again and again once you hang up, sometimes for hours",
         "They ring back for days or weeks, and each time they know a little more about you",
@@ -614,7 +708,8 @@ export const PAGES: Record<PageId, Page> = {
       { kicker: "the line nobody crosses", title: "Things no real company will ever ask you for", body: "There is no exception to any of these. Not for verification, not for security, not for a supervisor, not ever. \"Except for verification\" is the gap the entire scam fits through.", hasList: true, items: [
         "Your password, your PIN, or a one-time code sent to your phone",
         "Remote access to your computer, when they contacted you first",
-        "Payment in gift cards, cryptocurrency, wire transfer, e-transfer, or cash by courier",
+        "Payment in gift cards, cryptocurrency, or cash handed to a courier",
+        "A wire transfer or an e-transfer to somebody who contacted you first",
         "To move your money to a \"safe account\" they give you",
         "To log into online banking while they are watching your screen",
         "To install anything at all from a link they read out to you",
@@ -653,23 +748,6 @@ export const PAGES: Record<PageId, Page> = {
         "A CMD window with text scrolling, or a fake scan filling a browser window",
         "The Run box, typed into to show you a made-up \"licence ID\""
       ] },
-      { kicker: "the counter-move", title: "Refresh the page. Then refresh it again.", body: "The refund scam works by changing what is on your screen, not what is in your account. Somebody with control of your computer can edit the web page you are looking at \u2014 make a balance read $20,000 instead of $200, or add a payment that never happened \u2014 and it is convincing because it is your own bank's website with your own name on it. None of that survives a reload. Not one pixel of it. The page redraws from the bank's actual servers and every change they made disappears. Do it whenever a number looks wrong, and do it without announcing it.", hasList: true, items: [
-        "On Windows: press F5, or hold Ctrl and press R",
-        "On a Mac: hold Command and press R",
-        "Or click the circular arrow next to the address bar",
-        "On a phone or tablet: pull the page down and let go",
-        "Best of all, check the balance on a different device they are not connected to",
-        "If a number changes back after a refresh, you were being shown a fake",
-        "If they tell you not to refresh, or refresh it themselves first, that is your answer"
-      ] },
-      { kicker: "the pop-up that will not close", title: "It is a web page, not a virus", body: "A full-screen warning with a siren and a phone number is a web page doing exactly what web pages can do. It has not scanned anything, it cannot see your files, and it is not a virus. It is designed to feel unclosable so that you ring the number instead.", hasList: true, items: [
-        "Press Escape first \u2014 that alone drops most of them out of full screen",
-        "Then hold Ctrl and press W to close the tab, or Command and W on a Mac",
-        "If the tab will not close: Ctrl, Shift and Escape opens Task Manager, then End task on the browser",
-        "On a Mac: Command, Option and Escape, then Force Quit the browser",
-        "When you reopen the browser, decline any offer to restore the previous pages",
-        "Never ring the number, and never let it talk you into installing a \"cleaner\""
-      ] },
       { kicker: "the questions that end it", title: "Ask them something they should already know", body: "A real company holds your details; a scammer is fishing for them. You do not have to be clever about this \u2014 one question usually collapses the whole call.", hasList: true, items: [
         "Ask which account, which invoice number, or which product they are ringing about",
         "Ask them to tell you your account number, rather than you telling them",
@@ -681,7 +759,7 @@ export const PAGES: Record<PageId, Page> = {
       ] },
       { kicker: "the other one aimed at you", title: "The grandchild who is in trouble", body: "Not a computer scam, but it targets the same people and it is worth knowing while you are here. Somebody rings in tears claiming to be a grandchild \u2014 arrested, in hospital, in a crash abroad \u2014 and needs money now, and begs you not to tell their parents. Sometimes a second voice comes on claiming to be a lawyer or a police officer. The secrecy is the tell, exactly as it is above. Hang up and ring your grandchild on the number you already have. If it was real, they will answer, and if they do not, ring their parents \u2014 the people you were told not to ring." },
       { kicker: "the second wave", title: "The refund scam, months later", body: "If you were caught once, expect a second call. Sometimes it is a \"refund\" for the money you lost; sometimes it is somebody claiming to be police, or a recovery agency who can get it back for a fee. Lists of people who paid are sold on and reused. The second approach is often more convincing than the first, because this time they already know what happened to you." },
-      { kicker: "before it ever happens", title: "Twenty minutes that make you a hard target", body: "All of this is easier to do on a quiet afternoon than during a phone call designed to panic you.", hasList: true, items: [
+      { kicker: "before it ever happens", title: "An afternoon that makes you a hard target", body: "None of this is urgent, and all of it is easier on a quiet afternoon than during a phone call designed to panic you. The first two take a minute each.", hasList: true, items: [
         "Agree a password with your family that anyone ringing for money has to say",
         "Write \"nobody legitimate calls me first\" on a card and leave it by the phone",
         "Tell your bank you will never authorise a transfer over the phone",
@@ -698,23 +776,27 @@ export const PAGES: Record<PageId, Page> = {
         "Report it even if they would rather not \u2014 and see the second-wave note above",
         "Expect follow-up calls for months, and warn them about the refund one"
       ] },
+      { kicker: "if you already paid", title: "Speed matters more than embarrassment", body: "Money can sometimes be stopped in the first hours and almost never after that. Ring your bank immediately, say plainly that you were defrauded, and ask them to attempt a recall. If you bought gift cards, ring the card issuer with the receipts and the numbers \u2014 occasionally the balance is still sitting on them. Nobody at the bank will be surprised, and nobody there thinks you are stupid." },
+      { kicker: "if you gave them access", title: "Assume they took what they could", body: "Somebody who had control of your screen may have left something behind, read your saved passwords, or opened accounts in another window while you watched a fake scan.", hasList: true, items: [
+        "Ring your bank from the number on your card, not from anything they gave you",
+        "Change your email password first, from a different device \u2014 a phone is fine. It is the key that resets everything else",
+        "Then, in the email settings, check for forwarding rules, and for a recovery address or phone number that is not yours. A new password does not remove those",
+        "Sign out all other devices \u2014 every email account has that button somewhere in its security settings",
+        "Turn on two-step verification while you are in there",
+        "Then banking and shopping passwords, from that same other device",
+        "Put a fraud alert on your credit file with Equifax and TransUnion. Both are free and take one phone call each",
+        "Have the machine gone over properly before using it for anything financial",
+        "Watch for a follow-up call about a refund; see above"
+      ] },
       { kicker: "if you only rang the number", title: "You rang, but installed nothing", body: "This is the most common outcome and the least dangerous, but it is not nothing: you have confirmed to a criminal operation that your number is live and that you answer.", hasList: true, items: [
         "Nothing was installed, so the machine is almost certainly fine",
         "Block the number, but expect them to ring from a different one",
         "The next call may claim to be someone else entirely \u2014 police, your bank, a refund department",
         "Warn whoever else uses that phone, especially if it is a shared landline",
-        "If you gave out any personal details at all, treat it as the section below"
+        "If you gave out any personal details at all, treat it as the section above"
       ] },
-      { kicker: "if you gave them access", title: "Assume they took what they could", body: "Somebody who had control of your screen may have left something behind, read your saved passwords, or opened accounts in another window while you watched a fake scan.", hasList: true, items: [
-        "Ring your bank from the number on your card, not from anything they gave you",
-        "Change your email password first \u2014 it is the key that resets everything else",
-        "Then banking and shopping passwords, from a different device if you have one",
-        "Have the machine gone over properly before using it for anything financial",
-        "Watch for a follow-up call about a refund; see above"
-      ] },
-      { kicker: "if you already paid", title: "Speed matters more than embarrassment", body: "Money can sometimes be stopped in the first hours and almost never after that. Ring your bank immediately, say plainly that you were defrauded, and ask them to attempt a recall. If you bought gift cards, ring the card issuer with the receipts and the numbers \u2014 occasionally the balance is still sitting on them. Nobody at the bank will be surprised, and nobody there thinks you are stupid." },
       { kicker: "and then get it checked", title: "This is the part I can help with", body: "Passwords and banks you have to do yourself, and quickly. The machine is mine. If somebody had remote control of it, it needs going over properly \u2014 what they left behind, what was installed, what runs at startup, and whether anything is set up to let them back in. Email me what happened and roughly when, and do not use it for banking until it has been looked at. My terms are on the contact page and they do not change because you have had a bad week." },
-      { kicker: "where to report it", title: "The Canadian Anti-Fraud Centre", body: "Report it even if you lost nothing, and even if you feel foolish. Reports are what get numbers shut down, and they are the one thing that actually costs these operations something \u2014 far more than an hour of anybody's time on the phone. The Centre is run jointly by the RCMP, the OPP and the Competition Bureau, on 1-888-495-8501, Monday to Friday 10am to 4:45pm Eastern, closed holidays. There is an online reporting system at reportcyberandfraud.canada.ca. If you have actually lost money, contact your local police as well." },
+      { kicker: "where to report it", title: "The Canadian Anti-Fraud Centre", body: "Report it even if you lost nothing, and even if you feel foolish. Reports are what get numbers shut down, and they are the one thing that actually costs these operations something \u2014 far more than an hour of anybody's time on the phone. The Centre is run jointly by the RCMP, the OPP and the Competition Bureau, on 1-888-495-8501, Monday to Friday 10am to 4:45pm Eastern, closed holidays. There is an online reporting system at reportcyberandfraud.canada.ca. If money has gone, contact your local police as well." },
       { kicker: "in ontario", title: "Who to ring here", body: "Report it even if nothing was lost. The Anti-Fraud Centre builds the national picture; the police act on what happened to you, and Ontario has one number for the whole province.", hasList: true, items: [
         "Emergency, or somebody is at your door: 911",
         "OPP, non-emergency, toll-free and answered 24 hours: 1-888-310-1122",
