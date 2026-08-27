@@ -100,7 +100,7 @@ export const SNIPPETS: Record<PageId, readonly string[]> = {
   ],
 
   now: [
-    "What is on the bench at the moment, and what came off it this week.",
+    "The computers in for repair right now, what is wrong with each one, and roughly where it has got to. Updated whenever one goes home.",
   ],
 
   changelog: [
