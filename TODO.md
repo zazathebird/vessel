@@ -23,18 +23,24 @@ being acted on, and one is recorded below as a false alarm.
 
 ### Still needs the client — nothing else on this list does
 
-1. **Which Tailscale flow does he actually use?** `/setup`'s steps were rewritten on the
-   assumption that **he emails an invite link that joins the customer's machine to his
-   tailnet**, because it is the only flow a non-technical customer can complete and the only
-   one "machines I look after" implies. The alternative is the customer sharing the device
-   out of their own tailnet, which is an admin-console trip far beyond this reader. **If it
-   is the other one, the block needs rewriting again.**
-2. **Two operator-side consequences of that flow he should know about, neither of them
-   copy.** If customers join *his* tailnet, then by default Tailscale ACLs let every device
-   on it reach every other — one customer's machine could reach another's. **The ACLs are
-   the only thing separating them and they need setting deliberately.** And the free plan is
-   limited by *user* count, which is the small number; inviting customers as users runs into
-   it quickly. Neither is on the page and neither should be, but both are real.
+1. ~~**Which Tailscale flow?**~~ **Answered by deleting it.** Told to decide, and the
+   decision is that **Tailscale comes off the page** — reversing 2026-08-14. The steps did
+   not work, and the capability they bought is one the operator had already decided not to
+   use: `docs/DECISIONS.md` records his model as *"the screen, while you watch, **never
+   unattended**."* Unattended reach is all a mesh VPN is for. What it saved a repeat customer
+   was one code exchange on a call they placed anyway, against an account signup, a second
+   program the page never named, and a permanent way into their machine. `/setup` is Quick
+   Assist and macOS screen sharing now, both attended, both ephemeral.
+2. **If unattended access is ever actually wanted, do not reach for Tailscale again.** The
+   right shape is a purpose-built remote-support tool **hosted on his own machine** —
+   **RustDesk** (simplest: one program, does attended *and* unattended, self-hostable relay)
+   or **MeshCentral** (a small operator's console: remote desktop, file transfer, per-device
+   consent prompts that match what `/setup` promises). One install for the customer, one
+   thing to explain, one uninstall, and no third party's relay in the middle — the same
+   reasoning that made the downloads bucket private and the fonts self-hosted. **Blocked on
+   the ThinkCentre existing**: `scripts/thinkcentre-setup.sh` has still never run on real
+   hardware. Ask him whether he ever actually needs to get into a machine nobody is sitting
+   at; if the answer is no, this never needs building.
 3. **Was the first machine he took apart really a 486?** It is `/about`'s origin story, it
    was rewritten (not removed) this session, and this file recorded it under *Answered
    already* as "gone with `/now`" — it went from `/now` only. Same provenance question as
@@ -45,15 +51,14 @@ being acted on, and one is recorded below as a false alarm.
 
 ### Applied — `/setup`
 
-- **The Tailscale steps did not work.** Signing in with the customer's own account put the
-  machine on the customer's own tailnet, which he is not on, and "tell me the name it gives
-  the machine" is meaningless across tailnets. Five steps followed exactly connected to
-  nothing. Rewritten around the invite link, with the invite named as the thing that does
-  the joining.
-- **Tailscale is a connection, not a screen.** The page never said so and never named the
-  program that actually shares the screen. It says both now.
-- **"Screen sharing across it still asks you first" is gone** — a promise Tailscale does not
-  make, since Remote Desktop or an unattended VNC over the same link asks nobody. So is the
+- **Tailscale is gone from the page** — see item 1 above and `docs/DECISIONS.md`. Its steps
+  did not work, it was a connection rather than a screen and the page never named the program
+  that would have shared one, and unattended reach is a capability the operator had already
+  ruled out. The block that replaces it says nothing persists between visits, and says it as
+  the advantage it is: *"a permanent way into your machine is worth something to me about
+  twice a year, and worth a great deal to whoever finds it."*
+- **"Screen sharing across it still asks you first" went with it** — a promise Tailscale does
+  not make, since Remote Desktop or an unattended VNC over the same link asks nobody. So is the
   same claim in "[what i can see]", where a claim about *software* was welded to an honest
   personal promise; the promise is what survived, and it now carries a test the reader can
   apply: *"if a screen ever gets shared without you agreeing to it right then, it was not
@@ -70,14 +75,10 @@ being acted on, and one is recorded below as a false alarm.
 - **"I will never ask you for a password"** — the page had the gift-card equivalent and not
   this one, while telling somebody to sign in to a Google or Microsoft account.
 - **Added:** the code expiring; the Windows prompt the customer must click themselves; a
-  warning before the mouse is taken; that Tailscale shows nothing while connected; the
-  **tray-icon Disconnect**, which is the off switch a nervous person wants and the page only
-  offered uninstalling; and a whole **"when we're done"** block, which did not exist —
+  warning before the mouse is taken; and a whole **"when we're done"** block, which did not exist —
   including *don't type a password or open your banking while I am looking*, the single most
   valuable line that was missing.
-- **Removed:** the free-tier claim (somebody else's pricing, it dates, not the customer's
-  problem) and Apple from the sign-in list (not certain it is offered). The Mac block now
-  says where to find the version rather than assuming they know.
+- **The Mac block** now says where to find the version rather than assuming they know.
 
 ### Applied — `/scams`
 
@@ -1060,7 +1061,9 @@ Order is deliberate. **Windows Quick Assist leads** because for a one-off look
 "already on your machine, nothing to install, gone when you close it" beats an
 account signup. **Tailscale is the standing option** for machines the operator
 is in repeatedly, and is described honestly as what it is — a private link, with
-screen sharing running *inside* it, not screen sharing on its own. Then what the
+screen sharing running *inside* it, not screen sharing on its own. **[SUPERSEDED
+2026-08-26: Tailscale was removed. Its steps did not work and the unattended
+reach it bought was never used. See the top of this file.]** Then what the
 operator can see, how to turn it off, and a **scam-awareness block**, which was
 not in the brief: a page telling people to install remote-access software is
 exactly the page a scammer wants them to have read.

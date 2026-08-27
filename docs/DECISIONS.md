@@ -13,6 +13,161 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-26 (evening) — Rounds 4 and 5 of the copy review; and Tailscale comes off `/setup`
+
+The copy overhaul ran three rounds and stopped at a session limit. Round 4 (voice consistency
+across the seventeen pages) and round 5 (a cold read of the two safety pages) ran now.
+
+### The method, which is the transferable part
+
+Round 5 was run as **two cold readers given the page text and nothing else** — no `CLAUDE.md`,
+no repo, no history — and told to read as the people the pages are actually for: somebody on
+the phone to a scammer as they read, the adult child deciding whether to forward the link,
+somebody who has already paid, and a non-technical customer about to install remote-access
+software because a stranger told them to.
+
+That framing found two defects that four in-context passes had not, and the reason is
+structural: **an in-context reader knows what the page meant.** A cold reader only knows what
+it says.
+
+Both cold readers also produced confident false claims. One insisted
+`reportcyberandfraud.canada.ca` was wrong or dead; it answers 200, and the CAFC and OPP
+numbers check out. **Every factual claim was verified before being acted on**, and that
+verification is not optional — a cold read is a source of hypotheses, not of findings.
+
+### Tailscale is removed from `/setup`, reversing 2026-08-14
+
+The entry below says Quick Assist leads and **"Tailscale is the *standing* option"** for
+machines the operator is in repeatedly. It also, correctly, says Tailscale is not screen
+sharing. Two things retired it.
+
+**The steps did not work.** *"Sign in with your Google, Microsoft or Apple account"* puts the
+machine on **the customer's own tailnet**, which the operator is not on, and *"tell me the
+name it gives the machine"* is meaningless across tailnets — there is no lookup by name from
+outside one. A customer who followed all five steps ended up with Tailscale installed, signed
+in, and connected to nothing. Fixing it needs either an admin-console device share (far beyond
+this page's reader) or customers joining the operator's own tailnet — which puts strangers'
+machines on one network whose **default ACLs let every device reach every other**, and whose
+free plan is capped on *users*, the small number. Neither belongs on a page written for
+somebody who is nervous about installing anything at all.
+
+**And it was never needed.** The entry below states the operator's own model: what he can see
+is *"the screen, while you watch, **never unattended**."* Unattended reach is the whole of what
+Tailscale buys. The page was paying for it with an account signup, a second program it never
+named, and a permanent way into a customer's machine — for a capability the operator had
+already decided not to use. What it saved a repeat customer was **one code exchange, on a call
+they placed anyway.**
+
+The replacement block says so, and says it as the advantage it is rather than as a limitation:
+*"a permanent way into your machine is worth something to me about twice a year, and worth a
+great deal to whoever finds it."* That is the same argument `/scams` makes, pointed at his own
+tooling, which is the strongest position the page can take.
+
+**If unattended access is ever genuinely wanted**, the answer is a purpose-built remote-support
+tool he *hosts himself* — RustDesk or MeshCentral on the ThinkCentre — not a mesh VPN plus a
+screen program. One install for the customer, one thing to explain, one uninstall, and no
+third party's relay in the middle, which is the same reasoning that made the downloads bucket
+private and the fonts self-hosted. **It is in `TODO.md` and it is blocked on that machine
+actually existing** — `scripts/thinkcentre-setup.sh` has still never run on real hardware.
+
+### The other claims that came off `/setup`
+
+- **"Screen sharing across it still asks you first"** — a promise Tailscale does not make.
+  Gone with the block.
+- **"every one of these asks you to allow it before it shows me anything"** welded a claim
+  about *software* to *"I will not set any of them up to connect without asking"*, an honest
+  personal promise which is the half doing the work. Presenting the undertaking as a property
+  of the tools removed the reader's ability to check it, and handed a scammer the line *"don't
+  worry, it always asks you first."* The promise survived, and now carries a test the reader
+  can apply: *"if a screen ever gets shared without you agreeing to it right then, it was not
+  me."*
+- **"it stops existing the moment you close the window"** was false — the session ends, the app
+  stays installed. A reassurance built on a wrong fact, which is the worst kind on this page.
+- **"already on your machine"** is true of Windows 11 and often not of Windows 10, where Quick
+  Assist comes from the Store. Microsoft retired the in-box app in 2022, and the commonest
+  stall on the page had no answer on it.
+- **The page's own scam rule fired on the page's own workflow.** The customer emails; then *he*
+  rings *them* and reads out a code — which is the scam script, and Microsoft has documented
+  criminals running Quick Assist exactly that way. The one rule the reader is meant to apply
+  under pressure went off on the legitimate repair. The callback settles it, and now appears at
+  each of the three moments it gets tested.
+- **Added:** *"I will never ask you for a password"* (the page had the gift-card equivalent and
+  not this one, while telling somebody to sign in to a Google account); the Windows prompt only
+  the customer can click; a warning before the mouse is taken; and a **"when we're done"**
+  block, which did not exist — including *don't type a password or open your banking while I am
+  looking*, the most valuable line that was missing.
+
+### `/scams`: one wrong absolute, and four emergency instructions in the tail
+
+**"None of that survives a reload. Not one pixel of it."** is right about the screen-editing
+refund scam and wrong about the variant where the scammer moves the victim's **own** money
+between the victim's **own** accounts. That survives a reload *and* survives checking on a
+second device. A reader who tested it as instructed concluded the overpayment was genuine and
+sent it — the exact outcome the block exists to prevent, and the absolutism is what made it
+dangerous rather than merely incomplete. The technique stays; the block now names the variant
+and lands on the rule that holds either way: *you do not send money to somebody who rang you,
+whatever the screen says.*
+
+**Everything actionable-right-now moved to the front.** The emergency block was third, behind
+the lede and two CTAs; the pop-up close sequence was block 20 and the refresh counter-move
+block 19, both live defences filed with the reference material — on a page whose eyebrow,
+*"read this before you call anyone"*, is addressed to somebody staring at a pop-up. Block count
+unchanged at 33.
+
+**The bank call was bullet six of six, below "shut the computer down"**, on the only list a
+panicking reader finishes, while the page itself says money can be stopped in the first hours
+and almost never after. It is second now. 911-if-somebody-is-at-the-door joined it (it was in
+block 31, seventeen blocks after cash-by-courier is first named), as did changing the email
+password from a different device, which was nowhere.
+
+**The site said no legitimate company ever asks for an e-transfer, then asked for one.**
+*"There is no exception to any of these… not ever"* listed wire and e-transfer, while
+`/downloads` says *"send an e-transfer and a code comes back"*. The bullet is split: gift cards,
+crypto and courier cash stay absolute, because that absolute earns its keep; wire and
+e-transfer take the *"to somebody who contacted you first"* scoping the remote-access bullet
+above them already carried.
+
+**A password change does not evict anyone from an email account.** Forwarding rules, added
+recovery addresses and added recovery phone numbers all survive it, and are the standard
+persistence trick after a screen share. Now covered, with signing out other devices and turning
+on two-step. A **credit-file fraud alert** with Equifax and TransUnion was missing from the
+page entirely.
+
+**The shame surface, on the page whose own thesis is that shame is the mechanism.** The lede
+sorted the reader into a demographic before helping them. The block meant to absolve opened
+with *"People assume victims are gullible"* — a scanner reads headings and first lines, so the
+accusation arrived and the rebuttal did not. And *"if you have **actually** lost money"*
+divided readers into real victims and fussers. The **recovery trio ran least-bad → worst**, so
+the reader in the most trouble travelled furthest; it is triage order now.
+
+**Three instructions nobody could follow.** *"Switch off the Wi-Fi"* pointed at a setting
+**inside the machine the attacker is driving** — it names the router now, and says what a
+router is. Ctrl+W throws a "Leave site?" box on these pages, so the reader pressed the keys,
+saw a dialog and concluded it had failed. And Task Manager is a bad place to put a panicking
+person, so the blunt fallback the emergency block already uses (hold the power button in) is
+offered after it.
+
+### Round 4: the voice is holding
+
+Its mechanics are consistent page to page — short declaratives, concrete numbers over
+categories, first-person singular, the negative-construction pitch, and a block's last sentence
+carrying a turn that points **outward**. The 2026-08-26 reversal held: **there is no
+self-deprecation left to find.** `contact` and the pricing block are the plainest copy on the
+site, which reads as judgment being exercised rather than as drift.
+
+What drifted: **`/downloads` still carried the promise `TODO.md` recorded as cut** — *"pay
+once"* survived the claim audit's rewrite, which is the shape `CLAUDE.md` warns about by name,
+a retired promise rebuilt without its words. `guestbook` was the last content page whose eyebrow
+named nothing. **"the bench" survived in four places** after the bench turned out to be
+aspirational. The years read four different ways across six surfaces; they now all read *"over
+twenty years"*, his own 2026-08-14 correction, so the number he eventually gives is one phrase
+to change. `changelog`'s snippet was its own lede reworded — and the gate caught the
+replacement at 159 characters, which is the gate doing its job. `/gallery`'s drive-shelf alt
+gave a screen-reader user a count contradicting its heading, and its empty video slot was
+captioned "muted loop" for a block about a *noise*.
+
+---
+
 ## 2026-08-26 — Every word on the site, rewritten; and what a claim audit found in it
 
 Same day as the snippet fix below, and it started from it. With the search result

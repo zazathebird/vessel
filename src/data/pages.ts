@@ -374,7 +374,9 @@ export const PAGES: Record<PageId, Page> = {
    * spec, so it is the second block of copy on the site that is not verbatim,
    * after home's "the site" block. Scope agreed with the client: remote access
    * *before a callout* — the page you send someone so a fix does not need a
-   * drive — with Tailscale as the standing option and the simpler ones named.
+   * drive. Tailscale was the standing option here until 2026-08-26, when it was
+   * removed — see the block comment below for why, and do not put it back
+   * without reading it.
    *
    * Three site rules it is written to keep: no city is named, there is no form
    * and no email in the markup (the CTA points at Contact, which assembles the
@@ -387,7 +389,7 @@ export const PAGES: Record<PageId, Page> = {
     // "no drive" → "no driving" (2026-08-15). On a computer repair site "no
     // drive" reads first as *hard* drive, which is the one word on the page
     // that could be misread as being about the machine rather than the journey.
-    lede: "A good half of what goes wrong doesn't need me in the room. Set one of these up and I can see the machine from mine — same fix, no driving, no afternoon spent waiting in for someone.",
+    lede: "A good half of what goes wrong doesn't need me in the room. Use one of these and I can see the machine from mine — same fix, no driving, no afternoon spent waiting in for someone.",
     // One CTA, like Contact's. Two buttons pointing at the same page is a wart,
     // and everything here funnels to the same place anyway: email first.
     ctas: [{ label: "Tell me what's wrong first →", to: "contact", primary: true }],
@@ -464,42 +466,35 @@ export const PAGES: Record<PageId, Page> = {
         body: "macOS has screen sharing built in, but where it lives moved around between versions and I would rather send you the three right steps than four wrong ones. Click the Apple menu, choose About This Mac, and email me the line that says macOS and a number. I'll send the steps back.",
       },
       /*
-       * REWRITTEN 2026-08-26 (round 5). The old steps did not work, and a
-       * customer who followed all five ended up with nothing connected.
+       * REPLACED THE TAILSCALE BLOCK, 2026-08-26 (round 5). Tailscale was the
+       * page's "standing option" for machines the operator is in repeatedly.
+       * Two things killed it.
        *
-       * "Sign in with your Google, Microsoft or Apple account" puts the machine
-       * on **the customer's own tailnet**, which the operator is not on, and
-       * "tell me the name it gives the machine" is meaningless across tailnets —
-       * there is no lookup by name from outside one. Two flows can actually
-       * work: the customer shares the device out of their own tailnet (an admin
-       * console trip, far beyond this reader), or the operator invites them into
-       * his. **This copy assumes the invite**, because it is the only one a
-       * non-technical customer can complete and the only one "machines I look
-       * after" implies. CONFIRM WITH THE CLIENT — see TODO.md.
+       * The steps did not work: signing in with the customer's own account puts
+       * the machine on the *customer's* tailnet, which the operator is not on,
+       * and a device name means nothing across tailnets. Five steps followed
+       * exactly connected to nothing. Fixing that needs either an admin-console
+       * share (far beyond this reader) or customers joining the operator's own
+       * tailnet — which puts strangers' machines on one network whose default
+       * ACLs let every device reach every other.
        *
-       * Two claims came out. "Screen sharing across it still asks you first" is
-       * a promise Tailscale does not make: it is a network layer, and Remote
-       * Desktop or an unattended VNC over the same link asks nobody. And the
-       * free-tier line was a claim about somebody else's pricing — it dates, and
-       * it is not the customer's problem.
+       * And it was never needed. This page's own decision (docs/DECISIONS.md,
+       * 2026-08-14) says what the operator can see is "the screen, while you
+       * watch, **never unattended**." Unattended reach is the entire thing
+       * Tailscale buys. It was paying an account signup, a second program the
+       * page never named, and a permanent way into a customer's machine, for a
+       * capability the operator had already decided not to use.
        *
-       * The block now says the thing the reader most needs and was never told:
-       * Tailscale is a connection, not a screen, and nothing shows on the
-       * machine while it is up. Hence the Disconnect, which is the off switch a
-       * nervous person actually wants and the page only offered uninstalling.
+       * What it saved for a repeat customer was one code exchange, on a call
+       * they placed anyway. This block says that, and it says it as the
+       * advantage it is: nothing is left running, so there is nothing for
+       * anyone else to find later. If unattended access is ever genuinely
+       * wanted, TODO.md has the path — and it is not this one.
        */
       {
         kicker: "if it's regular",
-        title: "Tailscale, for machines I look after",
-        body: "Worth the ten minutes if I end up looking at your machine more than once. It puts your machine and mine on one small private network, encrypted end to end, and it survives a restart, so neither of us has to set it up a second time. It is a connection and nothing else — it does not show me your screen. Seeing the screen is a separate program on top, started separately, every time.",
-        hasList: true,
-        items: [
-          "Don't set this one up on your own. We do it together, on a call you rang me for",
-          "I email you an invite link, and that link is what joins your machine to mine. Installing Tailscale on its own does nothing",
-          "Install it, then sign in through my link using a Google or Microsoft account you already have — no new password to invent",
-          "Nothing pops up while it is connected, so the machine looks the same whether I am there or not. That is what the next line is for",
-          "The Tailscale icon has a Disconnect. One click and my way in is gone, and nothing is uninstalled",
-        ],
+        title: "Even if I'm in there often",
+        body: "There is nothing to install and nothing that stays behind, however many times I look. It is a fresh code every time, and it only works while you are sitting there agreeing to it. That is deliberate: a permanent way into your machine is worth something to me about twice a year, and worth a great deal to whoever finds it.",
       },
       /*
        * REWRITTEN 2026-08-26 (round 5). The old copy welded two claims together
@@ -523,7 +518,7 @@ export const PAGES: Record<PageId, Page> = {
       {
         kicker: "turning it off",
         title: "Whenever you feel like it",
-        body: "Quick Assist ends when the window closes, and either of us can close it. Tailscale has a Disconnect in its icon menu that cuts the connection without removing anything, and it uninstalls like any other program, which takes my way in with it. You don't have to tell me first.",
+        body: "Quick Assist ends when the window closes, and either of us can close it. On a Mac, stop sharing and it stops. There is nothing else to uninstall, because nothing else was installed \u2014 and the next time starts from nothing, the same as this time did.",
       },
       /*
        * NEW 2026-08-26 (round 5). "Afterwards" was absent from the page
