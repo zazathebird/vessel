@@ -12,8 +12,9 @@ import type { ReactNode } from "react";
 import { play, releaseAudio, setAudioPalette } from "../audio/engine";
 import type { VoiceId } from "../audio/engine";
 import { MAIL } from "../data/mail";
-import { MODES } from "../data/catalog";
+import { MODES, visibleFx } from "../data/catalog";
 import type { ModeId } from "../data/catalog";
+import { rollableOrnaments, visibleOrnament } from "../data/ornaments";
 import { PALETTES, paletteIndexForHour } from "../data/palettes";
 import { pageFromPath, pathFor, subFromPath } from "../data/pageIds";
 import type { PageId } from "../data/pageIds";
@@ -63,6 +64,25 @@ interface ConfigContextValue {
   /** The layout actually rendered, after small-screen collapsing. */
   layout: Config["layout"];
   adapted: boolean;
+  /**
+   * The ornament and the effect **actually rendered**, given who is looking.
+   *
+   * Two things happen here and both are presentation, so `config` is untouched
+   * by either — the same rule the adapted layout has always followed, and for
+   * the same reason: *the operator's stored choice is never overwritten.*
+   *
+   * 1. **The duels are operator-only** (2026-08-28, client request). A visitor
+   *    gets `DEFAULT_ORNAMENT` / `FALLBACK_FX` in place of one. Resolved here
+   *    rather than at the storage end so the operator does not lose the setting
+   *    by viewing his own site logged out.
+   * 2. **A signed-in operator gets a fresh ornament per load**, rolled from his
+   *    own pool. Deliberately *not* written into `config`: a roll that mutated
+   *    it would mean whatever the dice landed on is what gets published the
+   *    next time he presses Publish for an unrelated reason. It also yields
+   *    the moment he chooses an ornament himself — see `update`.
+   */
+  ornament: Config["ornament"];
+  fx: Config["fx"];
   toast: string;
   /** Toast. `silent` suppresses the sound for callers that are not a gesture. */
   say: (message: string, opts?: { silent?: boolean }) => void;
@@ -221,9 +241,17 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   // that armed it, so it reads current state from a ref rather than a closure.
   // `go` reads the same ref: a setConfig updater has to be pure, and StrictMode
   // double-invokes it, so the branch it takes cannot live inside one.
-  const live = useRef({ config, panelOpen, doorOpen, saverHeld, sub });
+  /*
+   * `isOperator` rides along because three roll sites need it from inside
+   * callbacks that outlive the render that made them — navigation, popstate and
+   * the mount roll. At mount it is still false, and that is correct rather than
+   * unfortunate: the session probe has not settled, so the safe pool is the
+   * honest one, and the operator's own per-load roll fires separately the
+   * moment it does settle.
+   */
+  const live = useRef({ config, panelOpen, doorOpen, saverHeld, sub, isOperator });
   useEffect(() => {
-    live.current = { config, panelOpen, doorOpen, saverHeld, sub };
+    live.current = { config, panelOpen, doorOpen, saverHeld, sub, isOperator };
   });
 
   // The synth is tuned by the palette, the same way everything visible is
@@ -301,6 +329,11 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     // Writing a ref from an event handler is safe — this is not render — and it
     // only ever makes `live.current` fresher than the effect would.
     live.current = { ...live.current, config: { ...live.current.config, ...patch } };
+    // Choosing an ornament ends the per-load roll for this session. Without
+    // this, the panel would appear broken to the one person who can use it:
+    // he picks Sonar, the rolled duel is still what renders, and nothing on
+    // screen explains why his own setting did not take.
+    if (patch.ornament !== undefined) setOperatorRoll(null);
     setConfig((previous) => ({ ...previous, ...patch }));
   }, []);
 
@@ -333,7 +366,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     // roll() is random and say() dispatches state — neither may live inside a
     // setConfig updater, which StrictMode double-invokes (the same purity rule
     // `go` was already fixed for). The roll happens here; the updater applies it.
-    const result = roll(live.current.config);
+    const result = roll(live.current.config, isOperator);
     if (!result) {
       // 60 attempts all blocked — the scope switches have painted into a corner.
       chime("deny");
@@ -377,7 +410,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       if (mode === "tod") {
         patch = { mode, pal: paletteIndexForHour(new Date().getHours()) };
       } else if (mode === "visit") {
-        const result = roll({ ...live.current.config, mode });
+        const result = roll({ ...live.current.config, mode }, isOperator);
         if (result) patch = { mode, ...result };
       }
       setConfig((previous) => ({ ...previous, ...patch }));
@@ -457,7 +490,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
      * every navigation, `visit` does not.
      */
     if (cfg.mode === "visit" || cfg.mode === "page") {
-      const result = roll(cfg);
+      const result = roll(cfg, live.current.isOperator);
       if (result) setConfig((previous) => ({ ...previous, ...result }));
     } else if (cfg.mode === "tod" && returning) {
       const pal = paletteIndexForHour(new Date().getHours());
@@ -466,6 +499,41 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     // Intentionally runs once, on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /*
+   * ---- the operator's per-load ornament -----------------------------------
+   *
+   * Signed in, the hero slot rolls fresh on every load (2026-08-28, client
+   * request); signed out, it is whatever was published. Three things about
+   * this are deliberate.
+   *
+   * **It is state here, not a patch to `config`.** A roll written into config
+   * is a roll that gets published the next time he presses Publish for an
+   * unrelated reason — the dice would quietly become the site. Same doctrine as
+   * the adapted layout: what he stored is what he stored.
+   *
+   * **It cannot live in the mount effect above.** `isOperator` is false until
+   * the session probe settles, and that effect runs once on mount, so a roll
+   * placed there would always see a signed-out viewer and never fire. Keyed on
+   * `isOperator` instead, which is also what makes it re-roll on sign-in rather
+   * than only on reload.
+   *
+   * **The pick happens outside the updater.** `Math.random` is impure and
+   * StrictMode double-invokes updaters — the same rule `shuffle` and `setMode`
+   * already record. Rolling out here and keeping the first result means the
+   * double invoke settles on one ornament rather than two.
+   */
+  const [operatorRoll, setOperatorRoll] = useState<Config["ornament"] | null>(null);
+  useEffect(() => {
+    if (!isOperator) {
+      // Signing out drops it, so the site immediately looks like the site.
+      setOperatorRoll(null);
+      return;
+    }
+    const pool = rollableOrnaments(true);
+    const rolled = pool[Math.floor(Math.random() * pool.length)]?.id;
+    if (rolled) setOperatorRoll((previous) => previous ?? rolled);
+  }, [isOperator]);
 
   // A revealed address does not follow the visitor to the next page.
   useEffect(() => {
@@ -543,7 +611,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       // Rolled out here rather than inside the updater: roll() is random, and a
       // double-invoked updater would spend two rolls to apply one.
       const current = live.current.config;
-      const result = current.mode === "page" ? roll(current) : null;
+      const result = current.mode === "page" ? roll(current, live.current.isOperator) : null;
       setConfig((prev) => ({ ...prev, page, ...(result ?? {}) }));
       setNav((n) => n + 1);
       setPanelOpen(false);
@@ -619,7 +687,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       // does for a click and for a load. Without this the browser's own buttons
       // were the one route that stayed frozen, which is indistinguishable from
       // the randomiser being broken.
-      const rolled = live.current.config.mode === "page" ? roll(live.current.config) : null;
+      const rolled = live.current.config.mode === "page" ? roll(live.current.config, live.current.isOperator) : null;
       setConfig((previous) => ({
         ...previous,
         ...(rolled ?? {}),
@@ -645,6 +713,16 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       band,
       layout: adaptLayout(config.layout, band),
       adapted: isAdapted(config.layout, band),
+      /*
+       * The rolled ornament wins for an operator until he picks one himself;
+       * for everybody else the duels resolve away. `visibleFx` carries no roll
+       * — he asked for a random *ornament*, and a background effect that
+       * changed under the page every load is a different request.
+       */
+      ornament: isOperator
+        ? (operatorRoll ?? config.ornament)
+        : visibleOrnament(config.ornament, false),
+      fx: visibleFx(config.fx, isOperator),
       toast,
       say,
       chime,
@@ -675,6 +753,11 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       sub,
       shuffle,
       band,
+      // Both feed the resolved `ornament`/`fx` above. Missing from here, the
+      // hero slot keeps whatever it resolved to on the render before the
+      // session probe settled — which is the signed-out answer, every time.
+      isOperator,
+      operatorRoll,
       toast,
       say,
       chime,

@@ -43,7 +43,7 @@ npm run deploy       # check, build, strip dist/_redirects, publish the Worker
 
 **Deploy with `npm run deploy`, never bare `wrangler deploy`** — see *Deployment*.
 
-**Three dev-only benches, all excluded from the build by construction.** Vite declares no
+**Five dev-only benches, all excluded from the build by construction.** Vite declares no
 `rollupOptions.input`, so the build has one entry (`index.html`) and `dist/` gets none of them —
 **if a multi-page input map is ever added, leave them out of it.** `fxlab.html` runs all sixteen
 effects through `FxCanvas`'s exact frame maths, advanced by an explicit **Step** button, because an
@@ -55,7 +55,13 @@ that answers the other question**: `duel-shot` renders stills, so it can say wha
 and can never say whether the fight *reads*, which is about tempo and is the only thing anyone
 actually asks. `duel-bench` builds a single self-contained HTML file — the real `duel.ts`, the real
 `duelCamera`, no external requests — for somebody whose browser is not headless. Same exclusion rule
-as the other three. `handoff_duel_engine/` holds the reference engine (`duel-cycle-v2.html`, with
+as the other three. **`scripts/fx-bench.mjs` and `scripts/fx-shot.mjs` are the same pair for the
+sixteen backgrounds** (2026-08-28): the bench builds one self-contained HTML running all sixteen
+live with palette, quality and Step controls, and the shot script captures them as stills.
+`fxlab.html` already renders the sixteen and is the right tool while the dev server is up, because it
+imports from `/src` and reloads — **what it cannot do is be handed to anybody**, which is the whole
+reason the bench exists. `scripts/ornament-shot.mjs` does the same for the eight hero ornaments,
+which unlike the effects are React and CSS rather than canvas and so need the real app running. `handoff_duel_engine/` holds the reference engine (`duel-cycle-v2.html`, with
 `BRIEF.md` / `IMPLEMENTED.md`) the duel absorbed ideas from — **all 29 of its named costumes are
 still in it and none has ever been deleted**, which is worth knowing because it is asked about.
 
@@ -634,6 +640,34 @@ covers how to *see* any of this — rAF parks in an automated browser, so use `s
 
 **Tuning, and where it may live:**
 
+- **The duels are operator-only, and that is a lock rather than a default** (2026-08-28, client:
+  *"lets keep it as a feature for just me unless i otherwise say so"*). `operatorOnly` on the `duel`
+  and `duelholy` entries in **both** catalogues — `src/data/ornaments.ts` and `FxEntry` in
+  `src/data/catalog.ts` — covers the hero ornament *and* the two full-screen background effects.
+  **It is a different axis from `hidden`, and both duels carry both flags for unrelated reasons**:
+  `hidden` is about *the picker* (`duelholy` was withdrawn from every menu on 2026-08-27), and
+  `operatorOnly` is about *the page*.
+- **Enforced where the thing is drawn, never at the storage end.** A published config or a share code
+  naming a duel still resolves to one; it renders as `DEFAULT_ORNAMENT` / `FALLBACK_FX` for anybody
+  not signed in. Enforcing it on the way in would mean the operator's own published config silently
+  rewriting itself, so he would lose the setting by looking at his own site logged out.
+  `ConfigContext` resolves it once and exposes `ornament` and `fx` beside the adapted `layout`;
+  `Ornament.tsx` and `FxCanvas.tsx` read those, never `config`.
+- **`roll()` takes `isOperator` and it defaults to `false`, which is the point.** Four routes deliver
+  a config — published, share code, storage, dice — and **the dice are the one nobody checks**;
+  before this, neither roll pool had a gate on it at all. A caller that has not thought about who is
+  looking gets the pool that is safe to show anybody.
+- **The operator's per-load ornament roll is component state and never a patch to `config`.** A roll
+  written into config is a roll that gets published the next time he presses Publish for an unrelated
+  reason — the dice would quietly become the site. Same doctrine as the adapted layout. It **cannot
+  live in the mount-only boot roll** (`isOperator` is false until the session probe settles, so it
+  would never fire), the pick happens **outside the updater** (StrictMode double-invokes them), and
+  it **yields the moment he picks an ornament himself** — without that the panel looks broken to the
+  only person who can use it. Gated, and verified in a browser: 14 signed-in loads gave 8 sonar and
+  6 duel with the stored config still reading `sonar`.
+- **The four withdrawn circles are deliberately not in the operator's roll pool.** He called them
+  lame and had them withdrawn on 2026-08-17; putting them back into his own dice would be restoring
+  rejected work by the back door. If he wants them again that is a decision, not a side effect.
 - **REVERSED 2026-08-28: the duel is configuration, and it publishes.** This entry used to say
   `DUEL_TUNING` was *"not in `Config`, not published, not in a share code and not persisted, and that
   is the invariant"*, because a duel that is a different fight per visitor is one nobody can review.

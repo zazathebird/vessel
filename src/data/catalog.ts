@@ -49,6 +49,22 @@ export interface FxEntry {
   id: FxId;
   label: string;
   /**
+   * Renders for the operator and for nobody else (2026-08-28, client request:
+   * the duels are *"a feature for just me unless i otherwise say so"*).
+   *
+   * A different axis from `hidden` below — `hidden` is about *the picker*,
+   * this is about *the page*. The two duels carry this and not `hidden`: they
+   * stay in the operator's own menu, which is where he chooses them, and they
+   * simply do not draw for anybody else.
+   *
+   * **Enforced where the effect is drawn, not where it is stored.** A published
+   * config or a share code naming a duel still resolves to one; it renders as
+   * `FALLBACK_FX` for a visitor. Enforcing it at the storage end would mean the
+   * operator's published config silently rewriting itself, so he would lose the
+   * setting by viewing his own site logged out.
+   */
+  operatorOnly?: boolean;
+  /**
    * Present in the array — and therefore holding its share-code index — but
    * kept out of the effect picker, the command palette and the shuffle. The
    * array is a wire format; the picker is a product decision, and the two
@@ -97,8 +113,8 @@ export const FX: FxEntry[] = [
    * effect here; the operator gains two entries in their own menu, and a visitor
    * sees a duel only if the operator publishes one.
    */
-  { id: "duel", label: "Lightswords: light & dark" },
-  { id: "duelholy", label: "Lightswords: saint & serpent" },
+  { id: "duel", label: "Lightswords: light & dark", operatorOnly: true },
+  { id: "duelholy", label: "Lightswords: saint & serpent", operatorOnly: true },
 
   // Appended at 14 and 15 (`…-E-…`, `…-F-…`), never inserted — same rule.
   // Both are built for the HUD archetype; see src/fx/effects.ts.
@@ -137,6 +153,31 @@ export const PICKABLE_FX: FxEntry[] = FX.filter((effect) => !effect.hidden);
  * share code moves and the operator loses no choice.
  */
 export const ROLLABLE_FX: FxEntry[] = PICKABLE_FX.filter((effect) => effect.id !== "off");
+
+/**
+ * What a visitor falls back to when the published effect is one they may not
+ * see. The site's own default, so the page looks like the site rather than like
+ * a failure.
+ */
+export const FALLBACK_FX: FxId = "vessels";
+
+/**
+ * The effects the dice may hand out, given who is looking.
+ *
+ * **The roll pool depends on the viewer**, which is what makes the lock hold:
+ * a visitor's dice can never land on a duel, so no path — roll, publish, share
+ * code or stored config — puts one on the public site. `ROLLABLE_FX` above is
+ * unchanged and is the operator's pool.
+ */
+export function rollableFx(isOperator: boolean): FxEntry[] {
+  return isOperator ? ROLLABLE_FX : ROLLABLE_FX.filter((effect) => !effect.operatorOnly);
+}
+
+/** What actually gets drawn behind the page, given who is looking. */
+export function visibleFx(id: FxId, isOperator: boolean): FxId {
+  if (isOperator) return id;
+  return FX.find((effect) => effect.id === id)?.operatorOnly ? FALLBACK_FX : id;
+}
 
 export interface TypeSet {
   id: TypeSetId;

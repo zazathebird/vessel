@@ -50,7 +50,13 @@ const MAX_EDGE = 2600;
 const MAX_DPR = 2;
 
 export function FxCanvas() {
-  const { config, saver } = useConfig();
+  /*
+   * `fx` comes off the context, not off `config`: it has already had the
+   * operator-only duels substituted out for anybody who is not signed in. This
+   * is a full-bleed background, so reading `config.fx` here would put a duel
+   * across the whole page for every visitor.
+   */
+  const { config, saver, fx } = useConfig();
 
   /*
    * The duel settings in force on this page, kept in a ref so the rAF loop sees
@@ -125,9 +131,9 @@ export function FxCanvas() {
   const quality = useRef(storedTier() ?? 1);
   const refit = useRef<(() => void) | null>(null);
 
-  const live = useRef({ fx: config.fx, pal: config.pal, calm: config.calm, saver });
+  const live = useRef({ fx, pal: config.pal, calm: config.calm, saver });
   useEffect(() => {
-    live.current = { fx: config.fx, pal: config.pal, calm: config.calm, saver };
+    live.current = { fx, pal: config.pal, calm: config.calm, saver };
   });
 
   // Buffer sizing. Separate from the render loop so a resize never touches the

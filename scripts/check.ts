@@ -64,6 +64,9 @@ import {
 } from "../src/data/duelSettings";
 import { PUBLISHED_KEYS } from "../src/config/siteConfig";
 import { decodeShareCode, encodeShareCode } from "../src/config/shareCode";
+import { roll } from "../src/config/randomiser";
+import { FALLBACK_FX, rollableFx, visibleFx } from "../src/data/catalog";
+import { rollableOrnaments, visibleOrnament } from "../src/data/ornaments";
 import { DEFAULT_CONFIG } from "../src/config/types";
 import type { Config } from "../src/config/types";
 import { PAGES } from "../src/data/pages";
@@ -2572,6 +2575,108 @@ if (!FAST) check("duel: a pooled fight rotates its fighters", () => {
 
 
 // ---- 5. Catalogue and content invariants -----------------------------------
+
+check("no duel can reach a visitor, by any route", () => {
+  /*
+   * The duels are the operator's alone (2026-08-28, client request: *"lets keep
+   * it as a feature for just me unless i otherwise say so"*), and the failure
+   * this gate exists for is that there are **four** ways a config arrives and
+   * only one of them is obvious. A visitor gets what was published, what a
+   * share code carried, what storage held — and what the dice rolled. The dice
+   * are the route nobody checks, and before this change `ROLLABLE_ORNAMENTS`
+   * and `ROLLABLE_FX` had no gate on them at all.
+   *
+   * So this asserts the lock at the two places it is actually enforced — the
+   * pools and the render-time resolvers — rather than asserting that a flag is
+   * set, which would pass whether or not anything read it.
+   */
+  const lockedOrnaments = ORNAMENTS.filter((o) => o.operatorOnly).map((o) => o.id);
+  const lockedFx = FX.filter((f) => f.operatorOnly).map((f) => f.id);
+  // Pinned, so withdrawing the lock from one of them is a deliberate edit here
+  // rather than a quiet change of who sees what.
+  must(
+    lockedOrnaments.join(",") === "duel,duelholy",
+    `operator-only ornaments are ${lockedOrnaments.join(",")}, expected duel,duelholy`,
+  );
+  must(
+    lockedFx.join(",") === "duel,duelholy",
+    `operator-only effects are ${lockedFx.join(",")}, expected duel,duelholy`,
+  );
+
+  // 1. The dice. A visitor's pool may not contain one; the operator's must.
+  for (const id of lockedOrnaments) {
+    must(
+      !rollableOrnaments(false).some((o) => o.id === id),
+      `a visitor's ornament dice can roll ${id}`,
+    );
+  }
+  /*
+   * The operator's own pool keeps the duel — but only the one that is still
+   * offered. `duelholy` carries **both** flags, for unrelated reasons:
+   * `operatorOnly` keeps it off the public site, and `hidden` withdrew it from
+   * every menu on 2026-08-27 when both duels became the same fight. A withdrawn
+   * entry is out of the dice for everybody, operator included, and asserting
+   * otherwise here was this gate's own first bug.
+   */
+  const rollable = ORNAMENTS.filter((o) => o.operatorOnly && !o.hidden).map((o) => o.id);
+  must(rollable.join(",") === "duel", `expected only duel rollable, got ${rollable.join(",")}`);
+  for (const id of rollable) {
+    must(
+      rollableOrnaments(true).some((o) => o.id === id),
+      `the operator's ornament dice cannot roll ${id}`,
+    );
+  }
+  for (const id of lockedFx) {
+    must(!rollableFx(false).some((f) => f.id === id), `a visitor's fx dice can roll ${id}`);
+    must(rollableFx(true).some((f) => f.id === id), `the operator's fx dice cannot roll ${id}`);
+  }
+  // A pool that has emptied is not a locked pool, it is a broken page.
+  must(rollableOrnaments(false).length > 0, "a visitor's ornament pool is empty");
+  must(rollableFx(false).length > 0, "a visitor's fx pool is empty");
+
+  // 2. The other three routes all converge on the render-time resolvers, which
+  //    is why the lock lives there and not at the storage end — a published
+  //    config naming a duel must still *store* one, or the operator would lose
+  //    the setting by looking at his own site logged out.
+  for (const id of lockedOrnaments) {
+    must(visibleOrnament(id, false) === DEFAULT_ORNAMENT, `${id} renders for a visitor`);
+    must(visibleOrnament(id, true) === id, `${id} does not render for the operator`);
+  }
+  for (const id of lockedFx) {
+    must(visibleFx(id, false) === FALLBACK_FX, `fx ${id} renders for a visitor`);
+    must(visibleFx(id, true) === id, `fx ${id} does not render for the operator`);
+  }
+  // Everything else is untouched by the lock, in both directions.
+  for (const o of ORNAMENTS.filter((x) => !x.operatorOnly)) {
+    must(visibleOrnament(o.id, false) === o.id, `${o.id} was substituted for a visitor`);
+  }
+  for (const f of FX.filter((x) => !x.operatorOnly)) {
+    must(visibleFx(f.id, false) === f.id, `fx ${f.id} was substituted for a visitor`);
+  }
+
+  // 3. What a visitor lands on has to be something they may actually see, or
+  //    the substitution is a loop.
+  must(
+    !ORNAMENTS.find((o) => o.id === DEFAULT_ORNAMENT)?.operatorOnly,
+    "DEFAULT_ORNAMENT is itself operator-only",
+  );
+  must(!FX.find((f) => f.id === FALLBACK_FX)?.operatorOnly, "FALLBACK_FX is itself operator-only");
+
+  // 4. The wire format is untouched. `operatorOnly` is about the page, and a
+  //    stored config or a share code naming a duel must still resolve to one.
+  must(ORNAMENTS.length === 8 && FX.length === 16, "the lock changed a catalogue's length");
+  const rolls = 4000;
+  let seen = 0;
+  for (let i = 0; i < rolls; i += 1) {
+    const out = roll({ ...DEFAULT_CONFIG, mode: "visit" }, false);
+    if (!out) continue;
+    seen += 1;
+    must(!lockedOrnaments.includes(out.ornament), `a visitor's roll produced ${out.ornament}`);
+    must(!lockedFx.includes(out.fx), `a visitor's roll produced fx ${out.fx}`);
+  }
+  must(seen > rolls * 0.9, `only ${seen} of ${rolls} visitor rolls succeeded`);
+  return `2 ornaments and 2 effects locked, ${seen} visitor rolls clean, pools non-empty`;
+});
 
 check("a share code carries the look and never the duel", () => {
   /*

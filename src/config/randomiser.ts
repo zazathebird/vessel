@@ -1,5 +1,5 @@
-import { LAYOUTS, ROLLABLE_FX, TYPESETS } from "../data/catalog";
-import { ROLLABLE_ORNAMENTS } from "../data/ornaments";
+import { LAYOUTS, TYPESETS, rollableFx } from "../data/catalog";
+import { rollableOrnaments } from "../data/ornaments";
 import { ROLLABLE_STATIONS } from "../data/stations";
 import { PALETTES } from "../data/palettes";
 import { isAllowed } from "../data/guardrails";
@@ -26,7 +26,14 @@ const pick = <T,>(items: readonly T[]): T => items[pickIndex(items.length)];
  * locked with only Palette in scope, say). Failing closed is correct — the
  * alternative is quietly overriding a guardrail the client asked for.
  */
-export function roll(config: Config): RollResult | null {
+/**
+ * @param isOperator Narrows the pools. **Defaults to false, and the default is
+ * the point**: the duels are operator-only (2026-08-28), so a caller that has
+ * not thought about who is looking gets the pool that is safe to show anybody.
+ * Guessing the other way would put a lightsword on the public site through the
+ * one route nobody would think to check — the dice.
+ */
+export function roll(config: Config, isOperator = false): RollResult | null {
   const { scope } = config;
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
@@ -39,8 +46,8 @@ export function roll(config: Config): RollResult | null {
       // the note on ROLLABLE_FX — a rolled `off` is a blank background and a
       // rolled empty ornament is a blank hero slot, and neither is
       // distinguishable from the site being broken.
-      fx: scope.fx ? pick(ROLLABLE_FX).id : config.fx,
-      ornament: scope.ornament ? pick(ROLLABLE_ORNAMENTS).id : config.ornament,
+      fx: scope.fx ? pick(rollableFx(isOperator)).id : config.fx,
+      ornament: scope.ornament ? pick(rollableOrnaments(isOperator)).id : config.ornament,
       // Rides the ornament scope rather than gaining a seventh: a station is
       // *where the ornament is*, so an operator who has pinned the ornament
       // has pinned where it sits too. A scope of its own would let the dice

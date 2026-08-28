@@ -1,0 +1,381 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FX Bench — sixteen backgrounds, live</title>
+
+<style>
+/*
+ * One visual world, painted explicitly, and no webfont.
+ *
+ * The subject is sixteen canvases drawn on a dark ground in twenty-five
+ * palettes; a light chrome around them would light-adapt the eye and misreport
+ * every contrast judgement this page exists to support. Every colour is
+ * declared rather than inherited, so the page holds whatever the host ground
+ * is — and the fonts are the system's, because the header comment promises no
+ * external requests and a Google Fonts link would make that promise false.
+ */
+:root {
+  --ground: #0b0d12;
+  --panel: #12151d;
+  --line: #232936;
+  --edge: #333b4d;
+  --ink: #e8ecf5;
+  --muted: #8b93a7;
+  --faint: #5b6478;
+  --accent: #6f8ab7;
+  --live: #ffc46b;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+  padding: 12px 20px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+h1 {
+  margin: 0 6px 0 0;
+  font: 600 12px/1 var(--mono);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+label { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 12px; }
+select, input, button {
+  font: 12px/1.4 var(--mono);
+  color: var(--ink);
+  background: #1a1f2a;
+  border: 1px solid var(--edge);
+  border-radius: 5px;
+  padding: 5px 8px;
+}
+button { cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.on { color: #161a10; background: var(--live); border-color: var(--live); }
+#status { margin-left: auto; font: 11px/1.4 var(--mono); color: var(--faint); }
+.note {
+  flex-basis: 100%;
+  margin: 2px 0 0;
+  max-width: 92ch;
+  font-size: 12px;
+  color: var(--faint);
+}
+.note b { color: var(--muted); font-weight: 600; }
+#grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  gap: 18px;
+  padding: 20px;
+}
+figure { margin: 0; }
+.frame {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #000;
+}
+canvas { display: block; width: 100%; height: 100%; }
+figcaption {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding-top: 7px;
+  font: 11px/1.4 var(--mono);
+  color: var(--faint);
+}
+figcaption b { font-weight: 600; font-size: 12px; color: var(--ink); font-family: system-ui, sans-serif; }
+figcaption .id { color: var(--accent); }
+figcaption .ms { margin-left: auto; }
+</style>
+
+<header>
+  <h1>fx bench</h1>
+  <label>palette <select id="pal"></select></label>
+  <label>quality <select id="quality"></select></label>
+  <label>shape
+    <select id="shape">
+      <option value="16:9">16:9 desk</option>
+      <option value="4:3">4:3 short</option>
+      <option value="9:16">9:16 phone</option>
+      <option value="21:9">21:9 ultrawide</option>
+    </select>
+  </label>
+  <label>dpr <input id="dpr" type="number" min="1" max="3" step="0.5" value="2" style="width:58px"></label>
+  <label>step <input id="frames" type="number" min="1" max="4000" value="60" style="width:70px"> frames</label>
+  <label><input id="sleeping" type="checkbox"> screensaver</label>
+  <button id="run">Play</button>
+  <button id="step">Step &#9656;</button>
+  <button id="burst">+600</button>
+  <button id="reset">Reset</button>
+  <span id="status">idle</span>
+  <p class="note">
+    All sixteen run from one clock, so every tile shows the same moment.
+    <b>Step</b> is not a convenience: an automated or occluded browser reports
+    <code>document.hidden</code> and parks <code>requestAnimationFrame</code>,
+    so in one of those Play does nothing and Step is the only way anything can
+    be looked at. <b>Quality</b> is the adaptive-resolution tier — only
+    <code>rain</code> and <code>plasma</code> read it, and nothing else on this
+    page will move when you change it. That is correct, not broken.
+  </p>
+</header>
+<div id="grid"></div>
+
+<script>/*__FX_BUNDLE__*/</script>
+<script>
+(function () {
+  var FX = window.__FX;
+  var drawFx = FX.drawFx, LIST = FX.FX, PALETTES = FX.PALETTES, TIERS = FX.TIERS;
+  var DUEL = FX.DEFAULT_DUEL_SETTINGS;
+
+  // FxCanvas's own cap: retina is worth paying for, a 3x phone panel is not,
+  // and a longer edge asks for a buffer nothing can fill in a frame.
+  var MAX_EDGE = 2600;
+  var ASPECTS = { "16:9": 16 / 9, "4:3": 4 / 3, "9:16": 9 / 16, "21:9": 21 / 9 };
+
+  var palSel = document.getElementById("pal");
+  var qualSel = document.getElementById("quality");
+  var shapeSel = document.getElementById("shape");
+  var dprInput = document.getElementById("dpr");
+  var framesInput = document.getElementById("frames");
+  var sleepInput = document.getElementById("sleeping");
+  var status = document.getElementById("status");
+  var grid = document.getElementById("grid");
+
+  PALETTES.forEach(function (p, i) {
+    var o = document.createElement("option");
+    o.value = String(i);
+    o.textContent = i + " · " + p.name;
+    palSel.append(o);
+  });
+  TIERS.forEach(function (q, i) {
+    var o = document.createElement("option");
+    o.value = String(q);
+    o.textContent = "tier " + i + " · " + q;
+    qualSel.append(o);
+  });
+
+  /* One cell per entry in FX — hidden entries included, because this is a
+   * bench and `hidden` withdraws an effect from a menu, not from the site.
+   * `off` is in here too: it draws nothing, and a reviewer being able to see
+   * that it draws nothing is the point of listing it. */
+  var cells = LIST.map(function (entry) {
+    var figure = document.createElement("figure");
+    var frame = document.createElement("div");
+    frame.className = "frame";
+    var canvas = document.createElement("canvas");
+    frame.append(canvas);
+    var caption = document.createElement("figcaption");
+    var name = document.createElement("b");
+    name.textContent = entry.label;
+    var id = document.createElement("span");
+    id.className = "id";
+    id.textContent = entry.id;
+    var ms = document.createElement("span");
+    ms.className = "ms";
+    caption.append(name, id, ms);
+    figure.append(frame, caption);
+    grid.append(figure);
+    return { entry: entry, frame: frame, canvas: canvas, ms: ms, cache: {}, costs: [] };
+  });
+
+  /* The clock is shared. Sixteen effects at sixteen different `t` values is a
+   * gallery of unrelated moments, and the question this page is for — do these
+   * tell apart — is only askable when they are all showing the same second. */
+  var t = 0;
+
+  function fit() {
+    var aspect = ASPECTS[shapeSel.value];
+    var dpr = Math.max(1, Number(dprInput.value) || 1);
+    cells.forEach(function (cell) {
+      var w = cell.frame.clientWidth;
+      var h = Math.round(w / aspect);
+      cell.frame.style.height = h + "px";
+      var scale = Math.min(dpr, MAX_EDGE / Math.max(w, h));
+      var bw = Math.max(1, Math.round(w * scale));
+      var bh = Math.max(1, Math.round(h * scale));
+      if (cell.canvas.width !== bw || cell.canvas.height !== bh) {
+        cell.canvas.width = bw;
+        cell.canvas.height = bh;
+      }
+      cell.w = w;
+      cell.h = h;
+      cell.scale = scale;
+    });
+  }
+
+  /*
+   * One frame, byte for byte the arithmetic in `FxCanvas`'s loop.
+   *
+   * The base `setTransform` is re-applied every frame rather than trusting an
+   * effect to leave the context as it found it — `rain` flips the world inside
+   * a save/restore pair, and one missed restore would otherwise mirror this
+   * page permanently. It is also what hands the effects CSS pixels, which
+   * `rain`'s 16px cell and `plasma`'s 26px grid are sized in.
+   *
+   * `dt` is the real elapsed frame count under Play and exactly 1 under Step.
+   * That matters for one effect and only one: the duel integrates against `dt`
+   * rather than `boost`, so a step of N frames has to be N calls at dt 1 —
+   * one call at dt N is a fight teleporting, and its own accumulator clamps
+   * that anyway, which is how a "240 frames in" shot turned out to be four.
+   */
+  function frame(dt) {
+    var palette = PALETTES[Number(palSel.value)] || PALETTES[0];
+    var quality = Number(qualSel.value) || 1;
+    var sleeping = sleepInput.checked;
+    // Scroll velocity is zero here — there is nothing to scroll — so `boost`
+    // is the screensaver bonus and the frame delta, and nothing else.
+    var boost = (1 + (sleeping ? 0.9 : 0)) * dt;
+    t += 0.011 * boost;
+    var beat = (Math.sin(t * 1.9) + 1) / 2;
+    cells.forEach(function (cell) {
+      var ctx = cell.canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.setTransform(cell.scale, 0, 0, cell.scale, 0, 0);
+      var started = performance.now();
+      drawFx(cell.entry.id, {
+        ctx: ctx, w: cell.w, h: cell.h, p: palette, duel: DUEL,
+        t: t, beat: beat, boost: boost, sleeping: sleeping,
+        dt: dt, quality: quality, mx: 0.5, my: 0.5,
+      }, cell.cache);
+      /* Report the minimum of the last thirty frames, never the mean.
+       *
+       * Frame cost has a hard floor — the work the effect actually does — and
+       * everything above it is the collector and the scheduler. Sixteen
+       * canvases share one heap here, so a mean says more about which tile was
+       * unlucky than about which effect is expensive. */
+      cell.costs.push(performance.now() - started);
+      if (cell.costs.length > 30) cell.costs.shift();
+    });
+  }
+
+  function report(label) {
+    cells.forEach(function (cell) {
+      var best = cell.costs.length ? Math.min.apply(null, cell.costs).toFixed(2) + "ms" : "—";
+      cell.ms.textContent = cell.w + "×" + cell.h + "  " + best;
+    });
+    var palette = PALETTES[Number(palSel.value)] || PALETTES[0];
+    status.textContent = label + " · t " + t.toFixed(1) + " · " + palette.name
+      + " · q " + qualSel.value + " · hidden=" + document.hidden;
+  }
+
+  /*
+   * Step: build the whole run's frame parameters first, then take each cell
+   * through all of them under **one** timer read.
+   *
+   * The obvious shape — call `frame(1)` n times, time each draw — reports
+   * `0.00ms` for all sixteen, which is what this page did when it was first
+   * looked at in a headless browser. Nothing was wrong with the effects: every
+   * browser that is not cross-origin isolated coarsens `performance.now()`, and
+   * a 0.4ms draw rounds to zero however many times it is measured. Summing
+   * zeros stays zero, so the fix has to be one read across many draws.
+   *
+   * Cell-outer is equivalent to frame-outer here because no cell touches
+   * another: each holds its own cache, and all sixteen are handed the same
+   * sequence of `t`, so they still land on the same moment. Play stays
+   * frame-outer — there the frames are real time and the timer has all the
+   * resolution it needs.
+   */
+  function step(n) {
+    var palette = PALETTES[Number(palSel.value)] || PALETTES[0];
+    var quality = Number(qualSel.value) || 1;
+    var sleeping = sleepInput.checked;
+    var boost = (1 + (sleeping ? 0.9 : 0));
+    var params = [];
+    for (var i = 0; i < n; i++) {
+      t += 0.011 * boost;
+      params.push({ t: t, beat: (Math.sin(t * 1.9) + 1) / 2 });
+    }
+    var started = performance.now();
+    cells.forEach(function (cell) {
+      var ctx = cell.canvas.getContext("2d");
+      if (!ctx) return;
+      var began = performance.now();
+      params.forEach(function (fp) {
+        ctx.setTransform(cell.scale, 0, 0, cell.scale, 0, 0);
+        drawFx(cell.entry.id, {
+          ctx: ctx, w: cell.w, h: cell.h, p: palette, duel: DUEL,
+          t: fp.t, beat: fp.beat, boost: boost, sleeping: sleeping,
+          dt: 1, quality: quality, mx: 0.5, my: 0.5,
+        }, cell.cache);
+      });
+      // A one-frame step is a repaint after a control moved, not a
+      // measurement — and it is exactly the case the coarse timer rounds to
+      // zero. Keep the last real reading rather than replacing it with a lie.
+      if (n >= 10) cell.costs = [(performance.now() - began) / n];
+    });
+    report(n + " frame(s) × " + cells.length + " in " + (performance.now() - started).toFixed(0) + "ms");
+  }
+
+  function reset() {
+    t = 0;
+    cells.forEach(function (cell) {
+      cell.cache = {};
+      cell.costs = [];
+      var ctx = cell.canvas.getContext("2d");
+      if (ctx) {
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, cell.canvas.width, cell.canvas.height);
+      }
+    });
+    step(1);
+  }
+
+  var raf = 0;
+  var last = 0;
+  var runButton = document.getElementById("run");
+  runButton.addEventListener("click", function () {
+    if (raf) {
+      cancelAnimationFrame(raf);
+      raf = 0;
+      runButton.textContent = "Play";
+      runButton.classList.remove("on");
+      return;
+    }
+    runButton.textContent = "Pause";
+    runButton.classList.add("on");
+    last = performance.now();
+    var loop = function () {
+      raf = requestAnimationFrame(loop);
+      var now = performance.now();
+      // Clamped exactly as FxCanvas clamps it, so a stall cannot jump the
+      // world forward and a 120Hz display does not run the fields at double
+      // speed.
+      var dt = Math.min(3, Math.max(0.2, (now - last) / (1000 / 60)));
+      last = now;
+      frame(dt);
+      report("playing");
+    };
+    raf = requestAnimationFrame(loop);
+  });
+
+  document.getElementById("step").addEventListener("click", function () {
+    step(Math.max(1, Number(framesInput.value) || 1));
+  });
+  document.getElementById("burst").addEventListener("click", function () { step(600); });
+  document.getElementById("reset").addEventListener("click", reset);
+  palSel.addEventListener("change", function () { step(1); });
+  qualSel.addEventListener("change", function () { step(1); });
+  shapeSel.addEventListener("change", function () { fit(); reset(); });
+  dprInput.addEventListener("change", function () { fit(); reset(); });
+  window.addEventListener("resize", function () { fit(); step(1); });
+
+  // Exposed so an automation tool can drive the bench without a pointer.
+  window.fxbench = { step: step, reset: reset, fit: fit, cells: cells };
+
+  fit();
+  step(90);
+})();
+</script>

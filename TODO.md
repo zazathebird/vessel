@@ -8,10 +8,23 @@ what is left to do.
 
 ## 2026-08-28 — guardrails reach the page, and the duel becomes reviewable
 
-`npm run check` is **50 green**, up from 46. Deployed today: `75ef788` (the carve, and the roster
+`npm run check` is **51 green**, up from 46. Deployed today: `75ef788` (the carve, and the roster
 down to twenty-four), `c5e9899` (a stale header here), `c5c72f3` (the duel becomes a published
 per-page setting), and the share-code decision below — on top of yesterday's `7a39870` and `5bbc7cc`.
 Every one verified by pulling the live bundle and grepping it, not by trusting the repo.
+**The operator-only duel lock landed after all of those and is not in that list** — the 51st gate is
+its gate; `docs/DECISIONS.md` has the entry.
+
+### The duels are operator-only now, and they roll for him
+
+Client: *"lets make it so that the lightsaber duels are off by default, until unlocked by me. and
+once i log in, they are random."* Both duels are locked in both catalogues — the hero ornament **and**
+the full-screen background effect — and a visitor gets `DEFAULT_ORNAMENT` / `FALLBACK_FX` instead.
+**The lock is enforced where the thing is drawn, never at the storage end**, so his published config
+keeps saying `duel` while he is signed out rather than rewriting itself. Signed in, the ornament
+rolls fresh every page load from his own pool (the duel and sonar), as **component state that is
+never patched into `config`** — and it yields the moment he picks an ornament himself.
+`docs/DECISIONS.md` carries the picker-versus-page distinction, the gate and the browser numbers.
 
 ### First, the thing to say out loud: the 2026-08-27 duel fixes ARE live
 
@@ -70,7 +83,9 @@ reversed at the client's request; `docs/DECISIONS.md` carries the reversal and h
 
 0. **Look at the twenty-four fighters on a phone.** Top of the list because it is cheap and it is the
    only unanswered question left about them — everything else about the roster is gated.
-   **Do any two read as the same fighter?** Open the duel on `/admin` or just watch the hero ornament.
+   **Do any two read as the same fighter?** Open the duel on `/admin`, or watch the hero ornament
+   **signed in** — since today a signed-out visitor cannot be shown a duel by any route, so a logged-out
+   phone shows sonar and answers nothing.
    **Watch executioner against sentinel first** — flat/soft/square against tall/hard/square, the
    nearest pair on the contact sheet. They are on opposite sides, so they *can* be drawn together. If
    two do read alike, the fix is one line in `NEVER_MEET`; the gate expects entries in it.
@@ -118,6 +133,11 @@ reversed at the client's request; `docs/DECISIONS.md` carries the reversal and h
    with a publish button. Gated (`a share code carries the look and never the duel`) and verified by
    widening `SharedConfig` to see it fail. **Reopen only if he asks for a look he can hand somebody
    that carries the duel with it** — and the answer then is a second format, not a widened first one.
+6. **`effectiveStation` reads `config.ornament`, not the resolved one.** Small, cosmetic, and
+   recorded so it is not re-discovered as a bug: publish a duel with station `roam` and a signed-out
+   visitor gets station `hold` on the sonar he is actually shown, where `roam` would have been
+   allowed. Conservative rather than wrong. The fix is `theme.ts` taking the resolved ornament, and
+   it wants a decision about whether the station should follow what is *drawn* or what is *stored*.
 
 ### Not started, unchanged from yesterday
 
@@ -1498,6 +1518,10 @@ Found while building; none blocking. Reasoning in `CLAUDE.md` unless noted.
    one — so the weighting stands as it is. **Do not "correct" the distribution
    toward sonar on the strength of the 08-17 note above**: it read the split as
    a possible defect, and the client has since read it as the feature.
+   **Re-read this as being about the operator alone (2026-08-28):** the duels are
+   operator-only now, so a visitor's dice contain no duel at all and this split
+   describes what *he* sees signed in. The distribution is unchanged for him and
+   still stands as signed off.
 11. **A republish may be needed for the withdrawn circles to fully go**
    (2026-08-17). Hidden means unlisted, not invalid: if the currently published
    config names Lens/Valve/Aperture/Orrery, first-time visitors keep getting it

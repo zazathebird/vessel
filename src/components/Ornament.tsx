@@ -21,7 +21,7 @@ import { DuelOrnament } from "./DuelOrnament";
 const HIDES_ORNAMENT: LayoutId[] = ["sidescroll", "terminal", "ledger", "console", "sheet"];
 
 export function Ornament({ layout }: { layout: LayoutId }) {
-  const { config, go } = useConfig();
+  const { config, go, ornament: resolved, fx } = useConfig();
 
   /*
    * The five-tap sign-in reveal was removed here on 2026-08-18.
@@ -63,9 +63,17 @@ export function Ornament({ layout }: { layout: LayoutId }) {
    * is already ordinary here — five layouts hide the slot outright — whereas a
    * missing background effect is not.
    */
-  const duelFx = config.fx === "duel" || config.fx === "duelholy";
-  const duelOrnament = config.ornament === "duel" || config.ornament === "duelholy";
-  const ornament = duelFx && duelOrnament ? DEFAULT_ORNAMENT : config.ornament;
+  /*
+   * `resolved` and `fx` come off the context rather than off `config`, and that
+   * is the whole of the operator-only lock as far as this file is concerned:
+   * `ConfigContext` has already substituted `DEFAULT_ORNAMENT` for a duel when
+   * nobody is signed in, and already applied the operator's per-load roll when
+   * somebody is. Reading `config.ornament` here instead would draw a duel on
+   * the public site, which is the one thing this must not do.
+   */
+  const duelFx = fx === "duel" || fx === "duelholy";
+  const duelOrnament = resolved === "duel" || resolved === "duelholy";
+  const ornament = duelFx && duelOrnament ? DEFAULT_ORNAMENT : resolved;
 
   // The phone band renders the ornament too (mobile parity, client request
   // 2026-08-13) — it is the duels' home, and hiding it left phones without it.

@@ -39,7 +39,30 @@ export type OrnamentId =
  * because the operator can still reach them by pasting an old code, which is
  * what "withdrawn" ought to mean.
  */
-export const ORNAMENTS: { id: OrnamentId; label: string; hidden?: boolean }[] = [
+/**
+ * `operatorOnly` withdraws an ornament from *visitors* rather than from menus,
+ * and it is a different axis from `hidden` (2026-08-28, client request: the
+ * duels are *"a feature for just me unless i otherwise say so"*).
+ *
+ * The two are orthogonal and both duels now carry both flags for different
+ * reasons — `duelholy` is `hidden` because it is a duplicate of `duel` in the
+ * menu, and both are `operatorOnly` because a lightsword is not for the public
+ * site. Read the pair as: `hidden` is about *the picker*, `operatorOnly` is
+ * about *the page*.
+ *
+ * **It is enforced where the ornament is drawn, not where it is stored.** A
+ * published config or a share code naming a duel still resolves to one — it
+ * simply renders as `DEFAULT_ORNAMENT` for anybody who is not signed in as the
+ * operator. Enforcing it at the storage end instead would mean the operator's
+ * own published config silently rewrote itself, and he would lose the setting
+ * by looking at his own site logged out.
+ */
+export const ORNAMENTS: {
+  id: OrnamentId;
+  label: string;
+  hidden?: boolean;
+  operatorOnly?: boolean;
+}[] = [
   { id: "lens", label: "Lens", hidden: true },
   { id: "valve", label: "Valve", hidden: true },
   { id: "aperture", label: "Aperture", hidden: true },
@@ -53,7 +76,7 @@ export const ORNAMENTS: { id: OrnamentId; label: string; hidden?: boolean }[] = 
   // the panel: shareCode.ts encodes the ornament as this array's *index*, so
   // putting anything ahead of an existing entry silently repoints every share
   // code in circulation — the same wire-format rule as FX.
-  { id: "duel", label: "Lightswords" },
+  { id: "duel", label: "Lightswords", operatorOnly: true },
   /*
    * **Withdrawn 2026-08-27, not deleted.** Both duel ornaments now draw from
    * the whole roster (`DUEL_POOLS`), so this one and index 5 became the same
@@ -63,7 +86,7 @@ export const ORNAMENTS: { id: OrnamentId; label: string; hidden?: boolean }[] = 
    * offered. The published site config named it at the time, which is exactly
    * the case `hidden` exists to keep working.
    */
-  { id: "duelholy", label: "Lightswords: saint & serpent", hidden: true },
+  { id: "duelholy", label: "Lightswords: saint & serpent", hidden: true, operatorOnly: true },
   /*
    * **Sonar — index 7, appended** (2026-08-17, client: *"a sonar with sweeping
    * radar ping would be better"*).
@@ -126,3 +149,40 @@ export const ROLLABLE_ORNAMENTS = PICKABLE_ORNAMENTS.filter((o) => o.id !== "non
  * are hidden rather than left as the head of the list.
  */
 export const DEFAULT_ORNAMENT: OrnamentId = "sonar";
+
+/**
+ * The ornaments a visitor may ever be shown, and the ones the operator may.
+ *
+ * **The roll pool depends on who is looking**, which is what makes the lock
+ * hold: a visitor's dice can never land on a duel, so there is no path — roll,
+ * publish, share code or stored config — by which one reaches the public site.
+ * `ROLLABLE_ORNAMENTS` above stays exactly what it was and is the operator's
+ * pool; this narrows it.
+ *
+ * At the operator's end the pool is two — the duel and sonar — and that is a
+ * real roll rather than a coin trick only in the sense that both outcomes are
+ * ornaments he has actually chosen to offer. **The four withdrawn circles are
+ * deliberately not re-added to it**: he called them lame and had them withdrawn
+ * on 2026-08-17, and quietly putting them back in his own dice would be
+ * restoring rejected work by the back door. If he wants them again that is a
+ * decision, not a side effect.
+ */
+export function rollableOrnaments(isOperator: boolean) {
+  return isOperator
+    ? ROLLABLE_ORNAMENTS
+    : ROLLABLE_ORNAMENTS.filter((o) => !o.operatorOnly);
+}
+
+/**
+ * What actually gets drawn in the hero slot, given who is looking.
+ *
+ * Yields to `DEFAULT_ORNAMENT`, never to `"none"` — an empty hero slot is
+ * indistinguishable from a broken page, and the visitor cannot see the setting
+ * that caused it. Exactly the reasoning `ROLLABLE_ORNAMENTS` and the duel
+ * guardrail already settled, applied to a third mechanism that can empty the
+ * slot.
+ */
+export function visibleOrnament(id: OrnamentId, isOperator: boolean): OrnamentId {
+  if (isOperator) return id;
+  return ORNAMENTS.find((o) => o.id === id)?.operatorOnly ? DEFAULT_ORNAMENT : id;
+}

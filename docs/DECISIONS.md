@@ -13,6 +13,106 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-28 — the duels become operator-only, and roll fresh for the operator
+
+**The client's words, and they are the decision:** *"lets make it so that the lightsaber duels are
+off by default, until unlocked by me. and once i log in, they are random. lets keep it as a feature
+for just me unless i otherwise say so."* Asked to disambiguate *random*, he chose **random ornament
+and random fighters**; asked how far *the duels* reached, he chose **the full-screen background
+effects as well as the hero ornament**. Every duel, not just the small one.
+
+### The lock
+
+A new `operatorOnly` flag on both catalogues — `src/data/ornaments.ts` (`duel`, `duelholy`) and
+`FxEntry` in `src/data/catalog.ts` (`duel` at index 12, `duelholy` at 13).
+
+**It is a different axis from `hidden`, and both duels now carry both flags for unrelated reasons.**
+`hidden` is about *the picker*: `duelholy` was withdrawn from every menu on 2026-08-27 when both
+duels started drawing from the whole roster and the two entries became the same fight.
+`operatorOnly` is about *the page*. Read them as picker versus page; neither implies the other.
+
+**Enforced where the thing is drawn, never at the storage end.** A published config or a share code
+naming a duel still resolves to a duel; it simply renders as `DEFAULT_ORNAMENT` or the new
+`FALLBACK_FX` (`vessels`) for anybody who is not signed in. Enforcing at storage would mean the
+operator's published config silently rewriting itself — he would lose the setting by viewing his own
+site logged out, which is the one thing he does constantly.
+
+Four helpers carry it: `visibleOrnament(id, isOperator)`, `visibleFx(id, isOperator)`,
+`rollableOrnaments(isOperator)` and `rollableFx(isOperator)`.
+
+**`roll()` in `src/config/randomiser.ts` gained an `isOperator` parameter defaulting to `false`, and
+the default is the point.** A caller that has not thought about who is looking gets the pool that is
+safe to show anybody. There are four ways a config arrives — published, share code, storage, dice —
+and the dice are the route nobody checks: before this, `ROLLABLE_ORNAMENTS` and `ROLLABLE_FX` had no
+gate on them at all.
+
+Resolution happens **once, in `ConfigContext`**, which now exposes `ornament` and `fx` beside the
+existing adapted `layout` — the same precedent, for the same reason. `Ornament.tsx` and
+`FxCanvas.tsx` read those, not `config`.
+
+### The operator's per-load roll
+
+Signed in, the hero ornament rolls fresh on every page load from the operator's own pool. Signed
+out, it is whatever was published.
+
+- **It is component state, never a patch to `config`.** A roll written into config is a roll that
+  gets published the next time he presses Publish for an unrelated reason, and the dice would
+  quietly become the site. Same doctrine as the adapted layout: what he stored is what he stored.
+- **It cannot live in the existing mount-only boot roll**, because `isOperator` is false until the
+  session probe settles — a roll placed there would always see a signed-out viewer and never fire.
+  It is keyed on `isOperator` instead, which also makes it re-roll on sign-in rather than only on
+  reload.
+- **The pick happens outside the state updater.** `Math.random` is impure and StrictMode
+  double-invokes updaters; `shuffle` and `setMode` already record this rule.
+- **It yields the moment he picks an ornament himself** — `update` clears it when the patch carries
+  `ornament`. Without that the panel would appear broken to the only person who can use it: he picks
+  Sonar, the rolled duel still renders, and nothing on the screen explains why.
+- **The operator's pool is the duel and sonar**, which is `ROLLABLE_ORNAMENTS` as it already stood.
+  **The four withdrawn circles — lens, valve, aperture, orrery — were deliberately not re-added.**
+  He called them lame and had them withdrawn on 2026-08-17, and quietly putting them back into his
+  own dice restores rejected work by the back door. If he wants them again that is a decision, not a
+  side effect.
+- **`visibleFx` carries no roll.** He asked for a random *ornament*; a background effect changing
+  under the page on every load is a different request, and it can be asked for.
+
+### The gate
+
+One new one — *"no duel can reach a visitor, by any route"*. It asserts that the operator-only set
+is exactly `duel,duelholy` in both catalogues (pinned, so withdrawing the lock is a deliberate
+edit); that a visitor's dice pool contains neither and the operator's contains `duel`; that neither
+pool is empty; that the render resolvers substitute for a visitor and pass through for the operator;
+that every non-locked entry is untouched in both directions; that `DEFAULT_ORNAMENT` and
+`FALLBACK_FX` are not themselves locked, or the substitution is a loop; that both catalogue lengths
+are unchanged, since the wire format is untouched; and that 4,000 visitor rolls produce no duel.
+**Verified by breaking it twice** — making the resolver stop resolving, and making the dice keep the
+wide pool. Each failed with the right message.
+
+**The gate's own first bug is worth recording**, because it is the picker/page distinction failing
+in the place that exists to hold it: it initially asserted the operator could roll `duelholy`. He
+cannot. `duelholy` is `hidden`, and a withdrawn entry is out of the dice for everybody, operator
+included.
+
+### Verified in a real browser, not only gated
+
+- **Signed out**, with `ornament: "duel"` and `fx: "duel"` seeded into stored config, four
+  combinations were loaded in headless Chrome. Every one rendered `v-ornament is-sonar` and no
+  `.v-duelfight` canvas.
+- **Signed in** — by temporarily forcing `isOperator` true, then reverting, the revert confirmed
+  clean — 14 loads with `ornament: "sonar"` stored gave **8 sonar and 6 duel**, and the stored config
+  still read `sonar` afterwards. That is both halves at once: the roll varies, and it never writes to
+  config.
+
+### One known edge, and it is not a bug
+
+`theme.ts` feeds `config.ornament` to `effectiveStation`, not the resolved one. So an operator who
+publishes a duel with station `roam` gives visitors station `hold` even though what they see is
+sonar, which `roam` would have allowed. It errs conservative rather than wrong, and the whole of the
+cost is cosmetic. Recorded in `TODO.md` rather than fixed.
+
+`npm run check` is **51 green**, up from 50.
+
+---
+
 ## 2026-08-28 — a share code is a picture, not a document, so it does not carry the duel
 
 **Closes the one item the entry below left open**, and closes it the other way from how it was
