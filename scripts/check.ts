@@ -63,6 +63,9 @@ import {
   validDuelSettings,
 } from "../src/data/duelSettings";
 import { PUBLISHED_KEYS } from "../src/config/siteConfig";
+import { decodeShareCode, encodeShareCode } from "../src/config/shareCode";
+import { DEFAULT_CONFIG } from "../src/config/types";
+import type { Config } from "../src/config/types";
 import { PAGES } from "../src/data/pages";
 import {
   CATEGORIES,
@@ -2569,6 +2572,56 @@ if (!FAST) check("duel: a pooled fight rotates its fighters", () => {
 
 
 // ---- 5. Catalogue and content invariants -----------------------------------
+
+check("a share code carries the look and never the duel", () => {
+  /*
+   * Decided 2026-08-28: the duel settings do not travel in a share code — see
+   * `SharedConfig` for the reasoning. This gate is what keeps that decision
+   * from being undone by accident rather than on purpose, and it guards the two
+   * ways it could be.
+   *
+   * **A share code is the worst kind of wire format to get wrong**: a wrong one
+   * is a *working* code pointing at the wrong thing, so nothing throws and
+   * nothing logs. That is the whole reason this file covers it at all.
+   */
+  const loud: Config = {
+    ...DEFAULT_CONFIG,
+    duel: {
+      ...DEFAULT_DUEL_SETTINGS,
+      pin: ["hooded", "caped"],
+      good: ["ronin"],
+      zoom: 1.4,
+      tuning: { ...DEFAULT_DUEL_TUNING, rest: 0.5 },
+    },
+    duelPages: { work: { bars: false } },
+  };
+
+  // 1. Encoding must not smuggle the duel in. A code is hyphen-separated
+  //    base-36 fields and nothing counts the characters, so a widened encoder
+  //    would produce codes that still decode and quietly mean more.
+  const code = encodeShareCode(loud);
+  must(/^[0-9a-z]+(-[0-9a-z]+)*$/.test(code), `${code} is not a plain share code`);
+  must(code.split("-").length === 7, `${code} has ${code.split("-").length} fields, expected 7`);
+
+  // 2. Decoding must not *claim* the duel either. `SharedConfig` is a `Pick`,
+  //    and a decoded code is applied with `update(shared)` — a patch — so an
+  //    operator who pastes a setup keeps the duel settings they already had.
+  //    Widen the type and that stops being true with nothing to indicate it.
+  const shared = decodeShareCode(code);
+  must(shared !== null, `${code} did not decode`);
+  for (const key of ["duel", "duelPages"]) {
+    must(!(key in (shared as object)), `a decoded share code carries ${key}`);
+  }
+
+  // 3. The patch, performed the way `ConfigContext.update` performs it.
+  const after = { ...loud, ...(shared as object) } as Config;
+  must(after.duel.pin?.[0] === "hooded", "applying a share code dropped the pinned pairing");
+  must(after.duel.tuning.rest === 0.5, "applying a share code reset the pacing");
+  must(after.duelPages.work?.bars === false, "applying a share code dropped a page override");
+  // And it must still have done its actual job.
+  must(after.pal === loud.pal && after.layout === loud.layout, "the code lost the look");
+  return `7 fields, ${code.length} chars, duel settings untouched by a round trip`;
+});
 
 check("the duel settings publish, refuse rubbish, and default to a no-op", () => {
   /*

@@ -13,6 +13,53 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-28 — a share code is a picture, not a document, so it does not carry the duel
+
+**Closes the one item the entry below left open**, and closes it the other way from how it was
+posed. It went out as *"ask him whether the duel settings should travel in a share code"*; he handed
+the call back — *"your call on what to do then if there is a conflict"* — and on inspection it was
+never his kind of question. Whether the duel is the same fight for everybody was a product decision
+and was his. How a wire format is shaped is not.
+
+**The decision: `Config.duel` and `Config.duelPages` do not appear in a share code, and the type that
+would have to carry them stays a `Pick`.**
+
+**A share code is a picture of the look; these are a document.** Every field in a code is an index
+into a fixed catalogue or a bit in one integer — seven hyphen-separated base-36 fields, thirteen
+characters for a full one. `duelPages` is a sparse map keyed by page, each entry partial, two of its
+fields variable-length lists of fighter ids. Fully specified it is about 6.8KB. Base-36'd, that is
+not a code anybody pastes; it is an attachment.
+
+**The compromise is the thing to refuse, and that is the whole of the reasoning.** The obvious middle
+— encode the site-level settings, drop the per-page map — produces a code that parses cleanly, reads
+as complete, and silently omits part of what the sender was looking at. The recipient sees a
+different site and nothing tells them why. That is the identical failure `decodeSetupCode` was built
+to refuse (*"a half-decoded plan renders as a complete checklist, the person ticks every row, and a
+folder they asked to share is silently absent"*), and there is no reason it is acceptable here and
+unacceptable there. **Half a picture is worse than no picture, because no picture is obvious.**
+
+**And it buys little.** Site config already distributes these — per page, validated field by field,
+with a publish button and a byte ceiling that fails loudly. The only gap a code would close is
+carrying *unpublished* duel settings between two of the operator's own browsers.
+
+**What made the decision safe was already true, and is now gated.** `SharedConfig` is a `Pick` and a
+decoded code is applied with `update(shared)` — a patch — so pasting a setup keeps whatever duel
+settings the operator already had. Nothing announced that; widening the type would have broken it
+with nothing to indicate it, and a share code is the worst wire format to get wrong because a wrong
+one is a *working* code pointing at the wrong thing. The new gate — *a share code carries the look
+and never the duel* — asserts the encoder still emits seven plain base-36 fields, that a decoded code
+carries neither key, and that applying one leaves a pinned pairing, the pacing and a page override
+intact while still doing its actual job. **Verified by widening `SharedConfig` to include `duel` and
+having the decoder return a real value**: it typechecks, and the gate alone fails.
+
+**Reopen only if he asks for a look he can hand somebody that carries the duel with it.** The answer
+then is a second format with its own prefix, not a widened first one — the same shape as the setup
+code's `VS1.`/`VS2.`, which is a different format and not this one.
+
+50 gates, up from 49.
+
+---
+
 ## 2026-08-28 — the duel becomes a published setting, and the rule forbidding it is reversed
 
 **Reverses the `DUEL_TUNING` decision recorded below** (*the duel was being improved by people who

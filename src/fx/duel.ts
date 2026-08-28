@@ -3107,10 +3107,9 @@ const TOTAL_WEIGHT = MODULES.reduce((n, m) => n + m.weight, 0);
  * state, so carrying it would mean a parameter through the director, the module
  * pool and the builder to express something that cannot vary within a page.
  *
- * Share codes are still excluded, and that part is unchanged rather than
- * forgotten: seven hyphen-separated base-36 fields cannot hold a per-page map
- * of fighter lists without a new format, which is a decision the client has not
- * been asked to make yet. See `TODO.md`.
+ * Share codes are still excluded, and that half is unchanged and now settled
+ * (2026-08-28): a code is a picture of the look and these are a document. See
+ * `SharedConfig` in `src/config/shareCode.ts` for the reasoning and the gate.
  *
  * **What has not changed is the paragraph below.** These are still multipliers
  * on values the fight already rolls, every default is still 1, and 1 must still

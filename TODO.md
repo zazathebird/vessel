@@ -8,8 +8,10 @@ what is left to do.
 
 ## 2026-08-28 — guardrails reach the page, and the duel becomes reviewable
 
-`npm run check` is **49 green**, up from 46. Three commits, all deployed: `7a39870`, `5bbc7cc`,
-`75ef788` (the carve and the twenty-four-fighter roster).
+`npm run check` is **50 green**, up from 46. Deployed today: `75ef788` (the carve, and the roster
+down to twenty-four), `c5e9899` (a stale header here), `c5c72f3` (the duel becomes a published
+per-page setting), and the share-code decision below — on top of yesterday's `7a39870` and `5bbc7cc`.
+Every one verified by pulling the live bundle and grepping it, not by trusting the repo.
 
 ### First, the thing to say out loud: the 2026-08-27 duel fixes ARE live
 
@@ -102,12 +104,20 @@ reversed at the client's request; `docs/DECISIONS.md` carries the reversal and h
    Gated at 24 and at a 12/12 split, verified by breaking it. **What is left needs eyes and is item 0
    above.**
 4. **The panel's guardrail notice**, above.
-5. **Ask him whether the duel settings should travel in a share code.** They do not today: a share
-   code is seven hyphen-separated base-36 fields, and a per-page map of fighter lists cannot be
-   packed into one without a new wire format — the share-code equivalent of a `VS2.` bump. They
-   publish through site config instead, which covers every visitor. **Not blocking, and flagged to
-   him already** — it is a question about whether a look he sends somebody carries the duel with it,
-   not a bug.
+5. ~~**Ask him whether the duel settings should travel in a share code.**~~ **Closed 2026-08-28 —
+   they do not, and it is a decision now rather than a question.** He handed the call back
+   (*"your call on what to do then if there is a conflict"*), and it turned out not to be his kind
+   of question at all: it is about a wire format, not about the business.
+
+   A share code is *a picture of the look* — every field an index into a fixed catalogue or a bit in
+   one integer. `duelPages` is *a document*: a sparse per-page map, partial entries, two
+   variable-length fighter lists, ~6.8KB fully specified. **The compromise is the thing to refuse** —
+   encoding the site-level settings and dropping the per-page map gives a code that parses cleanly,
+   reads as complete and silently omits part of what the sender was looking at, which is precisely
+   what `decodeSetupCode` refuses to do. Site config already distributes these, per page, validated,
+   with a publish button. Gated (`a share code carries the look and never the duel`) and verified by
+   widening `SharedConfig` to see it fail. **Reopen only if he asks for a look he can hand somebody
+   that carries the duel with it** — and the answer then is a second format, not a widened first one.
 
 ### Not started, unchanged from yesterday
 

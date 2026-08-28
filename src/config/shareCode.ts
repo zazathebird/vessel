@@ -80,7 +80,35 @@ export function encodeShareCode(config: Config): string {
     .toUpperCase();
 }
 
-/** The subset of config a code carries. Applying one also forces mode to Static. */
+/**
+ * The subset of config a code carries. Applying one also forces mode to Static.
+ *
+ * ## The duel settings are deliberately not in here (decided 2026-08-28)
+ *
+ * They were left as an open question when they landed and are now settled: a
+ * share code is **a picture of the look**, and `Config.duel` / `Config.duelPages`
+ * are **a document**. Every field below is an index into a fixed catalogue or a
+ * bit in one integer; `duelPages` is a sparse map keyed by page whose entries
+ * are partial and two of whose fields are variable-length lists of fighter ids.
+ * Fully specified it is about 6.8KB — a "code" nobody can paste.
+ *
+ * **The obvious compromise is the thing to avoid.** Encoding the site-level
+ * settings and quietly dropping the per-page map produces exactly the failure
+ * `decodeSetupCode` exists to refuse: a code that parses cleanly, renders as
+ * complete, and silently omits part of what the sender was looking at. The
+ * recipient sees a different site and nothing tells them why. Half a picture is
+ * worse than no picture, because no picture is obvious.
+ *
+ * And it buys little. Site config is already the distribution mechanism for
+ * these — it is per-page aware, validated field by field, and has a publish
+ * button. The only gap a code would close is carrying *unpublished* duel
+ * settings between browsers.
+ *
+ * **This being a `Pick` is what makes the decision safe**, and it is load
+ * bearing: a decoded code is applied with `update(shared)`, a patch, so an
+ * operator who pastes a setup keeps the duel settings they already had. Widen
+ * this type and that stops being true silently. Gated.
+ */
 export type SharedConfig = Pick<
   Config,
   | "pal"

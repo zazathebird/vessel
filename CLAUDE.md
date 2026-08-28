@@ -679,10 +679,18 @@ covers how to *see* any of this — rAF parks in an automated browser, so use `s
   key that grows without anybody editing `worker/site-config.ts`. It **fails loudly and must keep
   doing so**: truncating would inject a half-object that `loadConfig` then correctly refuses field by
   field, leaving the operator watching settings silently not apply.
-- **Share codes carry none of this**, deliberately and for now: seven hyphen-separated base-36 fields
-  cannot hold a per-page map of fighter lists without a new wire format of their own. (`VS1.`/`VS2.`
-  is the *setup code's* prefix, not this one — they are two separate formats.) Flagged to the client,
-  awaiting a decision — see `TODO.md`. Every default is arithmetic identity with the shipped engine, so the
+- **Share codes carry none of this, and that is decided rather than pending** (2026-08-28). A share
+  code is *a picture of the look*; `duel` and `duelPages` are *a document*. Every share-code field is
+  an index into a fixed catalogue or a bit in one integer, while `duelPages` is a sparse per-page map
+  whose entries are partial and two of whose fields are variable-length fighter lists — fully
+  specified, about 6.8KB, which is not a code anybody can paste. **The compromise is the thing to
+  refuse**: encoding the site-level settings and dropping the per-page map yields a code that parses
+  cleanly, reads as complete and silently omits part of what the sender was looking at — the exact
+  failure `decodeSetupCode` refuses. Site config is already the distribution mechanism, and it is
+  per-page aware, validated field by field and has a publish button.
+  **`SharedConfig` being a `Pick` is what makes it safe** — a decoded code is applied as a patch, so
+  pasting a setup keeps the duel settings you already had. Widening it breaks that silently. Gated,
+  and verified by widening it. Every default is arithmetic identity with the shipped engine, so the
   field changes nothing until somebody sets it.
 - **Every default is 1 and 1 must stay arithmetic identity.** Each knob is written as a multiplier on
   a value the fight already rolls, never as a replacement for one, so 360,000 stepped frames and
