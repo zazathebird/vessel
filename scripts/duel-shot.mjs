@@ -50,6 +50,12 @@ const onlyFlag = args.indexOf("--only");
 const ONLY = onlyFlag >= 0 ? args[onlyFlag + 1] : "";
 const pxFlag = args.indexOf("--px");
 const PX = pxFlag >= 0 ? args[pxFlag + 1] : "";
+/* `--tune circling,rest,impact,patience` drives `DUEL_TUNING` for this run, so
+ * the four knobs on /admin can be *seen* here and not only measured. Nothing is
+ * persisted: the whole point of that surface is that a value gets typed in as a
+ * constant once somebody has looked at it. */
+const tuneFlag = args.indexOf("--tune");
+const TUNE = tuneFlag >= 0 ? args[tuneFlag + 1] : "";
 mkdirSync(OUT, { recursive: true });
 
 /* The browser half. Imports the shipping module by absolute path so esbuild
@@ -60,10 +66,11 @@ writeFileSync(
   `
 import {
   advanceDuel, createDuel, drawDuel, duelFocus, FIGHTERS, FEET_Y, WORLD_W, WORLD_H,
-  BLADE_COLORS,
+  BLADE_COLORS, DUEL_TUNING,
 } from ${JSON.stringify(join(ROOT, "src/fx/duel"))};
 (window as any).__DUEL = {
   advanceDuel, createDuel, drawDuel, duelFocus, FIGHTERS, FEET_Y, WORLD_W, WORLD_H, BLADE_COLORS,
+  DUEL_TUNING,
 };
 `,
 );
@@ -334,6 +341,13 @@ function hitStrip(kind, pool, before, n, tag) {
 
 (async () => {
   const mode = new URLSearchParams(location.search).get('mode');
+  const tune = (new URLSearchParams(location.search).get('tune') || '').split(',').filter(Boolean).map(Number);
+  if (tune.length) {
+    const [circling, rest, impact, patience] = tune;
+    Object.assign(D.DUEL_TUNING, {
+      circling: circling ?? 1, rest: rest ?? 1, impact: impact ?? 1, patience: patience ?? 1,
+    });
+  }
   if (mode === 'hit' || mode === 'all') {
     await hitStrip('hit', ['hooded', 'caped'], 2, 12, 'landed');
     await hitStrip('block', ['haloed', 'horned'], 2, 12, 'blocked');
@@ -350,6 +364,16 @@ function hitStrip(kind, pool, before, n, tag) {
     await sheet(190, 'phone', 0);
     await sheet(340, 'desk', 0);
     await sheet(340, 'desk-moving', 300);
+  }
+  /* pace is strip asked a different question. A strip samples every 7th frame
+   * of one exchange, so it always looks busy — it is the wrong tool for "does
+   * the fight drag", because it never shows the gaps. This samples every 40th
+   * frame across ~13 seconds, roughly what somebody glancing at the ornament
+   * actually sees. (No backticks in here: this whole block lives inside a
+   * template literal in the node half, and one would end it.) */
+  if (mode === 'pace') {
+    await strip(['hooded', 'caped'], 600, 12, 40, 'pace-a');
+    await strip(['haloed', 'horned'], 1400, 12, 40, 'pace-b');
   }
   if (mode === 'strip' || mode === 'all') {
     await strip(['hooded', 'caped'], 240, 12, 7, 'order');
@@ -419,7 +443,7 @@ const chrome = spawn(
     "--no-sandbox",
     `--user-data-dir=${join(OUT, "chrome")}`,
     "--virtual-time-budget=20000",
-    `http://127.0.0.1:${port}/?mode=${MODE}&only=${encodeURIComponent(ONLY)}&px=${PX}`,
+    `http://127.0.0.1:${port}/?mode=${MODE}&only=${encodeURIComponent(ONLY)}&px=${PX}&tune=${encodeURIComponent(TUNE)}`,
   ],
   { stdio: ["ignore", "ignore", "pipe"] },
 );
