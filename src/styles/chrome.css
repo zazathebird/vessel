@@ -2682,6 +2682,46 @@
   color: var(--muted);
 }
 
+/* The setup-script checklist (SPEC-SHARING.md §4). Built on .v-drive-row's
+   shape deliberately — it is the same kind of thing one step earlier, and a
+   second visual idiom for "a folder and a button" would be one too many.
+
+   The path wraps rather than truncating with an ellipsis: it is there so
+   somebody can tell D:\Photos from C:\Users\me\Photos, and an ellipsis eats
+   the end of a path, which is the half that distinguishes them. */
+.v-setup-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.v-setup-row:last-of-type {
+  border-bottom: 0;
+}
+
+.v-setup-name {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--fg);
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* --muted, not --faint: this is the only thing telling two folders of the
+   same name apart, so it is content and has to pass contrast like content. */
+.v-setup-path {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  flex: 1 1 12ch;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 /* The explorer, List mode (§10). A dense sortable table is the accessible
    view — calm mode has nothing to collapse here yet. */
 .v-crumbs {

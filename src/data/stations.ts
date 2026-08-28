@@ -1,4 +1,3 @@
-import type { OrnamentId } from "./ornaments";
 
 /**
  * Where the hero ornament holds, and whether it stays there.
@@ -26,6 +25,40 @@ import type { OrnamentId } from "./ornaments";
  * deleting silently repoints every code already handed out. Withdraw with
  * `hidden`, exactly as the four circle ornaments were.
  */
+
+import type { OrnamentId } from "./ornaments";
+
+/**
+ * The station a config *actually renders at*, which is not always the one it
+ * stores (2026-08-27).
+ *
+ * `guardrails.ts` refuses `roam` with either duel, and has since 2026-08-18:
+ * roam fades the slot to 12% and re-acquires it at another bearing three times
+ * a revolution, and a duel is the one ornament with a subject to lose.
+ *
+ * **That rule only ever constrained the dice.** `isAllowed` has two callers —
+ * the randomiser and the check suite — so a roll is one of four ways a config
+ * arrives, and the other three walked straight past it: published from the
+ * operator panel, pasted as a share code (which carries ornament and station as
+ * independent fields), or restored from storage. Production shipped
+ * `duelholy` + `roam` for days, the client reported the fighters "grey out and
+ * then come back", and `npm run check` stayed green throughout **because the
+ * gate asserted the predicate rather than the page.**
+ *
+ * So the rule is enforced here as well, at the point all four paths converge —
+ * exactly the doctrine `Ornament.tsx` already records for the one-fight-at-a-
+ * time rule, which is this rule's sibling and got its half of the treatment
+ * three years of sessions earlier.
+ *
+ * **The station yields, never the ornament.** The operator picked the duel
+ * deliberately and the guardrail exists to protect it; substituting the
+ * ornament would throw away the thing being defended to satisfy the rule
+ * defending it. `hold` is the original behaviour and the only safe landing.
+ */
+export function effectiveStation(station: StationId, ornament: OrnamentId): StationId {
+  const duel = ornament === "duel" || ornament === "duelholy";
+  return duel && station === "roam" ? "hold" : station;
+}
 
 export type StationId = "hold" | "opposite" | "roam";
 

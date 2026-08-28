@@ -53,8 +53,17 @@ export const ORNAMENTS: { id: OrnamentId; label: string; hidden?: boolean }[] = 
   // the panel: shareCode.ts encodes the ornament as this array's *index*, so
   // putting anything ahead of an existing entry silently repoints every share
   // code in circulation — the same wire-format rule as FX.
-  { id: "duel", label: "Lightswords: light & dark" },
-  { id: "duelholy", label: "Lightswords: saint & serpent" },
+  { id: "duel", label: "Lightswords" },
+  /*
+   * **Withdrawn 2026-08-27, not deleted.** Both duel ornaments now draw from
+   * the whole roster (`DUEL_POOLS`), so this one and index 5 became the same
+   * thing, and two identical entries in a menu is worse than one. `hidden` is
+   * the documented withdrawal mechanism: a stored config or a share code naming
+   * `duelholy` still resolves to it and still works, it simply stops being
+   * offered. The published site config named it at the time, which is exactly
+   * the case `hidden` exists to keep working.
+   */
+  { id: "duelholy", label: "Lightswords: saint & serpent", hidden: true },
   /*
    * **Sonar — index 7, appended** (2026-08-17, client: *"a sonar with sweeping
    * radar ping would be better"*).

@@ -185,10 +185,29 @@ export function SiteConfigPanel() {
               style={{ background: palette.bg }}
               aria-pressed={config.pal === i}
               onClick={() => {
-                // Choosing a palette by hand pins it — otherwise the next roll
-                // would immediately overwrite the choice.
-                update({ pal: i, mode: "static" });
-                say(palette.name);
+                /*
+                 * **This used to also write `mode: "static"`, and that was the
+                 * second half of the stuck-randomiser bug** (2026-08-27).
+                 *
+                 * The old reasoning was sound as far as it went: pick a palette
+                 * while a randomiser is on and the next roll overwrites it. But
+                 * the swatch was the ONLY look control that did this — layout,
+                 * background, ornament, station and typography all write just
+                 * their own field — so choosing a colour silently turned the
+                 * randomiser off, and `publish` sent that. The operator set
+                 * "per page", touched a colour, published, and got a frozen
+                 * site with no indication of why.
+                 *
+                 * Silently changing a setting the operator did not touch is
+                 * worse than the overwrite it was avoiding. So: pick the
+                 * palette, leave the mode alone, and *say* what will happen.
+                 */
+                update({ pal: i });
+                say(
+                  config.mode === "static"
+                    ? palette.name
+                    : `${palette.name} — the randomiser will roll over this`,
+                );
               }}
             >
               <span className="v-swatch-dots" aria-hidden="true">

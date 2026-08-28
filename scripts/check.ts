@@ -26,6 +26,11 @@ import { join } from "node:path";
 
 import { qrMatrix } from "../src/auth/qr";
 import {
+  SETUP_CODE_PREFIX,
+  decodeSetupCode,
+  encodeSetupCode,
+} from "../src/share/setupCode";
+import {
   createDuel,
   createDuelFrom,
   advanceDuel,
@@ -44,7 +49,7 @@ import {
 } from "../src/fx/duel";
 import { duelCamera, ORNAMENT_PX } from "../src/components/DuelOrnament";
 import type { DuelCam } from "../src/components/DuelOrnament";
-import { BLADE_COLORS, DUEL_POOLS, FIGHTERS, rollPairing } from "../src/fx/fighters";
+import { BLADE_COLORS, DUEL_POOLS, FIGHTERS, NEVER_MEET, rollPairing } from "../src/fx/fighters";
 import type { CostumeCtx, FighterKind, FighterStyle } from "../src/fx/fighters";
 import { PAGES } from "../src/data/pages";
 import {
@@ -73,6 +78,7 @@ import { decodeShareCode } from "../src/config/shareCode";
 import { adaptLayout } from "../src/config/bands";
 import { DEFAULT_STATION, PICKABLE_STATIONS, STATIONS } from "../src/data/stations";
 import { isAllowed } from "../src/data/guardrails";
+import { effectiveStation } from "../src/data/stations";
 import { edgeState } from "../src/hooks/useEdgeFade";
 import type { Band } from "../src/config/bands";
 import { PRESETS } from "../src/data/presets";
@@ -2367,13 +2373,26 @@ check("duel: every costume is stroked, framed and aligned", () => {
    * the same failure as an unreachable duel module and is caught the same way:
    * by rolling, not by reading.
    */
+  /*
+   * **The cross-pool rule was replaced on 2026-08-27, not dropped.** It used to
+   * assert that no fighter appeared in two pools, because the pools were how
+   * lookalikes were kept apart. Measured, that cost four of the eight costumes:
+   * the ornament id is the pool key and the ornament is published config, so
+   * any given visitor could only ever see half the roster, four of twenty-eight
+   * pairs, with 72.7% of resets returning a fighter from the previous match.
+   *
+   * The pools are now the whole roster and `NEVER_MEET` carries the exclusions.
+   * So the assertion inverts: every fighter must be reachable from **every**
+   * pool, which is the check that would have caught the original fault.
+   */
   const seen = new Set<string>();
   const orders = new Set<string>();
+  const reachable = new Map<string, Set<string>>();
   for (const pool of Object.keys(DUEL_POOLS) as (keyof typeof DUEL_POOLS)[]) {
     const { good, evil } = DUEL_POOLS[pool];
     must(good.length > 0 && evil.length > 0, `pool ${pool} is one-sided`);
+    reachable.set(pool, new Set([...good, ...evil]));
     for (const s of [...good, ...evil]) {
-      must(!seen.has(s), `${s} is in more than one pool — pools are meant to keep lookalikes apart`);
       seen.add(s);
       must(
         FIGHTERS[s].side === (good.includes(s) ? "good" : "evil"),
@@ -2397,6 +2416,42 @@ check("duel: every costume is stroked, framed and aligned", () => {
   // Both arena ends, both pools: 2 pools × 2 good × 2 evil × 2 orders.
   const wanted = Object.values(DUEL_POOLS).reduce((n, p) => n + p.good.length * p.evil.length * 2, 0);
   must(orders.size === wanted, `${orders.size} of ${wanted} pairings rolled`);
+
+  // Every costume must be rollable from every pool. A costume nothing can roll
+  // is a costume nobody will ever see — the same failure as an unreachable duel
+  // module, and this is the assertion that was missing when four of them were.
+  for (const [pool, members] of reachable) {
+    for (const style of Object.keys(FIGHTERS)) {
+      must(
+        members.has(style),
+        `${style} is unreachable from pool ${pool} — every fighter must be rollable from every pool`,
+      );
+    }
+  }
+
+  // NEVER_MEET replaces the old split, so it has to name real fighters and it
+  // has to actually bite. A typo here would silently protect nothing.
+  for (const [a, b] of NEVER_MEET) {
+    must(a in FIGHTERS && b in FIGHTERS, `NEVER_MEET names an unknown fighter: ${a}/${b}`);
+    must(a !== b, `NEVER_MEET pairs ${a} with itself`);
+    must(
+      FIGHTERS[a].side !== FIGHTERS[b].side,
+      `NEVER_MEET lists ${a} and ${b}, who are the same side and could never meet anyway`,
+    );
+  }
+  {
+    // Roll hard against a stub rng that always returns the forbidden pair, and
+    // confirm the exclusion survives. Verified by adding a temporary entry.
+    for (const [a, b] of NEVER_MEET) {
+      for (let i = 0; i < 200; i += 1) {
+        const [x, y] = rollPairing("duel", () => Math.random());
+        must(
+          !((x === a && y === b) || (x === b && y === a)),
+          `rollPairing produced the excluded pairing ${a}/${b}`,
+        );
+      }
+    }
+  }
   return `${lines.length} costumes (${lines.join(", ")}), ${orders.size} pairings`;
 });
 
@@ -2530,6 +2585,62 @@ check("no preset offers a withdrawn effect or ornament", () => {
 //
 // New dimension, 2026-08-18. Three separate things here fail silently, which is
 // why it gets three assertions rather than a count.
+
+check("no ornament can render at a station the guardrails refuse", () => {
+  /*
+   * **This gate exists because its predecessor was green while production was
+   * broken** (2026-08-27). `check.ts` already asserted that
+   * `isAllowed({ornament:"duelholy", station:"roam"})` is false, and it was —
+   * and the live site shipped exactly that pairing for days, because
+   * `isAllowed` has two callers, the randomiser and this suite. A roll is one
+   * of four ways a config arrives; published config, share codes and stored
+   * config all walked past it, and the client watched his fighters fade to 12%
+   * three times a revolution.
+   *
+   * The lesson is the one `CLAUDE.md` already records about a retired promise
+   * rebuilt without its words: **the old gate tested the predicate, not the
+   * page.** This one drives `effectiveStation`, which is what the wrapper class
+   * is actually built from, so it fails if the resolver stops resolving.
+   */
+  // The dimensions this gate is not about, held constant at a known-allowed
+  // combination so any failure is attributable to the ornament/station pair.
+  const BASE_COMBINATION = {
+    palette: PALETTES[0].id,
+    layout: "cinematic" as const,
+    fx: "vessels" as const,
+    type: TYPESETS[0].id,
+    grain: false,
+  };
+
+  let refused = 0;
+  for (const ornament of ORNAMENTS) {
+    for (const station of STATIONS) {
+      const resolved = effectiveStation(station.id, ornament.id);
+
+      // Whatever a config stores, what RENDERS must be a pairing the
+      // guardrails permit. This is the assertion that was missing.
+      must(
+        isAllowed({ ...BASE_COMBINATION, ornament: ornament.id, station: resolved }),
+        `${ornament.id} + ${station.id} resolves to ${resolved}, which the guardrails still refuse`,
+      );
+
+      if (resolved !== station.id) {
+        refused += 1;
+        // The station yields; the ornament the operator chose must survive.
+        must(
+          resolved === DEFAULT_STATION,
+          `${ornament.id} + ${station.id} resolved to ${resolved}, expected the ${DEFAULT_STATION} fallback`,
+        );
+      }
+    }
+  }
+
+  // A resolver that never substitutes anything is a resolver that has been
+  // quietly disabled, and it would pass every assertion above.
+  must(refused > 0, "effectiveStation refused nothing — the roam/duel rule is no longer enforced anywhere");
+
+  return `${ORNAMENTS.length * STATIONS.length} ornament/station pairs, ${refused} resolved away from a refused pairing`;
+});
 
 check("stations: wire order, decode, and the roam guardrail bites", () => {
   // (a) The wire ORDER, not the count — a reorder passes every length check and
@@ -2967,6 +3078,218 @@ check("the served head carries exactly one description", () => {
     `index.html's description makes a claim the client retired: "${content}"`,
   );
   return `one in the shell, one injected, shell copy makes no retired claim`;
+});
+
+// A setup code is a wire format, and its failures are the silent kind: a code
+// that decodes to the wrong folders is a working code, so nothing throws and
+// nothing logs. Same reasoning as `shareCode.ts` and `paths.ts`, which are in
+// this harness for exactly that reason (SPEC-SHARING.md §4).
+check("setup codes round-trip, and refuse everything malformed", () => {
+  const plan = {
+    machine: "workshop",
+    folders: [
+      { label: "Photos", path: "D:\\Photos" },
+      { label: "Invoices", path: "C:\\Users\\me\\Documents\\Invoices" },
+      // Non-ASCII on both halves: a French filename is an ordinary thing here,
+      // and the encoder goes through UTF-8 and base64url to survive it.
+      { label: "Réparations", path: "D:\\Réparations\\2026" },
+    ],
+  };
+
+  const round = decodeSetupCode(encodeSetupCode(plan));
+  must(round !== null, "a code this encoder produced did not decode");
+  must(JSON.stringify(round) === JSON.stringify(plan), `round trip changed the plan: ${JSON.stringify(round)}`);
+
+  // One folder must survive. PowerShell 5.1's ConvertTo-Json turns a
+  // one-element array into a bare object, which is why the script builds its
+  // JSON by hand — and this is the case that would have shipped broken while
+  // every two-folder test passed.
+  const single = decodeSetupCode(encodeSetupCode({ machine: "", folders: [{ label: "One", path: "C:\\One" }] }));
+  must(single !== null && single.folders.length === 1, "a one-folder code did not decode");
+
+  const b64 = (json: string) =>
+    SETUP_CODE_PREFIX +
+    Buffer.from(json, "utf8").toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+  const rejected: Array<[string, string]> = [
+    ["not a code at all", "plain text"],
+    ["VS2.abc", "a future version"],
+    [SETUP_CODE_PREFIX + "!!!!", "not base64url"],
+    [b64("[]"), "an array rather than an object"],
+    [b64('{"n":"a"}'), "no folder list"],
+    [b64('{"n":"a","f":[]}'), "an empty folder list"],
+    [b64('{"n":"a","f":{}}'), "a folder list that is not an array"],
+    [b64('{"n":"a","f":[{"l":"x"}]}'), "a folder with no path"],
+    [b64('{"n":"a","f":[{"l":"","p":"C:\\\\x"}]}'), "an empty label"],
+    [b64('{"n":"a","f":[{"l":"x","p":"   "}]}'), "a whitespace path"],
+    [b64('{"n":"a","f":[{"l":5,"p":"C:\\\\x"}]}'), "a numeric label"],
+    [b64('{"n":"a","f":[null]}'), "a null folder"],
+    // The one that matters most: a label carrying a newline renders on the
+    // account and travels to anyone the folder is later shared with, where it
+    // can lie about how many rows there are.
+    [b64('{"n":"a","f":[{"l":"x\\ny","p":"C:\\\\x"}]}'), "a control character in a label"],
+    [b64('{"n":"a\\u0000","f":[{"l":"x","p":"C:\\\\x"}]}'), "a control character in the machine name"],
+    [b64(`{"n":"${"m".repeat(41)}","f":[{"l":"x","p":"C:\\\\x"}]}`), "an over-long machine name"],
+    [b64(`{"n":"a","f":[{"l":"${"L".repeat(41)}","p":"C:\\\\x"}]}`), "an over-long label"],
+    // A label that renders as something other than what it stores. Both fields
+    // are read by a person choosing which folder to hand over, so a label that
+    // lies is the whole attack — and two rows that render identically break the
+    // checklist's done-set silently.
+    [b64('{"n":"a","f":[{"l":"Family \\u202EsotohP","p":"C:\\\\x"}]}'), "a bidi override in a label"],
+    [b64('{"n":"a","f":[{"l":"Invoices\\u200b","p":"C:\\\\y"}]}'), "a zero-width space in a label"],
+    [b64('{"n":"a","f":[{"l":"x","p":"C:\\\\a\\u202Eb"}]}'), "a bidi override in a path"],
+    [b64('{"n":"a\\ufeff","f":[{"l":"x","p":"C:\\\\x"}]}'), "a byte-order mark in the machine name"],
+    // Two folders under one label collide in the checklist and one is silently
+    // never added, while the list reads complete.
+    [b64('{"n":"a","f":[{"l":"Photos","p":"C:\\\\a"},{"l":"Photos","p":"C:\\\\b"}]}'), "duplicate labels"],
+  ];
+
+  for (const [code, why] of rejected) {
+    must(decodeSetupCode(code) === null, `accepted ${why}`);
+  }
+
+  // Too many folders is refused rather than truncated: a truncated list renders
+  // as a complete checklist, and the folders past the cut are silently absent.
+  const many = {
+    machine: "m",
+    folders: Array.from({ length: 25 }, (_, i) => ({ label: `L${i}`, path: `C:\\p${i}` })),
+  };
+  must(decodeSetupCode(encodeSetupCode(many)) === null, "accepted more than 24 folders");
+
+  // Both halves of the wire format live in two languages, and the PowerShell
+  // half cannot be run from here. So: assert the script still emits the shape
+  // this decoder parses. Editing one side alone is what this catches.
+  const ps = readFileSync("scripts/windows-share-setup.ps1", "utf8");
+  must(ps.includes("'VS1.'"), "the Windows script no longer emits the VS1. prefix");
+  must(
+    ps.includes('{{"l":{0},"p":{1}}}'),
+    "the Windows script's folder JSON no longer matches what decodeSetupCode reads",
+  );
+  must(
+    ps.includes(`'{"n":'`),
+    "the Windows script's envelope JSON no longer matches what decodeSetupCode reads",
+  );
+  must(
+    ps.includes(".Replace('+', '-').Replace('/', '_').TrimEnd('=')"),
+    "the Windows script no longer produces base64url",
+  );
+
+  return `${rejected.length} malformed codes refused, round trip holds, the Windows encoder still agrees`;
+});
+
+/*
+ * The setup scripts' blocked-folder lists (SPEC-SHARING.md §4).
+ *
+ * These are a SECURITY CONTROL and the only one there is. A link to a blocked
+ * directory placed inside a picked folder is read normally by Chrome — crbug
+ * 40061477 — and the scripts recommend picking the share root as one folder, so
+ * nothing downstream catches a miss. Chrome's own position is that evading its
+ * blocklist is not a security bug, so it cannot be leaned on.
+ *
+ * Every entry below was absent at some point on 2026-08-27 and each absence had
+ * a working exploit: the parent of home (`/home`, `/Users`, `C:\Users`) exposed
+ * every account on the machine, and the credential directories were shareable
+ * because only `$HOME` itself was blocked, never its children — which are
+ * exactly the paths Chrome blocks with block-all-children semantics.
+ *
+ * This gate reads the scripts as text because it cannot run them. That is
+ * weaker than executing the logic and it is what is available; the execution
+ * evidence lives in the session that added it.
+ */
+check("the setup scripts refuse the folders that matter", () => {
+  const unix = ["scripts/linux-share-setup.sh", "scripts/macos-share-setup.sh"];
+
+  // Parse the actual token lists rather than substring-matching the file: a
+  // bare `includes("$HOME")` passes on `$HOME/.ssh` and would have proved
+  // nothing about whether the home directory itself is blocked.
+  const tokens = (text: string, name: string): string[] => {
+    const m = new RegExp(`${name}="([^"]*)"`).exec(text);
+    return m ? m[1].split(/\s+/).filter(Boolean) : [];
+  };
+
+  const requiredUnix: Record<string, { exact: string[]; prefix: string[] }> = {
+    "scripts/linux-share-setup.sh": {
+      exact: ["$HOME", "/home", "/etc", "/root", "/"],
+      prefix: ["$HOME/.ssh", "$HOME/.gnupg", "$HOME/.config"],
+    },
+    "scripts/macos-share-setup.sh": {
+      exact: ["$HOME", "/Users", "/System", "/Library", "/private", "/"],
+      prefix: ["$HOME/Library", "$HOME/.ssh", "$HOME/.gnupg"],
+    },
+  };
+
+  let checked = 0;
+  for (const [file, want] of Object.entries(requiredUnix)) {
+    const text = readFileSync(file, "utf8");
+    const exact = tokens(text, "BLOCK_EXACT");
+    const prefix = tokens(text, "BLOCK_PREFIX");
+    must(exact.length > 0, `${file} has no BLOCK_EXACT list`);
+    for (const entry of want.exact) {
+      must(
+        exact.includes(entry),
+        `${file} no longer blocks ${entry} — that list is a security control, not a convenience check`,
+      );
+      checked += 1;
+    }
+    for (const entry of want.prefix) {
+      must(
+        prefix.includes(entry),
+        `${file} no longer blocks ${entry} and everything under it`,
+      );
+      checked += 1;
+    }
+  }
+
+  {
+    const text = readFileSync("scripts/windows-share-setup.ps1", "utf8");
+    for (const entry of ["$env:USERPROFILE", "$env:SystemRoot", "$env:ProgramFiles"]) {
+      must(text.includes(entry), `windows-share-setup.ps1 no longer blocks ${entry}`);
+      checked += 1;
+    }
+  }
+
+  for (const file of unix) {
+    const text = readFileSync(file, "utf8");
+
+    // Fail closed. A path that cannot be canonicalised must be refused, never
+    // compared raw — otherwise the symlink hole reopens on any platform where
+    // the resolver is unavailable.
+    must(text.includes("canon()"), `${file} lost its path canonicaliser`);
+    must(
+      text.includes("Could not work out where that folder really is"),
+      `${file} no longer fails closed when a path cannot be resolved`,
+    );
+
+    // The leading `//` collapse: bash's `pwd -P` preserves it, and without this
+    // `//home/user` compared unequal to `/home/user` and was shared.
+    must(
+      text.includes('while [ "${p#//}" != "$p" ]'),
+      `${file} no longer collapses a leading double slash — //home/user would bypass the list`,
+    );
+
+    // Prefix matching, or blocking a directory does not block its children.
+    must(text.includes("BLOCK_PREFIX"), `${file} lost its prefix blocklist`);
+
+    // Case folding on Darwin, whose filesystem is case-insensitive.
+    must(text.includes("fold_case"), `${file} no longer folds case for macOS`);
+
+    /*
+     * The framing must stay correct, asserted POSITIVELY.
+     *
+     * The first version of this assertion checked that the old wrong phrase
+     * ("Refuse what the browser will refuse") was absent, and it failed
+     * immediately — because the replacement comment quotes that phrase in order
+     * to explain why it was wrong. An absence check cannot tell a live claim
+     * from a cited one. Requiring the true statement is both stricter and not
+     * defeated by someone discussing the old one.
+     */
+    must(
+      text.includes("This is a security control, not a convenience check"),
+      `${file} no longer calls its blocklist a security control — that framing is what stops it being relaxed to be helpful`,
+    );
+  }
+
+  return `3 scripts, ${checked} required blocklist entries, fail-closed and prefix matching intact`;
 });
 
 // ---- 6. Things only a person can judge -------------------------------------

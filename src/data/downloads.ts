@@ -40,14 +40,29 @@
  * nothing sniffs the visitor's platform. Somebody on a phone may well be
  * fetching a Windows tool to put on a memory stick.
  */
-export type DownloadPlatform = "windows" | "linux" | "android" | "script" | "any";
+export type DownloadPlatform =
+  | "windows"
+  | "linux"
+  | "android"
+  | "script"
+  | "any"
+  | "macos";
 
+/**
+ * **Appended, never inserted** (2026-08-27, when the sharing setup scripts
+ * arrived and the Mac one had nowhere to go). The stored value is the string
+ * itself rather than an index, so appending is genuinely safe here - but the
+ * order is what the editor's menu and the page's filter render, and a value
+ * that changes meaning is the failure this rule exists to prevent. Add
+ * platforms; never rename one.
+ */
 export const PLATFORMS: readonly DownloadPlatform[] = [
   "windows",
   "linux",
   "android",
   "script",
   "any",
+  "macos",
 ];
 
 /**
@@ -127,6 +142,7 @@ export const PLATFORM_LABEL: Record<DownloadPlatform, string> = {
   android: "Android",
   script: "Script",
   any: "Any machine",
+  macos: "macOS",
 };
 
 /* -------------------------------------------------------------------------- */
@@ -313,6 +329,10 @@ const PLATFORM_BY_EXT: Record<string, DownloadPlatform> = {
   bat: "windows", cmd: "windows",
   apk: "android", aab: "android",
   deb: "linux", rpm: "linux", appimage: "linux",
+  // `.sh` stays under `script` deliberately: a shell script is not a macOS
+  // thing, and mapping it here would mislabel every Linux upload. Only the
+  // extensions that genuinely name macOS are listed.
+  dmg: "macos", pkg: "macos",
   ps1: "script", sh: "script", py: "script", vbs: "script", pl: "script", rb: "script",
 };
 

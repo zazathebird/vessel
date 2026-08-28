@@ -90,9 +90,14 @@ settled.
 
 **Status: rebuilt 2026-08-13, live in the hero-ornament slot.** The match
 engine is `src/fx/duel.ts`, the ornament host is
-`src/components/DuelOrnament.tsx`, and both pairings are pickable in
-siteconfig's Ornament section (`Lightswords: light & dark`,
-`Lightswords: saint & serpent` — ornament share-code indices 5 and 6). **The
+`src/components/DuelOrnament.tsx`, and **one entry is pickable** in siteconfig's
+Ornament section — `Lightswords`, ornament share-code index 5. Index 6
+(`duelholy`, once *saint & serpent*) is **withdrawn but still resolves**: as of
+2026-08-27 both pools draw from the whole roster, so the two entries became
+identical. Before that each duel was locked to two good and two evil, which
+meant **four of the eight costumes were unreachable for any given visitor** —
+measured at 4 of 28 possible pairs, with 72.7% of match resets returning a
+fighter from the previous match. **The
 background-effect home is live again as of 2026-08-14**, at `FX` indices 12 and
 13 (`0-0-C-…`, `0-0-D-…`), which the entries held throughout — they spent a day
 flagged `hidden: true` because the HUD pass appended `scan` and `telemetry` and

@@ -442,7 +442,21 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     // double-invokes updaters, and a roll inside one applies a different
     // combination than it announces.
     const cfg = live.current.config;
-    if (cfg.mode === "visit") {
+    /*
+     * **`page` rolls here too, and its absence was the bug** (2026-08-27).
+     *
+     * `page` used to roll in exactly one place — `go`'s commit, which runs only
+     * on an in-app click. So a reload, a typed URL, a bookmark, an external
+     * link and back/forward all rendered the published look verbatim, and the
+     * operator's report was "i hit per load, per page, per everything, but it
+     * always stays stuck on one". He was right: a page *load* was not being
+     * treated as a page *arrival*, which is the only way anyone reads the label.
+     *
+     * `visit` and `page` therefore both roll on mount. They still differ, and
+     * the difference is the whole point of having both: `page` also rolls on
+     * every navigation, `visit` does not.
+     */
+    if (cfg.mode === "visit" || cfg.mode === "page") {
       const result = roll(cfg);
       if (result) setConfig((previous) => ({ ...previous, ...result }));
     } else if (cfg.mode === "tod" && returning) {
@@ -601,7 +615,16 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const onPop = () => {
-      setConfig((previous) => ({ ...previous, page: pageFromPath(window.location.pathname) }));
+      // Back and forward are page arrivals, so `page` mode rolls for them as it
+      // does for a click and for a load. Without this the browser's own buttons
+      // were the one route that stayed frozen, which is indistinguishable from
+      // the randomiser being broken.
+      const rolled = live.current.config.mode === "page" ? roll(live.current.config) : null;
+      setConfig((previous) => ({
+        ...previous,
+        ...(rolled ?? {}),
+        page: pageFromPath(window.location.pathname),
+      }));
       // Back and forward have to move the sub-page too, or the browser's own
       // buttons leave the URL and the screen disagreeing.
       setSub(subFromPath(window.location.pathname));

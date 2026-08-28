@@ -11,6 +11,8 @@
  * names keep the internal name (CLAUDE.md deviation 10).
  */
 
+import type { SetupPlan } from "./setupCode";
+
 const DB_NAME = "vessel-share";
 const STORE = "kv";
 
@@ -83,4 +85,18 @@ export const shareStore = {
   saveHandle: (driveId: string, handle: FileSystemDirectoryHandle) =>
     put(`handle:${driveId}`, handle),
   deleteHandle: (driveId: string) => del(`handle:${driveId}`),
+
+  /**
+   * The folder list a setup script produced, pasted in as a code
+   * (SPEC-SHARING.md §4).
+   *
+   * It lives here rather than in component state because the point of it is to
+   * survive: adding six folders is six separate picker gestures, and a person
+   * who does three, closes the tab and comes back must not have to run the
+   * script again. It is a to-do list and nothing else — it grants nothing, and
+   * losing it costs only the labels.
+   */
+  plan: () => get<SetupPlan>("setup-plan"),
+  savePlan: (plan: SetupPlan) => put("setup-plan", plan),
+  clearPlan: () => del("setup-plan"),
 };

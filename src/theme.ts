@@ -2,6 +2,7 @@ import type { CSSProperties } from "react";
 
 import { LOW_CONTRAST, PALETTES } from "./data/palettes";
 import { TYPESETS } from "./data/catalog";
+import { effectiveStation } from "./data/stations";
 import type { LayoutId } from "./data/catalog";
 import { BAND_TOKENS } from "./config/bands";
 import type { Band } from "./config/bands";
@@ -237,7 +238,14 @@ export function themeClasses(config: Config, layout: LayoutId, band: Band): stri
      * position, so the default deserves a selector to hang off rather than
      * being "the absence of the others".
      */
-    `station-${config.station}`,
+    /*
+     * **The resolved station, not the stored one.** `effectiveStation` refuses
+     * roam on a duel, which the guardrail table has forbidden since 2026-08-18
+     * and which nothing enforced on any path except the dice — see the comment
+     * on the resolver. The stored value survives untouched, so switching the
+     * ornament away from a duel brings roam back on its own.
+     */
+    `station-${effectiveStation(config.station, config.ornament)}`,
   ]
     .filter(Boolean)
     .join(" ");

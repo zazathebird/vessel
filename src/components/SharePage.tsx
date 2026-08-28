@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { ApiError, api, type MachineInfo } from "../auth/api";
+import { ApiError, api, type DriveInfo, type MachineInfo } from "../auth/api";
 import { fromBase64Url, toBase64Url } from "../auth/encoding";
 import { useSession } from "../auth/SessionContext";
 import { useConfig } from "../config/ConfigContext";
 import { VesselAgent, type AgentSnapshot } from "../share/agent";
 import { generateMachineKeypair } from "../share/handshake";
+import { decodeSetupCode, looksLikeSetupCode, type SetupPlan } from "../share/setupCode";
 import { shareStore, type StoredMachine } from "../share/store";
 import { derivePassword } from "../share/unlock";
 
@@ -458,6 +459,16 @@ function AgentPanel({
             </button>
           ) : null}
 
+          <SetupChecklist
+            drives={row.drives}
+            onAdd={async (label, handleForFolder) => {
+              const added = await api.driveAdd(row.id, label);
+              await shareStore.saveHandle(added.drive.id, handleForFolder);
+              await onChanged();
+              await refreshAttach();
+            }}
+          />
+
           <div className="v-account-form">
             <h3 className="v-field-label">Drives</h3>
             {row.drives.length === 0 ? (
@@ -533,6 +544,188 @@ function AgentPanel({
         </>
       )}
     </section>
+  );
+}
+
+/**
+ * The setup-script checklist (SPEC-SHARING.md §4).
+ *
+ * A setup script knows which folders the person chose, and cannot hand any of
+ * them to the browser — `showDirectoryPicker()` takes a human gesture and that
+ * is the whole reason this feature needs no installer. What the script can do
+ * is pass the *list* along in a code. Pasting it here turns six folders into
+ * six labelled buttons instead of six identical trips through a picker with
+ * nothing to say which folder was which.
+ *
+ * **A row is done when a drive with that label exists**, rather than when this
+ * component says so. Derived state cannot drift: re-pairing the machine, adding
+ * a folder by hand, or removing one all move the checklist correctly without it
+ * having to be told.
+ */
+function SetupChecklist({
+  drives,
+  onAdd,
+}: {
+  drives: DriveInfo[];
+  onAdd: (label: string, handle: FileSystemDirectoryHandle) => Promise<void>;
+}) {
+  const { say } = useConfig();
+  const [plan, setPlan] = useState<SetupPlan | null | undefined>(undefined);
+  const [paste, setPaste] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void shareStore.plan().then(setPlan);
+  }, []);
+
+  const done = new Set(drives.map((drive) => drive.label));
+
+  function applyCode(event: React.FormEvent) {
+    event.preventDefault();
+    const decoded = decodeSetupCode(paste);
+    if (!decoded) {
+      setError(
+        looksLikeSetupCode(paste)
+          ? "That setup code is damaged — copy it again from setup-code.txt, or run the script again."
+          : "That does not look like a setup code. It starts with VS1. and comes from the setup script.",
+      );
+      return;
+    }
+    setError(null);
+    setPaste("");
+    setPlan(decoded);
+    void shareStore.savePlan(decoded);
+    say(`Setup list read — ${decoded.folders.length} folder${decoded.folders.length === 1 ? "" : "s"}.`);
+  }
+
+  function discard() {
+    void shareStore.clearPlan().then(() => setPlan(null));
+  }
+
+  async function addOne(label: string) {
+    setError(null);
+    setBusy(label);
+    try {
+      const picked = await window.showDirectoryPicker!({ mode: "read" });
+      await onAdd(label, picked);
+      say(`${label} added.`);
+    } catch (cause) {
+      if ((cause as { name?: string }).name !== "AbortError") {
+        setError(
+          cause instanceof ApiError ? cause.message : `Could not add ${label}. Try that one again.`,
+        );
+      }
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  if (plan === undefined) return null;
+
+  if (plan === null) {
+    return (
+      <form className="v-account-form" onSubmit={applyCode}>
+        <h3 className="v-field-label">Ran the setup script?</h3>
+        <label className="v-field">
+          <span className="v-field-label">Setup code</span>
+          <input
+            className="v-input"
+            type="text"
+            value={paste}
+            spellCheck={false}
+            autoComplete="off"
+            placeholder="VS1."
+            onChange={(event) => setPaste(event.target.value)}
+          />
+          <span className="v-field-hint">
+            The script puts this on your clipboard and in a file called setup-code.txt. It lists the
+            folders you chose so this page can label them — it is not a password and it opens nothing.
+          </span>
+        </label>
+        <button type="submit" className="v-btn" disabled={paste.trim().length === 0}>
+          Read the list
+        </button>
+        {error ? (
+          <p className="v-account-error" role="alert">
+            {error}
+          </p>
+        ) : null}
+      </form>
+    );
+  }
+
+  const remaining = plan.folders.filter((folder) => !done.has(folder.label));
+
+  return (
+    <div className="v-account-form">
+      <h3 className="v-field-label">From the setup script</h3>
+
+      {/*
+        Clearing is offered whether or not the list is finished, and that is the
+        point rather than an oversight.
+
+        A row ticks itself off by matching a drive label, so somebody who took
+        the script's other suggestion — pick the share folder once and let the
+        links inside it cover everything — ends up sharing all of it under one
+        label while every row still reads "Choose folder". Without a way out,
+        the page would nag them for ever about work they have already done. The
+        same applies to anyone who simply changed their mind about a folder.
+
+        It is a list of suggestions, so throwing it away costs nothing and needs
+        no confirmation: nothing shared is removed, and re-running the script
+        prints the code again.
+      */}
+      {remaining.length === 0 ? (
+        <p className="v-account-note">
+          Every folder on the list has been added.{" "}
+          <button type="button" className="v-account-link" onClick={discard}>
+            Clear the list
+          </button>
+          .
+        </p>
+      ) : (
+        <p className="v-account-note">
+          {remaining.length} of {plan.folders.length} still to add. Each one needs you to choose it in
+          the picker — the browser will not take a folder any other way, which is why nothing had to be
+          installed.{" "}
+          <button type="button" className="v-account-link" onClick={discard}>
+            Clear the list
+          </button>{" "}
+          if you have finished with it another way.
+        </p>
+      )}
+
+      {plan.folders.map((folder) => {
+        const added = done.has(folder.label);
+        return (
+          <div key={folder.label} className="v-setup-row">
+            <span className="v-setup-name">{folder.label}</span>
+            <span className="v-setup-path" title={folder.path}>
+              {folder.path}
+            </span>
+            {added ? (
+              <span className="v-field-hint">added</span>
+            ) : (
+              <button
+                type="button"
+                className="v-btn"
+                disabled={busy !== null}
+                onClick={() => void addOne(folder.label)}
+              >
+                {busy === folder.label ? "Choose it…" : "Choose folder"}
+              </button>
+            )}
+          </div>
+        );
+      })}
+
+      {error ? (
+        <p className="v-account-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </div>
   );
 }
 

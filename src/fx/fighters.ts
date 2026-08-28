@@ -895,13 +895,59 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
   },
 };
 
-/** Which fighters each duel draws from. `duel` is the order's fight; `duelholy`
- *  is the war in heaven. Every pool is one side against the other, so a match
- *  is always good against evil and the blade colours always disagree. */
+/**
+ * Which fighters each duel draws from. Every pool is one side against the
+ * other, so a match is always good against evil and the blade colours always
+ * disagree — that half is load-bearing and unchanged.
+ *
+ * **Both pools are now the whole roster (2026-08-27, client).** They used to be
+ * a themed four each — the order's fight and the war in heaven — and the cost
+ * of that was measured rather than argued: with two good and two evil per pool,
+ * **four of the eight costumes were unreachable for any given visitor**, only
+ * four of the twenty-eight pairs could ever occur, and **72.7% of match resets
+ * brought back at least one fighter from the previous match** (23.9% returned
+ * the identical pair). The ornament id *is* the pool key and the ornament is
+ * published site config, so which half of the roster a visitor could see was
+ * fixed for everyone. The client's report was "only a couple characters get
+ * chosen ever, always starts with the same characters", and he was right.
+ *
+ * Merged: all eight are reachable, sixteen pairs instead of four, per-fighter
+ * appearance evens out at ~25% instead of ~52%, and back-to-back identical
+ * pairings fall from 24% to 7%.
+ *
+ * **What this gave up, stated because it was a real reason.** The roster
+ * comment above says confusable fighters were kept in different pools so they
+ * never meet. That protection is gone, and it is replaced by a specific
+ * exclusion list rather than by splitting the roster in half again — a blunt
+ * instrument that cost four costumes to solve a problem with at most a couple
+ * of pairs. Add to `NEVER_MEET` if two of them turn out to read alike.
+ */
 export const DUEL_POOLS: Record<DuelPool, { good: FighterStyle[]; evil: FighterStyle[] }> = {
-  duel: { good: ["hooded", "maned"], evil: ["caped", "cowled"] },
-  duelholy: { good: ["haloed", "winged"], evil: ["horned", "crowned"] },
+  duel: {
+    good: ["hooded", "maned", "haloed", "winged"],
+    evil: ["caped", "cowled", "horned", "crowned"],
+  },
+  duelholy: {
+    good: ["hooded", "maned", "haloed", "winged"],
+    evil: ["caped", "cowled", "horned", "crowned"],
+  },
 };
+
+/**
+ * Pairs that must never be drawn together because they read alike at ornament
+ * size. Empty today and deliberately kept: it is the mechanism that replaces
+ * the old pool split, so the next "these two look the same" report is one entry
+ * rather than a re-halving of the roster.
+ *
+ * Order-insensitive. `npm run check` asserts every entry names real fighters.
+ */
+export const NEVER_MEET: ReadonlyArray<readonly [FighterStyle, FighterStyle]> = [];
+
+function forbidden(a: FighterStyle, b: FighterStyle): boolean {
+  return NEVER_MEET.some(
+    ([x, y]) => (x === a && y === b) || (x === b && y === a),
+  );
+}
 
 export type DuelPool = "duel" | "duelholy";
 
@@ -919,7 +965,18 @@ export function rollPairing(
   rng: () => number = Math.random,
 ): [FighterStyle, FighterStyle] {
   const { good, evil } = DUEL_POOLS[pool];
-  const g = good[Math.floor(rng() * good.length) % good.length];
-  const e = evil[Math.floor(rng() * evil.length) % evil.length];
+
+  let g = good[Math.floor(rng() * good.length) % good.length];
+  let e = evil[Math.floor(rng() * evil.length) % evil.length];
+
+  // Re-roll a forbidden pairing rather than filtering the pools, so the draw
+  // stays uniform over what is allowed and an empty NEVER_MEET costs nothing.
+  // Bounded: a runaway list must not spin here, and falling through with the
+  // last roll is better than hanging the ornament.
+  for (let attempt = 0; attempt < 8 && forbidden(g, e); attempt += 1) {
+    g = good[Math.floor(rng() * good.length) % good.length];
+    e = evil[Math.floor(rng() * evil.length) % evil.length];
+  }
+
   return rng() < 0.5 ? [g, e] : [e, g];
 }

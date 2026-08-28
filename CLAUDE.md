@@ -17,6 +17,8 @@ each was found; that is history, and history lives in `docs/DECISIONS.md`.
 | `docs/DOWNLOADS.md` | The downloads runbook — upload a program, mint a code, give one away |
 | `docs/SECURITY-AUDIT.md`, `docs/BREAK-GLASS.md` | Standing security notes; operator recovery of last resort |
 | `docs/FONTS.md`, `docs/PHOTOS.md` | Asset ledgers — keep in sync when either changes |
+| `design/SPEC-SHARING.md` | Sharing, hosted storage and setup. **DRAFT, awaiting sign-off**; §2 is its decision log |
+| `docs/SHARING-SETUP.md` | The setup-script runbook — publish them, and what is known not to work |
 | `docs/pi-sharing-host.md`, `docs/thinkcentre-sharing-host.md` | Phase 2's always-on host |
 | `design/GUIDE-SUBDOMAINS.md` | How to add a page; what per-account subdomains would break |
 
@@ -440,11 +442,15 @@ All deliberate. Add to this list rather than silently diverging.
 5. **"Breathing" does something** — the prototype defines a `v-breathe` keyframe and never attaches it.
    It drives the vignette at the valve's 4.6s rhythm: no reflow, no text resampling, no scrollbar.
 6. **Contact's primary CTA reveals the address** instead of navigating to the page it is already on.
-7. **The hero ornament is a setting, not a fixture** (`src/data/ornaments.ts`) — **eight, four
-   withdrawn**. Lens, Valve, Aperture and Orrery carry `hidden`: they resolve from stored config and
-   share codes but appear in no menu (`PICKABLE_ORNAMENTS`, and `ROLLABLE_ORNAMENTS` = pickable minus
-   "None", because a rolled empty hero slot is indistinguishable from a broken page). Offered: None,
-   the two lightsword duels, and **Sonar** (index 7, `DEFAULT_ORNAMENT`). **An out-of-range share-code
+7. **The hero ornament is a setting, not a fixture** (`src/data/ornaments.ts`) — **eight, five
+   withdrawn**. Lens, Valve, Aperture, Orrery and `duelholy` carry `hidden`: they resolve from stored
+   config and share codes but appear in no menu (`PICKABLE_ORNAMENTS`, and `ROLLABLE_ORNAMENTS` =
+   pickable minus "None", because a rolled empty hero slot is indistinguishable from a broken page).
+   Offered: None, **Lightswords** (index 5) and **Sonar** (index 7, `DEFAULT_ORNAMENT`).
+   **`duelholy` was withdrawn 2026-08-27, not deleted**: both duels now draw from the whole roster
+   (`DUEL_POOLS`), so the two entries became the same thing and two identical menu rows is worse than
+   one. Every stored config and share code naming it still resolves and still works — which is the
+   case `hidden` exists for, and the published site config named it at the time. **An out-of-range share-code
    ornament field resolves to `DEFAULT_ORNAMENT`, not index 0** — index 0 is withdrawn. Sonar's contact
    flares are `animation-delay`-matched to the beam's arrival at their bearing, arithmetic written out
    in `chrome.css`: **retime the beam and every delay is wrong.** All eight sit in one square slot, so
@@ -749,6 +755,99 @@ wrong machine is worse than not running. `docs/pi-sharing-host.md` and
   work it out. **In `sshd_config` the first value wins**, so a drop-in below an earlier setting is
   written, reloaded and silently ignored — the script asks `sshd -T` whether its settings actually
   took rather than trusting that writing the file was enough.
+
+## The setup scripts — the invariants
+
+`design/SPEC-SHARING.md` §4 is the design and `docs/SHARING-SETUP.md` is the runbook. Three scripts —
+`windows-share-setup.ps1` (with `launch.bat`), `macos-share-setup.sh`, `linux-share-setup.sh` — plus
+`setup-bundle.sh`, which builds what gets published.
+
+- **A script cannot hand a browser a folder, and that is the feature, not the obstacle.**
+  `showDirectoryPicker()` needs a human gesture; that sandbox boundary is why this needs no installer
+  and no code-signing certificate, and why a path bug here cannot reach the whole disk. **The target
+  is one click, once, forever — never zero.** Anything promising zero is a native agent, which is a
+  certificate and a second copy of the trust model.
+- **The setup code carries no authority and must never become an API call.** It is a list of names
+  that grants nothing; the worst a hostile one does is *suggest* a folder the person still has to pick
+  themselves. Making it a POST would put a credential in a downloaded script and add a write route to
+  defend. **Phase S adds no table, no route and no credential** — that is what let it ship without a
+  security review, and it is worth keeping.
+- **The code is a two-language wire format**: PowerShell and shell encoders, a TypeScript decoder.
+  `npm run check` asserts the round trip, refuses twenty-one malformed shapes, **and greps the PowerShell
+  script for its exact JSON template and base64url transformation**, so editing one side alone fails.
+  Verified by breaking it. **Bump to `VS2.` rather than changing the shape of `VS1.`.**
+- **`ConvertTo-Json` is not used, and neither shell script uses `jq`.** PowerShell 5.1 collapses a
+  one-element array into a bare object, so somebody sharing exactly one folder would produce a code the
+  site refuses — while everyone testing with two saw it work.
+- **`decodeSetupCode` refuses; it never repairs.** A half-decoded plan renders as a complete checklist,
+  the person ticks every row, and a folder they asked to share is silently absent. They would find out
+  while away from that machine. **It refuses more than malformed structure**: a label or path carrying
+  a bidi override or a zero-width character is rejected, because both fields are read by a person
+  deciding which folder to hand over, and a label that *renders* as something other than what it
+  stores is the whole attack - as are two rows that render identically, one of which ticks off and
+  one of which does not. **Duplicate labels are refused too**, since they collide in the checklist's
+  done-set.
+- **The PowerShell JSON escaper branches on the integer code point, never on `switch`.** PowerShell's
+  `switch` compares linguistically, so every zero-collation-weight character - emoji variation
+  selectors, ZWJ, zero-width space, soft hyphen - compared equal to the first zero-weight clause and
+  was written out as `\b`. A folder called "Photos [emoji]" produced a code the site then refused,
+  after the links had already been made. `-CaseSensitive` does not fix it; `-eq` does not have it.
+- **`@()` around the folder collection is load-bearing.** A one-element array unrolls on return and
+  `Set-StrictMode -Version 2.0` suppresses the scalar `.Count` shim, so choosing exactly one folder
+  crashed the script. It worked with two, which is why it would have survived every test but the
+  first real one.
+- **The scripts' chrome goes to stderr; stdout is a data channel.** `choose_folders` returns the
+  chosen paths on stdout and the caller reads it with `while read < <(...)`. While `note`/`good`
+  wrote to stdout, the instructions and the "Added:" lines were read back as folder paths - every
+  interactive run told the customer their folders did not exist, and with no zenity the prompt
+  concatenated onto the typed path and nothing survived.
+- **The blocked-folder lists in all three scripts are a security control, and they are the ONLY
+  barrier.** A link to a blocked directory inside a picked folder is read normally by Chrome - it
+  blocks those as "do not pick", never "do not read" (crbug 40061477) - Chrome's own position is that
+  evading its blocklist is not a security bug, and the scripts recommend picking the share root as one
+  folder. So nothing downstream catches a miss. **Never relax an entry to be helpful, and never
+  describe this as an echo of what Chrome refuses**; that framing is what left it with working
+  bypasses. `npm run check` asserts the required entries, the fail-closed branch, the prefix matching
+  and the framing sentence itself. Four rules, each of which had a working exploit on 2026-08-27:
+  - **Canonicalise first, and fail closed.** Exact equality on the raw path let `/home/user//`,
+    `/home/./user`, `//home/user` and `/home/user/../user` straight through. `cd -P` + `pwd -P` on
+    Unix (`readlink -f` is absent on BSD, and failing silently there re-opens the hole); `GetFullPath`
+    plus a bounded `.Target` walk on Windows (`ResolveLinkTarget` is .NET 6+ and absent from
+    PowerShell 5.1). **A path that cannot be resolved is refused, never compared raw.**
+  - **Collapse a leading `//`.** Bash's `pwd -P` preserves it, so `//home/user` canonicalised to
+    itself and compared unequal to `/home/user`. Measured, not theorised.
+  - **Block the parent of home** - `/home`, `/Users`, `C:\Users`. The cheapest exploit of the lot:
+    "type `C:\Users` in the box" hands over every account on the machine, and the share root lives
+    inside it, so the junction was recursive as well.
+  - **Prefix-match, not exact-match.** `$HOME` was blocked and none of its children were, so
+    `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.config` and `~/Library` were all shareable - precisely the
+    paths Chrome blocks with block-all-children semantics. The script was opening what Chrome
+    deliberately closed. Windows also blocks `%LOCALAPPDATA%` and `%APPDATA%`, and refuses UNC/device
+    paths and 8.3 short names (`C:\PROGRA~1` is stable on every install).
+- **`--undo` removes links, never their targets, and refuses a share folder without its marker file.**
+  Deleting through a symlink is how somebody's photographs get deleted. Both are tested.
+- **The scripts leave the lid alone.** They stop idle sleep on mains when asked and warn when they see
+  a battery. A laptop taught not to sleep in a bag gets hot, and somebody who shuts a lid expects
+  sleep — changing that silently is a dangerous surprise, not a convenience.
+- **Junctions need no administrator; symbolic links do.** That is why Windows uses a junction, and it
+  is what keeps the whole prepare step running as an ordinary user. **A script that demands
+  administrator for its safe half teaches people to give administrator to scripts.**
+- **`CHECKSUMS.txt` and the readable `.txt` copies are generated, never typed.** A checksum in a
+  document is wrong the first time a script changes, and the person who suffers is the one who checks
+  properly, sees a mismatch, and concludes they were handed something tampered with. **The `.txt`
+  downloads rather than opening** — `worker/downloads.ts` forces `attachment` and `octet-stream`
+  unconditionally — so the page says "open it in a text editor", never "read it in your browser".
+- **The scam warning goes above the download.** This page asks for exactly the behaviour `/scams`
+  teaches people to refuse, so it earns the trust rather than assuming it: published source, checksum,
+  and "if somebody rang you and asked you to run this, hang up." Same ordering rule as `/setup`, and
+  for a stronger reason.
+- **A browser directory listing may be incomplete and will not say so.** Since Chrome M132, `entries()`
+  silently drops files whose resolved path is blocked and still reports success. **The phase-2 explorer
+  inherits this**, so nothing may present a listing as provably complete, and "that file is not there"
+  is never a safe thing to render as certainty.
+- **Which browser profile is the most bug-prone line in phase S.** The folder handles live in one
+  profile, not in the browser; a login task opening another gets a page that has never heard of the
+  machine. Windows takes `-BrowserProfile`; the others say so in their manual notes.
 
 ## Downloads — the invariants
 

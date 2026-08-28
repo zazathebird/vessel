@@ -13,6 +13,214 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-27 — The sharing build: phase S (setup scripts), and two findings about shipped code
+
+The client asked for the thing the site was always for — choose files on your computer, share them,
+reach them from anywhere. Phase 2 has done that since 2026-08-14 and almost nobody can set it up, so
+the work was designed as four phases in `design/SPEC-SHARING.md` (a **draft**, awaiting sign-off) and
+the first was built.
+
+### The constraint the whole design turns on
+
+**A script cannot hand a browser a folder.** `showDirectoryPicker()` requires a human gesture. That is
+not an obstacle to route around: it is the reason this feature exists with no installer and no
+code-signing certificate, and it is why a path bug in our code cannot reach the whole disk. So the
+scripts do everything *around* the click, and the target is **one click, once, forever** — not zero.
+Zero clicks is a native agent, which is phase N and costs an OV certificate (~$300–500/yr) plus a
+second implementation of the fingerprint trust model.
+
+### The setup code is deliberately not an API call
+
+The obvious design — the script POSTs its folder list to an authenticated endpoint — would mean a
+downloaded script holding a credential, and a new write route to defend, on the one artefact `/scams`
+tells people to be suspicious of. Instead the script prints `VS1.<base64url JSON>`, copies it to the
+clipboard and writes it to a file; `/share` decodes it into a checklist.
+
+**The code carries no authority.** It is a list of names: it grants nothing, opens nothing, and the
+worst a hostile one can do is *suggest* a folder the person must then pick themselves from the real
+picker. **Phase S therefore adds no server surface at all** — no table, no route, no credential —
+which is why it could be built without a security review.
+
+`ConvertTo-Json` is not used, and that is not fussiness: Windows PowerShell 5.1 turns a one-element
+array into a bare object, so somebody sharing exactly one folder would have produced a code the site
+refuses, and it would have worked perfectly for everyone testing with two.
+
+### The junction question, and why the answer is recorded as unproven
+
+Whether Chrome traverses a Windows junction or a POSIX symlink out of a picked folder decides whether
+the one-pick "share everything" path exists. **Read out of the Chromium source: it traverses.**
+`FileSystemAccessDirectoryHandleImpl::DidReadDirectory` runs the sensitive-path check on files only,
+and Chromium's own unit test asserts the directory exemption in as many words. Verified on the
+shipping branch with both feature flags compiled on.
+
+**It is still filed as unverified, because nobody watched it happen.** Two attempts to measure it here
+failed — the picker is a native dialog this environment cannot drive; a fake XDG portal answered a
+directory request but the walk output was never captured before the browser was torn down. Chromium
+tests junctions nowhere at all. This project's standing rule is that "verified" and "could not be
+observed here" are different claims, so the scripts offer the fast path as *"worth a try first"*, the
+checklist underneath does not depend on it, and the download page may not promise it.
+
+### Two findings that outrank it, both about code that already shipped
+
+**1. `entries()` silently returns a subset, and has since Chrome M132 (stable January 2025).** A file
+whose *resolved* path is blocked is omitted from a directory listing and the call still reports
+success — no exception, no signal to the page. **The phase-2 explorer inherits this today**: a
+customer can open a shared folder and simply not see a file, with nothing anywhere saying so. Chrome
+published nothing about the change; the only outside record is a 2023 bug report from a developer
+whose 3,000 files came back as "far fewer than 3,000". The explorer must never present a listing as
+provably complete.
+
+**2. The share-root-of-links pattern is the shape of a known blocklist bypass** (crbug 40061477, a
+$1,000 VRP, fixed only for the file leg). Home, Desktop, Documents and Downloads are blocked as *"you
+may not pick this"* rather than *"you may not read this"*, so a link to one of them **inside** a
+picked folder reads it. All three scripts refuse to link the home folder, the system root and the
+drive roots — **those lists are a security control, not a tidiness check**, and relaxing one to be
+helpful re-opens it. Chrome's own position is that evading the blocklist is not a security bug, so
+nothing here may lean on it as a boundary.
+
+### What was verified by running it, and what was not
+
+Run on Linux, which is the only platform reachable from here: the script end to end; **its output fed
+through the real `decodeSetupCode`**, accents intact, which is the cross-language check that matters;
+`--undo` proven to remove links and not their targets (a file inside a linked folder survived); and
+`--undo` proven to refuse a share folder without its marker file, so pointing it at somebody's real
+`~/Shared` does nothing.
+
+**Never run: the Windows and macOS scripts.** They cannot be, from here. Both follow the Linux one's
+shape, and that is an argument rather than a test.
+
+### The gate, and two defects it did not catch
+
+`npm run check` gained a setup-code gate — round trip, twenty-one malformed shapes refused (sixteen at
+first; five more when the decoder learned to refuse deceptive labels), and a grep of
+the PowerShell encoder for its exact JSON template and base64url transformation, so editing one side
+of a two-language wire format alone fails the suite. Verified by breaking it deliberately.
+
+**A claim audit then found two things in this session's own work that no gate could have caught.** All
+three scripts told the user to click a *"Share them all at once"* button that does not exist in
+`SharePage.tsx`; and `setup-bundle.sh` claimed its `.txt` copies open in the browser, when
+`worker/downloads.ts` sets `content-disposition: attachment` and `octet-stream` unconditionally and
+deliberately. The second is the exact failure the audit exists for: **a plausible sentence, sourced
+from a comment in this repository, that the code contradicts.** Both fixed.
+
+### The duel: three faults, and a guardrail that only ever constrained the dice
+
+Reported together — fighters "grey out and then come back to full white and in focus", "only a couple
+characters get chosen ever", and the randomiser "always stays stuck on one".
+
+**1. The greying was published config, not a renderer bug.** `ornament: duelholy` + `station: roam`.
+Roam fades `.v-ornament` 1 → 0.12 and back three times per 14.4s cycle and shifts it ±84px during the
+hold. `guardrails.ts` has forbidden that pairing since 2026-08-18 — *"a roaming duel is a duel you
+cannot follow"* — and it shipped anyway, because **`isAllowed` has two callers: the randomiser and
+the check suite.** A roll is one of four ways a config arrives; publish, share codes and stored config
+walked straight past. Ruled out by measurement rather than argument: the hit flash never runs longer
+than 6 frames and makes bodies *brighter*, and the adaptive tier cannot reach the ornament, which
+draws into a fixed 700px buffer.
+
+Fixed with `effectiveStation()` in `src/data/stations.ts`, read by `theme.ts` where the wrapper class
+is built — the point all four config paths converge, which is the doctrine `Ornament.tsx` already
+records for this rule's sibling. **The station yields, never the ornament**: the operator chose the
+duel deliberately and the guardrail exists to protect it.
+
+**And the gate that was green throughout is the lesson.** `check.ts` already asserted
+`isAllowed({ornament:"duelholy", station:"roam"})` was false — and it was, while production shipped
+exactly that. **The old gate tested the predicate, not the page.** The replacement drives the
+resolver over every ornament × station pair, and additionally fails if the resolver stops substituting
+anything at all — a disabled resolver would pass every other assertion.
+
+**2. Four of the eight fighters were unreachable.** Each duel was locked to two good and two evil, and
+the ornament id *is* the pool key, so the visible half of the roster was fixed for every visitor.
+Measured before: 4 of 28 pairs, 72.7% of match resets returning a fighter from the previous match,
+23.9% returning the identical pair. Measured after merging: **8 of 8 fighters, 16 pairs, per-fighter
+appearance ~12.5% each, back-to-back repeats down from 23.9% to 5.9%.**
+
+The split had a real reason — the roster comment says confusable fighters were kept apart — so it is
+replaced by `NEVER_MEET`, an exclusion list honoured by `rollPairing` with a bounded re-roll, rather
+than by a blunt instrument costing four costumes. `duelholy` is withdrawn via `hidden` rather than
+deleted, so every stored config and share code naming it still resolves. **The old cross-pool gate
+was inverted rather than dropped**: every fighter must now be reachable from *every* pool, which is
+the assertion that would have caught this.
+
+**3. `mode: "page"` never rolled on a page load.** It rolled only inside `go()`'s commit, an in-app
+click — so reload, typed URL, bookmark, external link and back/forward all rendered the published look
+verbatim. "Per page" was not treating a page *load* as a page *arrival*, which is the only way anyone
+reads the label. Now rolls on mount and on `popstate` as well.
+
+**The second half was the palette swatch**, the only look control that wrote `mode`, silently setting
+`static`. Its stated reason was sound as far as it went — pick a colour under a randomiser and the
+next roll overwrites it — but layout, background, ornament, station and typography all write only
+their own field, so choosing a colour quietly turned the randomiser off and `publish` sent that.
+**Silently changing a setting the operator did not touch is worse than the overwrite it avoided**, so
+the swatch now leaves `mode` alone and says *"the randomiser will roll over this"*.
+
+### The security pass, and what it found in this session's own work
+
+Three reviews. Every finding below was demonstrated by execution.
+
+**The blocklist was the only barrier and had four holes.** Because a link to a blocked directory
+*inside* a picked folder is read normally by Chrome (crbug 40061477), and the scripts recommend
+picking the share root, nothing downstream catches a miss — yet the comments described the lists as an
+echo of what Chrome would refuse. That framing is what left them with: exact string equality on the
+raw path (`//home/user`, `/home/./user`, `/home/user//`, `/home/user/../user` all passed); no symlink
+resolution anywhere; **the parent of every profile absent from every list** (`/home`, `/Users`,
+`C:\Users` — "type `C:\Users` in the box" hands over every account, and the share root lives inside
+it, so the junction was recursive); and `$HOME` blocked while `~/.ssh`, `~/.gnupg`, `~/.config` and
+`~/Library` were not — precisely the paths Chrome blocks with block-all-children semantics, so **the
+script was opening what Chrome deliberately closed.** Windows additionally fell to 8.3 short names,
+device paths and unresolved junctions.
+
+Now: canonicalise then compare, **fail closed** when a path cannot be resolved, prefix matching, case
+folding on Darwin, and a recursion guard. `cd -P`/`pwd -P` rather than `readlink -f`, which BSD lacks;
+a bounded `.Target` walk on Windows rather than `ResolveLinkTarget`, which PowerShell 5.1 lacks.
+**One hole was only found by testing**: bash's `pwd -P` preserves a leading `//`, so `//home/user`
+canonicalised to itself and compared unequal. No amount of reading would have caught that.
+
+**Three defects in code written this same session**, each with the same shape — works in the common
+case, breaks in the first real one:
+
+- **Choosing exactly one folder crashed the Windows script.** A one-element array unrolls on return
+  and `Set-StrictMode -Version 2.0` suppresses the scalar `.Count` shim. It worked with two.
+- **The PowerShell JSON escaper corrupted emoji and zero-width characters.** `switch` compares
+  linguistically, so every zero-collation-weight character compared equal to the first zero-weight
+  clause and was emitted as `\b`. "Photos ❤️" produced a code the site refused *after* the links were
+  made. Now branches on the integer code point.
+- **The shell scripts printed their interface to stdout while the caller captured stdout as the folder
+  list.** Every interactive run told the customer their folders did not exist; a headless Linux box
+  shared nothing at all.
+
+**The decoder now refuses deceptive labels.** Bidi overrides, zero-width characters and duplicate
+labels are rejected: the label is written to the account and shown to everyone the folder is later
+shared with, so one that *renders* as something other than what it stores is the whole attack — as are
+two rows rendering identically where only one ticks off.
+
+**Kept, because it is the honest reading:** of the three `/scams` mitigations, only *"hang up and ring
+back on a number you looked up yourself"* engages a phone scam. The published source serves someone
+who can audit 750 lines of PowerShell, who is not the person at risk, and the SHA-256 is served from
+the same page over the same connection as the file it describes. Every one of those signals is free
+for a scammer to clone.
+
+**Left open and recorded:** `isAllowed` still constrains only the dice. One rule is now enforced at
+render; sixteen remain violable by hand from the panel, including `grain` on a `LOW_CONTRAST` palette,
+which is a WCAG regression publishable to every visitor at once.
+
+### Also decided
+
+- **`DownloadPlatform` gained `macos`**, appended and never inserted. `.dmg` and `.pkg` map to it;
+  **`.sh` deliberately stays under `script`**, because a shell script is not a macOS thing and mapping
+  it would put a confident wrong label on every Linux upload.
+- **Per-page appearance was agreed** (client) — every dial, all seventeen pages, after phase S. The
+  transition was delegated and decided as **bleed the colour, snap the structure**: the 0.9s palette
+  bleed is the site's signature and worth keeping across navigation, but a layout or typeface changing
+  *during* a colour fade reflows text mid-transition and collides with the `.v-block` entrance stagger
+  that already runs on every page change.
+- **The randomiser stays on** (client: *"keep it rolling, and ill change whenever i feel like it"*), so
+  per-page overrides must compose with `mode: "visit"` rather than assume a static base.
+- **A reported "white page" was chased and was not the site.** It was an unstyled probe fixture on a
+  local port. Recorded so it is not re-investigated: all 25 palettes are dark, `base.css:19` paints
+  `#0b0a1f` before the tokens mount, and the stylesheet is render-blocking.
+
+---
+
 ## 2026-08-26 (evening) — Rounds 4 and 5 of the copy review; and Tailscale comes off `/setup`
 
 The copy overhaul ran three rounds and stopped at a session limit. Round 4 (voice consistency

@@ -6,6 +6,126 @@ what is left to do.
 
 ---
 
+## 2026-08-27 — the sharing build (phase S), the duel fixes, and a security pass
+
+Two pieces of work in one session. `design/SPEC-SHARING.md` is the design for the first and is a
+**DRAFT awaiting sign-off**; `docs/SHARING-SETUP.md` is its runbook. `npm run check` finished at
+**46 green**, up from 43.
+
+### Phase S — setup scripts. Built, hardened, not yet published.
+
+`scripts/windows-share-setup.ps1` + `launch.bat`, `macos-share-setup.sh`, `linux-share-setup.sh`,
+`setup-bundle.sh`; `src/share/setupCode.ts`; the paste box and checklist on `/share`.
+
+**The design turns on one constraint:** a script cannot hand a browser a folder, because
+`showDirectoryPicker()` needs a human gesture — and that sandbox boundary is *why* this needs no
+installer and no code-signing certificate. So the scripts do everything around the click, and the
+target is one click, once, forever. The setup code is carried on the clipboard and decoded in the
+browser, so **phase S adds no server route, table or credential.**
+
+**Still to do before it ships:**
+
+1. **Publish it.** `bash scripts/setup-bundle.sh` builds the bundle; `docs/DOWNLOADS.md` is the
+   upload runbook; `docs/setup-downloads-copy.md` is the page copy, already claim-audited. Nothing is
+   uploaded yet, so nothing about phase S is live.
+2. **The `.ps1` must ship as UTF-8 with a BOM.** Windows PowerShell 5.1 reads a BOM-less file with
+   the ANSI code page, so its twelve em dashes render as `â€"` — on a page whose whole pitch is
+   "read it before you run it". `launch.bat` wants ASCII + CRLF for the same reason. Make
+   `setup-bundle.sh` assert both so it cannot regress.
+3. **Run it on real Windows and a real Mac.** Neither has been. See `docs/SHARING-SETUP.md` for
+   exactly what *was* exercised — the Windows script has been parsed and partly executed under
+   PowerShell 7, which is not the 5.1 target.
+4. **The junction fast path stays unpromised.** Chrome does traverse a junction or symlink out of a
+   picked folder — read out of the Chromium source, where directory entries are exempt from the
+   sensitive-path check by construction and Chromium's own unit test says so — but **nobody has
+   watched it happen** and Chromium tests junctions nowhere. The scripts offer it as "worth a try";
+   the checklist does not depend on it; the download page must not promise it.
+5. `--undo` does not restore the sleep settings it changed, and leaves `setup-code.txt` behind.
+6. The shell `json_string` should **strip** control characters rather than escape them — the decoder
+   refuses them either way, so escaping only moves the failure later.
+
+### The duel — three faults, all found and fixed
+
+Reported as: fighters "grey out and then come back to full white and in focus"; "only a couple
+characters get chosen ever"; and the randomiser "always stays stuck on one".
+
+1. **Greying was `station: roam` on a duel ornament** — a pairing `guardrails.ts` has forbidden since
+   2026-08-18 ("a roaming duel is a duel you cannot follow"). Roam fades the slot 1 → 0.12 and back
+   three times per 14.4s cycle and shifts it ±84px during the hold. **It was publishable because
+   `isAllowed` had only two callers, the randomiser and the check suite** — publish, share codes and
+   stored config all walked past it. Fixed with `effectiveStation()` in `src/data/stations.ts`, read
+   by `theme.ts` where the wrapper class is built, following the doctrine `Ornament.tsx` already
+   records for this rule's sibling. **The station yields, never the ornament.**
+2. **Only four of eight fighters were reachable.** Each ornament was locked to two good and two evil
+   and the ornament id *is* the pool key, so which half a visitor could see was fixed for everyone.
+   Measured: 4 of 28 pairs, 72.7% of resets returning a fighter from the last match, 23.9% identical.
+   Pools merged; measured after: **8 of 8 fighters, 16 pairs, back-to-back repeats 5.9%.** The old
+   split kept lookalikes apart — that is now `NEVER_MEET`, an exclusion list, rather than a cost of
+   four costumes.
+3. **`mode: "page"` never rolled on a page load** — only inside `go()`, an in-app click. Reload, typed
+   URL, bookmark and back/forward all rendered the published look verbatim. And the palette swatch was
+   the only look control that wrote `mode`, silently setting `static`. Both fixed; the swatch now says
+   "the randomiser will roll over this" instead of quietly disabling it.
+
+**Open, and worth your attention:** `isAllowed` still constrains only the dice. One rule is now
+enforced at render; the other sixteen remain violable by hand from the panel — including `grain` on a
+`LOW_CONTRAST` palette, which is a WCAG regression publishable to every visitor at once.
+
+**Not done, and offered:** whether the fights *read* well is on the "needs a person" list by
+construction — rAF parks in an automated browser. Judge it once the three fixes are live; if it is
+still flat, the useful next step is a director pass against `handoff_duel_engine/duel-cycle-v2.html`,
+not a design tool.
+
+### The security pass on phase S
+
+Three reviews (PowerShell, shell, and a security review with a child audit). Everything below was an
+exploit demonstrated by execution, not a reading, and each is now closed **and gated**:
+
+- **The blocklist was bypassable on all three platforms.** Exact string equality on the raw path let
+  `//home/user`, `/home/./user`, `/home/user//` and `/home/user/../user` through; symlink targets were
+  never resolved; the parent of home (`/home`, `/Users`, `C:\Users`) was on no list at all; and
+  `$HOME` was blocked while `~/.ssh`, `~/.gnupg`, `~/.config` and `~/Library` were not — the exact
+  directories Chrome blocks with block-all-children semantics. Windows additionally fell to 8.3 short
+  names, device paths and unresolved junctions. Now: canonicalise-then-compare, **fail closed**,
+  prefix matching, case folding on Darwin, and a recursion guard.
+- **Choosing exactly one folder crashed the Windows script** — a one-element array unrolls on return
+  and StrictMode 2.0 kills the scalar `.Count` shim. It worked with two.
+- **The PowerShell JSON escaper corrupted emoji and zero-width characters**, because `switch` compares
+  linguistically and every zero-collation-weight character matched the backspace clause. A folder
+  called "Photos ❤️" produced a code the site refused *after* the links were made.
+- **The shell scripts printed their UI to stdout while the caller captured stdout as the folder
+  list**, so every interactive run reported the chosen folders as non-existent, and a headless Linux
+  box shared nothing at all.
+- **The decoder now refuses bidi overrides, zero-width characters and duplicate labels** — a label is
+  written to the account and shown to everyone you later share with, so one that renders as something
+  other than what it stores is the whole attack.
+
+**The honest note on the `/scams` tension**, from the security review and worth keeping: of the three
+mitigations, only *"hang up and ring back on a number you looked up yourself"* engages a phone scam.
+Published source helps someone who can read 750 lines of PowerShell, who is not the person at risk;
+and the SHA-256 is served from the same page over the same TLS connection as the file it describes,
+so against the stated threat it does close to nothing. Every one of those signals is free for a
+scammer to clone.
+
+### Per-page appearance — agreed, not started
+
+Client wants **every dial on all seventeen pages**, set from the admin panel. Transition decided:
+**bleed the colour, snap the structure** — the 0.9s palette bleed is the site's signature, but a
+layout or typeface changing mid-fade reflows text and collides with the `.v-block` entrance stagger.
+The randomiser stays on ("keep it rolling, and ill change whenever i feel like it"), so overrides must
+compose with `mode: "visit"` rather than assume a static base. **`ConfigContext` builds its initial
+state synchronously**, so a landing-page override has to arrive through the Worker's injection or
+every cold load bleeds from the wrong look — and **both `PUBLISHED_KEYS` arrays must learn the new
+shape**, or it is dropped silently on publish.
+
+### Not a bug: the white page
+
+Chased and recorded so it is not re-investigated. It was an unstyled probe fixture on a local port,
+not any route on the site: all 25 palettes are dark, `base.css:19` paints `#0b0a1f` before the tokens
+mount, and the stylesheet is render-blocking.
+
+---
+
 ## 2026-08-26 (evening) — rounds 4 and 5 of the copy review, run and applied
 
 The copy overhaul ran three rounds and stopped at the session limit. **Round 4 (voice
