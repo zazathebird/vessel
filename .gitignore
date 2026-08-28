@@ -20,3 +20,8 @@ dist/
 !.claude/skills/
 .claude/settings.local.json
 .claude/*.lock
+
+# A handoff bundle built on demand for an external design project. Everything
+# in it is a copy of something already tracked, so committing it would be two
+# copies of the engine that can disagree.
+/presentation/
