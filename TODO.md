@@ -8,15 +8,17 @@ what is left to do.
 
 ## 2026-08-28 — guardrails reach the page, and the duel becomes reviewable
 
-`npm run check` is **48 green**, up from 46. Two commits, both deployed: `7a39870`, `5bbc7cc`.
+`npm run check` is **48 green**, up from 46. Three commits, all deployed: `7a39870`, `5bbc7cc`,
+`75ef788` (the carve and the twenty-four-fighter roster).
 
 ### First, the thing to say out loud: the 2026-08-27 duel fixes ARE live
 
 The client re-reported all three faults verbatim. They are fixed and shipped — verified in
 production, not in the repo. The published config still reads `layout: "split"`,
 `station: "roam"`, `mode: "page"`, and the page rendered `layout-cinematic … station-opposite`:
-the roll fired on load and `effectiveStation` bit. Both pools are the full roster of eight in the
-shipped bundle. **If he still sees it, he is on a cached bundle** — the answer is a hard reload,
+the roll fired on load and `effectiveStation` bit. Both pools are the full roster in the shipped bundle —
+**twenty-four since `75ef788`**, verified by pulling the live bundle and grepping it for all eight new
+ids and all twenty-four deleted ones. **If he still sees it, he is on a cached bundle** — the answer is a hard reload,
 not a fix. Check production before re-fixing anything he re-reports.
 
 ### Guardrails now reach the page, not only the dice
