@@ -216,13 +216,17 @@ asked of a slightly different fight.
 The client's requirement: *"make the characters obvious and instantly identifiable."*
 `frontend-design` was loaded for it, per the standing instruction.
 
-The roster is `src/fx/fighters.ts`: **forty costumes since 2026-08-28**, twenty good and twenty evil,
-both pools the whole roster — 400 pairings each and 1,600 rolled orderings. It shipped as **eight
-costumes**, four good and four evil, in two pools of four pairings each. `duel` fights The Hermit / The Apprentice against The Mask / The Hollow;
-`duelholy` fights The Saint / The Seraph against The Devil / The Crown. Both duels roll a pairing
-on mount **and again on every match reset**, so the fighters change every ~52 seconds — the
-character-level half of *"not a set amount of looping duels"*, since two fighters who never change
-are still a loop at the scale anybody watches at.
+The roster is `src/fx/fighters.ts`: **twenty-four costumes since 2026-08-28**, twelve good and twelve
+evil, both pools the whole roster — 144 pairs each and 288 rolled orderings. It shipped as **eight
+costumes**, four good and four evil, in two pools of four pairings each: `duel` fought The Hermit /
+The Apprentice against The Mask / The Hollow, and `duelholy` fought The Saint / The Seraph — both
+deleted on 2026-08-28 — against The Devil / The Crown. **Neither split survives** — since 2026-08-27
+both duels draw from the whole roster, which is why `duelholy` was withdrawn as a menu entry. It went
+to forty on 2026-08-28 and came back to twenty-four the same day; `docs/DECISIONS.md` has both
+entries and *phase 2c* below has the reason.
+Both duels roll a pairing on mount **and again on every match reset**, so the
+fighters change every ~52 seconds — the character-level half of *"not a set amount of looping
+duels"*, since two fighters who never change are still a loop at the scale anybody watches at.
 
 What shipped, against what was planned:
 
@@ -236,7 +240,9 @@ What shipped, against what was planned:
   contact" bug class, bought for nothing.
 - **No edge pass was needed.** The brief wants one because its bodies are filled in near-black; ours
   are stroked in the palette's `--fg` over the palette's background, so they cannot disappear into a
-  dark arena. Noted rather than skipped silently.
+  dark arena. Noted rather than skipped silently. **Reversed 2026-08-28 — see phase 2c.** The
+  reasoning was true and answered the wrong question: an edge is not about contrast against the
+  arena, it is about a mark reading against the mark behind it.
 - **Every costume declares its `headroom` and `duelFocus` frames on it.** Clearance above the head
   was a flat 26 units, which is fine for four marks that all sat on a skull and wrong for horns, a
   halo and a pair of wings. Measured over 320,000 frames across all eight pairings: at the flat
@@ -301,6 +307,51 @@ and phone size. Six costumes were rebuilt on sight across three rounds. `docs/DE
 about why interior detail is worthless on this canvas.
 
 **Still open, unchanged from phase 2:** whether they read *while moving*.
+
+### Phase 2c — the carve, and the roster settles at twenty-four — **shipped 2026-08-28**
+
+Out of date order — it lands after phase 4 — but it belongs here, because it finishes what 2b
+started and it is the same finding one level down.
+
+Phase 2b gave the costumes bodies and the roster still read as one drawing repeated, so the answer
+reached for was **more costumes**: eight became forty, twenty a side, in eight tranches of four. That
+was the wrong lever. **The roster read flat because the renderer drew wire** — constant-width bones,
+two stroked ribcage edges beside a spine line, and every mark laid over every other with nothing
+between them, so a helmet did not stop where the skull started and the near leg did not cross in
+front of the far one. No number of costumes fixes that.
+
+Two changes, and this is the section `docs/DUEL.md` (*The carve*) states in full:
+
+- **The body is a mass.** Tapered capsules, two per limb so the elbow and knee are joints; a torso
+  shape between the shoulders and the hips, with `prop.build` setting its width at chest, waist and
+  hips; capsule feet. Draw order — back leg → torso → shoulders → neck → head → front leg → off arm →
+  sword arm — **is** the depth.
+- **Every shape carries its own edge.** Each mark is laid twice, first in the palette's background
+  role at a wider line and then in ink. **The brief wanted an edge pass and phase 2 declined it**, on
+  the grounds that stroked bodies over the palette's background cannot disappear into a dark arena —
+  which was true and answered a different question. The carve is not about contrast against the
+  arena; it is about a mark reading against *the mark behind it*. `rim: 0` switches it off and is the
+  rollback.
+
+**Then the roster came back down to twenty-four, twelve a side, the same day.** Once the renderer
+drew mass, twenty-four of the forty were visibly either a second copy of a stronger silhouette (three
+brimmed hats, four blocks for a head, two capes to the floor) or a costume whose whole read was
+interior detail — a sash, a bead loop, a bandage, a bird. That is 2b's own finding arriving again:
+**interior detail is worthless on this canvas**, and at 61px it is the first thing to go. Eight new
+archetypes went in and sixteen were kept unchanged, giving **144 pairs per pool and 288 rolled
+orderings**, and a per-fighter appearance rate of ~8.3% within a side against ~5% at forty. The pools
+are still derived from `FIGHTERS[].side`; `NEVER_MEET` is still empty.
+
+**Gated.** 48 green, with a new assertion that the roster is 24 and the split is exactly 12/12 — the
+per-side half being the one that matters, since the pools are derived from `side` and a costume added
+with the wrong alignment skews every pairing roll silently. Verified by breaking it. The render cost
+was measured rather than inferred: **0.097 → 0.172 ms/frame** with the carve on, software-rasterised
+at the ornament's real 700×700.
+
+**Still open, and it is 2b's question with one addition:** whether twenty-four read while moving at
+phone size — the nearest pair on the sheet is executioner against sentinel, opposite sides, so they
+can meet — and whether the carve holds on the pale palettes (`xerox`, `peat`), where it reads as a
+light gap rather than a dark rim.
 
 ### Phase 3 — new moves — **shipped 2026-08-20**
 

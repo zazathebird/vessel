@@ -61,17 +61,29 @@ unmistakably — the haloed figure gained shoulder-length hair, a floating
 two-pass halo, a light aura and a fuller robe; the horned one curved horns, a
 scalloped bat wing and a swaying spade-tipped tail; the hooded one a deeper
 hood, a belt in its blade colour and a tunic skirt; the caped one a domed
-helmet, a lit chest panel with belt boxes and a floor-length cape. (2) **Blades
-are now literal colours** — good fights in blue/green, evil in red, in every
+helmet, a lit chest panel with belt boxes and a floor-length cape. (**The haloed
+figure was deleted on 2026-08-28**; The Prophet carries the halo now, and the
+other three are still on the roster.) (2) **Blades are now literal colours** —
+good fights in blue/green, evil in red, in every
 palette (`BLADE_COLORS` in `src/fx/duel.ts`). That is the site's one deliberate
 literal-colour carve-out; everything else in the scene still recolours with the
 palette bleed. CLAUDE.md *Known deviations* 9 records both.
 
-**Update 2026-08-28: the roster is forty, twenty a side.** Thirty-two archetypes added in eight
-tranches of four, with the contact sheet read between each. What the building of them taught is in
-`CLAUDE.md` under *Fighters and costume* and at the head of `src/fx/fighters.ts`; the short version is
-that a costume fails in three ways at this size — two shapes on a head with no gap between them, a
-proportion that was not pushed far enough, and detail that lives inside the outline instead of on it.
+**Update 2026-08-28: the roster is twenty-four, twelve a side — and the bodies are carved.** It went
+to forty first, in eight tranches of four with the contact sheet read between each, and came back
+down the same day. The reason is in *The carve* below: the roster read flat because the renderer drew
+wire, and adding costumes could not fix that. Once it drew mass, twenty-four of the forty were either
+a second copy of a stronger silhouette (three brimmed hats, four blocks for a head, two capes to the
+floor) or a costume whose whole read was interior detail — a sash, a bead loop, a bandage, a bird —
+and **interior detail is the first thing to go at 61px**, which is the size this renders at. Those
+twenty-four went, eight new archetypes came in and sixteen were kept unchanged: **144 pairs per pool
+and 288 rolled orderings**, against 400 and 1,600 at twenty a side, and a per-fighter appearance rate
+of ~8.3% within a side.
+`ROSTER_GOOD` / `ROSTER_EVIL` are still derived from `FIGHTERS[].side`, and `NEVER_MEET` is still
+empty. What the building of them taught is in `CLAUDE.md` under *Fighters and costume* and at the
+head of `src/fx/fighters.ts`; the short version is that a costume fails in three ways at this size —
+two shapes on a head with no gap between them, a proportion that was not pushed far enough, and
+detail that lives inside the outline instead of on it.
 
 **Update 2026-08-18: the four silhouettes are a roster of eight.** Phase 2 of
 `docs/DUEL-ABSORB.md`, client: *"make the characters obvious and instantly
@@ -89,8 +101,8 @@ fills), and every costume **declares how far above the head it reaches**, which
 and wings on 0.07% of frames.
 
 **The naming and likeness constraint below is unchanged and is now absolute in
-code:** the roster carries archetypes only (The Hermit, The Mask, The Saint, The
-Hollow…), and there is no proper noun anywhere in the file. Nametags were
+code:** the roster carries archetypes only (The Hermit, The Mask, The Prophet,
+The Hollow…), and there is no proper noun anywhere in the file. Nametags were
 declined — a label over a 61px figure captions a fight, which deviation 8
 settled.
 
@@ -270,6 +282,47 @@ asking which. **Answered: bars are ornament-only, and there is no match counter
 or winner text anywhere** — the fallen fighter, the spark burst and the winner's
 raised blade are the announcement, for the same reason the hero vitals strip was
 removed (show, do not caption).
+
+## The carve — 2026-08-28
+
+Porting rule 1 above says every colour comes off the palette. **The carve is the
+second consumer of that rule**, and it is what took the fighters from wire to
+mass.
+
+- **Every bone is a tapered capsule**, wide at the root and narrow at the tip,
+  two per limb so the elbow and the knee are visible joints. The torso is a
+  shape between the shoulders and the hips; `prop.build` sets how wide that mass
+  is at chest, waist and hips, and the spine stroke and the two stroked ribcage
+  edges it replaced are gone. Feet are a short capsule each.
+- **Draw order is the depth.** Back leg → torso → shoulders → neck → head →
+  front leg → off arm → sword arm. Nothing else establishes it.
+- **Every shape carries its own edge.** Each mark is laid down twice: first in
+  the palette's **background role** at a wider line, then in ink. So a helmet
+  stops where the skull starts, and the near leg crosses in front of the far
+  one. The second tone is a role (`bg`), **never a literal**, so it cross-fades
+  with the 0.9s bleed and holds on all 25 palettes — on the pale ones the carve
+  reads as a light gap rather than a dark rim, which is the same information.
+- **`rim: 0` switches it off, and that is the rollback.** `CostumeCtx` carries
+  `paper` and `rim`; `DuelView` takes `paper` (required) and `rim` (optional,
+  defaulting to the exported `DEFAULT_RIM = 1.7`). Zero is also the right value
+  for any surface that draws the duel over an image rather than over a palette,
+  where there is no background role to carve with.
+- **`solid()` has a clipped inner shadow** — paper, alpha 0.34× the fill, offset
+  up and left — so a helmet has a top and an underside. **The clip is what stops
+  it becoming the 2026-08-14 slab.** `strokeInk()` carves stroked marks.
+- **Two strokes are deliberately uncarved:** the prophet's two halo rings, drawn
+  in the blade colour. They are light, not cloth, and a background-coloured rim
+  around a glow is a hole punched in the thing that is meant to be glowing.
+
+**Measured, not estimated.** Headless Chrome with `--disable-gpu` (software
+rasteriser), at the ornament's real 700×700, 3,000 frames per condition, run
+twice and averaged: **0.097 ms/frame carve off, 0.172 ms/frame carve on** — a
+1.77× multiplier on the duel's own draw, about **1% of a 60fps frame budget**.
+Software-rasterised, so a real GPU is the favourable direction.
+
+**Not answered here:** whether the carve holds on the pale palettes (`xerox`,
+`peat`), where it is a light gap rather than a dark rim. That case has not been
+looked at in a browser.
 
 ## ~~Sound~~ — built 2026-08-14
 

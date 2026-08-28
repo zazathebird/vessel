@@ -63,21 +63,36 @@ for why it may never become `Config`.
 
 ### Next, in order
 
-0. **Look at the forty fighters on a phone.** New today and top of the list because it is cheap and it
-   is the only unanswered question about them — everything else about the roster is gated. Open the
-   duel on `/admin`, or just watch the hero ornament, and say if any two are the same fighter to you.
+0. **Look at the twenty-four fighters on a phone.** Top of the list because it is cheap and it is the
+   only unanswered question left about them — everything else about the roster is gated.
+   **Do any two read as the same fighter?** Open the duel on `/admin` or just watch the hero ornament.
+   **Watch executioner against sentinel first** — flat/soft/square against tall/hard/square, the
+   nearest pair on the contact sheet. They are on opposite sides, so they *can* be drawn together. If
+   two do read alike, the fix is one line in `NEVER_MEET`; the gate expects entries in it.
+
+   **The pale-palette question is closed, and it was closed by measurement rather than by looking.**
+   The carve draws each mark's edge in the palette's *background* role, so the handoff warned it would
+   invert to a light gap on a pale palette and wanted that looked at. **There is no pale palette on
+   this site**: all 25 are dark-on-light-text, the brightest `bg` is Clay at a relative luminance of
+   **0.0104** and every `fg` sits between 0.88 and 0.94. So the carve reads as a dark rim on all 25 by
+   construction and the contrast behind it barely varies. **This becomes a live question again the day
+   a light palette is added** — that is the condition to watch, not a browser pass. `rim: 0` turns the
+   carve off and is the rollback either way.
 
 1. **Get the client's numbers off the four sliders.** The pacing fix is the same work whatever the
    fighters look like, and his eye is the one thing that cannot be substituted for. Then type the
    winning values in as constants and delete nothing — the knobs stay for the next argument.
-2. ~~**The roster: 8 → 20 a side.**~~ **Done 2026-08-28 — forty costumes, twenty a side.** Built in
-   eight tranches of four with the contact sheet read between each; `duel-shot.mjs sheet` now takes
-   `--only a,b,c` and `--px N` so a tranche can be looked at large. Archetypes throughout, per his own
-   rule. **What is left on this is the one thing that needs your eyes:** whether any two of the forty
-   are confusable *at phone size in a real browser*, and whether the busier ones (the standard-bearer's
-   banner, the djinn's four arms) still read in motion. The bench on `/admin` is where that happens.
-   If two do read alike, the fix is one line in `NEVER_MEET` — the gate now expects entries in it,
-   which it did not before today.
+2. ~~**The roster: 8 → 20 a side.**~~ ~~**Forty costumes, twenty a side.**~~ **Done 2026-08-28 —
+   twenty-four costumes, twelve a side, and the bodies are carved.** It went to forty first and came
+   back down the same day, and the reason is the useful part: **the roster read flat because the
+   renderer drew wire, not because there were too few costumes.** Bones are tapered capsules now, the
+   torso is a mass, draw order is the depth, and every mark is laid down in the palette's background
+   role before it is drawn in ink — so a helmet stops where the skull starts. Once that landed,
+   twenty-four of the forty were plainly a second copy of a stronger silhouette or a costume whose
+   whole read was interior detail, which is the first thing to go at 61px. Eight new archetypes in,
+   sixteen kept: 144 pairs per pool, 288 rolled orderings. Archetypes throughout, per his own rule.
+   Gated at 24 and at a 12/12 split, verified by breaking it. **What is left needs eyes and is item 0
+   above.**
 3. **The panel's guardrail notice**, above.
 
 ### Not started, unchanged from yesterday

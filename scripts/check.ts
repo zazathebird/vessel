@@ -45,6 +45,7 @@ import {
   drawDuel,
   BODY_H,
   DUEL_TABLES,
+  DEFAULT_RIM,
   GRAVITY,
 } from "../src/fx/duel";
 import { duelCamera, ORNAMENT_PX } from "../src/components/DuelOrnament";
@@ -1327,7 +1328,7 @@ if (!FAST) check("duel: a blow always flashes, and no reaction precedes its caus
 });
 
 if (!FAST) check("duel: fairness, reachability, stability", () => {
-  const styles = ["hooded", "caped", "haloed", "horned"] as const;
+  const styles = ["hooded", "caped", "maned", "horned"] as const;
   let left = 0;
   let right = 0;
   let nan = 0;
@@ -2172,6 +2173,14 @@ check("duel: every costume is stroked, framed and aligned", () => {
       save() {},
       restore() {},
       translate() {},
+      /*
+       * `solid()`'s clipped inner shadow calls this, and a stub without it
+       * threw on the first carved costume. It records nothing deliberately: a
+       * clip cannot add a point, and the shadow it bounds is drawn *inside* a
+       * mark this recorder has already measured — counting it again would make
+       * every carved mark look like two.
+       */
+      clip() {},
       moveTo: at,
       lineTo: at,
       quadraticCurveTo(cx: number, cy: number, x: number, y: number) {
@@ -2257,6 +2266,12 @@ check("duel: every costume is stroked, framed and aligned", () => {
       ink: "#fff",
       blade: "#3d9bff",
       dim: 1,
+      // The carve is measured with, not without. It adds no path points — so
+      // the reach and sideways numbers are the same either way — but it is the
+      // path that calls `clip()` and `save()`, and a gate that only ever drove
+      // the `rim: 0` branch would not have caught the missing stub above.
+      paper: "#000",
+      rim: DEFAULT_RIM,
       alpha: 0.85,
       hand: { x: 22, y: 6 },
       elbow: { x: 16, y: 14 },
@@ -2551,6 +2566,24 @@ check("catalogues match the documented counts", () => {
   must(TYPESETS.length === 5, `${TYPESETS.length} typesets, expected 5`);
   must(SCOPES.length === 6, `${SCOPES.length} scopes, expected 6`);
   must(ORNAMENTS.length === 8, `${ORNAMENTS.length} ornaments, expected 8`);
+  /*
+   * The roster, and **both halves of it**.
+   *
+   * The count was documented and never asserted, which is how it could go from
+   * forty to twenty-four with the suite green. The total is the cheap half; the
+   * per-side split is the half that matters, because `ROSTER_GOOD` and
+   * `ROSTER_EVIL` are *derived* from `side` — so a costume added with the wrong
+   * alignment does not fail anything, it silently makes one pool larger than
+   * the other and skews every pairing roll from then on. Twelve and twelve is
+   * 144 pairs per pool and 288 rolled orderings.
+   */
+  const roster = Object.values(FIGHTERS);
+  must(roster.length === 24, `${roster.length} fighters, expected 24`);
+  const good = roster.filter((k) => k.side === "good").length;
+  must(
+    good === 12 && roster.length - good === 12,
+    `roster is ${good} good / ${roster.length - good} evil, expected 12 and 12`,
+  );
   // A hidden effect is unlisted, not invalid — but the two lists must never
   // disagree about anything other than a `hidden` flag.
   must(
@@ -2578,7 +2611,7 @@ check("catalogues match the documented counts", () => {
     ORNAMENTS.map((o) => o.id).join(",") === ORNAMENT_WIRE,
     `ornament wire order changed: ${ORNAMENTS.map((o) => o.id).join(",")}`,
   );
-  return `${LAYOUTS.length}/${PALETTES.length}/${FX.length}/${ORNAMENTS.length} layouts/palettes/fx/ornaments`;
+  return `${LAYOUTS.length}/${PALETTES.length}/${FX.length}/${ORNAMENTS.length} layouts/palettes/fx/ornaments, ${roster.length} fighters ${good}/${roster.length - good}`;
 });
 
 check("hidden ornaments still decode; out-of-range falls to the default", () => {

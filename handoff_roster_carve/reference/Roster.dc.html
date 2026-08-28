@@ -1,0 +1,1555 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  body { margin: 0; }
+  a { color: #7aa2ff; }
+  a:hover { color: #a9c4ff; }
+</style>
+</helmet>
+
+<div style="min-height:100vh;padding:clamp(20px,4vw,48px) clamp(14px,3.5vw,40px) 72px;font-family:'JetBrains Mono',ui-monospace,monospace;background:#0b0d10;color:#e8eaee">
+
+  <div style="display:flex;flex-direction:column;gap:10px;max-width:900px;margin-bottom:40px">
+    <div style="font-size:12px;letter-spacing:0.18em;text-transform:uppercase;color:#6c7480">Roster pass — 24 fighters, 24 cut</div>
+    <div style="font-size:30px;font-weight:600;line-height:1.15;letter-spacing:-0.01em;text-wrap:pretty">They were flat because they were wire.</div>
+    <div style="font-size:13.5px;line-height:1.65;color:#9aa3af;text-wrap:pretty;max-width:66ch">Two changes, same costumes. <strong style="color:#d6dbe3;font-weight:600">The body is a mass</strong>: every bone is a tapered capsule, wide at the root and narrow at the tip, with the torso a shape between the shoulders and the hips. A stroke has no width that changes, so it has no direction, and a limb with no direction is a wire. <strong style="color:#d6dbe3;font-weight:600">Every shape carries its own edge</strong>: each one is laid down twice, first in the palette&rsquo;s background role at a wider line, then in ink &mdash; so a helmet stops where the skull starts, and the near leg crosses in front of the far one. The second tone is a palette role, not a literal, so it cross-fades with the site and holds on all twenty-five palettes.</div>
+    <div style="font-size:13px;line-height:1.6;color:#6c7480;text-wrap:pretty;max-width:66ch">Left of each pair is the current build. Right is the same costume, same stance, same proportions.</div>
+  </div>
+
+  <div style="display:flex;flex-wrap:wrap;gap:28px;align-items:flex-end;margin-bottom:36px;padding-bottom:28px;border-bottom:1px solid #1c2027">
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div style="font-size:10.5px;letter-spacing:0.16em;text-transform:uppercase;color:#6c7480">Fighter height</div>
+      <div style="display:flex;gap:8px">
+        <button onClick="{{ setSmall }}" style="font:inherit;font-size:12px;padding:7px 13px;border-radius:5px;border:1px solid #262c35;background:#12151a;color:#c3cad4;cursor:pointer" style-hover="background:#1a1f26">61px &mdash; phone</button>
+        <button onClick="{{ setMid }}" style="font:inherit;font-size:12px;padding:7px 13px;border-radius:5px;border:1px solid #262c35;background:#12151a;color:#c3cad4;cursor:pointer" style-hover="background:#1a1f26">109px &mdash; desk</button>
+        <button onClick="{{ setLarge }}" style="font:inherit;font-size:12px;padding:7px 13px;border-radius:5px;border:1px solid #262c35;background:#12151a;color:#c3cad4;cursor:pointer" style-hover="background:#1a1f26">240px &mdash; drawn large</button>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div style="font-size:10.5px;letter-spacing:0.16em;text-transform:uppercase;color:#6c7480">Palette under it</div>
+      <div style="display:flex;gap:8px">
+        <button onClick="{{ setInk }}" style="font:inherit;font-size:12px;padding:7px 13px;border-radius:5px;border:1px solid #262c35;background:#12151a;color:#c3cad4;cursor:pointer" style-hover="background:#1a1f26">Ink</button>
+        <button onClick="{{ setPaper }}" style="font:inherit;font-size:12px;padding:7px 13px;border-radius:5px;border:1px solid #262c35;background:#12151a;color:#c3cad4;cursor:pointer" style-hover="background:#1a1f26">Paper</button>
+        <button onClick="{{ setSlate }}" style="font:inherit;font-size:12px;padding:7px 13px;border-radius:5px;border:1px solid #262c35;background:#12151a;color:#c3cad4;cursor:pointer" style-hover="background:#1a1f26">Slate</button>
+      </div>
+    </div>
+    <div style="font-size:12px;color:#6c7480;padding-bottom:9px">{{ readout }}</div>
+  </div>
+
+  <div ref="{{ gridRef }}" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,440px),1fr));gap:38px 28px">
+    <sc-for list="{{ roster }}" as="f" hint-placeholder-count="20">
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:2px;align-items:start;justify-items:center;border-radius:8px;overflow:hidden;border:1px solid #1c2027">
+          <canvas data-fid="{{ f.id }}" data-carve="0" style="display:block;margin:0 auto;max-width:100%;height:auto"></canvas>
+          <canvas data-fid="{{ f.id }}" data-carve="1" style="display:block;margin:0 auto;max-width:100%;height:auto"></canvas>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px">
+          <div style="font-size:13px;font-weight:600;color:#e8eaee">{{ f.label }}</div>
+          <div style="font-size:10.5px;letter-spacing:0.14em;text-transform:uppercase;color:{{ f.tint }}">{{ f.side }}</div>
+        </div>
+        <div style="font-size:11.5px;line-height:1.55;color:#78818d;text-wrap:pretty">{{ f.read }}</div>
+      </div>
+    </sc-for>
+  </div>
+
+  <div style="margin-top:64px;padding-top:32px;border-top:1px solid #1c2027;display:flex;flex-wrap:wrap;gap:48px">
+    <div style="display:flex;flex-direction:column;gap:10px;max-width:44ch">
+      <div style="font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:#6c7480">Cut from the roster</div>
+      <div style="font-size:12.5px;line-height:1.7;color:#8b939f;text-wrap:pretty">{{ cutList }}</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px;max-width:44ch">
+      <div style="font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:#6c7480">Why they went</div>
+      <div style="font-size:12.5px;line-height:1.7;color:#8b939f;text-wrap:pretty">Each one was either a second copy of a stronger silhouette &mdash; three brimmed hats, four blocks for a head, two capes to the floor &mdash; or a costume whose whole read was interior detail: a sash, a bead loop, a bandage, a bird. Interior detail is the first thing to go at 61px, which is where this actually renders.</div>
+    </div>
+  </div>
+
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{}">
+const TORSO_H = 42, SHOULDER_X = 11, SHOULDER_Y = 13, HIP_X = 7;
+const BODY_H = 70, THIGH = 16, SHIN = 14.5, BLADE_LEN = 58, HAND_REACH = 20;
+const UPPER = 12, FORE = 12, OFF_UPPER = 12, OFF_FORE = 12;
+const TAU = Math.PI * 2;
+
+function joint(x0, y0, x1, y1, l1, l2, bend) {
+  const dx = x1 - x0, dy = y1 - y0;
+  let d = Math.hypot(dx, dy);
+  d = Math.max(1e-6, Math.min(d, l1 + l2 - 0.001));
+  const a = Math.acos(Math.max(-1, Math.min(1, (l1 * l1 + d * d - l2 * l2) / (2 * l1 * d))));
+  const base = Math.atan2(dy, dx);
+  const ang = base + a * bend;
+  return { x: x0 + Math.cos(ang) * l1, y: y0 + Math.sin(ang) * l1 };
+}
+
+/* ---- the carve -----------------------------------------------------------
+ * Every mark is laid down twice: once in the palette's background role at a
+ * wider line, then once in ink. The paper pass carves the mark out of
+ * everything already drawn behind it, which is the edge the roster has never
+ * had. It is a palette role, not a literal, so it cross-fades with the site
+ * and works on all 25 palettes by construction — including the pale ones,
+ * where the carve reads as a light gap rather than a dark rim.
+ */
+function rig(ctx, c) {
+  return {
+    // paper-under a stroke: call before the ink stroke, with the same path
+    under(width) {
+      if (!c.carve) return;
+      ctx.save();
+      ctx.strokeStyle = c.paper;
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = width + c.rim * 2;
+      ctx.stroke();
+      ctx.restore();
+    },
+  };
+}
+
+class Component extends DCLogic {
+  state = { px: 240, palette: "ink" };
+
+  gridRef = null;
+
+  componentDidMount() {
+    this.gridRef = this.gridRef || null;
+    this.raf = 0;
+    this.t = 0;
+    this.loop = () => {
+      this.t += 1;
+      this.paint();
+      this.raf = requestAnimationFrame(this.loop);
+    };
+    this.raf = requestAnimationFrame(this.loop);
+  }
+
+  componentWillUnmount() {
+    cancelAnimationFrame(this.raf);
+  }
+
+  componentDidUpdate() {
+    this.paint();
+  }
+
+  pal() {
+    const p = this.state.palette;
+    if (p === "paper") return { ink: "#1a1c20", paper: "#f2efe9", dim: 1 };
+    if (p === "slate") return { ink: "#dfe6ef", paper: "#2b3440", dim: 1 };
+    return { ink: "#e8eaee", paper: "#0b0d10", dim: 1 };
+  }
+
+  paint() {
+    const root = this.grid;
+    if (!root) return;
+    const cells = root.querySelectorAll("canvas[data-fid]");
+    const { ink, paper, dim } = this.pal();
+    const px = this.state.px;
+    const VW = 132, VH = 136;
+    const scale = px / BODY_H;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    cells.forEach((cv) => {
+      const id = cv.getAttribute("data-fid");
+      const carve = cv.getAttribute("data-carve") === "1";
+      const w = Math.round(VW * scale), h = Math.round(VH * scale);
+      if (cv.width !== w * dpr) { cv.width = w * dpr; cv.height = h * dpr; }
+      // No explicit CSS size: `max-width:100%;height:auto` lets the canvas
+      // sit inside its track and keep aspect from the intrinsic attributes.
+      // Forcing a width here made the fixed-size canvas widen the 1fr track
+      // past the cell and the pair's `overflow:hidden` clipped the blades.
+      if (cv.parentElement) cv.parentElement.style.background = paper;
+      const ctx = cv.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = paper;
+      ctx.fillRect(0, 0, w, h);
+      ctx.save();
+      ctx.scale(scale, scale);
+      ctx.translate(VW * 0.34, 54);
+      this.drawFighter(ctx, id, { ink, paper, dim, carve });
+    ctx.restore();
+    });
+  }
+
+  drawFighter(ctx, id, v) {
+    const kind = FIGHTERS[id];
+    if (!kind) return;
+    const t = this.t;
+    const phase = (id.length * 1.7) % 6.28;
+    const breath = Math.sin(t * 0.045 + phase) * 1.1;
+    const bladeA = -0.62 + Math.sin(t * 0.02 + phase) * 0.05;
+    const flick = 1 + Math.sin(t * 0.8 + phase) * 0.008;
+    const ha = bladeA * 0.55 - 0.2;
+    const g = {
+      hx: SHOULDER_X + Math.cos(ha) * HAND_REACH,
+      hy: SHOULDER_Y + Math.sin(ha) * HAND_REACH,
+    };
+    g.tx = g.hx + Math.cos(bladeA) * BLADE_LEN * flick;
+    g.ty = g.hy + Math.sin(bladeA) * BLADE_LEN * flick;
+
+    const lw = (n) => n * kind.prop.weight;
+    const shX = SHOULDER_X * kind.prop.shoulder;
+    const hr = 8 * kind.prop.head;
+    const stance = kind.stance;
+    const hipY = TORSO_H + stance.settle;
+    const shY = SHOULDER_Y + breath;
+    const lean = 0;
+    const neckX = kind.prop.hunch;
+    const headY = -8 + breath * 0.6;
+    const offHandX = g.hx - Math.cos(bladeA) * 8;
+    const offHandY = g.hy - Math.sin(bladeA) * 8;
+
+    const rimW = v.carve ? 1.7 : 0;
+    const c = {
+      hx: neckX, hy: headY + 6, hr, shY, shX, hipY, hipX: HIP_X, feetY: BODY_H,
+      lean, vx: 0, speed: 0, airborne: false, t, phase,
+      ink: v.ink, paper: v.paper, blade: BLADE_COLORS[id], dim: v.dim,
+      alpha: 1, carve: v.carve, rim: rimW,
+      hand: { x: g.hx, y: g.hy },
+      elbow: joint(shX, shY, g.hx, g.hy, UPPER, FORE, -1),
+      offHand: { x: offHandX, y: offHandY },
+      offElbow: joint(-shX, shY, offHandX, offHandY, OFF_UPPER, OFF_FORE, 1),
+      lw,
+    };
+
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+
+    const paperStroke = (width) => {
+      if (!v.carve) return;
+      ctx.save();
+      ctx.strokeStyle = v.paper;
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = width + rimW * 2;
+      ctx.stroke();
+      ctx.restore();
+    };
+
+    /* ---- the body is a mass now, not a wire ------------------------------
+     * Every bone is a tapered capsule: wide at the root, narrow at the tip,
+     * with its own paper rim. Two capsules per limb rather than one polyline,
+     * so the elbow and the knee are joints you can see. This is what stops
+     * the figure reading as a stick — a stroke has no width that changes and
+     * therefore no direction, and a limb without direction is a wire.
+     */
+    const massPath = (x0, y0, x1, y1, w0, w1) => {
+      const a = Math.atan2(y1 - y0, x1 - x0);
+      const px = Math.cos(a + Math.PI / 2), py = Math.sin(a + Math.PI / 2);
+      ctx.moveTo(x0 + px * w0, y0 + py * w0);
+      ctx.lineTo(x1 + px * w1, y1 + py * w1);
+      ctx.arc(x1, y1, w1, a + Math.PI / 2, a - Math.PI / 2, true);
+      ctx.lineTo(x0 - px * w0, y0 - py * w0);
+      ctx.arc(x0, y0, w0, a - Math.PI / 2, a + Math.PI / 2, true);
+      ctx.closePath();
+    };
+
+    const fillMass = (build, alpha, edge) => {
+      ctx.beginPath();
+      build();
+      paperStroke(edge);
+      ctx.fillStyle = v.ink;
+      ctx.globalAlpha = alpha;
+      ctx.fill();
+      if (v.carve) {
+        ctx.save();
+        ctx.clip();
+        ctx.strokeStyle = v.paper;
+        ctx.globalAlpha = 0.26 * alpha;
+        ctx.lineWidth = 3.2;
+        ctx.translate(-1.2, 1.9);
+        ctx.stroke();
+        ctx.restore();
+      }
+      ctx.strokeStyle = v.ink;
+      ctx.globalAlpha = alpha;
+      ctx.lineWidth = edge;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    };
+
+    const limb = (x0, y0, x1, y1, l1, l2, bend, w0, w1, w2, alpha) => {
+      const j = joint(x0, y0, x1, y1, l1, l2, bend);
+      fillMass(() => massPath(x0, y0, j.x, j.y, w0, w1), alpha, 0.7);
+      fillMass(() => massPath(j.x, j.y, x1, y1, w1, w2), alpha, 0.7);
+      return j;
+    };
+
+    c.solid = (fill, edge = 2.4, edgeAlpha = 1) => {
+      // The path is already built by the caller and is still current.
+      paperStroke(c.lw(edge));
+      ctx.fillStyle = v.ink;
+      ctx.globalAlpha = c.alpha * fill;
+      ctx.fill();
+      if (v.carve) {
+        // Inner shadow along the shaded edge, clipped to the mass, so a
+        // helmet has a top and an underside.
+        ctx.save();
+        ctx.clip();
+        ctx.strokeStyle = v.paper;
+        ctx.globalAlpha = 0.34 * fill;
+        ctx.lineWidth = Math.max(2.2, c.lw(edge) * 1.9);
+        ctx.translate(-1.5, 2.2);
+        ctx.stroke();
+        ctx.restore();
+      }
+      ctx.strokeStyle = v.ink;
+      ctx.globalAlpha = c.alpha * edgeAlpha;
+      ctx.lineWidth = c.lw(edge);
+      ctx.stroke();
+      ctx.globalAlpha = c.alpha;
+    };
+
+    c.ink = v.ink;
+    c.stroke = (width, alpha = 1) => {
+      paperStroke(c.lw(width));
+      ctx.strokeStyle = v.ink;
+      ctx.globalAlpha = c.alpha * alpha;
+      ctx.lineWidth = c.lw(width);
+      ctx.stroke();
+    };
+    c.begin = (width, alpha = 1) => {
+      ctx.strokeStyle = v.ink;
+      ctx.globalAlpha = c.alpha * alpha;
+      ctx.lineWidth = c.lw(width);
+      ctx.beginPath();
+    };
+
+    if (kind.back) { ctx.save(); kind.back(ctx, c); ctx.restore(); }
+
+    if (!v.carve) {
+      // ---- the current build: one stroke per bone, no edge anywhere -------
+      const wire = (x0, y0, x1, y1, l1, l2, bend, width, alpha) => {
+        const j = joint(x0, y0, x1, y1, l1, l2, bend);
+        ctx.strokeStyle = v.ink;
+        ctx.globalAlpha = alpha;
+        ctx.lineWidth = width;
+        ctx.beginPath();
+        ctx.moveTo(x0, y0); ctx.lineTo(j.x, j.y); ctx.lineTo(x1, y1);
+        ctx.stroke();
+      };
+      for (let i = 0; i < 2; i += 1) {
+        const front = i === 0;
+        wire(front ? HIP_X : -HIP_X, hipY, front ? stance.spread : -stance.spread,
+          BODY_H - (front ? 0 : stance.heel), THIGH, SHIN, -1, lw(front ? 5 : 4), 1);
+      }
+      ctx.strokeStyle = v.ink;
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = lw(6);
+      ctx.beginPath(); ctx.moveTo(0, hipY); ctx.lineTo(neckX, shY - 2); ctx.stroke();
+      ctx.lineWidth = lw(5);
+      ctx.beginPath(); ctx.moveTo(-shX, shY); ctx.lineTo(shX, shY); ctx.stroke();
+      if (kind.prop.build > 0) {
+        ctx.globalAlpha = 0.55 + kind.prop.build * 0.3;
+        ctx.lineWidth = lw(3.2);
+        ctx.beginPath();
+        for (const s of [-1, 1]) {
+          ctx.moveTo(s * (shX - 1.5), shY + 1);
+          ctx.quadraticCurveTo(s * (shX - 1) * kind.prop.build, (shY + hipY) / 2, s * (HIP_X + 1), hipY - 2);
+        }
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+      if (!kind.hollow) {
+        ctx.fillStyle = v.ink;
+        ctx.beginPath(); ctx.arc(neckX, headY + 6, hr, 0, TAU); ctx.fill();
+      }
+      wire(-shX, shY, offHandX, offHandY, OFF_UPPER, OFF_FORE, 1, lw(4.5), 0.85);
+      wire(shX, shY, g.hx, g.hy, UPPER, FORE, -1, lw(5), 1);
+    } else {
+    // ---- the back leg, behind the torso -----------------------------------
+    const legFoot = (front) => ({
+      x: front ? stance.spread : -stance.spread,
+      y: BODY_H - (front ? 0 : stance.heel),
+    });
+    const foot = (fx, fy, dir) => {
+      fillMass(() => massPath(fx, fy - 0.5, fx + dir * 5.4, fy + 0.6, lw(2.9), lw(2.1)), 1, 0.7);
+    };
+    {
+      const f0 = legFoot(false);
+      limb(-HIP_X, hipY, f0.x, f0.y, THIGH, SHIN, -1, lw(5.0), lw(3.9), lw(2.9), 0.9);
+      foot(f0.x, f0.y, -1);
+    }
+
+    // ---- the torso: a tapered mass, not a spine ---------------------------
+    /*
+     * Solid, and this is not the slab the client rejected. That was a *pale*
+     * torso quad beside a pale robe and a pale head block, all at the same
+     * value, compositing into one shape as wide as the figure was tall. This
+     * is the body itself at full ink, narrow at the waist, with the cloth
+     * behind it held at a third of the alpha — so the robe reads as being
+     * behind a person rather than as part of one pale mass.
+     */
+    const bw = HIP_X * 1.15 + kind.prop.build * 1.4;
+    const tw = shX * 0.74 + kind.prop.build * 1.2;
+    const waist = (shX * 0.6 + kind.prop.build * 2.6);
+    fillMass(() => {
+      ctx.moveTo(-tw, shY + 0.5);
+      ctx.quadraticCurveTo(-waist, (shY + hipY) / 2, -bw, hipY + 1);
+      ctx.quadraticCurveTo(0, hipY + 4.5, bw, hipY + 1);
+      ctx.quadraticCurveTo(waist, (shY + hipY) / 2, tw, shY + 0.5);
+      ctx.quadraticCurveTo(0, shY - 2.5, -tw, shY + 0.5);
+      ctx.closePath();
+    }, 1, 0.8);
+
+    // shoulders: one capsule across, so the top of the silhouette is a line
+    // with a thickness rather than a hairline.
+    fillMass(() => massPath(-shX + lean, shY, shX + lean, shY, lw(3.4), lw(3.4)), 1, 0.7);
+    // the neck
+    fillMass(() => massPath(neckX * 0.4, shY - 1, neckX, headY + 6 + hr * 0.4, lw(3.0), lw(2.6)), 1, 0.7);
+
+    if (!kind.hollow) {
+      fillMass(() => { ctx.arc(neckX, headY + 6, hr, 0, TAU); }, 1, 0.7);
+    }
+
+    // ---- the front leg, over the torso ------------------------------------
+    {
+      const f1 = legFoot(true);
+      limb(HIP_X, hipY, f1.x, f1.y, THIGH, SHIN, -1, lw(5.6), lw(4.4), lw(3.1), 1);
+      foot(f1.x, f1.y, 1);
+    }
+
+    limb(-shX + lean, shY, offHandX, offHandY, OFF_UPPER, OFF_FORE, 1, lw(4.2), lw(3.1), lw(2.3), 0.92);
+    limb(shX + lean, shY, g.hx, g.hy, UPPER, FORE, -1, lw(4.6), lw(3.4), lw(2.5), 1);
+    }
+
+    if (kind.overlay) { ctx.save(); kind.overlay(ctx, c); ctx.restore(); }
+    if (kind.head) { ctx.save(); ctx.translate(neckX, 0); kind.head(ctx, c); ctx.restore(); }
+
+    // the blade
+    const bl = BLADE_COLORS[id];
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    ctx.strokeStyle = bl;
+    ctx.globalAlpha = 0.2;
+    ctx.lineWidth = 11;
+    ctx.beginPath(); ctx.moveTo(g.hx, g.hy); ctx.lineTo(g.tx, g.ty); ctx.stroke();
+    ctx.globalAlpha = 0.5;
+    ctx.lineWidth = 5.5;
+    ctx.beginPath(); ctx.moveTo(g.hx, g.hy); ctx.lineTo(g.tx, g.ty); ctx.stroke();
+    ctx.restore();
+    ctx.strokeStyle = "#fff";
+    ctx.globalAlpha = 0.9;
+    ctx.lineWidth = 2.2;
+    ctx.beginPath(); ctx.moveTo(g.hx, g.hy); ctx.lineTo(g.tx, g.ty); ctx.stroke();
+    ctx.globalAlpha = 1;
+    // the grip
+    ctx.strokeStyle = v.ink;
+    ctx.lineWidth = lw(3.4);
+    ctx.beginPath();
+    ctx.moveTo(g.hx - Math.cos(bladeA) * 7, g.hy - Math.sin(bladeA) * 7);
+    ctx.lineTo(g.hx, g.hy);
+    paperStroke(lw(3.4));
+    ctx.strokeStyle = v.ink;
+    ctx.lineWidth = lw(3.4);
+    ctx.stroke();
+  }
+
+  renderVals() {
+    const roster = ORDER.map((id) => ({
+      id,
+      label: FIGHTERS[id].label,
+      side: FIGHTERS[id].side,
+      read: READS[id],
+      tint: FIGHTERS[id].side === "good" ? "#5fa8ff" : "#ff6a60",
+    }));
+    const px = this.state.px;
+    return {
+      roster,
+      gridRef: (el) => { this.grid = el; if (el) this.paint(); },
+      readout: px + "px figure \u2014 " + this.state.palette + " palette \u2014 left: current, right: carved",
+      cutList: CUT.join(" \u00b7 "),
+      setSmall: () => this.setState({ px: 61 }),
+      setMid: () => this.setState({ px: 109 }),
+      setLarge: () => this.setState({ px: 240 }),
+      setInk: () => this.setState({ palette: "ink" }),
+      setPaper: () => this.setState({ palette: "paper" }),
+      setSlate: () => this.setState({ palette: "slate" }),
+    };
+  }
+}
+
+const CUT = [
+  "The Monk", "The Beekeeper", "The Falconer", "The Watchman", "The Count",
+  "The Headless", "The Herald", "The Smith", "The Reaper", "The Werewolf",
+  "The Piper", "The Nomad", "The Hyde", "The Boar", "The Standard",
+  "The Harpooner", "The Inquisitor", "The Djinn", "The Scarecrow", "The Mummy",
+  "The Wendigo", "The Seraph", "The Saint", "The Diver",
+];
+
+const READS = {
+  prophet: "Hair, beard and robe in one mass, with a ring of light clear above it. Reads against The Devil at any size.",
+  luchador: "A laced mask with a blunt crest, on the widest shoulders in the good half.",
+  astronaut: "A dome with a visor chord, a collar ring, and a pack behind the shoulder.",
+  gunslinger: "A dented crown under a wide brim, over a duster split to the knee.",
+  pharaoh: "A headdress that flares past the shoulders, and a straight bar off the chin.",
+  viking: "A flared helm with a nasal bar, a wedge of beard, and a disc on the off hand.",
+  anubis: "Two ears standing straight up, and a muzzle that clears the shoulder.",
+  ringmaster: "A stovepipe taller than it is wide, over tails cut to two points.",
+  hooded: "A deep cowl that swallows the skull, over a robe to the ankles.",
+  maned: "Hair as a mass off the back of the skull, and a braid that trails.",
+  haloed: "A beard closing the head shape, and two rings of light above it.",
+  winged: "Three heavy feathers a side, growing upward rather than outward.",
+  ronin: "A shaved pate with the knot behind the crown, and hanging sleeves.",
+  gladiator: "A comb running fore and aft, clearing the dome by half a head.",
+  diver: "A ball bolted to a collar. The only head wider than the shoulders.",
+  musketeer: "A tilted brim, and three splayed strokes of plume behind it.",
+  valkyrie: "Wings at the temples rather than at the back, pulled well apart.",
+  sentinel: "A tower helm on a gorget: taller than it is wide, and square.",
+  caped: "Dome, cheeks and jaw flanges in one mass, over a flaring cape.",
+  horned: "Horns that go out before they go up, and a tail with a spade.",
+  crowned: "A band with points on it, and two pauldrons that do not meet.",
+  cowled: "An empty hood over a hem torn into three points. No head at all.",
+  plague: "The beak leaves the jaw, and the crown rises well clear of it.",
+  golem: "A chamfered block for a head, sunk between two outboard slabs.",
+  nosferatu: "A skull four units taller than it is wide, ears standing back.",
+  wendigo: "Antlers that branch and open into a V, on the lightest build here.",
+  executioner: "Flat across the top and square at the corners, over a wide belt.",
+  witch: "A cone bending back off a brim, with two strands of hair under it.",
+};
+
+const ORDER = [
+  "prophet", "horned", "hooded", "caped", "maned", "crowned",
+  "luchador", "golem", "ronin", "nosferatu", "viking", "anubis",
+  "gunslinger", "executioner", "astronaut", "cowled", "gladiator", "pharaoh",
+  "musketeer", "witch", "sentinel", "plague", "valkyrie", "ringmaster",
+];
+
+const BLADE_COLORS = {
+  hooded: "#3d9bff", maned: "#3d9bff", caped: "#ff3b30", cowled: "#ff3b30",
+  horned: "#ff2929", crowned: "#ff2929", ronin: "#3d9bff", gladiator: "#37d67a",
+  plague: "#ff3b30", golem: "#ff2929", nosferatu: "#ff3b30", musketeer: "#3d9bff",
+  valkyrie: "#37d67a", executioner: "#ff2929", sentinel: "#37d67a", witch: "#ff3b30",
+  prophet: "#ffd76a", luchador: "#37d67a", astronaut: "#3d9bff",
+  gunslinger: "#3d9bff", pharaoh: "#ff2929", viking: "#3d9bff",
+  anubis: "#ff2929", ringmaster: "#ff3b30",
+};
+
+const FIGHTERS = {
+  hooded: {
+    label: "The Hermit", side: "good",
+    prop: { shoulder: 1.02, weight: 1.06, hunch: 1.4, head: 0.92, build: 0 },
+    stance: { settle: 3.5, spread: 9, heel: 0 }, headroom: 17,
+    head: (ctx, c) => {
+      const r = c.hr;
+      ctx.beginPath();
+      ctx.moveTo(-r - 4, c.hy + 13);
+      ctx.quadraticCurveTo(-r - 5, c.hy - 9, 0, c.hy - 13);
+      ctx.quadraticCurveTo(r + 5, c.hy - 8, r + 3, c.hy + 11);
+      ctx.quadraticCurveTo(0, c.hy + 17, -r - 4, c.hy + 13);
+      ctx.closePath();
+      c.solid(0.92, 2.6);
+    },
+    back: (ctx, c) => {
+      const sway = Math.sin(c.t * 0.031 + c.phase) * 1.6;
+      ctx.beginPath();
+      ctx.moveTo(-c.hipX - 3, c.hipY - 11);
+      ctx.quadraticCurveTo(-13, c.hipY + 12, -13 + sway, c.feetY - 3);
+      ctx.quadraticCurveTo(-1 + sway, c.feetY + 3, 11 + sway * 0.6, c.feetY - 5);
+      ctx.quadraticCurveTo(12, c.hipY + 12, c.hipX + 3, c.hipY - 11);
+      ctx.closePath();
+      c.solid(0.34, 2.6, 0.85);
+    },
+    overlay: (ctx, c) => {
+      const sway = Math.sin(c.t * 0.031 + c.phase) * 1.4;
+      c.begin(2.6, 0.85);
+      ctx.moveTo(-c.hipX - 2, c.hipY - 8);
+      ctx.quadraticCurveTo(0, c.hipY - 5, c.hipX + 2, c.hipY - 9);
+      c.stroke(2.6, 0.85);
+      c.begin(2.2, 0.7);
+      ctx.moveTo(-3, c.hipY - 6);
+      ctx.quadraticCurveTo(-6 + sway * 0.5, c.hipY + 7, -5 + sway, c.hipY + 18);
+      c.stroke(2.2, 0.7);
+    },
+  },
+
+  maned: {
+    label: "The Apprentice", side: "good",
+    prop: { shoulder: 0.94, weight: 0.9, hunch: 0, head: 0.94, build: 0 },
+    stance: { settle: -1, spread: 16, heel: 4 }, headroom: 16,
+    head: (ctx, c) => {
+      const r = c.hr;
+      ctx.beginPath();
+      ctx.moveTo(r - 2, c.hy - r - 1);
+      ctx.quadraticCurveTo(-1, c.hy - r - 5, -r - 5, c.hy - r + 4);
+      ctx.quadraticCurveTo(-r - 9, c.hy + 6, -r - 4, c.hy + 19);
+      ctx.quadraticCurveTo(-r + 2, c.hy + 12, -r + 1, c.hy + 2);
+      ctx.quadraticCurveTo(-r + 2, c.hy - r + 3, r - 2, c.hy - r - 1);
+      ctx.closePath();
+      c.solid(0.9, 2.4);
+      const lag = Math.sin(c.t * 0.043 + c.phase) * 2.2;
+      c.begin(2.2, 0.85);
+      ctx.moveTo(-r - 2, c.hy + 8);
+      ctx.quadraticCurveTo(-r - 8 + lag * 0.5, c.hy + 20, -r - 6 + lag, c.hy + 32);
+      c.stroke(2.2, 0.85);
+    },
+    back: (ctx, c) => {
+      const sway = Math.sin(c.t * 0.037 + c.phase) * 1.8;
+      ctx.beginPath();
+      ctx.moveTo(-c.hipX - 1, c.hipY - 8);
+      ctx.quadraticCurveTo(-14, c.hipY + 10, -15 + sway, c.feetY - 16);
+      ctx.quadraticCurveTo(-1, c.feetY - 11, 12 + sway, c.feetY - 18);
+      ctx.quadraticCurveTo(12, c.hipY + 9, c.hipX + 1, c.hipY - 8);
+      ctx.closePath();
+      c.solid(0.32, 2.4, 0.9);
+    },
+  },
+
+  haloed: {
+    label: "The Saint", side: "good",
+    prop: { shoulder: 1.02, weight: 1.06, hunch: -0.8, head: 1, build: 0.35 },
+    stance: { settle: -2.5, spread: 6, heel: 0 }, headroom: 26,
+    head: (ctx, c) => {
+      ctx.beginPath();
+      ctx.moveTo(-c.hr + 1, c.hy + 3);
+      ctx.quadraticCurveTo(-4, c.hy + 18, 0, c.hy + 21);
+      ctx.quadraticCurveTo(4, c.hy + 17, c.hr - 1, c.hy + 2);
+      ctx.quadraticCurveTo(0, c.hy + 9, -c.hr + 1, c.hy + 3);
+      ctx.closePath();
+      c.solid(0.85, 2.4);
+      const bob = Math.sin(c.t * 0.04 + c.phase) * 1.6;
+      ctx.strokeStyle = c.blade;
+      ctx.globalAlpha = 0.92 * c.dim;
+      ctx.lineWidth = c.lw(2.2);
+      ctx.beginPath();
+      ctx.ellipse(0, c.hy - 14 + bob, 13, 4.4, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 0.3 * c.dim;
+      ctx.lineWidth = c.lw(1.6);
+      ctx.beginPath();
+      ctx.ellipse(0, c.hy - 16 + bob, 17, 5.6, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    },
+    back: (ctx, c) => {
+      const sway = Math.sin(c.t * 0.028 + c.phase) * 1.2;
+      ctx.beginPath();
+      ctx.moveTo(-c.hipX - 3, c.hipY - 8);
+      ctx.quadraticCurveTo(-15, c.hipY + 14, -14 + sway, c.feetY - 1);
+      ctx.quadraticCurveTo(0 + sway, c.feetY + 4, 13 + sway * 0.6, c.feetY - 2);
+      ctx.quadraticCurveTo(14, c.hipY + 14, c.hipX + 3, c.hipY - 8);
+      ctx.closePath();
+      c.solid(0.34, 2.8, 0.85);
+    },
+    overlay: (ctx, c) => {
+      c.begin(2.6, 0.8);
+      ctx.moveTo(-c.shX + 1, c.shY + 3);
+      ctx.quadraticCurveTo(0, c.shY + 9, c.shX - 1, c.shY + 3);
+      c.stroke(2.6, 0.8);
+    },
+  },
+
+  winged: {
+    label: "The Seraph", side: "good",
+    prop: { shoulder: 1.06, weight: 0.98, hunch: 0, head: 0.94, build: 0 },
+    stance: { settle: -3, spread: 8, heel: 5 }, headroom: 25,
+    back: (ctx, c) => {
+      const beat = Math.sin(c.t * 0.026 + c.phase) * 2.4;
+      const wing = (dx, alpha, lift) => {
+        const root = { x: dx + 2, y: c.shY + 4 };
+        const tips = [[dx - 18, c.shY + 3], [dx - 17, c.shY - 17 - lift], [dx - 6, c.shY - 34 - lift]];
+        tips.forEach(([tx, ty], i) => {
+          ctx.beginPath();
+          ctx.moveTo(root.x, root.y);
+          ctx.quadraticCurveTo(dx - 13, c.shY + 1 - i * 9, tx, ty);
+          ctx.quadraticCurveTo(dx - 4, c.shY - 2 - i * 8, root.x, root.y);
+          ctx.closePath();
+          c.solid(0.6 * alpha, 2.4 - i * 0.2, alpha);
+        });
+      };
+      wing(-c.shX + 5, 0.45, beat * 0.5);
+      wing(-c.shX - 1, 1, beat);
+    },
+  },
+
+  caped: {
+    label: "The Mask", side: "evil",
+    prop: { shoulder: 1.36, weight: 1.34, hunch: 0.6, head: 1.16, build: 1 },
+    stance: { settle: 4, spread: 14, heel: 0 }, headroom: 18,
+    head: (ctx, c) => {
+      const r = c.hr + 3;
+      ctx.beginPath();
+      ctx.moveTo(-r, c.hy + 1);
+      ctx.quadraticCurveTo(-r, c.hy - r - 3, 0, c.hy - r - 2);
+      ctx.quadraticCurveTo(r, c.hy - r - 3, r, c.hy + 1);
+      ctx.lineTo(r + 5, c.hy + 14);
+      ctx.quadraticCurveTo(0, c.hy + 10, -r - 5, c.hy + 14);
+      ctx.closePath();
+      c.solid(0.94, 2.8);
+    },
+    overlay: (ctx, c) => {
+      ctx.beginPath();
+      ctx.moveTo(-c.shX - 6, c.shY + 8);
+      ctx.quadraticCurveTo(-c.shX - 4, c.shY - 6, 0, c.shY - 7);
+      ctx.quadraticCurveTo(c.shX + 4, c.shY - 6, c.shX + 6, c.shY + 8);
+      ctx.quadraticCurveTo(0, c.shY + 2, -c.shX - 6, c.shY + 8);
+      ctx.closePath();
+      c.solid(0.8, 2.6, 0.9);
+    },
+    back: (ctx, c) => {
+      const trail = -10 + Math.sin(c.t * 0.033 + c.phase) * 1.8;
+      const drop = c.feetY - 2;
+      ctx.beginPath();
+      ctx.moveTo(-c.shX - 2, c.shY - 5);
+      ctx.quadraticCurveTo(trail - 7, c.shY + 26, trail - 14, drop);
+      ctx.quadraticCurveTo(trail - 3, drop + 6, trail + 7, drop - 5);
+      ctx.quadraticCurveTo(trail * 0.4, c.shY + 24, -1, c.shY - 6);
+      ctx.closePath();
+      c.solid(0.3, 2.8, 0.95);
+    },
+  },
+
+  horned: {
+    label: "The Devil", side: "evil",
+    prop: { shoulder: 1.12, weight: 1.1, hunch: 3.4, head: 0.96, build: 0.5 },
+    stance: { settle: 4.5, spread: 13, heel: 2 }, headroom: 23,
+    head: (ctx, c) => {
+      const horn = (root, out, up, thick, a) => {
+        ctx.beginPath();
+        ctx.moveTo(root, c.hy - 5);
+        ctx.quadraticCurveTo(out, c.hy - 1, out - 1, c.hy - up);
+        ctx.quadraticCurveTo(out + thick, c.hy + 1, root, c.hy + thick * 0.4);
+        ctx.closePath();
+        c.solid(0.85 * a, 2.2, a);
+      };
+      horn(-3, -18, 20, 5, 1);
+      horn(3, -12, 17, 4.4, 0.75);
+    },
+    back: (ctx, c) => {
+      const lash = Math.sin(c.t * 0.055 + c.phase) * 3;
+      const tipX = -22 + lash;
+      const tipY = c.hipY - 9 + lash * 0.4;
+      c.begin(2.4, 0.9);
+      ctx.moveTo(-2, c.hipY + 3);
+      ctx.quadraticCurveTo(-17, c.hipY + 7, tipX, tipY);
+      c.stroke(2.4, 0.9);
+      ctx.beginPath();
+      ctx.moveTo(tipX + 6, tipY + 4);
+      ctx.lineTo(tipX - 2, tipY - 1);
+      ctx.lineTo(tipX + 5, tipY - 5);
+      ctx.closePath();
+      c.solid(0.85, 2, 0.9);
+    },
+  },
+
+  crowned: {
+    label: "The Crown", side: "evil",
+    prop: { shoulder: 1.3, weight: 1.26, hunch: 0, head: 1.04, build: 0.85 },
+    stance: { settle: -2, spread: 10, heel: 0 }, headroom: 26,
+    head: (ctx, c) => {
+      const n = 5;
+      const inner = c.hr + 1;
+      const band = c.hr + 3.5;
+      ctx.beginPath();
+      ctx.moveTo(-inner - 1, c.hy - 1);
+      for (let i = 0; i < n; i += 1) {
+        const a = Math.PI * 1.08 + (i * Math.PI * 0.84) / (n - 1);
+        const mid = Math.PI * 1.08 + ((i + 0.5) * Math.PI * 0.84) / (n - 1);
+        const len = i === 2 ? 15 : 10 - Math.abs(i - 2) * 1.5;
+        ctx.lineTo(Math.cos(a) * (c.hr + len), c.hy + Math.sin(a) * (c.hr + len));
+        if (i < n - 1) ctx.lineTo(Math.cos(mid) * band, c.hy + Math.sin(mid) * band);
+      }
+      ctx.lineTo(inner + 1, c.hy - 1);
+      ctx.quadraticCurveTo(0, c.hy - inner + 1, -inner - 1, c.hy - 1);
+      ctx.closePath();
+      c.solid(0.9, 2.4);
+    },
+    overlay: (ctx, c) => {
+      for (const s of [-1, 1]) {
+        ctx.beginPath();
+        ctx.moveTo(s * (c.shX + 7), c.shY + 12);
+        ctx.lineTo(s * (c.shX + 8), c.shY - 1);
+        ctx.quadraticCurveTo(s * (c.shX + 2), c.shY - 7, s * (c.shX - 3), c.shY - 4);
+        ctx.lineTo(s * (c.shX - 1), c.shY + 8);
+        ctx.closePath();
+        c.solid(0.75, 2.4, 0.9);
+      }
+    },
+  },
+
+  cowled: {
+    label: "The Hollow", side: "evil",
+    prop: { shoulder: 1, weight: 1.02, hunch: 4.6, head: 1, build: 0 },
+    stance: { settle: 5, spread: 8, heel: 0 }, headroom: 23, hollow: true,
+    head: (ctx, c) => {
+      c.begin(3.2, 1);
+      ctx.moveTo(-10, c.hy + 14);
+      ctx.quadraticCurveTo(-13, c.hy - 7, -1, c.hy - 20);
+      ctx.quadraticCurveTo(12, c.hy - 6, 9, c.hy + 13);
+      c.stroke(3.2, 1);
+      c.begin(2.2, 0.45);
+      ctx.moveTo(-9, c.hy + 12);
+      ctx.quadraticCurveTo(0, c.hy + 5, 8, c.hy + 11);
+      c.stroke(2.2, 0.45);
+    },
+    back: (ctx, c) => {
+      const sway = Math.sin(c.t * 0.034 + c.phase) * 1.5;
+      const left = -14 + sway;
+      const right = 12 + sway * 0.6;
+      ctx.beginPath();
+      ctx.moveTo(-c.hipX - 3, c.hipY - 10);
+      ctx.quadraticCurveTo(-15, c.hipY + 12, left, c.feetY - 6);
+      for (let i = 0; i < 3; i += 1) {
+        const step = (right - left) / 3;
+        const x = left + step * i;
+        ctx.lineTo(x + step * 0.5, c.feetY + 3 - (i % 2) * 3);
+        ctx.lineTo(x + step, c.feetY - 7 - i);
+      }
+      ctx.quadraticCurveTo(13, c.hipY + 11, c.hipX + 3, c.hipY - 10);
+      ctx.closePath();
+      c.solid(0.32, 2.6, 0.88);
+    },
+    overlay: (ctx, c) => {
+      ctx.beginPath();
+      ctx.moveTo(c.offElbow.x - 5, c.offElbow.y - 2);
+      ctx.quadraticCurveTo(c.offElbow.x - 6, c.offElbow.y + 15, c.offHand.x - 1, c.offHand.y + 6);
+      ctx.quadraticCurveTo(c.offElbow.x + 3, c.offElbow.y + 8, c.offElbow.x - 5, c.offElbow.y - 2);
+      ctx.closePath();
+      c.solid(0.34, 2.4, 0.8);
+      c.begin(2.4, 0.6);
+      ctx.moveTo(c.elbow.x - 3, c.elbow.y + 1);
+      ctx.quadraticCurveTo(c.elbow.x - 2, c.elbow.y + 10, c.elbow.x + 5, c.elbow.y + 8);
+      c.stroke(2.4, 0.6);
+    },
+  },
+
+  ronin: {
+    label: "The Ronin", side: "good",
+    prop: { shoulder: 1.08, weight: 1.1, hunch: 0.4, head: 0.94, build: 0.4 },
+    stance: { settle: 5.5, spread: 15, heel: 0 }, headroom: 18,
+    head: (ctx, c) => {
+      const r = c.hr;
+      ctx.beginPath();
+      ctx.ellipse(-3, c.hy - r - 4, 5.2, 3.6, -0.5, 0, Math.PI * 2);
+      ctx.closePath();
+      c.solid(0.9, 2.2);
+      const flick = Math.sin(c.t * 0.05 + c.phase) * 1.6;
+      c.begin(2.6, 0.9);
+      ctx.moveTo(-5, c.hy - r - 5);
+      ctx.quadraticCurveTo(-13 + flick, c.hy - r - 3, -15 + flick, c.hy + 3);
+      c.stroke(2.6, 0.9);
+    },
+    overlay: (ctx, c) => {
+      const sleeve = (e, h) => {
+        ctx.beginPath();
+        ctx.moveTo(e.x - 6, e.y - 4);
+        ctx.quadraticCurveTo(e.x - 9, e.y + 12, e.x - 3, e.y + 16);
+        ctx.quadraticCurveTo(e.x + 4, e.y + 9, h.x - 2, h.y + 2);
+        ctx.quadraticCurveTo(e.x + 5, e.y - 1, e.x - 6, e.y - 4);
+        ctx.closePath();
+        c.solid(0.34, 2.4, 0.85);
+      };
+      sleeve(c.offElbow, c.offHand);
+      sleeve(c.elbow, c.hand);
+    },
+  },
+
+  gladiator: {
+    label: "The Gladiator", side: "good",
+    prop: { shoulder: 1.18, weight: 1.2, hunch: 0.8, head: 1.1, build: 0.7 },
+    stance: { settle: 3, spread: 12, heel: 0 }, headroom: 34,
+    head: (ctx, c) => {
+      const r = c.hr + 2;
+      ctx.beginPath();
+      ctx.moveTo(-r, c.hy + 4);
+      ctx.quadraticCurveTo(-r - 1, c.hy - r - 2, 0, c.hy - r - 3);
+      ctx.quadraticCurveTo(r + 1, c.hy - r - 2, r, c.hy + 4);
+      ctx.lineTo(r - 2, c.hy + 6);
+      ctx.quadraticCurveTo(0, c.hy + 2, -r + 2, c.hy + 6);
+      ctx.closePath();
+      c.solid(0.92, 2.6);
+      ctx.beginPath();
+      ctx.moveTo(-r + 3, c.hy - r + 2);
+      ctx.quadraticCurveTo(-5, c.hy - r - 20, 5, c.hy - r - 17);
+      ctx.quadraticCurveTo(r + 1, c.hy - r - 12, r - 3, c.hy - r + 1);
+      ctx.quadraticCurveTo(1, c.hy - r - 6, -r + 3, c.hy - r + 2);
+      ctx.closePath();
+      c.solid(0.88, 2.4);
+    },
+    overlay: (ctx, c) => {
+      for (let i = 0; i < 3; i += 1) {
+        const t = i / 2;
+        const x = c.shX - 2 + (c.elbow.x - c.shX + 2) * t;
+        const y = c.shY + 1 + (c.elbow.y - c.shY - 1) * t;
+        ctx.beginPath();
+        ctx.ellipse(x, y, 6.5 - i * 0.8, 3.4, 0.7, 0, Math.PI * 2);
+        ctx.closePath();
+        c.solid(0.8, 2.2, 0.9);
+      }
+    },
+  },
+
+  plague: {
+    label: "The Plague Doctor", side: "evil",
+    prop: { shoulder: 1, weight: 1, hunch: 2.2, head: 0.98, build: 0 },
+    stance: { settle: 2, spread: 11, heel: 0 }, headroom: 28,
+    head: (ctx, c) => {
+      const r = c.hr;
+      ctx.beginPath();
+      ctx.moveTo(-1, c.hy + 1);
+      ctx.quadraticCurveTo(r + 9, c.hy + 2, r + 12, c.hy + 15);
+      ctx.quadraticCurveTo(r + 2, c.hy + 9, -1, c.hy + 7);
+      ctx.closePath();
+      c.solid(0.92, 2.4);
+      ctx.beginPath();
+      ctx.ellipse(0, c.hy - r - 1, r + 6, 2.6, 0, 0, Math.PI * 2);
+      ctx.closePath();
+      c.solid(0.85, 2.2);
+      ctx.beginPath();
+      ctx.moveTo(-r + 2, c.hy - r - 2);
+      ctx.quadraticCurveTo(-r + 3, c.hy - r - 17, 0, c.hy - r - 17);
+      ctx.quadraticCurveTo(r - 3, c.hy - r - 17, r - 2, c.hy - r - 2);
+      ctx.closePath();
+      c.solid(0.88, 2.4);
+    },
+    back: (ctx, c) => {
+      const sway = Math.sin(c.t * 0.03 + c.phase) * 1.4;
+      ctx.beginPath();
+      ctx.moveTo(-c.shX - 1, c.shY + 4);
+      ctx.quadraticCurveTo(-13 + sway, c.hipY + 6, -12 + sway, c.feetY - 8);
+      ctx.quadraticCurveTo(0, c.feetY - 3, 11 + sway * 0.5, c.feetY - 9);
+      ctx.quadraticCurveTo(12, c.hipY + 6, c.shX + 1, c.shY + 4);
+      ctx.closePath();
+      c.solid(0.28, 2.6, 0.9);
+    },
+  },
+
+  golem: {
+    label: "The Golem", side: "evil",
+    prop: { shoulder: 1.42, weight: 1.5, hunch: 0, head: 1.24, build: 1 },
+    stance: { settle: 6, spread: 16, heel: 0 }, headroom: 16,
+    head: (ctx, c) => {
+      const r = c.hr;
+      ctx.beginPath();
+      ctx.moveTo(-r - 2, c.hy + 7);
+      ctx.lineTo(-r - 1, c.hy - r + 1);
+      ctx.lineTo(-r + 4, c.hy - r - 3);
+      ctx.lineTo(r - 3, c.hy - r - 3);
+      ctx.lineTo(r + 2, c.hy - r + 2);
+      ctx.lineTo(r + 3, c.hy + 6);
+      ctx.lineTo(r - 4, c.hy + 9);
+      ctx.lineTo(-r + 2, c.hy + 9);
+      ctx.closePath();
+      c.solid(0.95, 3);
+    },
+    overlay: (ctx, c) => {
+      for (const s of [-1, 1]) {
+        ctx.beginPath();
+        ctx.moveTo(s * (c.shX - 2), c.shY - 6);
+        ctx.lineTo(s * (c.shX + 9), c.shY - 4);
+        ctx.lineTo(s * (c.shX + 10), c.shY + 9);
+        ctx.lineTo(s * (c.shX - 1), c.shY + 6);
+        ctx.closePath();
+        c.solid(0.85, 2.6, 0.9);
+      }
+    },
+  },
+
+  diver: {
+    label: "The Diver", side: "good",
+    prop: { shoulder: 1.2, weight: 1.24, hunch: 0, head: 1.3, build: 0.8 },
+    stance: { settle: 4, spread: 12, heel: 0 }, headroom: 20,
+    head: (ctx, c) => {
+      const r = c.hr;
+      ctx.beginPath();
+      ctx.ellipse(1, c.hy, r + 2.5, r + 2, 0, 0, Math.PI * 2);
+      ctx.closePath();
+      c.solid(0.9, 2.6);
+      ctx.beginPath();
+      ctx.moveTo(-r - 1, c.hy + r - 1);
+      ctx.lineTo(r + 3, c.hy + r - 1);
+      ctx.lineTo(r + 4, c.hy + r + 4);
+      ctx.lineTo(-r - 2, c.hy + r + 4);
+      ctx.closePath();
+      c.solid(0.88, 2.4);
+      ctx.beginPath();
+      ctx.moveTo(-2, c.hy - r - 1);
+      ctx.lineTo(4, c.hy - r - 1);
+      ctx.lineTo(3, c.hy - r - 6);
+      ctx.lineTo(-1, c.hy - r - 6);
+      ctx.closePath();
+      c.solid(0.9, 2.2);
+    },
+    back: (ctx, c) => {
+      const coil = Math.sin(c.t * 0.031 + c.phase) * 2.2;
+      c.begin(4.2, 0.95);
+      ctx.moveTo(-c.hr - 3, c.hy + 4);
+      ctx.quadraticCurveTo(-22 + coil, c.hy + 13, -19 + coil, c.shY + 17);
+      ctx.quadraticCurveTo(-10 + coil, c.hipY + 2, -21 + coil * 0.6, c.hipY + 10);
+      c.stroke(4.2, 0.95);
+    },
+  },
+
+  nosferatu: {
+    label: "The Nosferatu", side: "evil",
+    prop: { shoulder: 0.86, weight: 0.84, hunch: 3.8, head: 1.02, build: 0 },
+    stance: { settle: 2, spread: 6, heel: 0 }, headroom: 17,
+    head: (ctx, c) => {
+      const r = c.hr;
+      ctx.beginPath();
+      ctx.ellipse(-1, c.hy - 2, r - 1.5, r + 4, 0, 0, Math.PI * 2);
+      ctx.closePath();
+      c.solid(0.92, 2.4);
+      for (const s of [-1, 1]) {
+        ctx.beginPath();
+        ctx.moveTo(s * (r - 3), c.hy - 4);
+        ctx.lineTo(s * (r + 6), c.hy - 11);
+        ctx.lineTo(s * (r - 2), c.hy + 1);
+        ctx.closePath();
+        c.solid(0.88, 2, 0.9);
+      }
+    },
+    overlay: (ctx, c) => {
+      for (let i = 0; i < 3; i += 1) {
+        c.begin(2, 0.85);
+        ctx.moveTo(c.offHand.x - 1, c.offHand.y + 1);
+        ctx.quadraticCurveTo(c.offHand.x + 4 + i, c.offHand.y + 7, c.offHand.x + 1 + i * 3, c.offHand.y + 13);
+        c.stroke(2, 0.85);
+      }
+    },
+  },
+
+  musketeer: {
+    label: "The Musketeer", side: "good",
+    prop: { shoulder: 1.04, weight: 0.96, hunch: 0, head: 1, build: 0 },
+    stance: { settle: -2, spread: 13, heel: 5 }, headroom: 26,
+    head: (ctx, c) => {
+      const r = c.hr;
+      ctx.beginPath();
+      ctx.ellipse(-1, c.hy - r + 1, r + 8, 3, -0.16, 0, Math.PI * 2);
+      ctx.closePath();
+      c.solid(0.86, 2.2);
+      ctx.beginPath();
+      ctx.moveTo(-r + 2, c.hy - r);
+      ctx.quadraticCurveTo(-r + 3, c.hy - r - 7, 0, c.hy - r - 7);
+      ctx.quadraticCurveTo(r - 2, c.hy - r - 7, r - 1, c.hy - r + 1);
+      ctx.closePath();
+      c.solid(0.88, 2.4);
+      for (let i = 0; i < 3; i += 1) {
+        c.begin(2.6 - i * 0.4, 0.9 - i * 0.12);
+        ctx.moveTo(-r + 1, c.hy - r - 4);
+        ctx.quadraticCurveTo(-14 - i * 2, c.hy - r - 10 - i * 2, -20 - i * 3, c.hy - r - 2 + i * 4);
+        c.stroke(2.6 - i * 0.4, 0.9 - i * 0.12);
+      }
+    },
+    overlay: (ctx, c) => {
+      ctx.beginPath();
+      ctx.moveTo(-c.shX - 1, c.shY + 2);
+      ctx.lineTo(-c.shX + 6, c.shY);
+      ctx.lineTo(c.hipX + 5, c.hipY - 3);
+      ctx.lineTo(c.hipX - 2, c.hipY);
+      ctx.closePath();
+      c.solid(0.36, 2.4, 0.9);
+    },
+  },
+
+  valkyrie: {
+    label: "The Valkyrie", side: "good",
+    prop: { shoulder: 1.04, weight: 1, hunch: 0, head: 0.98, build: 0.3 },
+    stance: { settle: -3, spread: 11, heel: 3 }, headroom: 23,
+    head: (ctx, c) => {
+      const r = c.hr;
+      ctx.beginPath();
+      ctx.moveTo(-r - 1, c.hy + 1);
+      ctx.quadraticCurveTo(-r - 1, c.hy - r - 3, 0, c.hy - r - 3);
+      ctx.quadraticCurveTo(r + 1, c.hy - r - 3, r + 1, c.hy + 1);
+      ctx.quadraticCurveTo(0, c.hy - r + 3, -r - 1, c.hy + 1);
+      ctx.closePath();
+      c.solid(0.9, 2.4);
+      const wing = (dx, alpha, lift) => {
+        ctx.beginPath();
+        ctx.moveTo(dx, c.hy - 2);
+        ctx.quadraticCurveTo(dx - 8, c.hy - 9 - lift, dx - 13, c.hy - 18 - lift);
+        ctx.quadraticCurveTo(dx - 1, c.hy - 13 - lift, dx + 4, c.hy - 4);
+        ctx.closePath();
+        c.solid(0.82 * alpha, 2.2, alpha);
+      };
+      wing(-r + 10, 0.45, -7);
+      wing(-r + 1, 1, 2);
+    },
+    back: (ctx, c) => {
+      const swing = Math.sin(c.t * 0.036 + c.phase) * 2;
+      c.begin(3.4, 0.9);
+      ctx.moveTo(-c.hr + 1, c.hy + 4);
+      ctx.quadraticCurveTo(-11 + swing, c.shY + 12, -8 + swing, c.hipY + 2);
+      c.stroke(3.4, 0.9);
+    },
+  },
+
+  wendigo: {
+    label: "The Wendigo", side: "evil",
+    prop: { shoulder: 1, weight: 0.8, hunch: 4.2, head: 0.9, build: 0.55 },
+    stance: { settle: 3, spread: 12, heel: 0 }, headroom: 31,
+    head: (ctx, c) => {
+      const r = c.hr;
+      const antler = (dx, dir, alpha, span) => {
+        c.begin(2.8, alpha);
+        ctx.moveTo(dx, c.hy - r + 1);
+        ctx.quadraticCurveTo(dx + dir * span, c.hy - r - 8, dx + dir * (span - 3), c.hy - r - 21);
+        c.stroke(2.8, alpha);
+        for (let i = 0; i < 2; i += 1) {
+          const t = 0.4 + i * 0.32;
+          c.begin(2.2, alpha * 0.9);
+          ctx.moveTo(dx + dir * span * t * 0.9, c.hy - r - 11 * t);
+          ctx.lineTo(dx + dir * (span + 4 + i * 2), c.hy - r - 12 - i * 6);
+          c.stroke(2.2, alpha * 0.9);
+        }
+      };
+      antler(-2, -1, 0.95, 13);
+      antler(2, 1, 0.78, 9);
+    },
+  },
+
+  executioner: {
+    label: "The Executioner", side: "evil",
+    prop: { shoulder: 1.32, weight: 1.36, hunch: 0.4, head: 1.06, build: 1 },
+    stance: { settle: 4, spread: 13, heel: 0 }, headroom: 17,
+    head: (ctx, c) => {
+      const r = c.hr;
+      ctx.beginPath();
+      ctx.moveTo(-r - 4, c.hy + 11);
+      ctx.lineTo(-r - 4, c.hy - r - 2);
+      ctx.lineTo(-r + 1, c.hy - r - 5);
+      ctx.lineTo(r - 1, c.hy - r - 5);
+      ctx.lineTo(r + 4, c.hy - r - 2);
+      ctx.lineTo(r + 4, c.hy + 11);
+      ctx.quadraticCurveTo(0, c.hy + 15, -r - 4, c.hy + 11);
+      ctx.closePath();
+      c.solid(0.93, 2.8);
+    },
+    overlay: (ctx, c) => {
+      ctx.beginPath();
+      ctx.moveTo(-11, c.hipY - 3);
+      ctx.lineTo(11, c.hipY - 3);
+      ctx.lineTo(12, c.hipY + 4);
+      ctx.lineTo(-12, c.hipY + 4);
+      ctx.closePath();
+      c.solid(0.8, 2.4, 0.9);
+    },
+  },
+
+  sentinel: {
+    label: "The Sentinel", side: "good",
+    prop: { shoulder: 1.24, weight: 1.26, hunch: 0, head: 1, build: 0.9 },
+    stance: { settle: 1, spread: 10, heel: 0 }, headroom: 22,
+    head: (ctx, c) => {
+      const r = c.hr;
+      ctx.beginPath();
+      ctx.moveTo(-r + 1, c.hy + 8);
+      ctx.lineTo(-r + 1, c.hy - r - 8);
+      ctx.lineTo(-r + 4, c.hy - r - 11);
+      ctx.lineTo(r - 3, c.hy - r - 11);
+      ctx.lineTo(r, c.hy - r - 8);
+      ctx.lineTo(r, c.hy + 8);
+      ctx.lineTo(r + 3, c.hy + 11);
+      ctx.lineTo(-r - 3, c.hy + 11);
+      ctx.closePath();
+      c.solid(0.93, 2.8);
+    },
+    overlay: (ctx, c) => {
+      ctx.beginPath();
+      ctx.moveTo(-c.shX - 4, c.shY + 1);
+      ctx.quadraticCurveTo(0, c.shY - 6, c.shX + 4, c.shY + 1);
+      ctx.quadraticCurveTo(0, c.shY + 4, -c.shX - 4, c.shY + 1);
+      ctx.closePath();
+      c.solid(0.8, 2.4, 0.9);
+    },
+  },
+
+  witch: {
+    label: "The Witch", side: "evil",
+    prop: { shoulder: 0.94, weight: 0.88, hunch: 3, head: 0.92, build: 0 },
+    stance: { settle: 3, spread: 12, heel: 0 }, headroom: 31,
+    head: (ctx, c) => {
+      const r = c.hr;
+      ctx.beginPath();
+      ctx.ellipse(-1, c.hy - r + 1, r + 7, 3.2, 0.1, 0, Math.PI * 2);
+      ctx.closePath();
+      c.solid(0.86, 2.2);
+      ctx.beginPath();
+      ctx.moveTo(-r + 1, c.hy - r - 1);
+      ctx.quadraticCurveTo(-6, c.hy - r - 14, -15, c.hy - r - 20);
+      ctx.quadraticCurveTo(-6, c.hy - r - 10, r - 1, c.hy - r - 1);
+      ctx.closePath();
+      c.solid(0.9, 2.4);
+      for (let i = 0; i < 2; i += 1) {
+        c.begin(2, 0.8);
+        ctx.moveTo(-r - 1 + i * 2, c.hy - r + 3);
+        ctx.quadraticCurveTo(-r - 4 - i, c.hy + 4, -r - 2 - i * 2, c.hy + 12);
+        c.stroke(2, 0.8);
+      }
+    },
+  },
+
+  prophet: {
+    label: "The Prophet", side: "good",
+    prop: { shoulder: 1.04, weight: 1.08, hunch: -0.6, head: 1, build: 0.3 },
+    stance: { settle: -2, spread: 7, heel: 0 }, headroom: 30,
+    head: (ctx, c) => {
+      const r = c.hr;
+      // hair off the back of the skull first, so the beard overlaps it
+      ctx.beginPath();
+      ctx.moveTo(-r + 3, c.hy - r + 1);
+      ctx.quadraticCurveTo(-r - 8, c.hy + 4, -r - 5, c.hy + 17);
+      ctx.quadraticCurveTo(-r + 1, c.hy + 7, -r + 4, c.hy - 2);
+      ctx.closePath();
+      c.solid(0.86, 2.2);
+      // beard: closes the head into one mass and runs to the chest
+      ctx.beginPath();
+      ctx.moveTo(-r + 1, c.hy + 1);
+      ctx.quadraticCurveTo(-r - 3, c.hy + 15, -2, c.hy + 25);
+      ctx.quadraticCurveTo(5, c.hy + 20, r - 1, c.hy + 1);
+      ctx.quadraticCurveTo(0, c.hy + 9, -r + 1, c.hy + 1);
+      ctx.closePath();
+      c.solid(0.92, 2.6);
+      const bob = Math.sin(c.t * 0.04 + c.phase) * 1.5;
+      ctx.strokeStyle = c.blade;
+      ctx.globalAlpha = 0.95 * c.dim;
+      ctx.lineWidth = c.lw(2.4);
+      ctx.beginPath();
+      ctx.ellipse(0, c.hy - 15 + bob, 13.5, 4.6, 0, 0, TAU);
+      ctx.stroke();
+      ctx.globalAlpha = 0.28 * c.dim;
+      ctx.lineWidth = c.lw(1.6);
+      ctx.beginPath();
+      ctx.ellipse(0, c.hy - 17.5 + bob, 18, 6, 0, 0, TAU);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    },
+    back: (ctx, c) => {
+      const sway = Math.sin(c.t * 0.028 + c.phase) * 1.3;
+      ctx.beginPath();
+      ctx.moveTo(-c.hipX - 3, c.hipY - 9);
+      ctx.quadraticCurveTo(-15, c.hipY + 14, -14 + sway, c.feetY - 1);
+      ctx.quadraticCurveTo(sway, c.feetY + 4, 13 + sway * 0.6, c.feetY - 2);
+      ctx.quadraticCurveTo(14, c.hipY + 14, c.hipX + 3, c.hipY - 9);
+      ctx.closePath();
+      c.solid(0.34, 2.8, 0.85);
+    },
+    overlay: (ctx, c) => {
+      c.begin(2.6, 0.8);
+      ctx.moveTo(-c.shX + 1, c.shY + 4);
+      ctx.quadraticCurveTo(0, c.shY + 11, c.shX - 1, c.shY + 4);
+      c.stroke(2.6, 0.8);
+    },
+  },
+
+  luchador: {
+    label: "The Luchador", side: "good",
+    prop: { shoulder: 1.26, weight: 1.24, hunch: 0, head: 1.06, build: 0.95 },
+    stance: { settle: 3, spread: 13, heel: 0 }, headroom: 24,
+    head: (ctx, c) => {
+      const r = c.hr + 1;
+      ctx.beginPath();
+      ctx.moveTo(-r, c.hy + 5);
+      ctx.quadraticCurveTo(-r - 1, c.hy - r - 2, 0, c.hy - r - 2);
+      ctx.quadraticCurveTo(r + 1, c.hy - r - 2, r, c.hy + 5);
+      ctx.quadraticCurveTo(0, c.hy + 11, -r, c.hy + 5);
+      ctx.closePath();
+      c.solid(0.94, 2.6);
+      // a blunt crest fore-and-aft, half a head clear of the dome
+      ctx.beginPath();
+      ctx.moveTo(-r + 4, c.hy - r);
+      ctx.quadraticCurveTo(-3, c.hy - r - 13, 6, c.hy - r - 9);
+      ctx.quadraticCurveTo(r + 2, c.hy - r - 5, r - 4, c.hy - r + 1);
+      ctx.quadraticCurveTo(0, c.hy - r - 5, -r + 4, c.hy - r);
+      ctx.closePath();
+      c.solid(0.88, 2.2);
+    },
+    overlay: (ctx, c) => {
+      ctx.beginPath();
+      ctx.moveTo(-9.5, c.hipY - 3);
+      ctx.lineTo(9.5, c.hipY - 3);
+      ctx.lineTo(10, c.hipY + 3);
+      ctx.lineTo(-10, c.hipY + 3);
+      ctx.closePath();
+      c.solid(0.5, 2.4, 0.9);
+    },
+    back: (ctx, c) => {
+      const trail = Math.sin(c.t * 0.035 + c.phase) * 1.6;
+      ctx.beginPath();
+      ctx.moveTo(-c.shX - 1, c.shY - 3);
+      ctx.quadraticCurveTo(-16 + trail, c.shY + 14, -13 + trail, c.hipY + 8);
+      ctx.quadraticCurveTo(-2, c.hipY + 12, 8 + trail * 0.5, c.hipY + 3);
+      ctx.quadraticCurveTo(-2, c.shY + 8, -c.shX - 1, c.shY - 3);
+      ctx.closePath();
+      c.solid(0.3, 2.6, 0.9);
+    },
+  },
+
+  astronaut: {
+    label: "The Astronaut", side: "good",
+    prop: { shoulder: 1.22, weight: 1.3, hunch: 0, head: 1.3, build: 0.85 },
+    stance: { settle: 4, spread: 11, heel: 0 }, headroom: 22,
+    head: (ctx, c) => {
+      const r = c.hr;
+      ctx.beginPath();
+      ctx.ellipse(1, c.hy - 1, r + 2, r + 2.5, 0, 0, TAU);
+      ctx.closePath();
+      c.solid(0.9, 2.6);
+      // visor band: a wide chord across the front of the dome
+      ctx.beginPath();
+      ctx.moveTo(-r + 1, c.hy - 3);
+      ctx.quadraticCurveTo(1, c.hy - 9, r + 2, c.hy - 4);
+      ctx.quadraticCurveTo(r + 1, c.hy + 4, 1, c.hy + 5);
+      ctx.quadraticCurveTo(-r + 1, c.hy + 3, -r + 1, c.hy - 3);
+      ctx.closePath();
+      c.solid(0.4, 2.4, 0.95);
+      // collar ring
+      ctx.beginPath();
+      ctx.moveTo(-r + 1, c.hy + r + 1);
+      ctx.lineTo(r + 1, c.hy + r + 1);
+      ctx.lineTo(r + 1.5, c.hy + r + 5);
+      ctx.lineTo(-r + 0.5, c.hy + r + 5);
+      ctx.closePath();
+      c.solid(0.6, 2.4, 0.95);
+      c.begin(2, 0.85);
+      ctx.moveTo(-r + 1, c.hy - r + 1);
+      ctx.lineTo(-r - 3, c.hy - r - 6);
+      c.stroke(2, 0.85);
+    },
+    back: (ctx, c) => {
+      ctx.beginPath();
+      ctx.moveTo(-c.shX - 2, c.shY - 4);
+      ctx.lineTo(-c.shX + 8, c.shY - 5);
+      ctx.lineTo(-c.shX + 7, c.hipY - 1);
+      ctx.lineTo(-c.shX - 4, c.hipY + 1);
+      ctx.closePath();
+      c.solid(0.66, 2.8, 0.95);
+      c.begin(2.2, 0.8);
+      ctx.moveTo(-c.shX - 1, c.shY + 6);
+      ctx.quadraticCurveTo(-c.shX - 9, c.shY + 14, -c.shX - 2, c.hipY + 2);
+      c.stroke(2.2, 0.8);
+    },
+  },
+
+  gunslinger: {
+    label: "The Gunslinger", side: "good",
+    prop: { shoulder: 1.06, weight: 1, hunch: 0.6, head: 0.98, build: 0.2 },
+    stance: { settle: 2, spread: 13, heel: 0 }, headroom: 24,
+    head: (ctx, c) => {
+      const r = c.hr;
+      ctx.beginPath();
+      ctx.ellipse(-1, c.hy - r + 2, r + 9, 3.2, -0.08, 0, TAU);
+      ctx.closePath();
+      c.solid(0.86, 2.4);
+      // crown with a dent in the top
+      ctx.beginPath();
+      ctx.moveTo(-r + 2, c.hy - r + 1);
+      ctx.lineTo(-r + 3, c.hy - r - 9);
+      ctx.quadraticCurveTo(0, c.hy - r - 5, r - 3, c.hy - r - 9);
+      ctx.lineTo(r - 2, c.hy - r + 1);
+      ctx.closePath();
+      c.solid(0.9, 2.6);
+      // kerchief knot under the jaw
+      ctx.beginPath();
+      ctx.moveTo(-r + 2, c.hy + 4);
+      ctx.quadraticCurveTo(0, c.hy + 13, r - 1, c.hy + 4);
+      ctx.quadraticCurveTo(0, c.hy + 8, -r + 2, c.hy + 4);
+      ctx.closePath();
+      c.solid(0.5, 2.2, 0.9);
+    },
+    back: (ctx, c) => {
+      const sway = Math.sin(c.t * 0.034 + c.phase) * 1.7;
+      ctx.beginPath();
+      ctx.moveTo(-c.shX - 1, c.shY + 3);
+      ctx.quadraticCurveTo(-16 + sway, c.hipY + 8, -19 + sway, c.feetY - 13);
+      ctx.lineTo(-6 + sway, c.feetY - 11);
+      ctx.lineTo(-2 + sway, c.hipY + 6);
+      ctx.lineTo(4, c.hipY + 6);
+      ctx.lineTo(8 + sway * 0.5, c.feetY - 11);
+      ctx.lineTo(19 + sway * 0.5, c.feetY - 14);
+      ctx.quadraticCurveTo(15, c.hipY + 8, c.shX + 1, c.shY + 3);
+      ctx.closePath();
+      c.solid(0.3, 2.6, 0.9);
+    },
+  },
+
+  pharaoh: {
+    label: "The Pharaoh", side: "evil",
+    prop: { shoulder: 1.08, weight: 1.08, hunch: 0, head: 1, build: 0.4 },
+    stance: { settle: -1, spread: 9, heel: 0 }, headroom: 22,
+    head: (ctx, c) => {
+      const r = c.hr;
+      // nemes: narrow at the crown, flaring out past the shoulders
+      ctx.beginPath();
+      ctx.moveTo(-r + 1, c.hy - r - 2);
+      ctx.quadraticCurveTo(0, c.hy - r - 5, r - 1, c.hy - r - 2);
+      ctx.lineTo(r + 4, c.hy + 10);
+      ctx.lineTo(r - 1, c.hy + 11);
+      ctx.lineTo(r - 3, c.hy + 1);
+      ctx.lineTo(-r + 3, c.hy + 1);
+      ctx.lineTo(-r + 1, c.hy + 11);
+      ctx.lineTo(-r - 4, c.hy + 10);
+      ctx.closePath();
+      c.solid(0.92, 2.6);
+      // false beard: a straight bar off the chin
+      ctx.beginPath();
+      ctx.moveTo(-3, c.hy + 5);
+      ctx.lineTo(4, c.hy + 5);
+      ctx.lineTo(3, c.hy + 20);
+      ctx.lineTo(-2, c.hy + 20);
+      ctx.closePath();
+      c.solid(0.88, 2.4);
+      // uraeus hooking forward off the brow
+      c.begin(2.4, 0.9);
+      ctx.moveTo(0, c.hy - r - 1);
+      ctx.quadraticCurveTo(6, c.hy - r - 6, 10, c.hy - r - 2);
+      c.stroke(2.4, 0.9);
+    },
+    overlay: (ctx, c) => {
+      ctx.beginPath();
+      ctx.moveTo(-c.shX - 3, c.shY + 3);
+      ctx.quadraticCurveTo(0, c.shY + 12, c.shX + 3, c.shY + 3);
+      ctx.quadraticCurveTo(0, c.shY + 6, -c.shX - 3, c.shY + 3);
+      ctx.closePath();
+      c.solid(0.8, 2.4, 0.9);
+    },
+  },
+
+  viking: {
+    label: "The Viking", side: "good",
+    prop: { shoulder: 1.3, weight: 1.3, hunch: 0.4, head: 1.02, build: 0.9 },
+    stance: { settle: 4, spread: 14, heel: 0 }, headroom: 20,
+    head: (ctx, c) => {
+      const r = c.hr;
+      // beard first: a wide wedge to the chest
+      ctx.beginPath();
+      ctx.moveTo(-r - 1, c.hy + 1);
+      ctx.quadraticCurveTo(-r - 4, c.hy + 13, -1, c.hy + 21);
+      ctx.quadraticCurveTo(r + 3, c.hy + 12, r + 1, c.hy + 1);
+      ctx.quadraticCurveTo(0, c.hy + 8, -r - 1, c.hy + 1);
+      ctx.closePath();
+      c.solid(0.9, 2.6);
+      // helm: rounded cap with a flared rim and a nasal bar
+      ctx.beginPath();
+      ctx.moveTo(-r - 3, c.hy + 1);
+      ctx.quadraticCurveTo(-r - 3, c.hy - r - 5, 0, c.hy - r - 5);
+      ctx.quadraticCurveTo(r + 3, c.hy - r - 5, r + 3, c.hy + 1);
+      ctx.lineTo(r + 5, c.hy + 3);
+      ctx.lineTo(-r - 5, c.hy + 3);
+      ctx.closePath();
+      c.solid(0.94, 2.8);
+      c.begin(2.2, 0.9);
+      ctx.moveTo(1, c.hy + 2);
+      ctx.lineTo(1, c.hy + 8);
+      c.stroke(2.2, 0.9);
+    },
+    overlay: (ctx, c) => {
+      // round shield on the off hand
+      ctx.beginPath();
+      ctx.ellipse(c.offHand.x - 2, c.offHand.y + 3, 12, 12.5, 0, 0, TAU);
+      ctx.closePath();
+      c.solid(0.6, 2.8, 0.95);
+      ctx.beginPath();
+      ctx.ellipse(c.offHand.x - 2, c.offHand.y + 3, 3.4, 3.6, 0, 0, TAU);
+      ctx.closePath();
+      c.solid(0.9, 2.2, 0.9);
+    },
+  },
+
+  anubis: {
+    label: "The Anubis", side: "evil",
+    prop: { shoulder: 1.1, weight: 1.06, hunch: 0, head: 0.94, build: 0.5 },
+    stance: { settle: 1, spread: 11, heel: 0 }, headroom: 28,
+    head: (ctx, c) => {
+      const r = c.hr;
+      // two tall tapered ears, standing straight up and well apart
+      for (const s of [-1, 1]) {
+        const a = s < 0 ? 1 : 0.78;
+        ctx.beginPath();
+        ctx.moveTo(s * (r - 4), c.hy - r + 3);
+        ctx.quadraticCurveTo(s * (r + 1), c.hy - r - 12, s * (r - 2), c.hy - r - 19);
+        ctx.quadraticCurveTo(s * (r - 6), c.hy - r - 8, s * (r - 7), c.hy - r + 2);
+        ctx.closePath();
+        c.solid(0.88 * a, 2.4, a);
+      }
+      // muzzle: a long wedge forward, clear of the shoulders
+      ctx.beginPath();
+      ctx.moveTo(0, c.hy - 3);
+      ctx.quadraticCurveTo(r + 10, c.hy - 2, r + 15, c.hy + 6);
+      ctx.quadraticCurveTo(r + 4, c.hy + 9, 0, c.hy + 7);
+      ctx.closePath();
+      c.solid(0.9, 2.4);
+    },
+    overlay: (ctx, c) => {
+      ctx.beginPath();
+      ctx.moveTo(-c.shX - 4, c.shY + 2);
+      ctx.quadraticCurveTo(0, c.shY + 13, c.shX + 4, c.shY + 2);
+      ctx.quadraticCurveTo(0, c.shY + 5, -c.shX - 4, c.shY + 2);
+      ctx.closePath();
+      c.solid(0.78, 2.4, 0.9);
+    },
+    back: (ctx, c) => {
+      const sway = Math.sin(c.t * 0.032 + c.phase) * 1.5;
+      ctx.beginPath();
+      ctx.moveTo(-c.hipX - 2, c.hipY - 6);
+      ctx.quadraticCurveTo(-12, c.hipY + 10, -11 + sway, c.feetY - 18);
+      ctx.quadraticCurveTo(0, c.feetY - 13, 10 + sway * 0.6, c.feetY - 19);
+      ctx.quadraticCurveTo(11, c.hipY + 9, c.hipX + 2, c.hipY - 6);
+      ctx.closePath();
+      c.solid(0.28, 2.6, 0.88);
+    },
+  },
+
+  ringmaster: {
+    label: "The Ringmaster", side: "evil",
+    prop: { shoulder: 1.14, weight: 1.04, hunch: 0, head: 0.96, build: 0.35 },
+    stance: { settle: -2, spread: 11, heel: 4 }, headroom: 30,
+    head: (ctx, c) => {
+      const r = c.hr;
+      ctx.beginPath();
+      ctx.ellipse(-1, c.hy - r + 1, r + 6, 3, -0.06, 0, TAU);
+      ctx.closePath();
+      c.solid(0.86, 2.4);
+      // tall stovepipe crown, taller than it is wide
+      ctx.beginPath();
+      ctx.moveTo(-r + 1, c.hy - r);
+      ctx.lineTo(-r, c.hy - r - 19);
+      ctx.lineTo(r - 1, c.hy - r - 19);
+      ctx.lineTo(r - 2, c.hy - r);
+      ctx.closePath();
+      c.solid(0.92, 2.8);
+      // moustache, so the head shape is not a bare oval under the hat
+      c.begin(2.4, 0.85);
+      ctx.moveTo(-4, c.hy + 4);
+      ctx.quadraticCurveTo(0, c.hy + 7, 5, c.hy + 3);
+      c.stroke(2.4, 0.85);
+    },
+    overlay: (ctx, c) => {
+      // high collar standing off the neck
+      for (const s of [-1, 1]) {
+        c.begin(2.4, 0.85);
+        ctx.moveTo(s * 3, c.shY - 1);
+        ctx.lineTo(s * 9, c.shY - 9);
+        c.stroke(2.4, 0.85);
+      }
+    },
+    back: (ctx, c) => {
+      const flick = Math.sin(c.t * 0.038 + c.phase) * 1.8;
+      ctx.beginPath();
+      ctx.moveTo(-c.shX - 1, c.shY + 2);
+      ctx.quadraticCurveTo(-15 + flick, c.hipY + 6, -18 + flick, c.feetY - 20);
+      ctx.lineTo(-7 + flick, c.feetY - 19);
+      ctx.lineTo(-2, c.hipY + 4);
+      ctx.lineTo(4, c.hipY + 4);
+      ctx.lineTo(9 + flick * 0.5, c.feetY - 19);
+      ctx.lineTo(18 + flick * 0.5, c.feetY - 22);
+      ctx.quadraticCurveTo(15, c.hipY + 6, c.shX + 1, c.shY + 2);
+      ctx.closePath();
+      c.solid(0.3, 2.6, 0.9);
+    },
+  },
+};
+
+</script>
+</body>
+</html>

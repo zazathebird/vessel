@@ -1958,6 +1958,9 @@ function duelling(pool: DuelPool): Effect {
       y: h * 0.8 - DUEL_FEET_Y * scale,
       scale,
       ink: p.fg,
+      // The carve's second tone — see `DuelView.paper`. Here the duel *is* the
+      // page background, so `bg` is exactly what is behind every fighter.
+      paper: p.bg,
       // The blades keep their alignment colours in every palette — the one
       // literal-colour carve-out on the site (see BLADE_COLORS in fx/duel.ts).
       bladeA: BLADE_COLORS[st.a.style],

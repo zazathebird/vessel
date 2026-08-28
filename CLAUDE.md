@@ -542,7 +542,29 @@ Design and phase history in `docs/DUEL.md` / `docs/DUEL-ABSORB.md`; the referenc
 `handoff_duel_engine/duel-cycle-v2.html`. Costume work has its own skill (`duel-costumes`), which also
 covers how to *see* any of this — rAF parks in an automated browser, so use `scripts/duel-shot.mjs`.
 
-**Fighters and costume** (`src/fx/fighters.ts`, **a roster of forty — twenty a side**, 2026-08-28):
+**Fighters and costume** (`src/fx/fighters.ts`, **a roster of twenty-four — twelve a side**, 2026-08-28):
+
+- **The body is a mass and every mark carries its own edge — "the carve", and it is not optional.**
+  Each shape is laid down in the palette's **background role** at a wider line before it is drawn in
+  ink, so a helmet stops where the skull starts and the near leg crosses in front of the far one; each
+  bone is a tapered capsule, two per limb, so the elbow and the knee are joints you can see. `paper` is
+  a **role, not a literal** — it cross-fades with the 0.9s bleed and holds on all 25 palettes. It
+  would read as a light *gap* rather than a dark rim on a pale palette; **there is no pale palette
+  here** (the brightest `bg` is Clay at 0.0104 relative luminance against `fg` values of 0.88–0.94),
+  so today it is always a rim. **Adding a light palette makes that a live question again.** **`rim: 0` disables it and is the rollback**,
+  and is also the right value for any surface drawing the duel over an image rather than a palette.
+  Measured at **0.097ms → 0.172ms** per frame at the ornament's 700×700 on a *software* rasteriser:
+  1.77× the duel's own draw and ~1% of a 60fps budget. **Do not revert this to strokes** — the flat,
+  wire look it replaced is the thing the client rejected by name.
+- **The carve reaches every costume through `solid()` and `strokeInk()`, which is why sixteen surviving
+  costumes needed no edit.** A hook that ends in a bare `ctx.stroke()` is uncarved and back to being a
+  wire. **Two are deliberately bare**: the prophet's halo rings, drawn in the blade colour, because a
+  background-coloured rim around a glow is a hole punched in the thing that is meant to glow.
+- **`solid()`'s inner shadow is clipped to its own mark, and the clip is what keeps it from being the
+  2026-08-14 slab** — it is a second value *inside* one shape, never across the body. Nothing else on
+  the body gets a second interior tone, and cloth alpha must not be raised to compensate for the new
+  edges: the carve already separates a cape from the legs, and alpha is what stops it becoming a
+  shield.
 
 - **Mass is allowed; a slab is not** — the rule is not "never fill", but a filled shape covering the
   torso must be faint enough to read the body through.
@@ -550,14 +572,21 @@ covers how to *see* any of this — rAF parks in an automated browser, so use `s
   is.** Three costumes were built and lost this way before it was written down: the plague doctor's
   beak left the brow and disappeared under its own brim, the falconer's bird faced forward and made a
   two-headed figure, and the valkyrie's wings overlapped into one flap. Each was fixed by *moving* a
-  shape, never by enlarging it.
+  shape, never by enlarging it. **The carve weakens this and does not retire it** — a mark now stops
+  where the one behind it starts, so a collision is cheaper to survive, but two shapes drawn in the
+  same place are still one shape and an edge cannot separate them.
 - **A proportion has to be pushed past what looks right in the source.** At ~61px two rig units is one
   pixel — the gladiator's crest cleared its helm by eight units and read as a bump, and the reaper's
   skull had two units of cheek pinch and read as an egg.
 - **Interior detail is not a costume — the outline is.** The monk had a sash and a bead loop, obeyed
   every rule, and read on the contact sheet as an undressed rig; what fixed it was a rolled fold that
   changes the *silhouette* at the shoulder. Same finding as the 2026-08-19 wire-diagram one, arriving
-  at a costume that was doing nothing wrong.
+  at a costume that was doing nothing wrong. **This is the finding the 2026-08-28 cut came out of**:
+  sixteen of the forty were a second copy of a stronger silhouette (three brimmed hats, four blocks
+  for a head, two capes to the floor) or a costume whose whole read was interior detail, and the count
+  turned out to be the wrong lever — what fixed the flatness was the carve, one level down.
+  **The exhibits for all three rules — the falconer, the reaper, the monk — were among the sixteen
+  cut, so the lessons are now older than anything you can look at. They are still true.**
 - **All three were found on the contact sheet and none was visible in a single duel** — `duel-shot.mjs
   sheet` takes `--only a,b,c` and `--px N` so a tranche can be looked at large. **Add costumes in
   tranches and look at the sheet between them**; the question is whether they are telling apart in a
@@ -566,7 +595,7 @@ covers how to *see* any of this — rAF parks in an automated browser, so use `s
   that must agree with the roster is precisely how four of the original eight became unreachable.
 - **A fighter has a `stance`, and it moves the hips and the feet only.** Eight costumes on eight
   identical bodies in one identical guard is what made the roster read as one fighter — which matters
-  more at forty, not less.
+  more at twenty-four, not less.
 - **`prop` carries `head` and `build`; `proportion` is `shoulder` / `weight` / `hunch`, with
   deliberately no height multiplier** — the blade is drawn inside the same transform as the body, so
   scaling height scales reach.
@@ -582,7 +611,9 @@ covers how to *see* any of this — rAF parks in an automated browser, so use `s
   **The argument that actually lands is technical**: this engine draws a silhouette plus one signature
   shape at ~200px and cannot draw face detail at all, and those characters are recognised by *face* —
   a mask texture, a burn scar, a jumper stripe. Folklore was designed as silhouette and is free: The
-  Reaper, The Plague Doctor, The Headless Rider, The Count, The Djinn, The Outlaw.
+  Plague Doctor, The Nosferatu, The Prophet, The Pharaoh, The Anubis, The Viking. (The Reaper, The
+  Headless Rider, The Count and The Djinn were drawn and then cut on 2026-08-28 — the rule that made
+  them safe to draw is unchanged.)
 
 **The choreographer** — fighters decide nothing:
 

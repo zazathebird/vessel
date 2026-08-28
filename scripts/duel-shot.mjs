@@ -44,8 +44,8 @@ const OUT = outFlag >= 0 ? args[outFlag + 1] : mkdtempSync(join(tmpdir(), "duel-
 const MODE = modes[0] ?? "all";
 /* `--only a,b,c` narrows the contact sheet to a tranche and `--px N` sets the
  * cell size. Adding costumes four at a time means looking at those four large
- * and then at the whole roster small, and the sheet at forty fighters is too
- * small to judge a mark in. */
+ * and then at the whole roster small, and the sheet at twenty-four fighters is
+ * still too small to judge a mark in. */
 const onlyFlag = args.indexOf("--only");
 const ONLY = onlyFlag >= 0 ? args[onlyFlag + 1] : "";
 const pxFlag = args.indexOf("--px");
@@ -105,6 +105,10 @@ function view(over) {
   return Object.assign({
     x: 0, y: 0, scale: 1, ink: INK, bladeA: '#3d9bff', bladeB: '#ff3b30',
     core: INK, spark: SPARK, line: LINE, bars: false, dim: 1,
+    // The carve's second tone. This bench paints BG behind every cell, so it
+    // is telling drawDuel the truth about what is behind the fighters —
+    // which is the whole contract of the field.
+    paper: BG,
     // kick on, because this bench exists to review the ornament and the
     // ornament is the presentation that opts into it. Without this the shake
     // is simply not drawn and a strip of a contact looks like there is none.
@@ -350,14 +354,14 @@ function hitStrip(kind, pool, before, n, tag) {
   }
   if (mode === 'hit' || mode === 'all') {
     await hitStrip('hit', ['hooded', 'caped'], 2, 12, 'landed');
-    await hitStrip('block', ['haloed', 'horned'], 2, 12, 'blocked');
+    await hitStrip('block', ['prophet', 'horned'], 2, 12, 'blocked');
     await hitStrip('ground', ['maned', 'cowled'], 1, 12, 'ground');
   }
   if (mode === 'move' || mode === 'all') {
     await moveStrip('sweep_low', 'low-sweep', ['hooded', 'caped'], 12, 3, 'sweep-hop');
     await moveStrip('roll_through', 'roll-past', ['hooded', 'caped'], 12, 4, 'roll');
     await moveStrip('handspring', 'spring-away', ['maned', 'cowled'], 12, 4, 'handspring');
-    await moveStrip('parry_spin', 'whirl-and-catch', ['haloed', 'horned'], 12, 3, 'parry-spin');
+    await moveStrip('parry_spin', 'whirl-and-catch', ['prophet', 'horned'], 12, 3, 'parry-spin');
     await moveStrip('blade_throw', 'throw-deflected', ['hooded', 'caped'], 12, 5, 'throw-deflected');
   }
   if (mode === 'sheet' || mode === 'all') {
@@ -373,11 +377,11 @@ function hitStrip(kind, pool, before, n, tag) {
    * template literal in the node half, and one would end it.) */
   if (mode === 'pace') {
     await strip(['hooded', 'caped'], 600, 12, 40, 'pace-a');
-    await strip(['haloed', 'horned'], 1400, 12, 40, 'pace-b');
+    await strip(['prophet', 'horned'], 1400, 12, 40, 'pace-b');
   }
   if (mode === 'strip' || mode === 'all') {
     await strip(['hooded', 'caped'], 240, 12, 7, 'order');
-    await strip(['haloed', 'horned'], 600, 12, 7, 'holy');
+    await strip(['prophet', 'horned'], 600, 12, 7, 'holy');
   }
   if (mode === 'scale' || mode === 'all') {
     const st = D.createDuel('maned', 'cowled');

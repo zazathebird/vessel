@@ -13,6 +13,89 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-28 — the carve, and the roster back down to twenty-four
+
+**Supersedes the entry below it** (*the roster goes to forty*), which stays exactly as written: forty
+was built, and this is what happened to it later the same day.
+
+**The fault, and it is not a costume fault.** The roster read flat. Forty archetypes on the contact
+sheet were forty *wire diagrams* — every bone a constant-width stroke, the torso two stroked ribcage
+edges beside a spine line, and every mark laid over every other mark with nothing between them, so a
+helmet did not stop where the skull started and a near leg did not cross in front of a far one. That
+is a **renderer** problem, and no number of costumes could fix it — which is what thirty-two of them
+had just been spent trying to do.
+
+**Two changes, and the second is the one with a name.**
+
+1. **The body is a mass.** Every bone is a tapered capsule, wide at the root and narrow at the tip,
+   two per limb so the elbow and the knee are visible joints. The torso is a shape between the
+   shoulders and the hips, and `prop.build` now sets how wide that mass is at chest, waist and hips
+   rather than stroking two ribcage edges. Feet are a short capsule each. Draw order is back leg →
+   torso → shoulders → neck → head → front leg → off arm → sword arm, **and that order is the depth**.
+2. **Every shape carries its own edge — the carve.** Each mark is laid down twice: first in the
+   palette's **background role** at a wider line, then in ink. The second tone is a role (`bg`), never
+   a literal, so it cross-fades with the 0.9s bleed and holds on all 25 palettes; on the pale ones the
+   carve reads as a light gap rather than a dark rim, which is the same information either way.
+   `CostumeCtx` gained `paper` and `rim`; `DuelView` gained `paper` (required) and `rim` (optional,
+   defaulting to the exported `DEFAULT_RIM = 1.7`). **`rim: 0` switches the carve off and is the
+   rollback** — and is the right value for any surface drawing the duel over an image rather than
+   over a palette.
+
+`solid()` gained a clipped inner shadow — paper, alpha 0.34× the fill, offset up and left — so a
+helmet has a top and an underside. **It is clipped to the mark**, which is what stops it becoming the
+2026-08-14 slab. A new `strokeInk()` carves stroked marks the same way. **Two strokes in the file are
+deliberately left uncarved**: the prophet's two halo rings, because they are drawn in the blade
+colour. They are light, not cloth, and a background-coloured rim around a glow is a hole punched in
+the thing that is meant to be glowing.
+
+**Then the roster was cut from forty to twenty-four, twelve a side.** Sixteen kept unchanged, eight
+added — The Prophet, The Luchador, The Astronaut, The Gunslinger and The Viking on the good side, The
+Pharaoh, The Anubis and The Ringmaster on the evil one — and **twenty-four deleted**. Every deletion
+was one of two things: a second copy of a stronger silhouette (three brimmed hats, four blocks for a
+head, two capes to the floor), or a costume whose whole read was interior detail — a sash, a bead
+loop, a bandage, a bird. **Interior detail is the first thing to go at 61px**, which is the size this
+renders at, so on the phone those costumes were never doing the work their descriptions claimed.
+
+The derived counts move with it: **144 pairs per pool and 288 rolled orderings**, against 400 and
+1,600 at twenty a side, and a per-fighter appearance rate of **~8.3%** within a side against ~5% at
+forty. The pools are still derived from `FIGHTERS[].side` and `NEVER_MEET` is still empty. The
+nearest confusable pair on the sheet is **executioner** (flat, soft, square) against **sentinel**
+(tall, hard, square) — opposite sides, so they *can* meet, and they are the pair to watch first.
+
+**Headroom, corrected on the new costumes.** Two under-declared their reach (anubis 28→30, luchador
+24→26) and four over-declared it and cost camera on every frame (pharaoh 22→18, viking 20→17,
+gunslinger 24→21, astronaut 22→20). **Under-declaring is the failure that matters**: `duelFocus`
+reserves `headroom + 16`, so a tip gets cropped rather than the camera pulling back. Nothing on the
+roster exceeds the 34-unit sideways limit — the viking's shield is the widest at 31.7, and it is a
+fixed shape on the off hand rather than something that trails, so it does not grow with travel.
+
+**Cost, measured rather than inferred.** Timed in headless Chrome with `--disable-gpu` (software
+rasteriser), at the ornament's real 700×700, 3,000 frames per condition, run twice and averaged:
+**0.097 ms/frame with the carve off, 0.172 ms/frame with it on.** A **1.77×** multiplier on the
+duel's own draw, and about **1% of a 60fps frame budget**. Software-rasterised, so a real GPU is the
+favourable direction.
+
+**Gates.** `npm run check` is 48 green. Two changes in `check.ts`: the recording context gained a
+`clip()` stub, because `solid()`'s inner shadow calls it, and the `CostumeCtx` stub now carries
+`paper` and the real `DEFAULT_RIM` — so the gate drives the carved path rather than the `rim: 0`
+branch. **A new assertion joins *catalogues match the documented counts*: the roster is 24, and the
+split is exactly 12/12.** The count has been documented for as long as the roster has existed and was
+never asserted, which is how it could have changed with the suite green. **The per-side half is the
+one that matters**, because `ROSTER_GOOD` / `ROSTER_EVIL` are derived from `side`, so a costume added
+with the wrong alignment silently skews every pairing roll rather than failing. **Verified by
+breaking it: flipping the viking to evil failed both this gate and the existing blade-colour gate.**
+
+One fixture moved with the roster. `check.ts`'s fairness gate named `haloed` and now names `maned`,
+and `scripts/duel-shot.mjs`'s four `['haloed','horned']` pairings are `['prophet','horned']` — the
+prophet carries the halo now, so the *holy* strip keeps its meaning.
+
+**Not verified here, and it is the usual one, plus one that is new.** Whether twenty-four fighters
+read *in motion* at phone size in a real browser — `duel-bench` on `/admin` is where that is
+answered. And whether the carve holds on the **pale** palettes, `xerox` and `peat`, where it is a
+light gap rather than a dark rim. That specific case has not been looked at in a browser.
+
+---
+
 ## 2026-08-28 — the roster goes to forty, and three ways a costume fails at 61px
 
 **What was asked for and what was built.** The client asked for twenty fighters a side and for named

@@ -312,6 +312,12 @@ export function DuelOrnament({ pairing }: { pairing: DuelPool }) {
         y: shot.y,
         scale: shot.scale,
         ink: p.fg,
+        // The second tone the carve is drawn in: the palette's background role,
+        // which is literally the colour these figures are standing on. A role
+        // and not a literal, so it cross-fades with the 0.9s bleed like the ink
+        // does — and on the pale palettes the carve reads as a light gap rather
+        // than a dark rim, which is the same information either way.
+        paper: p.bg,
         // Blades are the site's one literal-colour carve-out (see BLADE_COLORS):
         // good is blue/green, evil is red, whatever the palette says.
         bladeA: BLADE_COLORS[st.a.style],

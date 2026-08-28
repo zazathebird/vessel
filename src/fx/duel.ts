@@ -658,6 +658,18 @@ const LIGHT_RANGE = 22;
 /** How much of the blade's colour a bone touching the blade takes. */
 const LIGHT_STRENGTH = 0.5;
 
+/**
+ * Half the carve's width, in world units — the default for `DuelView.rim`.
+ *
+ * World units, so it scales with the figure and is the same rim at the phone
+ * slot's ~61px fighter as on the bench at 240px. At 1.7 it is a little under a
+ * pixel on a phone and a little over two on desk, which is the range where it
+ * separates two overlapping shapes without becoming a visible outline in its
+ * own right. Raising it turns the fighters into stickers; lowering it below
+ * about 1.2 stops it surviving the phone.
+ */
+export const DEFAULT_RIM = 1.7;
+
 
 /**
  * Which way this fighter's blade tip is travelling, as a unit vector.
@@ -4084,6 +4096,27 @@ export interface DuelView {
   scale: number;
   /** Body ink — `fg`, same as every figure on the site. */
   ink: string;
+  /**
+   * The palette's **background** role — the second tone every mark and every
+   * bone is carved out in before it is drawn. See `CostumeCtx.paper`.
+   *
+   * Required rather than optional on purpose. It is the colour the figures are
+   * standing on, and a caller that has not said what that is cannot be given a
+   * default that is right: the ornament draws over the page, the background
+   * effect *is* the page, and a future surface might draw the duel over a
+   * photograph, where the honest answer is `rim: 0` and no carve at all. A
+   * missing field is a compile error; a wrong default is a rim in the wrong
+   * colour that nobody notices until a palette changes.
+   */
+  paper: string;
+  /**
+   * Half the carve's width in world units, defaulting to `DEFAULT_RIM`.
+   *
+   * **Set it to 0 to switch the carve off**, which is the rollback for the
+   * whole 2026-08-28 change and the right value over an image. Keep that path
+   * working — it is one branch in `carve()` and one in `fillMass`.
+   */
+  rim?: number;
   /** Left and right blade colours — the two accents, so the pair reads opposed. */
   bladeA: string;
   bladeB: string;
@@ -4493,28 +4526,6 @@ function drawFighter(
     ctx.restore();
   };
 
-  const limb = (
-    x0: number,
-    y0: number,
-    x1: number,
-    y1: number,
-    l1: number,
-    l2: number,
-    bend: number,
-    width: number,
-  ): { x: number; y: number } => {
-    const j = joint(x0, y0, x1, y1, l1, l2, bend);
-    ctx.lineWidth = width;
-    ctx.beginPath();
-    ctx.moveTo(x0, y0);
-    ctx.lineTo(j.x, j.y);
-    ctx.lineTo(x1, y1);
-    ctx.stroke();
-    lightBone(x0, y0, j.x, j.y, width);
-    lightBone(j.x, j.y, x1, y1, width);
-    return j;
-  };
-
   /*
    * The body is a stick figure, and that is the client's own call (2026-08-14):
    * "if it makes it easier, make the character models more simple, but make the
@@ -4548,6 +4559,8 @@ function drawFighter(
   const lw = (n: number) => n * kind.prop.weight;
   const shX = SHOULDER_X * kind.prop.shoulder;
   const hr = 8 * kind.prop.head;
+  /** Half the carve's width. 0 is the rollback — see `DuelView.rim`. */
+  const rim = v.rim ?? DEFAULT_RIM;
 
   /*
    * The stance settles the hips and nothing else.
@@ -4623,6 +4636,8 @@ function drawFighter(
     ink,
     blade,
     dim: v.dim,
+    paper: v.paper,
+    rim,
     alpha: bodyAlpha,
     hand: { x: handX, y: handY },
     elbow: joint(shX + lean, shY, handX, handY, UPPER_ARM, FOREARM, -1),
@@ -4648,7 +4663,124 @@ function drawFighter(
     ctx.restore();
   }
 
-  // ---- legs, behind everything -------------------------------------------
+  /*
+   * ---- the body is a mass, not a wire -------------------------------------
+   *
+   * Every bone is a **tapered capsule**, wide at the root and narrow at the
+   * tip, and every limb is two of them so the elbow and the knee are joints you
+   * can see. A stroke has one width for its whole length, so it has no
+   * direction; a limb with no direction is a wire, and eight wires in a row is
+   * the state the client called flat.
+   *
+   * This is the same finding as the costume rule one level down — *interior
+   * detail is not a costume, the outline is* — applied to the body underneath
+   * the costumes, and it is why sixteen surviving costumes needed no edit to
+   * benefit from it.
+   *
+   * **It is not the 2026-08-14 slab.** That was a *pale* torso quad beside a
+   * pale robe and a pale head block, all at one value, compositing into a
+   * single shape as wide as the figure was tall, which the client read
+   * (correctly) as *"they are holding shields"*. This is the body itself at
+   * full ink, narrow at the waist, carved out of the cloth behind it, with that
+   * cloth still held at a third of the body's alpha by the gate that has always
+   * bounded it. The rule that made the difference is unchanged: cloth over the
+   * body never wins against the body.
+   */
+  const massPath = (
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    w0: number,
+    w1: number,
+  ): void => {
+    const a = Math.atan2(y1 - y0, x1 - x0);
+    const px = Math.cos(a + Math.PI / 2);
+    const py = Math.sin(a + Math.PI / 2);
+    ctx.moveTo(x0 + px * w0, y0 + py * w0);
+    ctx.lineTo(x1 + px * w1, y1 + py * w1);
+    ctx.arc(x1, y1, w1, a + Math.PI / 2, a - Math.PI / 2, true);
+    ctx.lineTo(x0 - px * w0, y0 - py * w0);
+    ctx.arc(x0, y0, w0, a - Math.PI / 2, a + Math.PI / 2, true);
+    ctx.closePath();
+  };
+
+  /**
+   * `solid()`'s twin for the body, which is not a costume and so has no
+   * `CostumeCtx` to read. Same three passes: carve, fill, clipped inner shadow,
+   * ink edge.
+   */
+  const fillMass = (build: () => void, alpha: number, edge: number): void => {
+    ctx.beginPath();
+    build();
+    if (rim > 0) {
+      ctx.save();
+      ctx.strokeStyle = v.paper;
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = edge + rim * 2;
+      ctx.stroke();
+      ctx.restore();
+    }
+    ctx.fillStyle = ink;
+    ctx.globalAlpha = bodyAlpha * alpha;
+    ctx.fill();
+    if (rim > 0) {
+      // The shaded side, clipped to the bone, so a thigh is round rather than
+      // flat. Up-and-left, because the arena's light is above and behind.
+      ctx.save();
+      ctx.clip();
+      ctx.strokeStyle = v.paper;
+      ctx.globalAlpha = 0.26 * bodyAlpha * alpha;
+      ctx.lineWidth = 3.2;
+      ctx.translate(-1.2, 1.9);
+      ctx.stroke();
+      ctx.restore();
+    }
+    ctx.strokeStyle = ink;
+    ctx.globalAlpha = bodyAlpha * alpha;
+    ctx.lineWidth = edge;
+    ctx.stroke();
+  };
+
+  /**
+   * A two-bone limb as two tapering capsules, and the blade's light on both.
+   *
+   * **Both `lightBone` calls stay.** They are the one thing the mass version
+   * can silently drop — nothing renders differently without them for the many
+   * frames the blade is nowhere near a given bone, so their absence would read
+   * as "the light got weaker" rather than as a bug.
+   */
+  const limb = (
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    l1: number,
+    l2: number,
+    bend: number,
+    w0: number,
+    w1: number,
+    w2: number,
+    alpha: number,
+  ): { x: number; y: number } => {
+    const j = joint(x0, y0, x1, y1, l1, l2, bend);
+    fillMass(() => massPath(x0, y0, j.x, j.y, w0, w1), alpha, 0.7);
+    fillMass(() => massPath(j.x, j.y, x1, y1, w1, w2), alpha, 0.7);
+    lightBone(x0, y0, j.x, j.y, w1 * 2);
+    lightBone(j.x, j.y, x1, y1, w2 * 2);
+    return j;
+  };
+
+  /** One short capsule off the ankle, pointing the way the leg is facing. */
+  const foot = (fx: number, fy: number, dir: number): void => {
+    fillMass(
+      () => massPath(fx, fy - 0.5, fx + dir * 5.4, fy + 0.6, lw(2.9), lw(2.1)),
+      1,
+      0.7,
+    );
+  };
+
+  // ---- where the feet are this frame --------------------------------------
   /*
    * **A roll is a ball, and a ball is made by the legs coming in.**
    *
@@ -4667,11 +4799,14 @@ function drawFighter(
   const kickP = f.action === "kicking" ? Math.min(1, f.mf / MOVES[f.move].frames) : 0;
   const kickReach = Math.sin(Math.PI * Math.min(1, kickP * 1.4)) * 34;
   const brace = f.action === "attacking" ? 5 : 0;
-  ctx.globalAlpha = bodyAlpha;
-  ctx.strokeStyle = ink;
-  for (let i = 0; i < 2; i += 1) {
-    const front = i === 0;
-    const hipX = front ? HIP_X : -HIP_X;
+
+  /**
+   * Where one foot has ended up. Lifted out of the old two-pass loop unchanged
+   * — the legs are no longer drawn together, because the near one now crosses
+   * *in front of* the torso and the far one behind it, which is most of what
+   * makes the figure read as having a near side at all.
+   */
+  const footFor = (front: boolean): { x: number; y: number } => {
     /*
      * **The feet used to stand inside the hips**, at ±4 against a hip at ±7,
      * which is not a guard — it is a person standing to attention, and with the
@@ -4702,78 +4837,100 @@ function drawFighter(
       footX += (10 - footX) * tucked;
       footY += (hipY + 8 - footY) * tucked;
     }
-    limb(hipX, hipY, footX, footY, THIGH, SHIN, -1, lw(front ? 5 : 4));
-  }
-
-  // ---- spine and head -----------------------------------------------------
-  // The spine is not drawn through `limb`, so it asks for its own light — a
-  // blade held across the chest should reach the body it is across.
-  lightBone(0, hipY, neckX, shY - 2, lw(6));
-  ctx.globalAlpha = bodyAlpha;
-  ctx.strokeStyle = ink;
-  ctx.lineWidth = lw(6);
-  ctx.beginPath();
-  ctx.moveTo(0, hipY);
-  ctx.lineTo(neckX, shY - 2);
-  ctx.stroke();
-
-  ctx.lineWidth = lw(5);
-  ctx.beginPath();
-  ctx.moveTo(-shX + lean, shY);
-  ctx.lineTo(shX + lean, shY);
-  ctx.stroke();
+    return { x: footX, y: footY };
+  };
 
   /*
-   * Torso mass, for the two fighters whose character is that they are built
-   * heavily: the two *edges* of a chest, from the shoulder bar down to the
-   * hips, and nothing between them.
+   * ---- draw order ---------------------------------------------------------
    *
-   * This is the shape the client rejected in 2026-08-14 — with the difference
-   * that made it rejected removed. What read as *"they are holding shields"*
-   * was a **filled** quad: a pale slab as wide as the figure was tall, which
-   * swallowed the spine and both arms into one silhouette. Two strokes with the
-   * spine still visible between them is a ribcage, and it is the only way this
-   * rig can say *heavy* about a body rather than about a line width. It is
-   * spent on two fighters out of eight on purpose: the light ones keep the
-   * plain stick, and that contrast is what makes the heavy ones read heavy.
+   * Back leg, torso, shoulders, neck, head, front leg, off arm, sword arm. The
+   * order *is* the depth: with every bone carrying its own carved edge, a limb
+   * drawn later is unambiguously in front of one drawn earlier, and the figure
+   * acquires a near and a far side without a single extra tone.
    */
-  if (kind.prop.build > 0) {
-    ctx.globalAlpha = bodyAlpha * (0.55 + kind.prop.build * 0.3);
-    ctx.lineWidth = lw(3.2);
-    ctx.beginPath();
-    for (const s of [-1, 1]) {
-      ctx.moveTo(s * (shX - 1.5) + lean, shY + 1);
-      ctx.quadraticCurveTo(
-        s * (shX - 1) * kind.prop.build + lean * 0.5,
-        (shY + hipY) / 2,
-        s * (HIP_X + 1),
-        hipY - 2,
-      );
-    }
-    ctx.stroke();
-    ctx.globalAlpha = bodyAlpha;
-  }
+  const backFoot = footFor(false);
+  limb(-HIP_X, hipY, backFoot.x, backFoot.y, THIGH, SHIN, -1, lw(5.0), lw(3.9), lw(2.9), 0.9);
+  foot(backFoot.x, backFoot.y, -1);
+
+  /*
+   * The torso, replacing the spine stroke and `prop.build`'s two stroked edges.
+   *
+   * `build` is no longer a pair of ribcage lines drawn beside a spine — it is
+   * how wide the mass itself is at the chest, the waist and the hips, which is
+   * what it was always trying to say. A light fighter still tapers to a narrow
+   * waist and a heavy one does not, and that contrast is what makes the heavy
+   * ones read heavy.
+   */
+  const bw = HIP_X * 1.15 + kind.prop.build * 1.4;
+  const tw = shX * 0.74 + kind.prop.build * 1.2;
+  const waist = shX * 0.6 + kind.prop.build * 2.6;
+  // The spine is gone, so the light it used to ask for is asked for here: a
+  // blade held across the chest should still reach the body it is across.
+  lightBone(0, hipY, neckX, shY - 2, lw(6));
+  fillMass(() => {
+    ctx.moveTo(-tw + lean * 0.5, shY + 0.5);
+    ctx.quadraticCurveTo(-waist + lean * 0.5, (shY + hipY) / 2, -bw, hipY + 1);
+    ctx.quadraticCurveTo(0, hipY + 4.5, bw, hipY + 1);
+    ctx.quadraticCurveTo(waist + lean * 0.5, (shY + hipY) / 2, tw + lean * 0.5, shY + 0.5);
+    ctx.quadraticCurveTo(lean * 0.5, shY - 2.5, -tw + lean * 0.5, shY + 0.5);
+    ctx.closePath();
+  }, 1, 0.8);
+
+  // The shoulders: one capsule across, so the top of the silhouette has a
+  // thickness rather than being a hairline.
+  fillMass(() => massPath(-shX + lean, shY, shX + lean, shY, lw(3.4), lw(3.4)), 1, 0.7);
+  // The neck.
+  fillMass(
+    () => massPath(neckX * 0.4, shY - 1, neckX, headY + 6 + hr * 0.4, lw(3.0), lw(2.6)),
+    1,
+    0.7,
+  );
 
   // A hollow costume has no head: the point of an empty cowl is that there is
   // nothing inside it, and a disc drawn under the hood makes it a hat.
   if (!kind.hollow) {
-    ctx.fillStyle = ink;
-    ctx.beginPath();
-    ctx.arc(neckX, headY + 6, hr, 0, TAU);
-    ctx.fill();
+    fillMass(() => {
+      ctx.arc(neckX, headY + 6, hr, 0, TAU);
+    }, 1, 0.7);
   }
+
+  // ---- the front leg, over the torso --------------------------------------
+  const frontFoot = footFor(true);
+  limb(HIP_X, hipY, frontFoot.x, frontFoot.y, THIGH, SHIN, -1, lw(5.6), lw(4.4), lw(3.1), 1);
+  foot(frontFoot.x, frontFoot.y, 1);
 
   // ---- the off hand -------------------------------------------------------
   // On the grip, a little below the sword hand, unless the arm is pushing —
   // solved above, with the costume's.
-  ctx.globalAlpha = bodyAlpha * 0.85;
-  ctx.strokeStyle = ink;
-  limb(-shX + lean, shY, offHandX, offHandY, OFF_UPPER_ARM, OFF_FOREARM, 1, lw(4.5));
+  limb(
+    -shX + lean,
+    shY,
+    offHandX,
+    offHandY,
+    OFF_UPPER_ARM,
+    OFF_FOREARM,
+    1,
+    lw(4.2),
+    lw(3.1),
+    lw(2.3),
+    0.92,
+  );
 
   // ---- the sword arm ------------------------------------------------------
   if (!dead) {
-    ctx.globalAlpha = bodyAlpha;
-    limb(shX + lean, shY, handX, handY, UPPER_ARM, FOREARM, -1, lw(5));
+    limb(
+      shX + lean,
+      shY,
+      handX,
+      handY,
+      UPPER_ARM,
+      FOREARM,
+      -1,
+      lw(4.6),
+      lw(3.4),
+      lw(2.5),
+      1,
+    );
   }
 
   /*
