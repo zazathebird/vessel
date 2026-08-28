@@ -48,6 +48,10 @@ const BUFFER = 8;
 /**
  * The touch route in (mobile parity, client request 2026-08-13): a band
  * without a hardware keyboard cannot type `cmd` anywhere, so the header shows
+ * a chip — **labelled `menu` since 2026-08-28**, because off the desk this is
+ * the only route to the five `FOOTER_NAV` pages, which sit ~2,000px below the
+ * fold, and nobody taps a button that says `cmd`. The typed idiom is unchanged
+ * and still `cmd`; only what the chip *says* moved.
  * a chip on those bands that raises this event. An event rather than lifted
  * state, deliberately — the palette owns `open`, and the header should not
  * re-render with it.

@@ -114,7 +114,21 @@ export const FX: FxEntry[] = [
    * sees a duel only if the operator publishes one.
    */
   { id: "duel", label: "Lightswords: light & dark", operatorOnly: true },
-  { id: "duelholy", label: "Lightswords: saint & serpent", operatorOnly: true },
+  /*
+   * **Withdrawn from the menu 2026-08-28 — the same collapse that took the
+   * matching ornament on 2026-08-27, arriving a day late here.**
+   *
+   * `DUEL_POOLS` hands both entries `ROSTER_GOOD` / `ROSTER_EVIL` verbatim, so
+   * the two draw from an identical distribution: under a seeded RNG they
+   * produce byte-identical frames, which is how the contact sheet caught it.
+   * Two menu rows for one effect is worse than one, and the ornament half of
+   * this pair has been saying so for a day.
+   *
+   * `hidden`, never deleted — index 13 is a share-code wire format and a code
+   * naming it still resolves and still works. That is the case `hidden` exists
+   * for, and it is why both lists are kept even while they are equal.
+   */
+  { id: "duelholy", label: "Lightswords: saint & serpent", hidden: true, operatorOnly: true },
 
   // Appended at 14 and 15 (`…-E-…`, `…-F-…`), never inserted — same rule.
   // Both are built for the HUD archetype; see src/fx/effects.ts.

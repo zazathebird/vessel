@@ -13,6 +13,105 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-28 — the mobile menu, and four visual fixes
+
+### The report was not the bug: *"the downloads page isnt showing in the menu in mobile"*
+
+Asked whether he wanted Downloads added to the header nav, or whether the real complaint was that the
+footer links are hard to find on a phone, he confirmed **the latter**.
+
+**Measured, not guessed.** On a 390×844 phone the header nav is a horizontal scroller showing about
+four and a half of its seven pills, and `.v-footer` sits at **y = 2873 in an 844px viewport** — the
+five `FOOTER_NAV` pages (Now, Changelog, Setup, Scams, Downloads) and the permanent sign-in link are
+all roughly 2,000px below the fold. **The chrome itself is correct**: `.v-chrome` is 844px, the
+document does not scroll, and `.v-stage` scrolls internally at scrollHeight 2861. The footer is
+simply the last thing inside the scrolling stage.
+
+**The fix is one word.** The palette chip shown on non-desk bands said `cmd` — the thing a developer
+types, which tells a visitor on a phone nothing. It says **`menu`** now. The palette was already the
+answer: it offers `[...NAV, ...FOOTER_NAV]` and lists every entry on an empty query, so Downloads has
+always been one tap and a scroll away. What was missing was any reason to tap.
+
+**Renaming beat adding a pill, and that is the load-bearing part.** `NAV` is what
+`useOperatorRoutes` cycles with the arrow keys and what Radial's orbit renders, so an eighth pill
+changes paging and the dial for everybody — and it would land sixth or later in a scroller that
+already hides its tail, which is the problem rather than a fix.
+
+Verified in a browser at 390×844: the chip reads `menu`, tapping it opens the palette, and the list
+contains "go — Downloads".
+
+**The new gate is *"every page is reachable off the desk"***, and it asserts the things that must
+hold together and are each invisible alone: that the palette enumerates both navs; that it still
+lists everything on an empty query, so it can be browsed by touch rather than typed at; that the chip
+is band-gated to non-desk; that the chip says `menu`; and that every page in `PATHS` is offered by
+one of the two navs except a named `OFF_NAV` list (`notfound`, `signup`, `signin`, `admin`,
+`machines`, `share` — each unlinked by an existing decision). **Verified by breaking it twice** —
+reverting the chip to `cmd`, and removing Downloads from `FOOTER_NAV`.
+
+### Plasma and Pressure were near-invisible, and this cannot be gated
+
+A capture pass over all sixteen effects on three palettes, scored on peak brightness (99th-percentile
+channel distance from the palette's background) and coverage.
+
+- **Plasma** — ramp ceiling `* 0.32` → `* 0.62`. It topped out at 0.21 alpha, very nearly a flat
+  black rectangle on Xerox, while being the second most expensive effect in the set. Peak **22 → 42**,
+  coverage **50% → 65%**, now level with Matrix rain. **The floor stays at 0.35** — below it no dot is
+  drawn at all, which is what keeps its cost down — so only the ceiling moved. It is deliberately
+  still short of the loud effects, because it sits behind body copy.
+- **Pressure** — alpha `* 0.3` → `* 0.52`, and the thin rings 0.9px → 1.4px, **because a sub-pixel
+  line is antialiased into a fraction of the alpha it asked for and so loses twice over**. Peak
+  **16 → 27**, coverage **3.2% → 5.7%**.
+
+**This cannot be gated, and that is the part worth recording.** `npm run check` has no rasteriser —
+its effect coverage is a recording-context stub — so *"is this effect actually visible"* is measured
+offline with `scripts/fx-shot.mjs` and a peak/coverage script, never asserted. **The numbers above
+are the baseline to compare against**, and they are written down here because there is nowhere else
+they can live.
+
+### A reported finding that measurement contradicted — and the first metric contradicted the measurement
+
+Bokeh and Constellation were reported weak on Xerox by eye. They are not. **Bokeh peaks at 54 over a
+third of the frame**, and **Constellation lights only 0.4% of the frame but hits 51 where it does** —
+it is sparse, not dim, and sparse is a design choice rather than a defect.
+
+**Choosing the metric was the harder half.** The first one tried — mean channel distance over the
+whole frame — ranked Constellation *last*, precisely because it conflates "a large area slightly
+different from the background" with "a small area very bright". It took peak-plus-coverage to see it.
+**Telemetry, at peak 16, is now the weakest effect in the set.**
+
+### `duelholy` is withdrawn as an effect too
+
+`hidden: true` on the FX entry — the same collapse that took the matching *ornament* on 2026-08-27,
+arriving a day late. `DUEL_POOLS` hands both entries `ROSTER_GOOD`/`ROSTER_EVIL` verbatim, so they
+draw from an identical distribution and produce byte-identical frames under a seeded RNG. **Never
+deleted**: index 13 is a share-code wire format, and a code naming it still resolves.
+
+**It tripped the previous day's own gate**, which asserted the operator could roll every
+`operatorOnly` effect — false, because `hidden` removes an entry from the dice for everybody,
+operator included. **That gate had already made the identical wrong assumption about the ornament
+half a day earlier** (recorded in the entry below as its own first bug). It now derives the rollable
+set as `operatorOnly && !hidden` in both catalogues.
+
+### Two phone-size fixes
+
+- **Sonar's contact blips** — floor `max(5px, 2.2%)` → `max(7px, 2.2%)`. At the phone's ~172px slot
+  the percentage yields 3.8px, so **the floor is the entire small-screen behaviour**. At 5px the blips
+  were the one part of the sonar that did not survive a phone: the smallest thing on the scope, lit
+  only for the moment the beam crosses their bearing. 7px binds only below a 318px slot, so desk and
+  Radial are untouched by construction.
+- **The duels get a wider phone slot, and only the duels** — `min(72vw, 300px)` against every other
+  ornament's 44vw, taking the pair from ~60px to a measured **281px slot (~98px figures)**. **The
+  camera could not do this**: `duelCamera` already frames as tightly as it safely can, and its own
+  note records that at this size `CAM_MIN` is what clips a fallen fighter, so zooming crops rather
+  than enlarges. Widening the slot for every ornament would push the phone headline and primary CTA
+  down **to fix an ornament no visitor can see**, the duels being operator-only — so the cost lands
+  only on the person who gets the benefit. The rule carries `:not(.layout-radial)`, by the convention
+  every station rule follows.
+
+`npm run check` is **52 green**, up from 51.
+
+---
+
 ## 2026-08-28 — the duels become operator-only, and roll fresh for the operator
 
 **The client's words, and they are the decision:** *"lets make it so that the lightsaber duels are

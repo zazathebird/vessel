@@ -8,12 +8,35 @@ what is left to do.
 
 ## 2026-08-28 — guardrails reach the page, and the duel becomes reviewable
 
-`npm run check` is **51 green**, up from 46. Deployed today: `75ef788` (the carve, and the roster
+`npm run check` is **52 green**, up from 46. Deployed today: `75ef788` (the carve, and the roster
 down to twenty-four), `c5e9899` (a stale header here), `c5c72f3` (the duel becomes a published
 per-page setting), and the share-code decision below — on top of yesterday's `7a39870` and `5bbc7cc`.
 Every one verified by pulling the live bundle and grepping it, not by trusting the repo.
-**The operator-only duel lock landed after all of those and is not in that list** — the 51st gate is
-its gate; `docs/DECISIONS.md` has the entry.
+**The operator-only duel lock and everything after it landed later and is in none of that list** —
+the 51st gate is the duel lock's and the 52nd is the phone menu's; `docs/DECISIONS.md` has both
+entries.
+
+### Every page is reachable on a phone now, and the fix was one word
+
+Reported as *"the downloads page isnt showing in the menu in mobile"*. Confirmed with him that the
+real complaint was the footer links being unfindable on a phone, not Downloads missing from the
+header. Measured at 390×844: `.v-footer` sits at **y = 2873 in an 844px viewport**, so all five
+`FOOTER_NAV` pages and the sign-in link are ~2,000px below the fold. The non-desk palette chip said
+`cmd` and says **`menu`** now — the palette already offered `[...NAV, ...FOOTER_NAV]` and already
+listed everything on an empty query, so what was missing was a reason to tap. **An eighth header
+pill was refused**: `NAV` drives arrow-key paging and Radial's orbit, and the pill would have landed
+in the hidden tail of a scroller. Gated (*"every page is reachable off the desk"*, the 52nd) and
+verified by breaking it twice.
+
+### What can be seen now that could not be
+
+Plasma and Pressure were measured near-invisible and are brighter — peak **22 → 42** and **16 → 27**.
+The duels get a **281px** phone slot instead of ~60px, which is what makes item 0 below answerable at
+all. Sonar's contact blips have a 7px floor instead of 5px, the floor being the whole of the
+small-screen behaviour. `duelholy` is withdrawn as an effect, matching the ornament a day late.
+**None of this is gateable** — `npm run check` has no rasteriser, so visibility is measured offline
+with `scripts/fx-shot.mjs`, and the numbers in `docs/DECISIONS.md` are the baseline to compare
+against.
 
 ### The duels are operator-only now, and they roll for him
 
@@ -85,7 +108,9 @@ reversed at the client's request; `docs/DECISIONS.md` carries the reversal and h
    only unanswered question left about them — everything else about the roster is gated.
    **Do any two read as the same fighter?** Open the duel on `/admin`, or watch the hero ornament
    **signed in** — since today a signed-out visitor cannot be shown a duel by any route, so a logged-out
-   phone shows sonar and answers nothing.
+   phone shows sonar and answers nothing. **The hero ornament is a real place to answer this as of
+   today**: the duels alone get a 281px phone slot (~98px figures) against the ~60px that made the
+   question unanswerable there before.
    **Watch executioner against sentinel first** — flat/soft/square against tall/hard/square, the
    nearest pair on the contact sheet. They are on opposite sides, so they *can* be drawn together. If
    two do read alike, the fix is one line in `NEVER_MEET`; the gate expects entries in it.
@@ -138,6 +163,12 @@ reversed at the client's request; `docs/DECISIONS.md` carries the reversal and h
    visitor gets station `hold` on the sonar he is actually shown, where `roam` would have been
    allowed. Conservative rather than wrong. The fix is `theme.ts` taking the resolved ornament, and
    it wants a decision about whether the station should follow what is *drawn* or what is *stored*.
+7. **The sine-band family is three effects doing one job.** `flow`, `telemetry` and `aurora` are all
+   horizontal bands driven by summed sines, and **telemetry is now the weakest effect in the set** at
+   peak 16 — measured, in the pass that fixed Plasma and Pressure. **A live design question, not a
+   bug**: either one of the three is pushed somewhere the other two are not, or the set is simply one
+   effect wide here and one of them should go. It is taste, so it wants his eye rather than a decision
+   from this side, and nothing is broken while it waits.
 
 ### Not started, unchanged from yesterday
 

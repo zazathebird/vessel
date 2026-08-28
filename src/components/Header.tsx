@@ -220,13 +220,35 @@ export function Header() {
 
         <div className="v-header-right">
           {band !== "desk" && (
-            // Mobile parity (client request, 2026-08-13): the palette's only
-            // route in is typing `cmd`, which needs a hardware keyboard. Bands
-            // that usually have none get a chip. Desk keeps the typed idiom —
-            // a standing button everywhere would advertise what SPEC-ACCOUNTS
-            // §10 shipped as a shortcut.
+            /*
+             * Mobile parity (client request, 2026-08-13): the palette's only
+             * route in is typing `cmd`, which needs a hardware keyboard. Bands
+             * that usually have none get a chip. Desk keeps the typed idiom —
+             * a standing button everywhere would advertise what SPEC-ACCOUNTS
+             * §10 shipped as a shortcut.
+             *
+             * **It says "menu" off the desk, and that word is the fix to a real
+             * bug** (client, 2026-08-28: *"the downloads page isnt showing in
+             * the menu in mobile"*). It was labelled `cmd`, which names the
+             * thing a developer types and tells a visitor on a phone nothing.
+             *
+             * The palette was already the answer — it offers `[...NAV,
+             * ...FOOTER_NAV]` and lists every entry with an empty query, so
+             * Downloads has always been one tap and a scroll away. What was
+             * missing was any reason to tap. On a phone the header nav is a
+             * horizontal scroller showing about four and a half of its seven
+             * pills, and the five footer pages sit at the very bottom of a
+             * ~2,900px scroll, so this chip is the only route to a third of the
+             * site that does not require knowing it is there.
+             *
+             * **Renaming it beats adding a pill.** `NAV` is what
+             * `useOperatorRoutes` cycles with the arrow keys and what Radial's
+             * orbit renders, so an eighth pill changes paging and the dial for
+             * everybody — and it would land sixth or later in a scroller that
+             * already hides its tail, which is the problem rather than a fix.
+             */
             <button type="button" className="chip" onClick={openCommandPalette}>
-              cmd
+              menu
             </button>
           )}
           <button

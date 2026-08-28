@@ -155,8 +155,10 @@ have no findable way in at all. `npm run check` fails if the link is re-gated be
 `App.tsx` stops rendering the footer unconditionally, or if any stylesheet gives `.v-footer`
 `display: none`. The five-tap machinery is **deleted**, not disabled. **The logo's five taps are
 untouched** — those open the door, a different affordance for a different thing. The ornament renders
-on the phone band (do not re-hide it), and non-desk bands get a header `cmd` chip because the command
-palette's only other route in is typing `cmd` on a hardware keyboard.
+on the phone band (do not re-hide it), and non-desk bands get a header chip because the command
+palette's only other route in is typing `cmd` on a hardware keyboard. **The chip is labelled `menu`,
+not `cmd`** — see the mobile-menu entry below; it is the only route to a third of the site off the
+desk, and it is gated.
 
 ## CSS invariants
 
@@ -621,6 +623,26 @@ covers how to *see* any of this — rAF parks in an automated browser, so use `s
   Headless Rider, The Count and The Djinn were drawn and then cut on 2026-08-28 — the rule that made
   them safe to draw is unchanged.)
 
+**Visual legibility — measured, and the measurement cannot be gated:**
+
+- **`npm run check` has no rasteriser**, so *"is this effect actually visible"* is measured offline
+  with `scripts/fx-shot.mjs` plus a peak/coverage script, never asserted. The effect gates drive a
+  recording-context stub, which can say a path was built and never that anything can be seen.
+- **Score effects on peak *and* coverage, never on mean difference from the background.** The mean
+  conflates a large area slightly different with a small area very bright, and it ranked
+  `constellation` the least visible of the sixteen when its lit points are among the brightest —
+  it is *sparse*, not dim. Peak (99th percentile channel distance from `bg`) plus % coverage
+  separates the two, and it is what caught that the reported weakness of `bokeh` and
+  `constellation` on Xerox was not real.
+- **The baseline, on Xerox, 2026-08-28:** aurora 108, vessels 71, bokeh 54, flow 50, rain 42,
+  plasma 42, scan 38, pressure 27, tunnel 25, telemetry 16, orbits 14, stars 7, constellation 3.
+  `plasma` (22 → 42) and `pressure` (16 → 27) were raised that day; **`telemetry` is now the weakest
+  thing in the set.** An effect must stay short of the loud end deliberately — it sits behind body
+  copy on palettes already near the contrast floor.
+- **A sub-pixel line loses twice** — it is antialiased into a fraction of the alpha it asked for, so
+  a hairline at low alpha is dimmer than its numbers say. `pressure`'s thin rings went 0.9px → 1.4px
+  for that reason, not for weight.
+
 **The choreographer** — fighters decide nothing:
 
 - **No sequence names a side.** Every beat is `ATT` or `DEF`, and the role coin consults nothing — not
@@ -640,6 +662,16 @@ covers how to *see* any of this — rAF parks in an automated browser, so use `s
 
 **Tuning, and where it may live:**
 
+- **The palette chip says `menu` off the desk, and that word is a bug fix** (2026-08-28, client:
+  *"the downloads page isnt showing in the menu in mobile"*). Measured on a 390×844 phone: the header
+  nav is a horizontal scroller showing ~4.5 of its seven pills, and `.v-footer` sits at **y = 2873 in
+  an 844px viewport** — every `FOOTER_NAV` page and the permanent sign-in link are ~2,000px below the
+  fold. The palette was always the answer (it offers `[...NAV, ...FOOTER_NAV]` and lists everything on
+  an empty query); what was missing was a reason to tap a chip labelled `cmd`. **Renaming beats adding
+  a pill**: `NAV` is what `useOperatorRoutes` cycles and what Radial's orbit renders, so an eighth pill
+  changes paging and the dial for everybody, and it would land in the hidden tail of that scroller
+  anyway. Gated — the palette must enumerate both navs, still list all on an empty query, and the chip
+  must be band-gated *and* say `menu`.
 - **The duels are operator-only, and that is a lock rather than a default** (2026-08-28, client:
   *"lets keep it as a feature for just me unless i otherwise say so"*). `operatorOnly` on the `duel`
   and `duelholy` entries in **both** catalogues — `src/data/ornaments.ts` and `FxEntry` in

@@ -69,6 +69,8 @@ import { FALLBACK_FX, rollableFx, visibleFx } from "../src/data/catalog";
 import { rollableOrnaments, visibleOrnament } from "../src/data/ornaments";
 import { DEFAULT_CONFIG } from "../src/config/types";
 import type { Config } from "../src/config/types";
+import { FOOTER_NAV, NAV, PATHS } from "../src/data/pageIds";
+import type { PageId } from "../src/data/pageIds";
 import { PAGES } from "../src/data/pages";
 import {
   CATEGORIES,
@@ -2576,6 +2578,69 @@ if (!FAST) check("duel: a pooled fight rotates its fighters", () => {
 
 // ---- 5. Catalogue and content invariants -----------------------------------
 
+check("every page is reachable off the desk", () => {
+  /*
+   * The bug this exists for (client, 2026-08-28): *"the downloads page isnt
+   * showing in the menu in mobile."*
+   *
+   * On a phone the header nav is a horizontal scroller showing about four and a
+   * half of its seven pills, and the five `FOOTER_NAV` pages sit at the bottom
+   * of a ~2,900px scroll — measured, not estimated. So off the desk the command
+   * palette is the only route to a third of the site, and it was labelled
+   * `cmd`, which names what a developer types and tells a visitor nothing.
+   *
+   * Three things have to hold together for that route to exist at all, and each
+   * is invisible on its own: the palette must **offer** every page, the chip
+   * must be **rendered** off the desk, and it must be **called something a
+   * person would tap**. This asserts all three, because a green suite said
+   * everything was fine while a third of the site was unreachable on a phone.
+   */
+  const header = readFileSync("src/components/Header.tsx", "utf8");
+  const palette = readFileSync("src/components/CommandPalette.tsx", "utf8");
+
+  // 1. The palette offers both navs, and with an empty query it lists them all.
+  must(
+    /for \(const entry of \[\.\.\.NAV, \.\.\.FOOTER_NAV\]\)/.test(palette),
+    "the palette no longer enumerates NAV + FOOTER_NAV — a page can be unreachable off the desk",
+  );
+  must(
+    /:\s*commands;/.test(palette),
+    "the palette no longer lists everything on an empty query, so it cannot be browsed by touch",
+  );
+
+  // 2. The chip is rendered off the desk, and only off the desk — the desk
+  //    keeps the typed idiom deliberately.
+  must(
+    /band !== "desk" &&/.test(header),
+    "the palette chip is no longer band-gated",
+  );
+  // 3. And it is called something a visitor would tap. `cmd` is the regression.
+  const label = header.match(/onClick=\{openCommandPalette\}>\s*([a-z]+)\s*<\/button>/)?.[1];
+  must(label === "menu", `the palette chip says "${label}", and a visitor does not tap "cmd"`);
+
+  /*
+   * 4. Every public page is offered by one of the two navs, so a page cannot be
+   *    added to `PATHS` and left reachable by URL alone.
+   *
+   *    The exclusions are each a decision on record rather than an oversight:
+   *    `notfound` is what an unknown URL renders and lost its pill when the 404
+   *    joke moved behind sign-in; the four account and phase-2 pages are
+   *    deliberately unlinked, which is the whole point of the footer's
+   *    sign-in link being the one standing route in.
+   */
+  const OFF_NAV: PageId[] = ["notfound", "signup", "signin", "admin", "machines", "share"];
+  const offered = new Set([...NAV, ...FOOTER_NAV].map((n) => n.id));
+  const unreachable = (Object.keys(PATHS) as PageId[]).filter(
+    (id) => !offered.has(id) && !OFF_NAV.includes(id),
+  );
+  must(
+    unreachable.length === 0,
+    `no nav offers ${unreachable.join(", ")} — unreachable without typing the URL`,
+  );
+  must(offered.has("downloads"), "downloads is offered by neither nav");
+  return `${offered.size} pages in the two navs, palette chip says "${label}" off the desk`;
+});
+
 check("no duel can reach a visitor, by any route", () => {
   /*
    * The duels are the operator's alone (2026-08-28, client request: *"lets keep
@@ -2628,6 +2693,21 @@ check("no duel can reach a visitor, by any route", () => {
   }
   for (const id of lockedFx) {
     must(!rollableFx(false).some((f) => f.id === id), `a visitor's fx dice can roll ${id}`);
+  }
+  /*
+   * The operator's pool keeps the locked entries that are still *offered*.
+   * `hidden` and `operatorOnly` are separate axes and a withdrawn entry leaves
+   * the dice for everybody, operator included — this gate asserted otherwise
+   * twice, once for each catalogue, and was wrong both times. `duelholy` now
+   * carries both flags in both catalogues: withdrawn because it is a duplicate,
+   * locked because it is a duel.
+   */
+  const rollableLockedFx = FX.filter((f) => f.operatorOnly && !f.hidden).map((f) => f.id);
+  must(
+    rollableLockedFx.join(",") === "duel",
+    `expected only duel rollable in fx, got ${rollableLockedFx.join(",")}`,
+  );
+  for (const id of rollableLockedFx) {
     must(rollableFx(true).some((f) => f.id === id), `the operator's fx dice cannot roll ${id}`);
   }
   // A pool that has emptied is not a locked pool, it is a broken page.

@@ -546,10 +546,19 @@ const pressure: Effect = ({ ctx, w, h, p, t, beat, mx, my }) => {
     // `faint`, not `line`, for the outer rings — same measured invisibility
     // as the tunnel wall (≤ 1.08:1 effective on the darker palettes).
     ctx.strokeStyle = i < 2 ? p.a1 : i < 5 ? p.a2 : i < 9 ? p.a3 : p.faint;
-    ctx.globalAlpha = (1 - k) * 0.3 * (0.55 + bp * 0.8) * swell;
+    /*
+     * **Raised from `* 0.3` on 2026-08-28.** On Xerox these rings were
+     * essentially invisible and read as a rendering failure rather than as an
+     * effect — a hairline at a third alpha over a near-black ground, on a
+     * palette whose accents are near-grey, is nothing at all.
+     */
+    ctx.globalAlpha = (1 - k) * 0.52 * (0.55 + bp * 0.8) * swell;
     // Every third ring heavy, the rest hairlines: a ring field reads as a
     // series of events rather than as a grid.
-    ctx.lineWidth = (i % 3 === 0 ? 2.2 : 0.9) * (1 + (1 - k));
+    // Every third ring was already heavier; the thin ones go from 0.9 to 1.4,
+    // because a sub-pixel line is antialiased into a fraction of the alpha it
+    // was told to draw at and loses twice over.
+    ctx.lineWidth = (i % 3 === 0 ? 2.8 : 1.4) * (1 + (1 - k));
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, TAU);
     ctx.stroke();
@@ -1149,7 +1158,20 @@ function plasmaRamp(p: Palette): { fill: string[]; alpha: number[] } {
   const alpha: number[] = [];
   for (let i = 0; i < PLASMA_BANDS; i++) {
     const a = (i + 0.5) / PLASMA_BANDS;
-    alpha[i] = Math.max(0, (a - 0.35) * 0.32);
+    /*
+     * **Raised from `* 0.32` on 2026-08-28**, which topped out at 0.21 and made
+     * this the least visible of the sixteen — on Xerox it was very nearly a
+     * flat black rectangle, and you had to hunt for it even on Nebula. It is
+     * also the second most expensive effect here, so it was paying full price
+     * to draw almost nothing.
+     *
+     * The floor stays at 0.35 (below it no dot is drawn at all, which is what
+     * keeps the cost down) and only the ceiling moves. It still has to sit
+     * behind body copy on palettes already near the contrast floor, so this is
+     * deliberately short of the brightest effects — it is a texture, not a
+     * subject.
+     */
+    alpha[i] = Math.max(0, (a - 0.35) * 0.62);
     if (!lo || !mid || !hi) {
       // A palette role that is not plain 6-digit hex: fall back to the old
       // discrete choice rather than guessing at the format.

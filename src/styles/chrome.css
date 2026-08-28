@@ -981,6 +981,31 @@
   margin-inline: auto;
 }
 
+/*
+ * **The duels get a bigger slot on a phone, and only the duels** (2026-08-28).
+ *
+ * At the phone's ~172px slot the pair renders about 60px tall, below the size
+ * the costumes were authored for: the health bars become the largest legible
+ * feature and the fighters read as one mass with two coloured sticks. The
+ * camera cannot fix it — it already frames as tightly as it safely can, and
+ * `duelCamera`'s own note records that at this size `CAM_MIN` is what clips a
+ * fallen fighter, so zooming in crops rather than enlarges.
+ *
+ * That leaves the slot, and widening the slot for *everybody* would push the
+ * headline and the primary CTA down the phone hero to fix an ornament **no
+ * visitor can see** — the duels are operator-only. So the cost lands on the
+ * one person who gets the benefit. Every other ornament keeps its 44vw.
+ *
+ * `:not(.layout-radial)` follows the convention every station rule here has:
+ * Radial's slot is the dial and its width is derived from `--dial`. Radial is
+ * desk-band only today, so this cannot currently collide — the exclusion is
+ * there so it still cannot if that ever changes.
+ */
+:not(.layout-radial).band-phone .v-ornament.is-duel,
+:not(.layout-radial).band-phone .v-ornament.is-duelholy {
+  width: min(72vw, 300px);
+}
+
 /* The dial's size is a variable because the orbit radius is derived from it.
    Two literals that have to agree is exactly how the old orbit drifted out of
    being a circle. */
@@ -1258,11 +1283,20 @@
   position: absolute;
   /* Sized to the slot, not to a pixel count (2026-08-17 audit): a fixed 6px
      contact was proportionate at the 340px slot, lost in Radial's 540px well
-     and oversized against the phone's 190px scope. 2.2% of the slot with a
-     5px floor keeps the same read at every size. Centred with the translate
-     property — v-ping animates the scale property, and the two compose;
-     the old negative margin only knew about 6px. */
-  width: max(5px, 2.2%);
+     and oversized against the phone's 190px scope. 2.2% of the slot keeps the
+     same read at every size. Centred with the translate property — v-ping
+     animates the scale property, and the two compose; the old negative margin
+     only knew about 6px.
+
+     **The floor went 5px → 7px on 2026-08-28**, and the floor is the whole of
+     the small-screen behaviour: at the phone's ~172px slot the percentage
+     yields 3.8px, so the floor is what is actually drawn there and nothing
+     else. At 5px the contacts were the one part of the sonar that did not
+     survive a phone — they are the smallest thing on the scope *and* they are
+     only lit for a moment as the beam crosses them, so size and exposure were
+     working against each other. 7px binds only below a 318px slot, so the desk
+     and Radial readings are untouched by construction. */
+  width: max(7px, 2.2%);
   aspect-ratio: 1;
   translate: -50% -50%;
   border-radius: 50%;
