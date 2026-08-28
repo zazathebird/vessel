@@ -13,6 +13,75 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-28 — the roster goes to forty, and three ways a costume fails at 61px
+
+**What was asked for and what was built.** The client asked for twenty fighters a side and for named
+characters — Homer, Rick, Shrek, Jason, Freddy. The names stay refused, for the reason recorded in
+the entry below this one and in `src/fx/fighters.ts`: it is his own 2026-08-14 rule, and separately
+this engine draws a silhouette plus one signature shape and cannot draw the *face* those characters
+are recognised by. **The count was met in full**: eight costumes became **forty, twenty a side**, all
+archetypes — folklore and the trades, both of which were designed as outlines.
+
+Built in **eight tranches of four**, with the contact sheet read between each, because the only
+question that matters about a costume is whether it tells apart *in a row* and that cannot be asked
+of one fighter. `scripts/duel-shot.mjs sheet` gained `--only a,b,c` and `--px N` for it.
+
+**Three failures showed up repeatedly, each caught on the sheet and invisible in a single duel.**
+
+1. **Two shapes on one head merge into a third shape neither of them is, unless there is a gap.**
+   The plague doctor's beak left the brow, ran under its own brim with nothing between them, and the
+   fighter had *no beak at all* — it read as a boater. The falconer's bird faced forward and its beak
+   ran at the fighter's own skull: one two-headed silhouette. The valkyrie's two wings sat four units
+   apart and composited into a single flap, so the helm read as a cap with an ear. **Every one was
+   fixed by moving a shape, and none by making one bigger** — the beak dropped to the jaw, the bird
+   turned round, the wings were pulled apart in depth as well as height.
+2. **A proportion has to be pushed past what looks right in the source.** The gladiator's crest
+   cleared its dome by eight units and read as a bump on a helmet — indistinguishable from The Mask,
+   the one fighter it must not resemble. The reaper's skull had a cranium of `r+1` over a jaw of
+   `r-4` and read as an egg. At the ~61px the ornament renders on a phone, **two rig units is one
+   pixel**; the crest went to seventeen and the pinch to half the cranium's width.
+3. **Interior detail is not a costume; the outline is.** The monk had a kesa at cloth alpha and a
+   bead loop, obeyed every rule in the file, and on the full contact sheet was the one figure that
+   read as an *undressed rig*. What fixed it was a rolled fold of cloth at the shoulder — a mark, so
+   the gate allows it solid — that puts a bump on the silhouette where every other fighter has a
+   helmet. This is the 2026-08-19 wire-diagram finding arriving at a costume that was doing nothing
+   wrong: the fill rule bounds what may be solid and says nothing about where the recognition lives.
+
+**The pools are now derived, not written down.** `ROSTER_GOOD` / `ROSTER_EVIL` filter `FIGHTERS` on
+the `side` field the blade-colour carve-out is already checked against. Two hand-written lists that
+had to agree with the roster is *precisely* how four of the original eight became unreachable for
+every visitor (see 2026-08-27), and at twenty a side that mistake is forty ids to keep in sync.
+
+**Two gates broke on the way, both because they had constants sized for eight.**
+
+- **The pairing-coverage assertion ran a fixed 4,000 rolls**, which covered 32 orderings comfortably
+  and 1,600 not at all. It now scales as `good × evil × 40`.
+- **And it was seeded by a linear congruential generator.** Even at 32,000 rolls six of the 1,600
+  orderings never came up: successive LCG values lie on a lattice, and `rollPairing` draws *three* in
+  a row — good fighter, evil fighter, side coin — so whole triples are unreachable. Swapped for
+  mulberry32: same one line of arithmetic, same reproducibility, no structure. **This is a gate that
+  was quietly weaker than it read for as long as it has existed**; it only failed once the space got
+  big enough for the lattice to show.
+
+**A third gate was fixed before it could bite.** `NEVER_MEET` is documented in `CLAUDE.md` as the
+mechanism that replaced the old pool split — and the coverage assertion computed `wanted` as
+`good × evil × 2` with no allowance for it, so the first person to answer a *"these two look alike"*
+report would have got `1598 of 1600 pairings rolled`: a message about coverage, for a deliberate
+exclusion, at the exact moment they were not thinking about the harness. It now subtracts the
+forbidden pairs, **verified by adding an entry and watching the expected total drop to 1,596.** The
+list itself stays empty: no cross-side pair on the finished sheet reads alike enough to spend
+variety on.
+
+**Cost.** +22.5KB raw, **+4.3KB gzipped**, for thirty-two costumes. `npm run check` is 48 green and
+the duel's 360,000 stepped frames and 280,000 generated sequences are unchanged — costumes are
+render-only and touch nothing the simulation reads.
+
+**Not verified here, and it is the usual one:** whether forty fighters *read* in motion, and whether
+any two of them are confusable at phone size in a real browser. The sheets say they are distinct at
+desk size in a headless render. `duel-bench` on `/admin` is where that question gets answered.
+
+---
+
 ## 2026-08-28 — a guardrail that only constrains the dice is not a guardrail
 
 **The fault.** `isAllowed` had exactly two callers: the randomiser and `npm run check`. A roll is

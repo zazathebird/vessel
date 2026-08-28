@@ -42,6 +42,14 @@ const modes = args.filter((a) => !a.startsWith("-"));
 const outFlag = args.indexOf("--out");
 const OUT = outFlag >= 0 ? args[outFlag + 1] : mkdtempSync(join(tmpdir(), "duel-shot-"));
 const MODE = modes[0] ?? "all";
+/* `--only a,b,c` narrows the contact sheet to a tranche and `--px N` sets the
+ * cell size. Adding costumes four at a time means looking at those four large
+ * and then at the whole roster small, and the sheet at forty fighters is too
+ * small to judge a mark in. */
+const onlyFlag = args.indexOf("--only");
+const ONLY = onlyFlag >= 0 ? args[onlyFlag + 1] : "";
+const pxFlag = args.indexOf("--px");
+const PX = pxFlag >= 0 ? args[pxFlag + 1] : "";
 mkdirSync(OUT, { recursive: true });
 
 /* The browser half. Imports the shipping module by absolute path so esbuild
@@ -125,7 +133,10 @@ function label(text, x, y) {
  * camera actually renders (~109px figure on desk, ~61px on a phone). The pair
  * is drawn clipped to the cell and offset so the subject lands in the middle. */
 function sheet(px, tag, frame) {
-  const ids = Object.keys(D.FIGHTERS);
+  const q = new URLSearchParams(location.search);
+  const only = (q.get('only') || '').split(',').filter(Boolean);
+  const ids = only.length ? only : Object.keys(D.FIGHTERS);
+  px = Number(q.get('px')) || px;
   const cw = px, ch = Math.round(px * 1.25), cols = 4;
   const rows = Math.ceil(ids.length / cols);
   bg(cw * cols, ch * rows);
@@ -408,7 +419,7 @@ const chrome = spawn(
     "--no-sandbox",
     `--user-data-dir=${join(OUT, "chrome")}`,
     "--virtual-time-budget=20000",
-    `http://127.0.0.1:${port}/?mode=${MODE}`,
+    `http://127.0.0.1:${port}/?mode=${MODE}&only=${encodeURIComponent(ONLY)}&px=${PX}`,
   ],
   { stdio: ["ignore", "ignore", "pipe"] },
 );

@@ -67,6 +67,12 @@ palette (`BLADE_COLORS` in `src/fx/duel.ts`). That is the site's one deliberate
 literal-colour carve-out; everything else in the scene still recolours with the
 palette bleed. CLAUDE.md *Known deviations* 9 records both.
 
+**Update 2026-08-28: the roster is forty, twenty a side.** Thirty-two archetypes added in eight
+tranches of four, with the contact sheet read between each. What the building of them taught is in
+`CLAUDE.md` under *Fighters and costume* and at the head of `src/fx/fighters.ts`; the short version is
+that a costume fails in three ways at this size — two shapes on a head with no gap between them, a
+proportion that was not pushed far enough, and detail that lives inside the outline instead of on it.
+
 **Update 2026-08-18: the four silhouettes are a roster of eight.** Phase 2 of
 `docs/DUEL-ABSORB.md`, client: *"make the characters obvious and instantly
 identifiable."* They live in `src/fx/fighters.ts` as costume hooks — `back`

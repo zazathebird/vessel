@@ -216,8 +216,9 @@ asked of a slightly different fight.
 The client's requirement: *"make the characters obvious and instantly identifiable."*
 `frontend-design` was loaded for it, per the standing instruction.
 
-The roster is `src/fx/fighters.ts`: **eight costumes**, four good and four evil, in two pools of
-four pairings each. `duel` fights The Hermit / The Apprentice against The Mask / The Hollow;
+The roster is `src/fx/fighters.ts`: **forty costumes since 2026-08-28**, twenty good and twenty evil,
+both pools the whole roster — 400 pairings each and 1,600 rolled orderings. It shipped as **eight
+costumes**, four good and four evil, in two pools of four pairings each. `duel` fights The Hermit / The Apprentice against The Mask / The Hollow;
 `duelholy` fights The Saint / The Seraph against The Devil / The Crown. Both duels roll a pairing
 on mount **and again on every match reset**, so the fighters change every ~52 seconds — the
 character-level half of *"not a set amount of looping duels"*, since two fighters who never change

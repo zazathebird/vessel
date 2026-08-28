@@ -542,12 +542,31 @@ Design and phase history in `docs/DUEL.md` / `docs/DUEL-ABSORB.md`; the referenc
 `handoff_duel_engine/duel-cycle-v2.html`. Costume work has its own skill (`duel-costumes`), which also
 covers how to *see* any of this — rAF parks in an automated browser, so use `scripts/duel-shot.mjs`.
 
-**Fighters and costume** (`src/fx/fighters.ts`, a roster of eight):
+**Fighters and costume** (`src/fx/fighters.ts`, **a roster of forty — twenty a side**, 2026-08-28):
 
 - **Mass is allowed; a slab is not** — the rule is not "never fill", but a filled shape covering the
   torso must be faint enough to read the body through.
+- **Two shapes on one head need a gap between them, or they merge into a third shape neither of them
+  is.** Three costumes were built and lost this way before it was written down: the plague doctor's
+  beak left the brow and disappeared under its own brim, the falconer's bird faced forward and made a
+  two-headed figure, and the valkyrie's wings overlapped into one flap. Each was fixed by *moving* a
+  shape, never by enlarging it.
+- **A proportion has to be pushed past what looks right in the source.** At ~61px two rig units is one
+  pixel — the gladiator's crest cleared its helm by eight units and read as a bump, and the reaper's
+  skull had two units of cheek pinch and read as an egg.
+- **Interior detail is not a costume — the outline is.** The monk had a sash and a bead loop, obeyed
+  every rule, and read on the contact sheet as an undressed rig; what fixed it was a rolled fold that
+  changes the *silhouette* at the shoulder. Same finding as the 2026-08-19 wire-diagram one, arriving
+  at a costume that was doing nothing wrong.
+- **All three were found on the contact sheet and none was visible in a single duel** — `duel-shot.mjs
+  sheet` takes `--only a,b,c` and `--px N` so a tranche can be looked at large. **Add costumes in
+  tranches and look at the sheet between them**; the question is whether they are telling apart in a
+  row, which cannot be asked of one fighter.
+- **The pools are derived from `side`, never hand-written** (`ROSTER_GOOD` / `ROSTER_EVIL`). Two lists
+  that must agree with the roster is precisely how four of the original eight became unreachable.
 - **A fighter has a `stance`, and it moves the hips and the feet only.** Eight costumes on eight
-  identical bodies in one identical guard is what made the roster read as one fighter.
+  identical bodies in one identical guard is what made the roster read as one fighter — which matters
+  more at forty, not less.
 - **`prop` carries `head` and `build`; `proportion` is `shoulder` / `weight` / `hunch`, with
   deliberately no height multiplier** — the blade is drawn inside the same transform as the body, so
   scaling height scales reach.

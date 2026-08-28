@@ -63,19 +63,21 @@ for why it may never become `Config`.
 
 ### Next, in order
 
+0. **Look at the forty fighters on a phone.** New today and top of the list because it is cheap and it
+   is the only unanswered question about them — everything else about the roster is gated. Open the
+   duel on `/admin`, or just watch the hero ornament, and say if any two are the same fighter to you.
+
 1. **Get the client's numbers off the four sliders.** The pacing fix is the same work whatever the
    fighters look like, and his eye is the one thing that cannot be substituted for. Then type the
    winning values in as constants and delete nothing — the knobs stay for the next argument.
-2. **The roster: 8 → 20 a side.** Archetypes, never named — his own rule (see `CLAUDE.md`, and the
-   file note in `src/fx/fighters.ts` quoting him). He asked for celebrities, movie characters and
-   politicians; what is actually available is better suited to the medium, because this engine draws
-   silhouette plus one signature shape at ~200px and cannot draw a face. Candidates already sketched:
-   The Outlaw, The Djinn, The Reaper, The Plague Doctor, The Headless Rider, The Count, The Creature,
-   The Nosferatu, The Phantom, The Hyde, The Wendigo, The Golem, The Executioner, The Witch, The
-   Scarecrow, The Mummy, The Werewolf, plus the historical bench — Ronin, Berserker, Musketeer,
-   Gladiator, Centurion, Pharaoh, Valkyrie, Highwayman, Conquistador, Spartan.
-   **Do the costumes in tranches and look at the contact sheet between each** (`duel-shot.mjs sheet`);
-   the whole point is telling them apart in a row, which cannot be judged one at a time.
+2. ~~**The roster: 8 → 20 a side.**~~ **Done 2026-08-28 — forty costumes, twenty a side.** Built in
+   eight tranches of four with the contact sheet read between each; `duel-shot.mjs sheet` now takes
+   `--only a,b,c` and `--px N` so a tranche can be looked at large. Archetypes throughout, per his own
+   rule. **What is left on this is the one thing that needs your eyes:** whether any two of the forty
+   are confusable *at phone size in a real browser*, and whether the busier ones (the standard-bearer's
+   banner, the djinn's four arms) still read in motion. The bench on `/admin` is where that happens.
+   If two do read alike, the fix is one line in `NEVER_MEET` — the gate now expects entries in it,
+   which it did not before today.
 3. **The panel's guardrail notice**, above.
 
 ### Not started, unchanged from yesterday

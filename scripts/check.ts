@@ -2400,10 +2400,34 @@ check("duel: every costume is stroked, framed and aligned", () => {
       );
     }
     let rng = 1;
-    for (let i = 0; i < 4000; i += 1) {
-      // A cheap deterministic sequence, so a failure here is reproducible.
-      rng = (rng * 1103515245 + 12345) % 2147483648;
-      const [l, r] = rollPairing(pool, () => (rng = (rng * 1103515245 + 12345) % 2147483648) / 2147483648);
+    /*
+     * **Scaled to the pool, not fixed.** This was 4,000 rolls, which covered
+     * every pairing comfortably while the roster was eight — and silently
+     * stopped covering them when it grew, failing as "1294 of 1296 pairings
+     * rolled" rather than as anything to do with the roster. Collecting every
+     * one of n outcomes takes about n·ln(n) uniform draws, so the count has to
+     * grow faster than the roster does; forty per pairing is a wide margin on
+     * that and still costs milliseconds.
+     */
+    const rolls = Math.max(4000, good.length * evil.length * 40);
+    /*
+     * **Deterministic, but not a linear congruential generator.** This was an
+     * LCG, and at eight fighters it covered every pairing; at twenty it left
+     * six of 1,600 unrolled however many rolls it was given. Successive values
+     * from an LCG lie on a lattice, and `rollPairing` draws *three* in a row —
+     * the good fighter, the evil one, and the side coin — so whole triples are
+     * simply unreachable. Mulberry32 is the same one line of arithmetic and
+     * the same reproducibility, without the structure.
+     */
+    const next = () => {
+      rng = (rng + 0x6d2b79f5) | 0;
+      let t = rng;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    for (let i = 0; i < rolls; i += 1) {
+      const [l, r] = rollPairing(pool, next);
       must(
         FIGHTERS[l].side !== FIGHTERS[r].side,
         `${pool} rolled ${l} against ${r} — both ${FIGHTERS[l].side}`,
@@ -2413,8 +2437,28 @@ check("duel: every costume is stroked, framed and aligned", () => {
   }
   const missing = (Object.keys(FIGHTERS) as FighterStyle[]).filter((s) => !seen.has(s));
   must(missing.length === 0, `unreachable costume(s): ${missing.join(", ")}`);
-  // Both arena ends, both pools: 2 pools × 2 good × 2 evil × 2 orders.
-  const wanted = Object.values(DUEL_POOLS).reduce((n, p) => n + p.good.length * p.evil.length * 2, 0);
+  /*
+   * Every good against every evil, at both ends of the arena, in every pool —
+   * **less the pairings `NEVER_MEET` forbids**, which is the half this used to
+   * be missing. `NEVER_MEET` is documented in `CLAUDE.md` as the mechanism
+   * that replaced the old pool split, and with the list empty nobody noticed
+   * that adding one entry to it would fail this assertion with "1598 of 1600
+   * pairings rolled" — a message about coverage, for a deliberate exclusion.
+   * The next person to answer a "these two look alike" report would have hit
+   * it, which is precisely the moment not to be debugging the harness.
+   */
+  const wanted = Object.values(DUEL_POOLS).reduce(
+    (n, p) =>
+      n +
+      (p.good.length * p.evil.length -
+        NEVER_MEET.filter(
+          ([a, b]) =>
+            (p.good.includes(a) && p.evil.includes(b)) ||
+            (p.good.includes(b) && p.evil.includes(a)),
+        ).length) *
+        2,
+    0,
+  );
   must(orders.size === wanted, `${orders.size} of ${wanted} pairings rolled`);
 
   // Every costume must be rollable from every pool. A costume nothing can roll
