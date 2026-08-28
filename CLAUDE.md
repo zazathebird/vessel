@@ -634,13 +634,56 @@ covers how to *see* any of this — rAF parks in an automated browser, so use `s
 
 **Tuning, and where it may live:**
 
-- **`DUEL_TUNING` is a tuning surface, not configuration** (2026-08-28). Four multipliers —
-  `circling` (the pick weight of the seven modules containing no blow), `rest` (the slack past the
-  last move's *end*), `impact` (hit-stop frames), `patience` (the anti-stall threshold) — turned live
-  from the bench on `/admin`. **It is not in `Config`, not published, not in a share code and not
-  persisted, and that is the invariant**: a duel that is a different fight per visitor is one nobody
-  can review, because no two people are discussing the same fight. Turn a knob, watch, and type the
-  value that wins in as the constant.
+- **REVERSED 2026-08-28: the duel is configuration, and it publishes.** This entry used to say
+  `DUEL_TUNING` was *"not in `Config`, not published, not in a share code and not persisted, and that
+  is the invariant"*, because a duel that is a different fight per visitor is one nobody can review.
+  The client asked for the opposite, in his words: *"i want complete options for the duels for
+  everyone n djust for mysef."* Both halves are built — the settings publish to every visitor, and
+  the operator drives them live without publishing. **Do not restore the old rule from an earlier
+  reading of this file.**
+
+  The risk the old rule named has not gone away, it has **moved**: it is no longer "nobody agreed to
+  this fight", it is "a bad value reaches every visitor at once", which is the exposure every other
+  published appearance field already has. That is what `validDuelSettings` answers, and why it
+  **refuses rather than repairs**, field by field, like the rest of the published config.
+
+  Four multipliers — `circling` (the pick weight of the seven modules containing no blow), `rest`
+  (the slack past the last move's *end*), `impact` (hit-stop frames), `patience` (the anti-stall
+  threshold) — plus the pinned pairing, the per-side roster allow-lists, `rim`, `zoom`, `bars` and
+  `kick`. `src/data/duelSettings.ts` owns the type, the bands and the validation.
+- **`Config.duel` is the site default and `Config.duelPages` is a *sparse map of partial
+  overrides*.** Partial is load-bearing: a full copy per page means sixteen of the seventeen silently
+  going stale the next time the site default moves, so a page that says nothing about `zoom` keeps
+  tracking it. Gated.
+- **A null allow-list means "the whole side" and is not the same as listing all twelve** — a null
+  keeps up with the roster, a written-out list stops including anything added after it, which is
+  exactly how four of the original eight became unreachable. **A restriction that would empty a side
+  is refused** and falls back to the whole side: a hero slot drawing no fighter is indistinguishable
+  from a broken page. Both gated.
+- **The restriction rides on `DuelState.allow`, not on the call that rolls the pair** — the re-roll
+  happens inside `advanceDuel` on a match boundary, where the caller is a rAF loop that has long
+  since forgotten what it was configured with. Honoured only on the opening match, it comes back as
+  *"it ignores my settings after a minute"*. Gated over six match resets.
+- **The knobs stayed a module-level global** (`applyDuelTuning`) when they became publishable, and
+  that is deliberate: they are read from `buildSequence`, which is handed a module and an rng and no
+  state, so carrying them would mean a parameter through the director, the module pool and the
+  sequence builder to express something that cannot vary within a page anyway. The *other* settings
+  reach the background effect on the `Frame` contract instead, where everything else per-render
+  already lives.
+- **`DuelSettingsEditor` publishes and `DuelBench` does not, and no control appears on both.** The
+  four knobs moved from the bench to the editor on 2026-08-28 for exactly that reason — a knob that
+  publishes cannot also be a knob that does not. **There is one publish button for the whole
+  appearance**, in the site-config panel; a second one here would be two routes that can disagree
+  about what is live.
+- **`MAX_CONFIG_BYTES` is 8,000, up from 2,000, and `duelPages` is why** — it is the first published
+  key that grows without anybody editing `worker/site-config.ts`. It **fails loudly and must keep
+  doing so**: truncating would inject a half-object that `loadConfig` then correctly refuses field by
+  field, leaving the operator watching settings silently not apply.
+- **Share codes carry none of this**, deliberately and for now: seven hyphen-separated base-36 fields
+  cannot hold a per-page map of fighter lists without a new wire format of their own. (`VS1.`/`VS2.`
+  is the *setup code's* prefix, not this one — they are two separate formats.) Flagged to the client,
+  awaiting a decision — see `TODO.md`. Every default is arithmetic identity with the shipped engine, so the
+  field changes nothing until somebody sets it.
 - **Every default is 1 and 1 must stay arithmetic identity.** Each knob is written as a multiplier on
   a value the fight already rolls, never as a replacement for one, so 360,000 stepped frames and
   280,000 generated sequences pass unchanged. A default that merely *looked* neutral would move every

@@ -1976,11 +1976,34 @@ export type DuelPool = "duel" | "duelholy";
  * and read every exchange through that. Rolling the side means the only thing
  * telling you who is who is the costume, which is the point of the phase.
  */
+/**
+ * Which fighters a roll may draw from, per side — already intersected with the
+ * pool and guaranteed non-empty by `allowFor` in `src/data/duelSettings.ts`.
+ */
+export interface RosterAllow {
+  good: FighterStyle[];
+  evil: FighterStyle[];
+}
+
 export function rollPairing(
   pool: DuelPool,
   rng: () => number = Math.random,
+  allow: RosterAllow | null = null,
 ): [FighterStyle, FighterStyle] {
-  const { good, evil } = DUEL_POOLS[pool];
+  /*
+   * The operator's restriction, if there is one. **Defaulting to null rather
+   * than to the full lists is the point**: an absent restriction has to mean
+   * "the whole side as it stands today", not "the side as it stood when
+   * somebody last looked at it". Two lists that must agree with the roster is
+   * exactly how four of the original eight became unreachable.
+   *
+   * It is not re-checked for emptiness here. `allowFor` owns that, because the
+   * fallback it applies — an excluded-everything list means the whole side — is
+   * a product decision about what an operator meant, and this function's job is
+   * to roll uniformly over whatever it is handed.
+   */
+  const good = allow ? allow.good : DUEL_POOLS[pool].good;
+  const evil = allow ? allow.evil : DUEL_POOLS[pool].evil;
 
   let g = good[Math.floor(rng() * good.length) % good.length];
   let e = evil[Math.floor(rng() * evil.length) % evil.length];

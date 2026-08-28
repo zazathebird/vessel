@@ -50,13 +50,40 @@ const PUBLISHED_KEYS = [
   // sensible default the way a missing boolean does: the operator publishes
   // "Roam" and every visitor gets "Hold" with nothing to indicate why.
   "station",
+  // The duel, site-wide and per page (2026-08-28) — same kept-in-step rule.
+  // These two are the largest published values by a wide margin: `duelPages`
+  // is a map, so it is the one key that can grow without anybody editing this
+  // file. See the size ceiling immediately below, which is what keeps that
+  // from becoming a head tag nobody can serve.
+  "duel",
+  "duelPages",
 ] as const;
 
 /**
  * A ceiling on what can be stored, since this string is injected into every
- * page the site serves. The real config is a couple of hundred bytes.
+ * page the site serves.
+ *
+ * **Raised from 2,000 on 2026-08-28, when the duel settings landed**, and the
+ * arithmetic is worth writing down because this is the one number that decides
+ * whether a legitimate operator action fails. Everything the site had before
+ * was indices, ids and booleans: a couple of hundred bytes, and 2,000 was so
+ * far above it that the ceiling was theoretical. `duelPages` is a *map* — it
+ * is the first published key that grows without anybody editing this file.
+ *
+ * One fully-specified page override, with both twelve-id allow-lists spelled
+ * out, is roughly 400 bytes. Seventeen of those is ~6.8KB, which is the
+ * pathological case rather than the expected one — the editor writes only the
+ * fields a page actually disagrees with, and a realistic override (a pinned
+ * pairing and the four knobs) is ~120 bytes, so seventeen pages is ~2KB.
+ * 8,000 covers the realistic case with room, and still refuses the
+ * pathological one rather than putting 7KB into the head of every page.
+ *
+ * **It fails loudly and has to keep doing so.** Truncating here would inject
+ * a half-object that `loadConfig` would then correctly refuse field by field,
+ * and the operator would see settings silently not apply with nothing to
+ * explain it.
  */
-const MAX_CONFIG_BYTES = 2_000;
+const MAX_CONFIG_BYTES = 8_000;
 
 /**
  * Cache the published row inside the isolate for a few seconds.
@@ -129,7 +156,15 @@ export async function publishSiteConfig(request: Request, env: Env): Promise<Res
   if (Object.keys(clean).length === 0) throw new BadRequest("Nothing in that config to publish.");
 
   const encoded = JSON.stringify(clean);
-  if (encoded.length > MAX_CONFIG_BYTES) throw new BadRequest("That config is too large.");
+  if (encoded.length > MAX_CONFIG_BYTES) {
+    // Says the two numbers, because the only way to act on this is to know how
+    // far over it is — and the thing to remove is almost certainly a per-page
+    // duel override, which is the only key here that grows.
+    throw new BadRequest(
+      `That config is ${encoded.length} bytes and the limit is ${MAX_CONFIG_BYTES}. ` +
+        "Clear a per-page duel override — those are the only settings that grow.",
+    );
+  }
 
   await env.DB.prepare(
     `INSERT INTO site_config (id, config, published_at, published_by)

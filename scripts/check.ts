@@ -45,13 +45,24 @@ import {
   drawDuel,
   BODY_H,
   DUEL_TABLES,
+  DUEL_TUNING,
   DEFAULT_RIM,
+  createDuelFrom,
   GRAVITY,
 } from "../src/fx/duel";
 import { duelCamera, ORNAMENT_PX } from "../src/components/DuelOrnament";
 import type { DuelCam } from "../src/components/DuelOrnament";
 import { BLADE_COLORS, DUEL_POOLS, FIGHTERS, NEVER_MEET, rollPairing } from "../src/fx/fighters";
 import type { CostumeCtx, FighterKind, FighterStyle } from "../src/fx/fighters";
+import {
+  DEFAULT_DUEL_SETTINGS,
+  DEFAULT_DUEL_TUNING,
+  allowFor,
+  resolveDuel,
+  validDuelPages,
+  validDuelSettings,
+} from "../src/data/duelSettings";
+import { PUBLISHED_KEYS } from "../src/config/siteConfig";
 import { PAGES } from "../src/data/pages";
 import {
   CATEGORIES,
@@ -2558,6 +2569,127 @@ if (!FAST) check("duel: a pooled fight rotates its fighters", () => {
 
 
 // ---- 5. Catalogue and content invariants -----------------------------------
+
+check("the duel settings publish, refuse rubbish, and default to a no-op", () => {
+  /*
+   * Four ways this feature can fail without anything throwing, which is why it
+   * has a gate at all rather than a typecheck.
+   */
+
+  // 1. The defaults must be arithmetic identity with what the engine already
+  //    does. Every duel gate in this file — 360,000 stepped frames, 280,000
+  //    generated sequences — is measured against the shipped fight, and a
+  //    default that merely *looked* neutral would move all of them at once
+  //    while reading as a change to nobody.
+  for (const k of ["circling", "rest", "impact", "patience"] as const) {
+    must(
+      DEFAULT_DUEL_SETTINGS.tuning[k] === 1 && DUEL_TUNING[k] === 1,
+      `${k} defaults to ${DEFAULT_DUEL_SETTINGS.tuning[k]}, and 1 is the identity`,
+    );
+  }
+  must(
+    DEFAULT_DUEL_SETTINGS.rim === DEFAULT_RIM,
+    `settings default rim ${DEFAULT_DUEL_SETTINGS.rim} against the engine's ${DEFAULT_RIM}`,
+  );
+
+  // 2. **Both** published-key lists must carry both fields. They are separate
+  //    arrays in separate files and either one missing a key drops the value
+  //    silently on publish — the operator's own browser shows a setting that
+  //    never reached anybody else, which is the hardest kind of bug to be told
+  //    about because the person reporting it cannot see it.
+  const workerKeys = readFileSync("worker/site-config.ts", "utf8");
+  for (const key of ["duel", "duelPages"]) {
+    must(
+      (PUBLISHED_KEYS as readonly string[]).includes(key),
+      `${key} is missing from the client's PUBLISHED_KEYS`,
+    );
+    must(
+      new RegExp(`^\\s*"${key}",`, "m").test(workerKeys),
+      `${key} is missing from the Worker's PUBLISHED_KEYS`,
+    );
+  }
+
+  // 3. It is published to every visitor, so it is validated field by field and
+  //    refuses rather than repairs. A half-accepted duel setting is one the
+  //    operator cannot account for.
+  const rubbish: unknown[] = [
+    null,
+    42,
+    "duel",
+    { pin: ["hooded"] },
+    { pin: ["hooded", "nosuchfighter"] },
+    { good: [] },
+    { good: ["caped"] },
+    { tuning: { circling: "fast" } },
+    { tuning: { rest: -1 } },
+    { tuning: { patience: 99 } },
+    { rim: -1 },
+    { rim: Number.NaN },
+    { zoom: 0 },
+    { bars: "yes" },
+  ];
+  for (const r of rubbish) {
+    const out = validDuelSettings(r);
+    must(out.pin === null, `${JSON.stringify(r)} produced a pin`);
+    must(
+      out.tuning.circling === 1 && out.tuning.rest === 1 && out.tuning.patience === 1,
+      `${JSON.stringify(r)} moved the pacing`,
+    );
+    must(out.rim === DEFAULT_RIM && out.zoom === 1, `${JSON.stringify(r)} moved the look`);
+    must(out.bars === true && out.kick === true, `${JSON.stringify(r)} moved a flag`);
+  }
+  // `{ good: ["caped"] }` is refused for a reason worth pinning: `caped` is an
+  // evil fighter, so it is not an allow-list for the good side at all — and an
+  // allow-list that ends up empty means "nobody may appear", whose honest
+  // rendering is an empty hero slot.
+  must(validDuelSettings({ good: ["caped"] }).good === null, "a wrong-side allow-list stuck");
+  const real = validDuelSettings({ good: ["hooded", "ronin"], tuning: { rest: 0.5 } });
+  must(real.good?.length === 2 && real.tuning.rest === 0.5, "a valid payload was refused");
+
+  // 4. An override is partial, and stays partial. A page that states one field
+  //    must keep tracking the site default for the others — writing the whole
+  //    resolved object would freeze today's values onto sixteen pages that
+  //    nobody would think to revisit.
+  const site = { ...DEFAULT_DUEL_SETTINGS, zoom: 1.4, tuning: { ...DEFAULT_DUEL_TUNING, rest: 2 } };
+  const pages = validDuelPages({ work: { bars: false }, nosuchpage: { bars: false } });
+  must(!("nosuchpage" in pages), "an unknown page id survived validation");
+  must(Object.keys(pages.work ?? {}).length === 1, "a partial override was widened");
+  const onWork = resolveDuel(site, pages, "work");
+  must(onWork.bars === false, "the override did not apply");
+  must(onWork.zoom === 1.4 && onWork.tuning.rest === 2, "the override froze the site default");
+  must(resolveDuel(site, pages, "about").bars === true, "an override leaked onto another page");
+
+  // 5. A restriction can never empty a side. An ornament that draws no fighter
+  //    is indistinguishable from a broken page.
+  const none = allowFor({ ...DEFAULT_DUEL_SETTINGS, good: [], evil: [] }, "duel");
+  must(none.good.length > 0 && none.evil.length > 0, "a restriction emptied a side");
+  const one = allowFor({ ...DEFAULT_DUEL_SETTINGS, good: ["hooded"] }, "duel");
+  must(one.good.length === 1 && one.evil.length === 12, "allowFor did not intersect the pool");
+
+  // 6. A restriction has to survive a match reset, which happens inside
+  //    `advanceDuel` where the caller is a rAF loop that has forgotten what it
+  //    was configured with. A restriction honoured only on the opening match
+  //    comes back as "it ignores my settings after a minute".
+  const st = createDuelFrom("duel", Math.random, one);
+  let matches = 0;
+  const seen = new Set<string>();
+  for (let i = 0; i < 200_000 && matches < 6; i += 1) {
+    advanceDuel(st, 1);
+    if (st.matches !== matches) {
+      matches = st.matches;
+      seen.add(st.a.style);
+      seen.add(st.b.style);
+    }
+  }
+  must(matches >= 5, `only ${matches} matches in 200,000 frames`);
+  for (const id of seen) {
+    must(
+      id === "hooded" || FIGHTERS[id as FighterStyle].side === "evil",
+      `${id} walked on past a restriction that excluded it`,
+    );
+  }
+  return `${rubbish.length} malformed payloads refused, override stays partial, restriction held over ${matches} matches`;
+});
 
 check("catalogues match the documented counts", () => {
   must(LAYOUTS.length === 14, `${LAYOUTS.length} layouts, expected 14`);

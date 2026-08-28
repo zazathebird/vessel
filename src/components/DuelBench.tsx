@@ -4,7 +4,6 @@ import { PALETTES } from "../data/palettes";
 import {
   BLADE_COLORS,
   DUEL_POOLS,
-  DUEL_TUNING,
   FIGHTERS,
   advanceDuel,
   createDuel,
@@ -28,12 +27,17 @@ import type { DuelCam } from "./DuelOrnament";
  * engine through the same camera the hero slot uses, at the size the hero slot
  * uses, so what is judged here is what visitors get.
  *
- * **The four knobs are a tuning surface, not a setting** (`DUEL_TUNING`). They
- * are not in `Config`, not published, not in a share code and not persisted:
- * turn one, watch, and the value that wins gets typed into the engine as the
- * new constant. A duel that is a different fight per visitor is not a decision
- * anybody made — and it would also be unreviewable, since no two people would
- * be discussing the same fight.
+ * **Nothing here is a setting.** It plays, steps, scrubs speed and changes the
+ * preview size and palette, and every one of those is a way of looking rather
+ * than a thing that is looked at — saved nowhere, published nowhere, seen by
+ * nobody else.
+ *
+ * The four pacing knobs used to live here on exactly that reasoning, and
+ * **moved to `DuelSettingsEditor` on 2026-08-28** when the client asked for
+ * *"complete options for the duels for everyone n just for myself"* and they
+ * became publishable. The old note said a duel that is a different fight per
+ * visitor is not a decision anybody made; that is now a decision somebody made,
+ * and the surface it is made on is the one that publishes.
  *
  * Operator-gated by its caller, and gated again here, for the reason every
  * operator surface is: a bench is production furniture to anybody else.
@@ -45,38 +49,6 @@ const SIZES = [
   { px: 320, label: "desk" },
   { px: 520, label: "large" },
 ] as const;
-
-/** The knobs, with the band each slider spans. Order is the order they matter. */
-const KNOBS = [
-  {
-    key: "circling" as const,
-    label: "Circling",
-    lo: 0,
-    hi: 2,
-    note: "Weight of the seven modules that contain no blow. At 1 they are 30.6% of every pick.",
-  },
-  {
-    key: "rest" as const,
-    label: "Rest",
-    lo: 0,
-    hi: 2,
-    note: "The pause after each exchange. Moves themselves are never scaled — their frame counts are what every reaction is derived from.",
-  },
-  {
-    key: "impact" as const,
-    label: "Impact",
-    lo: 0,
-    hi: 4,
-    note: "Frames of hit-stop a contact buys. At 1 it is 1.9% of all frames.",
-  },
-  {
-    key: "patience" as const,
-    label: "Patience",
-    lo: 0.3,
-    hi: 2,
-    note: "How long before a match starts filtering to modules that land. Lower ends fights sooner.",
-  },
-];
 
 export function DuelBench({ enabled }: { enabled: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -100,7 +72,6 @@ export function DuelBench({ enabled }: { enabled: boolean }) {
   const [speed, setSpeed] = useState<number>(1);
   const [size, setSize] = useState<number>(320);
   const [running, setRunning] = useState(true);
-  const [tuning, setTuning] = useState({ ...DUEL_TUNING });
   const [readout, setReadout] = useState("");
 
   /*
@@ -113,11 +84,6 @@ export function DuelBench({ enabled }: { enabled: boolean }) {
   useEffect(() => {
     live.current = { pal, speed, running, size };
   });
-
-  /* The knobs are module state on the engine, so write them straight through. */
-  useEffect(() => {
-    Object.assign(DUEL_TUNING, tuning);
-  }, [tuning]);
 
   useEffect(() => {
     if (!enabled) return undefined;
@@ -350,37 +316,14 @@ export function DuelBench({ enabled }: { enabled: boolean }) {
 
       <p className="v-duelbench-readout">{readout || "…"}</p>
 
-      <div className="v-duelbench-knobs">
-        {KNOBS.map((k) => (
-          <label key={k.key} className="v-duelbench-knob">
-            <span className="v-duelbench-knob-head">
-              {k.label}
-              <b>{tuning[k.key].toFixed(2)}</b>
-            </span>
-            <input
-              type="range"
-              min={k.lo}
-              max={k.hi}
-              step={0.05}
-              value={tuning[k.key]}
-              onChange={(e) =>
-                setTuning((t) => ({ ...t, [k.key]: Number(e.target.value) }))
-              }
-            />
-            <span className="v-duelbench-knob-note">{k.note}</span>
-          </label>
-        ))}
-      </div>
+      <p className="v-duelbench-note">
+        The pacing and the look moved to <b>What the duel does</b> above on
+        2026-08-28, when they became things that publish. A knob that reaches
+        visitors cannot also be a knob that does not, so there is one of each
+        rather than two of one. What is left here is a way of watching a fight:
+        none of it is saved and none of it is seen by anybody else.
+      </p>
 
-      <div className="v-duelbench-row">
-        <button
-          type="button"
-          className="chip"
-          onClick={() => setTuning({ rest: 1, circling: 1, impact: 1, patience: 1 })}
-        >
-          back to the shipped fight
-        </button>
-      </div>
     </section>
   );
 }

@@ -52,9 +52,9 @@
  * draws the blades.
  */
 import { FIGHTERS, rollPairing } from "./fighters";
-import type { CostumeCtx, DuelPool, FighterStyle } from "./fighters";
+import type { CostumeCtx, DuelPool, FighterStyle, RosterAllow } from "./fighters";
 
-export type { FighterStyle, CostumeCtx, DuelPool } from "./fighters";
+export type { FighterStyle, CostumeCtx, DuelPool, RosterAllow } from "./fighters";
 export { BLADE_COLORS, FIGHTERS, DUEL_POOLS, rollPairing } from "./fighters";
 
 type Action = "neutral" | "attacking" | "kicking" | "force" | "dead";
@@ -259,6 +259,17 @@ export interface DuelState {
    * See `createDuelFrom`.
    */
   pool: DuelPool | null;
+  /**
+   * The operator's roster restriction, or null for the whole pool.
+   *
+   * **On the state rather than passed to the re-roll**, because the re-roll
+   * happens *inside* `advanceDuel` on a match boundary, where the caller is a
+   * rAF loop that has long since forgotten what it was configured with. A
+   * restriction that only applied to the opening match would come back as "it
+   * ignores my settings after a minute", which is the hardest kind of bug to
+   * be told about.
+   */
+  allow: RosterAllow | null;
   a: Fighter;
   b: Fighter;
   sparks: Spark[];
@@ -342,6 +353,7 @@ function makeFighter(x: number, facing: 1 | -1, style: FighterStyle): Fighter {
 export function createDuel(left: FighterStyle, right: FighterStyle): DuelState {
   return {
     pool: null,
+    allow: null,
     a: makeFighter(START_A, 1, left),
     b: makeFighter(START_B, -1, right),
     sparks: [],
@@ -372,10 +384,15 @@ export function createDuel(left: FighterStyle, right: FighterStyle): DuelState {
  * changing — so new fighters appearing there is a scene change, not a swap
  * mid-frame.
  */
-export function createDuelFrom(pool: DuelPool, rng: () => number = Math.random): DuelState {
-  const [left, right] = rollPairing(pool, rng);
+export function createDuelFrom(
+  pool: DuelPool,
+  rng: () => number = Math.random,
+  allow: RosterAllow | null = null,
+): DuelState {
+  const [left, right] = rollPairing(pool, rng, allow);
   const st = createDuel(left, right);
   st.pool = pool;
+  st.allow = allow;
   return st;
 }
 
@@ -3082,6 +3099,23 @@ const TOTAL_WEIGHT = MODULES.reduce((n, m) => n + m.weight, 0);
  * constant. A duel that is a different fight per visitor is not a decision
  * anybody made.
  *
+ * **REVERSED 2026-08-28, at the client's request** — *"i want complete options
+ * for the duels for everyone n djust for mysef."* These four are `Config.duel`
+ * now, published to every visitor and settable per page, and this object is the
+ * live value they are pushed into by `applyDuelTuning`. It stays a module
+ * global because `buildSequence` below is handed a module and an rng and no
+ * state, so carrying it would mean a parameter through the director, the module
+ * pool and the builder to express something that cannot vary within a page.
+ *
+ * Share codes are still excluded, and that part is unchanged rather than
+ * forgotten: seven hyphen-separated base-36 fields cannot hold a per-page map
+ * of fighter lists without a new format, which is a decision the client has not
+ * been asked to make yet. See `TODO.md`.
+ *
+ * **What has not changed is the paragraph below.** These are still multipliers
+ * on values the fight already rolls, every default is still 1, and 1 must still
+ * be arithmetic identity — the gates are measured against it.
+ *
  * Measured 2026-08-28, at these defaults, over 200 complete matches: median
  * match 50.8s, 62% of frames neutral, 12% striking, 1.9% in hit-stop, and
  * **30.6% of module picks contain no blow at all**. Those are the numbers the
@@ -3112,6 +3146,24 @@ export const DUEL_TUNING = {
    */
   patience: 1,
 };
+
+/**
+ * Point `DUEL_TUNING` at a new set of values.
+ *
+ * **The tuning stayed a module-level global when it became publishable
+ * (2026-08-28), and that is deliberate.** The obvious alternative is to carry
+ * it on `DuelState`, but the knobs are read from `buildSequence`, which is
+ * handed a module and an rng and no state — so threading it means a parameter
+ * on the director, the module pool and the sequence builder, all to express
+ * something that cannot vary within a page anyway. One page renders at a time,
+ * and both homes of the duel on that page want the same answer.
+ *
+ * Assigned into rather than replaced, so anything holding the object — the
+ * `/admin` bench and `duel-shot --tune` both do — keeps seeing live values.
+ */
+export function applyDuelTuning(t: Partial<typeof DUEL_TUNING>): void {
+  Object.assign(DUEL_TUNING, t);
+}
 
 /** Clamp a knob to a sane band. The bench is a slider, and a slider can be dragged to 0. */
 function knob(v: number, lo: number, hi: number): number {
@@ -3708,7 +3760,7 @@ function step(st: DuelState): void {
       // Fresh fighters if this fight came from a pool, the same two if it was
       // pinned to a pairing. Rolled here rather than in the caller so every
       // home of the duel gets it without knowing the roster exists.
-      const [left, right] = st.pool ? rollPairing(st.pool) : [a.style, b.style];
+      const [left, right] = st.pool ? rollPairing(st.pool, Math.random, st.allow) : [a.style, b.style];
       st.a = makeFighter(START_A, 1, left);
       st.b = makeFighter(START_B, -1, right);
       /*

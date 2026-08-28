@@ -4,6 +4,7 @@ import { ORNAMENTS } from "../data/ornaments";
 import { STATIONS } from "../data/stations";
 import { PATHS } from "../data/pageIds";
 import type { PageId } from "../data/pageIds";
+import { validDuelPages, validDuelSettings } from "../data/duelSettings";
 import { DEFAULT_CONFIG } from "./types";
 import type { Config, Scopes } from "./types";
 import { publishedConfig } from "./siteConfig";
@@ -96,6 +97,12 @@ export function loadConfig(): Config {
     fx: oneOf(saved.fx, FX.map((f) => f.id), DEFAULT_CONFIG.fx),
     ornament: oneOf(saved.ornament, ORNAMENTS.map((o) => o.id), DEFAULT_CONFIG.ornament),
     station: oneOf(saved.station, STATIONS.map((s) => s.id), DEFAULT_CONFIG.station),
+    // Validated in their own module, field by field, because they are a nested
+    // shape rather than an index or an id and the helpers above cannot reach
+    // inside one. Same rule as the rest of this function: refuse and fall back
+    // per field, so one bad number cannot take the duel down with it.
+    duel: validDuelSettings(saved.duel),
+    duelPages: validDuelPages(saved.duelPages),
     type: index(saved.type, TYPESETS.length, DEFAULT_CONFIG.type),
     mode: oneOf(saved.mode, MODES.map((m) => m.id), DEFAULT_CONFIG.mode),
     scope,

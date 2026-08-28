@@ -13,6 +13,111 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-28 — the duel becomes a published setting, and the rule forbidding it is reversed
+
+**Reverses the `DUEL_TUNING` decision recorded below** (*the duel was being improved by people who
+could not watch it*), which stays exactly as written: the four knobs were a bench surface that
+afternoon and are a published field by the evening.
+
+**The rule that was reversed, and its reason.** `DUEL_TUNING`'s four pacing multipliers —
+`circling`, `rest`, `impact`, `patience` — were deliberately kept out of `Config`: not published,
+not in a share code, not persisted, on the reasoning that **"a duel that is a different fight per
+visitor is one nobody can review, because no two people are discussing the same fight."** The
+operator turned a knob, watched, and typed the winning value in as a constant.
+
+**The client asked for the opposite, and his words are the record.** He asked for a duel
+customisation tool covering *"each page, site, and every other possible thing"*. Offered the choice
+between operator-only and published to everyone, he declined both as put to him and wrote: **"with
+options for everyone also. i want complete options for the duels for everyone n djust for mysef"** —
+quoted with its typos, because the quote is the decision. Both halves are honoured: the settings
+publish to every visitor, **and** the operator can drive them live without publishing.
+
+**The risk the old rule named has not gone away — it has moved.** It is no longer "nobody agreed to
+this fight"; it is "the fight a visitor sees is whatever was published, so a bad value reaches
+everyone at once". That is the exposure every other published appearance field already carries, and
+it has an answer already in force for them: validation field by field that **refuses rather than
+repairs**.
+
+### The shape
+
+`src/data/duelSettings.ts` is new and holds the whole of it — the `DuelSettings` type,
+`DEFAULT_DUEL_SETTINGS`, `validDuelSettings`, `validDuelPages`, `resolveDuel`, `allowFor`, and
+`DUEL_BANDS`, one table of knob bands so the editor, the validator and the gate cannot disagree
+about what a legal value is. `Config` gains two fields: `duel`, the site default, and `duelPages`, a
+**sparse map of partial overrides** keyed by page, which `resolveDuel` merges onto the default.
+
+**Partial, not a full copy per page, and that is the load-bearing choice.** Seventeen full copies
+means sixteen of them silently going stale the next time the site default moves. A page that says
+nothing about `zoom` keeps tracking the default.
+
+Covered: a pinned pairing or a roll from the pool; per-side roster allow-lists; the four pacing
+knobs; carve width (`rim`), figure size (`zoom`), health bars and frame kick.
+
+- **A null allow-list means "the whole side" and is not the same as listing all twelve.** A null
+  keeps up with the roster; a full list silently stops including anything added after it was
+  written, which is precisely how four of the original eight costumes became unreachable.
+- **An allow-list that would empty a side is refused** and falls back to the whole side. An ornament
+  that draws no fighter is indistinguishable from a broken page.
+- **The restriction rides on `DuelState.allow` rather than being passed to the roll.** The re-roll
+  happens inside `advanceDuel` at a match boundary, where the caller is a rAF loop that has long
+  forgotten its configuration — and a restriction honoured only on the opening match comes back as
+  *"it ignores my settings after a minute"*.
+- **The four knobs stayed a module-level global** (`applyDuelTuning`) rather than moving onto
+  `DuelState`, because they are read from `buildSequence`, which is handed a module and an rng and no
+  state at all. One page renders at a time, and both homes of the duel on it want the same answer.
+- The resolved settings reach the background effect through a new `duel` field on the `Frame`
+  contract. Every other effect ignores it, exactly as they ignore `quality`.
+
+### Two surfaces, deliberately
+
+`DuelSettingsEditor` is the **published** half. `DuelBench` is the **unpublished** half — play, step,
+speed, preview size and palette, which are ways of *looking* and are saved nowhere. **The four knobs
+moved from the bench to the editor**, because a knob that publishes cannot also be a knob that does
+not. There is one publish button for the whole appearance, in the site-config panel, and no second
+one on the editor: two publish routes for one config is two things that can disagree about what is
+live.
+
+### `MAX_CONFIG_BYTES`, 2,000 → 8,000
+
+The published config is injected into the head of every page. Everything in it before this was
+indices, ids and booleans — a couple of hundred bytes — so the old ceiling was theoretical.
+`duelPages` is a map, and **the first published key that can grow without anybody editing the file
+it lives in.** One fully-specified page override with both twelve-id allow-lists spelled out is
+~400 bytes, so seventeen of them is ~6.8KB; that is the pathological case and not the expected one.
+A realistic override — a pinned pairing and the four knobs — is ~120 bytes, so seventeen pages is
+~2KB. **8,000 covers the realistic case and still refuses the pathological one.**
+
+**It fails loudly and must keep doing so.** Truncating would inject a half-object that `loadConfig`
+would then correctly refuse field by field, and the operator would watch his settings silently not
+apply with nothing anywhere to explain it. The refusal now names both byte counts and says that a
+per-page override is the thing to clear.
+
+### The gate
+
+One new one — *"the duel settings publish, refuse rubbish, and default to a no-op"* — asserting that
+every default is arithmetic identity with the shipped engine (all four knobs at 1, `rim` equal to the
+engine's `DEFAULT_RIM`); that **both** `PUBLISHED_KEYS` lists carry both keys, the client's and the
+Worker's being separate arrays where either one missing a key drops the value silently on publish;
+that 14 malformed payloads are all refused; that an override stays partial and does not leak onto
+another page; that `allowFor` never empties a side; and that a roster restriction still holds after
+six match resets over 200,000 simulated frames. **Verified by breaking it twice** — deleting
+`duelPages` from the Worker's list, and widening a partial override into a full copy. Both failed the
+gate.
+
+`npm run check` is **49 green**, up from 48.
+
+### What is not done, and it is two things
+
+- **Share codes carry none of this.** A share code is seven hyphen-separated base-36 fields, and a
+  per-page map of fighter lists cannot be packed into one without a new wire format — the
+  share-code equivalent of a `VS2.` bump. The settings publish through site config instead. **This
+  was flagged to the client and is awaiting a decision, not forgotten.**
+- **The editor has not been driven in a browser.** It is an operator surface behind a signed-in
+  session, which is one of the things `npm run check` says out loud that it cannot verify. Nobody
+  has clicked it yet.
+
+---
+
 ## 2026-08-28 — the carve, and the roster back down to twenty-four
 
 **Supersedes the entry below it** (*the roster goes to forty*), which stays exactly as written: forty

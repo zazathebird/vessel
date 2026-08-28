@@ -1,12 +1,15 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 import { useConfig } from "../config/ConfigContext";
+import { allowFor, resolveDuel } from "../data/duelSettings";
 import { PALETTES } from "../data/palettes";
 import {
   BLADE_COLORS,
   FEET_Y,
   WORLD_W,
   advanceDuel,
+  applyDuelTuning,
+  createDuel,
   createDuelFrom,
   drawDuel,
   duelFocus,
@@ -254,9 +257,29 @@ export function DuelOrnament({ pairing }: { pairing: DuelPool }) {
   const { config, saver } = useConfig();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  const live = useRef({ pal: config.pal, calm: config.calm, saver });
+  /*
+   * The settings in force on *this* page: the site default with this page's
+   * override merged onto it. Recomputed on the page changing, which is what
+   * makes a per-page override a per-page override.
+   */
+  const duel = useMemo(
+    () => resolveDuel(config.duel, config.duelPages, config.page),
+    [config.duel, config.duelPages, config.page],
+  );
+
+  /*
+   * The pacing knobs are a module-level global in the engine — see
+   * `applyDuelTuning` for why they stayed one. Pushed in an effect rather than
+   * during render because it is a write to something outside React, and a
+   * render that mutates a global runs twice under StrictMode.
+   */
   useEffect(() => {
-    live.current = { pal: config.pal, calm: config.calm, saver };
+    applyDuelTuning(duel.tuning);
+  }, [duel.tuning]);
+
+  const live = useRef({ pal: config.pal, calm: config.calm, saver, duel });
+  useEffect(() => {
+    live.current = { pal: config.pal, calm: config.calm, saver, duel };
   });
 
   useEffect(() => {
@@ -264,7 +287,16 @@ export function DuelOrnament({ pairing }: { pairing: DuelPool }) {
     // every match reset, inside `advanceDuel`. The two ids used to be a fixed
     // pairing in this file; they are `src/fx/fighters.ts` now, so both homes of
     // the duel get the roster without either of them knowing it exists.
-    const st = createDuelFrom(pairing);
+    /*
+     * Pinned, or rolled from whatever the operator has left in the pool.
+     *
+     * A pin sets `pool` to null through `createDuel`, which is the mechanism
+     * that already made a pinned pairing survive match resets — so pinning
+     * here needed no new machinery in the engine, only a different constructor.
+     */
+    const st = duel.pin
+      ? createDuel(duel.pin[0], duel.pin[1])
+      : createDuelFrom(pairing, Math.random, allowFor(duel, pairing));
     let raf = 0;
     let last = performance.now();
     // Null until the first drawn frame, which snaps rather than eases — a
@@ -293,7 +325,7 @@ export function DuelOrnament({ pairing }: { pairing: DuelPool }) {
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
 
-      const { pal, calm, saver: sleeping } = live.current;
+      const { pal, calm, saver: sleeping, duel: v } = live.current;
       if (!calm && !sleeping) advanceDuel(st, frames);
 
       const p = PALETTES[pal] ?? PALETTES[0];
@@ -325,18 +357,23 @@ export function DuelOrnament({ pairing }: { pairing: DuelPool }) {
         core: p.fg,
         spark: p.a2,
         line: p.line,
-        bars: true,
+        bars: v.bars,
         // The frame may jolt on contact here — the fight is the subject in this
         // slot. Off in the background presentation, where it would move the page
         // under body copy. See the translate in `drawDuel`.
-        kick: true,
+        kick: v.kick,
+        rim: v.rim,
         dim: 1,
       });
     };
 
     raf = requestAnimationFrame(step);
     return () => cancelAnimationFrame(raf);
-  }, [pairing]);
+    // `duel.pin` and the allow-lists decide *which fight this is*, so a change
+    // to either has to build a new one. The look and the tuning deliberately do
+    // not: they are read live out of `live.current` every frame, so dragging a
+    // slider on /admin does not restart the match under the person watching it.
+  }, [pairing, duel.pin, duel.good, duel.evil]);
 
   return (
     <canvas

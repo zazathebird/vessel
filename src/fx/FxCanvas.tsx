@@ -1,7 +1,9 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 import { useConfig } from "../config/ConfigContext";
+import { resolveDuel } from "../data/duelSettings";
 import { PALETTES } from "../data/palettes";
+import { applyDuelTuning } from "./duel";
 import { drawFx } from "./effects";
 import { TIERS, saveTier, storedTier } from "./perf";
 import type { FxCache } from "./effects";
@@ -49,6 +51,26 @@ const MAX_DPR = 2;
 
 export function FxCanvas() {
   const { config, saver } = useConfig();
+
+  /*
+   * The duel settings in force on this page, kept in a ref so the rAF loop sees
+   * changes without being torn down and restarted. Only the two duel effects
+   * read it; every other effect ignores it exactly as it ignores `quality`.
+   */
+  const duel = useMemo(
+    () => resolveDuel(config.duel, config.duelPages, config.page),
+    [config.duel, config.duelPages, config.page],
+  );
+  const liveDuel = useRef(duel);
+  useEffect(() => {
+    liveDuel.current = duel;
+    // The pacing knobs are the engine's own global — see `applyDuelTuning`.
+    // Applied here as well as in `DuelOrnament` because either surface can be
+    // the only one on the page: the ornament can be "None" while the background
+    // effect is a duel, and vice versa. Both write the same resolved value, so
+    // it does not matter which runs last.
+    applyDuelTuning(duel.tuning);
+  }, [duel]);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   /** CSS-pixel size and the base scale, written by the observer, read per frame. */
@@ -260,6 +282,11 @@ export function FxCanvas() {
         w,
         h,
         p,
+        // Read out of the ref rather than closed over, for the same reason the
+        // palette is: this loop outlives the render that started it, and a
+        // captured value would freeze the settings at whatever they were when
+        // the effect mounted.
+        duel: liveDuel.current,
         t,
         beat: (Math.sin(t * 1.9) + 1) / 2,
         boost,

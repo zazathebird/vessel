@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { DownloadCodes } from "./DownloadCodes";
 import { DownloadEditor } from "./DownloadEditor";
 import { DuelBench } from "./DuelBench";
+import { DuelSettingsEditor } from "./DuelSettingsEditor";
 
 import { useConfig } from "../config/ConfigContext";
 import { useSession } from "../auth/SessionContext";
@@ -277,6 +278,9 @@ export function Admin() {
           else. `enabled` rather than a conditional render so the rAF loop is
           torn down by the component's own cleanup rather than by unmounting
           mid-frame. */}
+      {/* The published half above the unpublished one: what visitors get is
+          the more consequential surface, and it is the one to land on first. */}
+      <DuelSettingsEditor enabled={isOperator} />
       <DuelBench enabled={isOperator} />
     </section>
   );

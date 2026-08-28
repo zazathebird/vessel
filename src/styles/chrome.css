@@ -4411,3 +4411,246 @@
   font: 400 11.5px/1.5 var(--font-body);
   color: var(--muted);
 }
+
+/* ---- the duel's settings, on /admin -------------------------------------
+ *
+ * The published half of the duel surface (`DuelSettingsEditor`); the bench
+ * above it is the unpublished half and keeps its own block.
+ *
+ * **Tokens only, like every other operator surface.** The one colour that
+ * arrives as a literal is a fighter's blade, and it arrives through
+ * `BLADE_COLORS` as an inline style rather than from this file — the same
+ * carve-out the duel itself has, and the reason it is legible here is the
+ * reason it exists at all: blue/green is the good side and red is the evil
+ * one, in every palette, so a roster list reads as two sides at a glance
+ * without needing a second word per row.
+ */
+
+.v-duelset-target {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 10px;
+}
+
+/* A tab, not a chip: `aria-pressed` carries the state, so the styling has
+   something true to hang off and a screen reader is told the same thing the
+   eye is. Never colour alone — the pressed tab also gains a solid edge. */
+.v-duelset-tab {
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.v-duelset-tab[aria-pressed="true"] {
+  border-color: var(--edge);
+  color: var(--fg);
+  background: var(--surface);
+}
+
+/* The marker saying a page carries its own settings. `--a1`, because it is the
+   one thing in this list a reader is scanning for. */
+.v-duelset-tab span[aria-hidden="true"] {
+  color: var(--a1);
+}
+
+/* Visually hidden, deliberately not `display: none` — the dot beside an
+   overridden page is the only visual carrier of that fact, and a dot is not a
+   word. This is the word. */
+.v-duelset-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.v-duelset-state {
+  margin: 0 0 14px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.v-duelset-rig {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  align-items: flex-start;
+}
+
+.v-duelset-stage {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* **Deliberately not sticky.** It was, on the reasoning that the whole point
+     of a knob is watching the thing it moves — and it was wrong: `.v-account`
+     is `width: min(100%, 34rem)`, so the preview and the controls never fit
+     side by side and the rig always wraps to one column. A sticky element is
+     confined to its containing block, not to its own flex line, so the preview
+     stayed pinned and floated over the controls beneath it, covering the first
+     two sliders' labels. Seen in a browser, not reasoned about.
+     A container query could bring it back the day this panel gets wider. */
+}
+
+.v-duelset-stage canvas {
+  display: block;
+  width: 288px;
+  height: 288px;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  background: var(--bg);
+}
+
+.v-duelset-pal {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.v-duelset-controls {
+  flex: 1 1 320px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.v-duelset-group {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 12px 14px 14px;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--surface);
+}
+
+.v-duelset-group legend {
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 0 6px;
+}
+
+.v-duelset-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.v-duelset-pair {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.v-duelset-pair label {
+  flex: 1 1 130px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.v-duelset-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--fg);
+}
+
+.v-duelset-rosters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.v-duelset-roster {
+  flex: 1 1 150px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.v-duelset-roster h3 {
+  margin: 0 0 2px;
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.v-duelset-fighter {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  color: var(--fg);
+}
+
+/* The fighter's own blade colour, filled in from `BLADE_COLORS`. Two units of
+   information in one mark: which side, and which fighter's it is. */
+.v-duelset-blade {
+  flex: none;
+  width: 3px;
+  height: 13px;
+  border-radius: 1px;
+}
+
+.v-duelset-slider {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.v-duelset-slider-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 12.5px;
+  color: var(--fg);
+}
+
+.v-duelset-slider-head b {
+  font-family: var(--font-mono);
+  font-weight: 400;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.v-duelset-slider small {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.v-duelset-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* The preview is the first thing to go when there is no room for it beside the
+   controls: at this width it stops being sticky and simply leads. */
+@media (max-width: 640px) {
+  .v-duelset-stage canvas {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1;
+  }
+}

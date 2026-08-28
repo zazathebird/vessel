@@ -57,6 +57,13 @@ export const PUBLISHED_KEYS = [
   "slots",
   "entrances",
   "station",
+  // Both halves of the duel settings publish. **They must also be added to the
+  // Worker's own PUBLISHED_KEYS in `worker/site-config.ts`** — the two lists
+  // are separate arrays and either one missing a field silently drops the value
+  // on publish, which is a setting that saves, reloads clean and never reaches
+  // a visitor.
+  "duel",
+  "duelPages",
 ] as const;
 
 /** Narrow a full config down to the slice that gets published. */

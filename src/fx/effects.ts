@@ -13,6 +13,8 @@
  */
 
 import type { FxId } from "../data/catalog";
+import type { DuelSettings } from "../data/duelSettings";
+import { allowFor } from "../data/duelSettings";
 import type { Palette } from "../data/palettes";
 import {
   BLADE_COLORS,
@@ -20,6 +22,7 @@ import {
   WORLD_H as DUEL_WORLD_H,
   WORLD_W as DUEL_WORLD_W,
   advanceDuel,
+  createDuel,
   createDuelFrom,
   drawDuel,
 } from "./duel";
@@ -29,6 +32,18 @@ export interface Frame {
   ctx: CanvasRenderingContext2D;
   w: number;
   h: number;
+  /**
+   * The duel settings in force on the page being drawn — the site default with
+   * this page's override merged onto it.
+   *
+   * **On the frame rather than read from a module global**, unlike the pacing
+   * knobs. The knobs had a reason to stay global (they are read from
+   * `buildSequence`, which is handed no state); these are read here, at the top
+   * of the only two effects that care, where the frame is already the channel
+   * for everything else that varies per render. Every other effect ignores it,
+   * exactly as they ignore `quality`.
+   */
+  duel: DuelSettings;
   /** The live palette — sampled fresh each frame, never captured. */
   p: Palette;
   /** Effect clock, already multiplied by boost. */
@@ -1898,7 +1913,7 @@ const telemetry: Effect = ({ ctx, w, h, p, t, beat }) => {
  */
 
 function duelling(pool: DuelPool): Effect {
-  return ({ ctx, w, h, p, t, dt }, cache) => {
+  return ({ ctx, w, h, p, t, dt, duel: v }, cache) => {
     let st = cache.duel;
     /*
      * The pairing is rolled from the pool rather than pinned, here and again on
@@ -1906,7 +1921,19 @@ function duelling(pool: DuelPool): Effect {
      * The blade colours therefore have to be read off the fighters who actually
      * walked on, not off the ids this factory was built with.
      */
-    if (!st) st = cache.duel = createDuelFrom(pool);
+    /*
+     * Pinned, or rolled from what the operator has left in the pool. Cached, so
+     * this runs once per effect mount — and `FxCanvas` drops the cache when the
+     * effect *id* changes, which a settings change is not. Rebuilding on every
+     * settings change would restart the match under whoever is watching, and a
+     * background fight that resets when a slider moves is worse than one that
+     * takes until the next match to honour a new restriction.
+     */
+    if (!st) {
+      st = cache.duel = v.pin
+        ? createDuel(v.pin[0], v.pin[1])
+        : createDuelFrom(pool, Math.random, allowFor(v, pool));
+    }
 
     /*
      * The fight runs on real time, not on the boosted effect clock (client,
@@ -1985,6 +2012,13 @@ function duelling(pool: DuelPool): Effect {
        * So the feature is kept, in the one place it reads.
        */
       bars: false,
+      // The carve's width is the operator's, here as in the ornament. `bars`
+      // and `kick` are deliberately *not* — they are settled by the slot rather
+      // than by taste, and the reasoning is the block comment above: this is a
+      // full-bleed background with body copy over it, so a readout pinned above
+      // two heads is something the reader has to look past, and a contact that
+      // moves the page moves it under what they are reading.
+      rim: v.rim,
       dim: 0.55,
     });
   };

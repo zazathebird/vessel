@@ -8,7 +8,7 @@ what is left to do.
 
 ## 2026-08-28 — guardrails reach the page, and the duel becomes reviewable
 
-`npm run check` is **48 green**, up from 46. Three commits, all deployed: `7a39870`, `5bbc7cc`,
+`npm run check` is **49 green**, up from 46. Three commits, all deployed: `7a39870`, `5bbc7cc`,
 `75ef788` (the carve and the twenty-four-fighter roster).
 
 ### First, the thing to say out loud: the 2026-08-27 duel fixes ARE live
@@ -60,8 +60,9 @@ for **+18KB** — the engine was already bundled for the hero ornament.
 All 35 modules do run. **The problem is density, not variety**, and that is a different fix.
 
 `DUEL_TUNING` exposes four multipliers for it — `circling`, `rest`, `impact`, `patience` — all
-defaulting to 1, with 1 as arithmetic identity so every duel gate passes unchanged. See `CLAUDE.md`
-for why it may never become `Config`.
+defaulting to 1, with 1 as arithmetic identity so every duel gate passes unchanged. **They are in
+`Config` and published as of later the same day** — the rule that said they never could be was
+reversed at the client's request; `docs/DECISIONS.md` carries the reversal and his words for it.
 
 ### Next, in order
 
@@ -81,10 +82,15 @@ for why it may never become `Config`.
    a light palette is added** — that is the condition to watch, not a browser pass. `rim: 0` turns the
    carve off and is the rollback either way.
 
-1. **Get the client's numbers off the four sliders.** The pacing fix is the same work whatever the
+1. **Drive the duel settings editor in a real signed-in browser.** Nobody has clicked it. It is an
+   operator surface behind a session, which is one of the things `npm run check` says out loud it
+   cannot verify, and it is now the surface the next item is done *on* — the four knobs moved off the
+   bench onto it when they became a published field. Check a per-page override in particular: set one
+   page, load another, and confirm it did not follow.
+2. **Get the client's numbers off the four sliders.** The pacing fix is the same work whatever the
    fighters look like, and his eye is the one thing that cannot be substituted for. Then type the
    winning values in as constants and delete nothing — the knobs stay for the next argument.
-2. ~~**The roster: 8 → 20 a side.**~~ ~~**Forty costumes, twenty a side.**~~ **Done 2026-08-28 —
+3. ~~**The roster: 8 → 20 a side.**~~ ~~**Forty costumes, twenty a side.**~~ **Done 2026-08-28 —
    twenty-four costumes, twelve a side, and the bodies are carved.** It went to forty first and came
    back down the same day, and the reason is the useful part: **the roster read flat because the
    renderer drew wire, not because there were too few costumes.** Bones are tapered capsules now, the
@@ -95,7 +101,13 @@ for why it may never become `Config`.
    sixteen kept: 144 pairs per pool, 288 rolled orderings. Archetypes throughout, per his own rule.
    Gated at 24 and at a 12/12 split, verified by breaking it. **What is left needs eyes and is item 0
    above.**
-3. **The panel's guardrail notice**, above.
+4. **The panel's guardrail notice**, above.
+5. **Ask him whether the duel settings should travel in a share code.** They do not today: a share
+   code is seven hyphen-separated base-36 fields, and a per-page map of fighter lists cannot be
+   packed into one without a new wire format — the share-code equivalent of a `VS2.` bump. They
+   publish through site config instead, which covers every visitor. **Not blocking, and flagged to
+   him already** — it is a question about whether a look he sends somebody carries the duel with it,
+   not a bug.
 
 ### Not started, unchanged from yesterday
 

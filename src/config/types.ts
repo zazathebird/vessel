@@ -1,6 +1,8 @@
 import type { FxId, LayoutId, ModeId, ScopeId } from "../data/catalog";
 import type { OrnamentId } from "../data/ornaments";
 import { DEFAULT_ORNAMENT } from "../data/ornaments";
+import type { DuelPageSettings, DuelSettings } from "../data/duelSettings";
+import { DEFAULT_DUEL_SETTINGS } from "../data/duelSettings";
 import type { PageId } from "../data/pageIds";
 import type { StationId } from "../data/stations";
 import { DEFAULT_STATION } from "../data/stations";
@@ -88,6 +90,29 @@ export interface Config {
    * gated on it: the door and the panel check `is_operator` instead.
    */
   unlocked: boolean;
+  /**
+   * The duel, site-wide (2026-08-28, client request).
+   *
+   * Appearance, so published-only and never stored per visitor — the two things
+   * a visitor may set for themselves are still exactly `calm` and `sound`, and
+   * the test for a third is "can a visitor set it at all", which this fails by
+   * design: it is an operator surface.
+   *
+   * **It publishes the four pacing knobs, which reverses `DUEL_TUNING`'s own
+   * rule.** See `src/data/duelSettings.ts` for the client's words and for what
+   * the reversal costs. Every default is what the site already does, so this
+   * field changes nothing until somebody sets it.
+   */
+  duel: DuelSettings;
+  /**
+   * Per-page overrides, sparse and partial — a page names only what it
+   * disagrees with, and `resolveDuel` merges it onto `duel`.
+   *
+   * **Partial rather than a full copy per page**, because seventeen full copies
+   * means sixteen of them silently going stale the next time the site default
+   * moves. A page that says nothing about `zoom` keeps tracking the default.
+   */
+  duelPages: DuelPageSettings;
 }
 
 export const DEFAULT_CONFIG: Config = {
@@ -107,6 +132,8 @@ export const DEFAULT_CONFIG: Config = {
   slots: false, // production notes are for the operator, not the visitor
   entrances: true, // each layout announces its own structure on arrival
   station: DEFAULT_STATION, // centred, with the float the slot has always had
+  duel: DEFAULT_DUEL_SETTINGS, // every knob at what the engine already does
+  duelPages: {}, // no page disagrees with the site until one is told to
 
   unlocked: false,
 };
