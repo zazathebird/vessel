@@ -4281,3 +4281,133 @@
   border-color: var(--edge);
   color: var(--muted);
 }
+
+/* ---- the duel bench, /admin ------------------------------------------------
+ *
+ * Operator-only, and the only panel on that page that administers nothing. It
+ * is laid out as an instrument rather than as a form: the picture is the
+ * subject and everything else is a control for it, so the stage leads and the
+ * controls sit beside it on desk and under it on a phone.
+ *
+ * Every colour is a token. No literal belongs here for the same reason no
+ * literal belongs anywhere — a palette change has to stay a variable swap, and
+ * this panel recolours with the twenty-five like everything else.
+ */
+
+.v-duelbench-rig {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  align-items: flex-start;
+  margin-top: 14px;
+}
+
+/* Fixed square. The canvas is a 700-unit buffer whatever this is, exactly as
+   the hero slot's is — CSS scales the one picture, which is the assumption
+   `duelCamera`'s floor rests on (see the note on CAM_MIN). */
+.v-duelbench-stage {
+  flex: none;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  line-height: 0;
+}
+
+.v-duelbench-stage canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.v-duelbench-side {
+  flex: 1 1 240px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.v-duelbench-pair {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.v-duelbench-pair label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.v-duelbench-pair label > span {
+  font: 500 10px/1.4 var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  /* --muted, not --faint: --faint measures 2.78–4.09:1 across the palettes and
+     is not a text colour. Operator-only is not a WCAG exemption. */
+  color: var(--muted);
+}
+
+.v-duelbench-pair select {
+  width: 100%;
+  font: 400 13px/1.4 var(--font-mono);
+  color: var(--fg);
+  background: var(--surface);
+  border: 1px solid var(--edge);
+  border-radius: 3px;
+  padding: 6px 8px;
+}
+
+.v-duelbench-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.v-duelbench-readout {
+  margin: 12px 0 0;
+  font: 400 12px/1.6 var(--font-mono);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.v-duelbench-knobs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.v-duelbench-knob {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface);
+}
+
+.v-duelbench-knob-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  font: 600 12px/1.3 var(--font-body);
+  color: var(--fg);
+}
+
+.v-duelbench-knob-head b {
+  font: 500 12px/1.3 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--a1);
+}
+
+.v-duelbench-knob input[type="range"] {
+  width: 100%;
+  accent-color: var(--a1);
+}
+
+.v-duelbench-knob-note {
+  font: 400 11.5px/1.5 var(--font-body);
+  color: var(--muted);
+}

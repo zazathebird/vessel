@@ -3053,10 +3053,76 @@ const TOTAL_WEIGHT = MODULES.reduce((n, m) => n + m.weight, 0);
  * papered over. `Array.prototype.sort` is stable, so beats sharing a frame keep
  * the order they were authored in — which `the-lock` depends on.
  */
+/**
+ * The four numbers that decide how *dense* the fight is, gathered in one live
+ * object so the operator bench can turn them while the fight runs.
+ *
+ * **Every default here is 1, and 1 must reproduce the shipped fight exactly**
+ * — `npm run check` drives 360,000 stepped frames and 280,000 generated
+ * sequences against these defaults, so a default that merely *looked* neutral
+ * would move every one of those gates at once. Each knob below is written as a
+ * multiplier on an existing rolled value rather than as a replacement for it,
+ * which is what makes the identity hold arithmetically instead of by hope.
+ *
+ * This is a **tuning surface, not configuration.** It is not in `Config`, not
+ * published, not in a share code and not persisted: the operator turns a knob,
+ * watches, and the value he settles on gets typed into the engine as the new
+ * constant. A duel that is a different fight per visitor is not a decision
+ * anybody made.
+ *
+ * Measured 2026-08-28, at these defaults, over 200 complete matches: median
+ * match 50.8s, 62% of frames neutral, 12% striking, 1.9% in hit-stop, and
+ * **30.6% of module picks contain no blow at all**. Those are the numbers the
+ * knobs exist to move.
+ */
+export const DUEL_TUNING = {
+  /**
+   * Multiplier on the trailing rest each module rolls for itself — the slack
+   * between the last move *ending* and the sequence ending. Below 1 the
+   * exchanges come faster; the moves themselves are untouched, because their
+   * frame counts are what every reaction frame is derived from and scaling
+   * them would move contacts out from under the beats that answer them.
+   */
+  rest: 1,
+  /**
+   * Multiplier on the pick weight of the seven modules that contain no blow —
+   * `close-in`, `step-in`, `overhead-denied`, `probe`, `standoff`,
+   * `the-overrun`, `throw-deflected`. At 1 they are 30.6% of every pick, and
+   * the heaviest module in the pool (`close-in`, weight 22) is pure walking.
+   */
+  circling: 1,
+  /** Multiplier on the frames of hit-stop a contact buys. The impact budget. */
+  impact: 1,
+  /**
+   * Multiplier on the anti-stall threshold. Above 22 sequences a match filters
+   * the pool to modules that land, which is what makes matches converge —
+   * lower it and fights end sooner.
+   */
+  patience: 1,
+};
+
+/** Clamp a knob to a sane band. The bench is a slider, and a slider can be dragged to 0. */
+function knob(v: number, lo: number, hi: number): number {
+  return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : 1;
+}
+
 export function buildSequence(module: Module, rng: () => number = Math.random): Sequence {
   const built = module.build(makeRoll(rng));
   const beats = built.beats.slice().sort((x, y) => x.at - y.at);
-  return { id: module.id, length: built.length, beats };
+  /*
+   * The rest is the slack *past the last move's own end*, re-derived here from
+   * the move table rather than taken on trust — a module's `length` is its last
+   * beat's end plus a rolled rest, and only that second part may be scaled.
+   * Scaling the whole length would cut into the closing move itself, which is
+   * the exact bug the `step-in` comment records shipping once already.
+   *
+   * `Math.max` with `end` is the floor and it is load-bearing: at `rest: 0` a
+   * sequence must still contain its own last move.
+   */
+  const end = beats.reduce((n, b) => Math.max(n, ends(b.move, b.at)), 0);
+  const slack = Math.max(0, built.length - end);
+  const length = Math.max(end, Math.round(end + slack * knob(DUEL_TUNING.rest, 0, 4)));
+  return { id: module.id, length, beats };
 }
 
 /**
@@ -3170,16 +3236,24 @@ function chooseSequence(st: DuelState): void {
    * as it ends, and it is why matches converge at all; just do not raise the
    * threshold expecting to touch an edge case, because it is the ending.
    */
-  const hard = st.dir.pressure > 22;
+  const hard = st.dir.pressure > 22 * knob(DUEL_TUNING.patience, 0.2, 3);
   if (hard) pool = pool.filter((m) => m.hits);
   if (pool.length === 0) pool = MODULES.filter((m) => m.range === "any");
   if (pool.length === 0) pool = MODULES;
 
-  const total = pool.reduce((n, m) => n + m.weight, 0) || TOTAL_WEIGHT;
+  /*
+   * The pick weight, with the bench's one thumb on the scale: a module that
+   * contains no blow counts for `DUEL_TUNING.circling` times its declared
+   * weight. At the default of 1 this is `m.weight` exactly, so the shipped
+   * distribution — and every gate that measures it — is untouched.
+   */
+  const circling = knob(DUEL_TUNING.circling, 0, 3);
+  const weigh = (m: Module) => (m.hits ? m.weight : m.weight * circling);
+  const total = pool.reduce((n, m) => n + weigh(m), 0) || TOTAL_WEIGHT;
   let roll = Math.random() * total;
   let pick = pool[0];
   for (const m of pool) {
-    roll -= m.weight;
+    roll -= weigh(m);
     if (roll <= 0) {
       pick = m;
       break;
@@ -3272,7 +3346,7 @@ function resolveContact(st: DuelState, f: Fighter, foe: Fighter, m: Move): void 
     // Hit-stop: both fighters' move clocks freeze for two frames while the
     // sparks keep flying. Two frames is nothing to describe and a great deal to
     // watch — it is the cheapest weight cue available.
-    st.hitStop = 2;
+    st.hitStop = Math.round(2 * knob(DUEL_TUNING.impact, 0, 6));
   } else if (f.outcome === "blocked") {
     // The true crossing of the two blades — `bladeGap` returns the closest
     // approach of the two segments and the midpoint between them.
@@ -3375,7 +3449,7 @@ function resolveContact(st: DuelState, f: Fighter, foe: Fighter, m: Move): void 
      * an empty hand would.
      */
     if (thrownBlade(f) === null) f.bounce = 5;
-    st.hitStop = 3;
+    st.hitStop = Math.round(3 * knob(DUEL_TUNING.impact, 0, 6));
   } else if (f.outcome === "miss" && tip.ty > FLOOR_Y + BODY_H - 6) {
     // A swing that finishes in the floor throws sparks off it — and along it,
     // the way the blade was travelling, rather than straight up out of it.
@@ -3586,7 +3660,7 @@ function stepLock(st: DuelState): void {
   // The break, on the last frame the move exists: the press fails all at once.
   if (mf >= total - 1) {
     spawnSparks(st, near.x, near.y, 22, 0, -1.4);
-    st.hitStop = 2;
+    st.hitStop = Math.round(2 * knob(DUEL_TUNING.impact, 0, 6));
   }
 }
 

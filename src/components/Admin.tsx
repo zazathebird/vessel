@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { DownloadCodes } from "./DownloadCodes";
 import { DownloadEditor } from "./DownloadEditor";
+import { DuelBench } from "./DuelBench";
 
 import { useConfig } from "../config/ConfigContext";
 import { useSession } from "../auth/SessionContext";
@@ -267,6 +268,16 @@ export function Admin() {
           other operator-only lists already are. */}
       <DownloadEditor />
       <DownloadCodes />
+
+      {/* The duel bench, last: it is the only panel here that is not
+          administration of anything — it changes no stored state and touches no
+          account. It costs nothing to ship (the engine is already in the bundle
+          for the hero ornament) and it is gated on `isOperator` like everything
+          else on this page, because a bench is production furniture to anybody
+          else. `enabled` rather than a conditional render so the rAF loop is
+          torn down by the component's own cleanup rather than by unmounting
+          mid-frame. */}
+      <DuelBench enabled={isOperator} />
     </section>
   );
 }
