@@ -174,6 +174,13 @@ Say so rather than implying otherwise.
   easing still need the client's eye. Two traps it exists because of: an automated browser
   reports `document.hidden` **and** `prefers-reduced-motion: reduce`, and the second becomes calm,
   which hides the canvas. On the real site you need a visible tab *and* calm off.
+- **The duel is the one effect with a *tempo*, and stills cannot report on it.** `duel-shot.mjs`
+  gives frames; **`node scripts/duel-bench.mjs --out <dir>`** builds one self-contained HTML file
+  running the real engine and the real camera, to be opened in a browser that is not headless — the
+  client's, or your own. The same surface is on **`/admin`** when signed in as operator, with four
+  live `DUEL_TUNING` knobs. **You still cannot watch it here**; what you can now do is hand somebody
+  something that plays, and measure the fight in Node (see `docs/DECISIONS.md`, 2026-08-28 — 62% of
+  frames are neutral). Say "could not be watched here" rather than "verified".
 - **`zoom` in the browser-automation tool leaves a device-metrics override behind** — the page's
   `innerWidth` stays clamped to the zoom region while `outerWidth` looks normal, and
   `resize_window` does not clear it. Every screenshot after that is of a phone-width layout.

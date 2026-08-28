@@ -6,6 +6,84 @@ what is left to do.
 
 ---
 
+## 2026-08-28 — guardrails reach the page, and the duel becomes reviewable
+
+`npm run check` is **48 green**, up from 46. Two commits, both deployed: `7a39870`, `5bbc7cc`.
+
+### First, the thing to say out loud: the 2026-08-27 duel fixes ARE live
+
+The client re-reported all three faults verbatim. They are fixed and shipped — verified in
+production, not in the repo. The published config still reads `layout: "split"`,
+`station: "roam"`, `mode: "page"`, and the page rendered `layout-cinematic … station-opposite`:
+the roll fired on load and `effectiveStation` bit. Both pools are the full roster of eight in the
+shipped bundle. **If he still sees it, he is on a cached bundle** — the answer is a hard reload,
+not a fix. Check production before re-fixing anything he re-reports.
+
+### Guardrails now reach the page, not only the dice
+
+`isAllowed` had two callers, the randomiser and the check suite. Publishing from the panel,
+pasting a share code and restoring stored config walked past all seventeen rules. Two are now
+resolved at render and fifteen are surfaced to the operator instead; the split is in `CLAUDE.md`
+deviation 1 and the short version is **a rule is resolved when it is an accessibility floor with
+an obvious direction of yield, and otherwise it is the client's taste and his to overrule — but
+never unknowingly.**
+
+- `effectiveGrain` joins `effectiveStation`. Grain is a 14% `--fg` overlay across every word on
+  the page and was publishable by hand onto the four low-contrast palettes.
+- The grain rule moved **into** `GUARDRAILS`; as a special case inside `isAllowed` it could not be
+  named, so no enumeration of the rules could include it.
+- Every guardrail now carries a required `note`, and `combinationOf` is the one constructor.
+- Two gates, both driving `resolve()` rather than the predicate.
+
+**Still open, and it is a judgement call rather than a bug:** the fifteen taste rules are only
+surfaced in `matched()`. **The panel does not yet print them** — the plumbing is there and the
+rendering is not. That is the next small piece of this thread.
+
+### The duel can be watched now, and it has been measured
+
+`scripts/duel-bench.mjs` builds a self-contained page (real `duel.ts`, real `duelCamera`, no
+external requests). `src/components/DuelBench.tsx` puts the same thing on `/admin`, operator-gated,
+for **+18KB** — the engine was already bundled for the hero ornament.
+
+**Measured over 200 complete matches, at the shipped defaults:**
+
+| | |
+|---|---|
+| median match | **50.8s** (26.5–72s) |
+| frames doing nothing | **62%** — guard 44.6%, advance 9.7%, circle 4.5%, backstep 3.0% |
+| frames striking | 12% |
+| frames in hit-stop | **1.9%** |
+| module picks containing no blow | **30.6%** — and the heaviest module in the pool, `close-in` at weight 22, is *pure walking* |
+
+All 35 modules do run. **The problem is density, not variety**, and that is a different fix.
+
+`DUEL_TUNING` exposes four multipliers for it — `circling`, `rest`, `impact`, `patience` — all
+defaulting to 1, with 1 as arithmetic identity so every duel gate passes unchanged. See `CLAUDE.md`
+for why it may never become `Config`.
+
+### Next, in order
+
+1. **Get the client's numbers off the four sliders.** The pacing fix is the same work whatever the
+   fighters look like, and his eye is the one thing that cannot be substituted for. Then type the
+   winning values in as constants and delete nothing — the knobs stay for the next argument.
+2. **The roster: 8 → 20 a side.** Archetypes, never named — his own rule (see `CLAUDE.md`, and the
+   file note in `src/fx/fighters.ts` quoting him). He asked for celebrities, movie characters and
+   politicians; what is actually available is better suited to the medium, because this engine draws
+   silhouette plus one signature shape at ~200px and cannot draw a face. Candidates already sketched:
+   The Outlaw, The Djinn, The Reaper, The Plague Doctor, The Headless Rider, The Count, The Creature,
+   The Nosferatu, The Phantom, The Hyde, The Wendigo, The Golem, The Executioner, The Witch, The
+   Scarecrow, The Mummy, The Werewolf, plus the historical bench — Ronin, Berserker, Musketeer,
+   Gladiator, Centurion, Pharaoh, Valkyrie, Highwayman, Conquistador, Spartan.
+   **Do the costumes in tranches and look at the contact sheet between each** (`duel-shot.mjs sheet`);
+   the whole point is telling them apart in a row, which cannot be judged one at a time.
+3. **The panel's guardrail notice**, above.
+
+### Not started, unchanged from yesterday
+
+Per-page appearance (see the 2026-08-27 section below), and publishing the setup scripts.
+
+---
+
 ## 2026-08-27 — the sharing build (phase S), the duel fixes, and a security pass
 
 Two pieces of work in one session. `design/SPEC-SHARING.md` is the design for the first and is a

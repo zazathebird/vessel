@@ -50,8 +50,14 @@ effects through `FxCanvas`'s exact frame maths, advanced by an explicit **Step**
 automated or occluded browser reports `document.hidden` (so rAF parks) *and*
 `prefers-reduced-motion: reduce` (which becomes calm, which hides the canvas) — that pair has
 blocked whole sessions from seeing an effect. `sitelab.html` is the same idea for the site.
-`scripts/duel-shot.mjs` is the equivalent for the duel. `handoff_duel_engine/` holds the reference
-engine (`duel-cycle-v2.html`, with `BRIEF.md` / `IMPLEMENTED.md`) the duel absorbed ideas from.
+`scripts/duel-shot.mjs` is the equivalent for the duel, and **`scripts/duel-bench.mjs` is the one
+that answers the other question**: `duel-shot` renders stills, so it can say what a frame looks like
+and can never say whether the fight *reads*, which is about tempo and is the only thing anyone
+actually asks. `duel-bench` builds a single self-contained HTML file — the real `duel.ts`, the real
+`duelCamera`, no external requests — for somebody whose browser is not headless. Same exclusion rule
+as the other three. `handoff_duel_engine/` holds the reference engine (`duel-cycle-v2.html`, with
+`BRIEF.md` / `IMPLEMENTED.md`) the duel absorbed ideas from — **all 29 of its named costumes are
+still in it and none has ever been deleted**, which is worth knowing because it is asked about.
 
 ## The project
 
@@ -434,6 +440,20 @@ All deliberate. Add to this list rather than silently diverging.
    change, and each field is deliberately required** — the ornament was rolled for months and never
    passed to `isAllowed`, so no guardrail could constrain it *however it was written*. Required fields
    make the next forgotten dimension a type error. **Add a knob to the roll, add it to `Combination`.**
+
+   **A guardrail must reach the page, not only the dice** (2026-08-28). `isAllowed` had two callers,
+   the randomiser and the check suite — so publishing from the panel, pasting a share code and
+   restoring stored config all walked past every rule, and production shipped a pairing the table had
+   forbidden for nine days with the suite green. Two of the seventeen are now resolved at render, and
+   the split is deliberate: **a rule is resolved when it is an accessibility floor and the direction
+   of yield is obvious; every other rule is the client's taste, and taste is his to overrule.** The
+   two are `effectiveStation` (the station yields, never the ornament) and `effectiveGrain` (the grain
+   yields, never the palette — grain is a 14% `--fg` overlay across every word on the page, and it is
+   already the first thing calm drops). What the operator could not do before is overrule a rule
+   *knowingly*, so **every guardrail carries a required `note`** and the panel prints it. `resolve()`
+   applies both halves and the gates drive it, never the predicate. **The grain rule lives in
+   `GUARDRAILS` like the rest** — as a special case inside `isAllowed` it could not be named, so no
+   list of the rules could include it. `combinationOf` is the one constructor.
 2. **Focus-visible styles exist** in `base.css` — the spec lists their absence as a gap, not a decision.
 3. **Magazine's h1 minimum is `46px`** — the spec's value, not the prototype's `40px`.
 4. **Matrix rain is rebuilt** (client request) — each column owns its speed, trail length and glyphs,
@@ -534,7 +554,16 @@ covers how to *see* any of this — rAF parks in an automated browser, so use `s
 - **Every costume declares its own `headroom` and `duelFocus`** — a flat clearance was right for marks
   that sit on a skull and wrong for horns and haloes.
 - **`back` hooks draw before the legs** — a cape drawn last swallows the limbs it hangs off.
-- **No real names, anywhere.**
+- **No real names, anywhere** — and this is the *client's* rule, in his words, recorded at the top of
+  `src/fx/fighters.ts`: *"do not name them on pages that are not accessible only by me, to avoid any
+  copyright or legal bullshit."* The plan permitted real names on operator-gated surfaces; they are
+  **not used at all**, because a name sits in the public bundle even when nothing renders it. He asks
+  for named characters periodically (Homer, Ned, Rick, Morty, Shrek, Jason, Freddy) and has proposed
+  "similar but not identical" as a way round it — it is not one, substantial similarity is the test.
+  **The argument that actually lands is technical**: this engine draws a silhouette plus one signature
+  shape at ~200px and cannot draw face detail at all, and those characters are recognised by *face* —
+  a mask texture, a burn scar, a jumper stripe. Folklore was designed as silhouette and is free: The
+  Reaper, The Plague Doctor, The Headless Rider, The Count, The Djinn, The Outlaw.
 
 **The choreographer** — fighters decide nothing:
 
@@ -552,6 +581,28 @@ covers how to *see* any of this — rAF parks in an automated browser, so use `s
 - **`buildSequence` sorts the beats and the gate still asserts builders emit them sorted** —
   `runDirector` walks the array in order and stops at the first future beat.
 - **`st.dir.pressure` resets on match reset**, which is what makes the anti-stall rail per-match.
+
+**Tuning, and where it may live:**
+
+- **`DUEL_TUNING` is a tuning surface, not configuration** (2026-08-28). Four multipliers —
+  `circling` (the pick weight of the seven modules containing no blow), `rest` (the slack past the
+  last move's *end*), `impact` (hit-stop frames), `patience` (the anti-stall threshold) — turned live
+  from the bench on `/admin`. **It is not in `Config`, not published, not in a share code and not
+  persisted, and that is the invariant**: a duel that is a different fight per visitor is one nobody
+  can review, because no two people are discussing the same fight. Turn a knob, watch, and type the
+  value that wins in as the constant.
+- **Every default is 1 and 1 must stay arithmetic identity.** Each knob is written as a multiplier on
+  a value the fight already rolls, never as a replacement for one, so 360,000 stepped frames and
+  280,000 generated sequences pass unchanged. A default that merely *looked* neutral would move every
+  duel gate at once, and they are the gates that cannot be eyeballed.
+- **`rest` scales the slack, never the moves.** A move's frame count is what every reaction frame in
+  the module pool is derived from; scaling moves would slide contacts out from under the beats that
+  answer them. `buildSequence` re-derives the last move's end from the move table and scales only what
+  is past it, with that end as a floor — at `rest: 0` a sequence must still contain its own last move.
+- **The measurements the knobs exist to move**, at the defaults, over 200 complete matches: median
+  match **50.8s**, **62% of frames neutral**, 12% striking, **1.9% in hit-stop**, and **30.6% of
+  module picks contain no blow at all** — the heaviest module in the pool (`close-in`, weight 22) is
+  pure walking.
 
 **Physics and rendering:**
 

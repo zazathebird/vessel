@@ -13,6 +13,113 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-28 — a guardrail that only constrains the dice is not a guardrail
+
+**The fault.** `isAllowed` had exactly two callers: the randomiser and `npm run check`. A roll is
+one of four ways a config arrives at the page — the other three are the operator panel's publish, a
+pasted share code, and stored config, and all three walked straight past all seventeen rules. This
+had already cost nine days of production with `duelholy` + `roam` shipped, the client reporting his
+fighters fading, and the suite green throughout, **because the gate asserted the predicate rather
+than the page**. That was fixed for one rule on 2026-08-27 (`effectiveStation`). This is the other
+sixteen.
+
+**What was decided, and it is a split rather than a blanket.** Enforcing all seventeen at render
+was rejected. Fifteen of them are matters of taste the client set down — *"Magazine may not use
+Matrix rain"* — and silently substituting a value the operator deliberately chose is its own bad
+surprise, in a direction nobody agreed. Worse, for the layout×effect family there is no obvious
+answer to *which side yields*: the operator picked both.
+
+So a rule is **resolved at render** when it is an accessibility floor *and* the direction of yield
+is obvious, and **surfaced to the operator** otherwise. Two qualify:
+
+- `effectiveStation` — the station yields, never the ornament (2026-08-27).
+- `effectiveGrain` — the grain yields, never the palette. Grain is a 14% `mix-blend-mode: overlay`
+  sheet of `--fg` across the entire page including body copy, on the four palettes with the least
+  room for it. The palette is the look — it is what the 0.9s bleed exists for and what every token
+  derives from — and grain is already the first thing calm drops. Substituting the palette to keep
+  the texture would throw away the thing being defended to satisfy the rule defending it.
+
+The other fifteen gained a **required `note`**, so the panel can print what is being overruled. The
+operator may still publish them; what he could not do before is do it *knowingly*.
+
+**Three smaller things fell out of it.** The grain rule moved from a special case inside
+`isAllowed` into `GUARDRAILS` — as a special case it could not be *named*, so no enumeration of the
+rules could ever include it, which is exactly the shape of bug this file exists to record.
+`combinationOf` became the one constructor of a `Combination`, because two constructors is how the
+ornament came to be rolled for months and never checked. And both new gates drive `resolve()`
+rather than `isAllowed`, on the 2026-08-27 lesson.
+
+---
+
+## 2026-08-28 — the duel was being improved by people who could not watch it
+
+**The fault, and it is a process one.** `requestAnimationFrame` parks in this environment (the tab
+reports `document.hidden`), so every improvement to the duel across three sessions was made one
+still frame at a time through `scripts/duel-shot.mjs`. The client is the only person who has ever
+watched it move, and his report — *"the battles are still lacking"* — could not be acted on,
+because "lacking" is a statement about tempo and a still has no tempo.
+
+He asked whether to rebuild the engine, hand it to another model, or take it to Claude Design. All
+three were declined, and the reasoning is worth keeping: Claude Design produces static artboards
+and cannot produce choreography, physics or a camera; a different model faces the identical
+constraint; and the engine is 5,123 lines with 35 chained modules, derived reaction frames, a
+fairness coin, hit-stop, an asymmetric camera and a spark model, under gates that drive 360,000
+stepped frames and 280,000 generated sequences. **The model was never the bottleneck. The feedback
+loop was.**
+
+**What was built.** `scripts/duel-bench.mjs` emits one self-contained HTML file carrying the real
+`duel.ts` and the real `duelCamera` — imported, never re-derived, for the reason `duelCamera` is
+exported and pure in the first place: a bench with its own camera only ever confirms its own
+camera. `src/components/DuelBench.tsx` puts the same surface on `/admin` for **+18KB**, since the
+engine is already in the bundle for the hero ornament.
+
+**What it immediately found.** Measured over 200 complete matches: median match **50.8s**, **62% of
+frames neutral**, 12% striking, **1.9% in hit-stop**, and **30.6% of module picks contain no blow at
+all** — with `close-in`, the heaviest module in the pool at weight 22, being *pure walking*. All 35
+modules do run, so the fight is not repeating itself. **The problem is density, not variety**, which
+is a different fix from the one three sessions of work had been aiming at.
+
+**`DUEL_TUNING`, and the line drawn around it.** Four multipliers — `circling`, `rest`, `impact`,
+`patience` — turned live from the bench. It was deliberately **not** put in `Config`: not published,
+not in a share code, not persisted. A duel that is a different fight per visitor is one nobody can
+review, because no two people would be discussing the same fight. The knobs are for finding a
+number; the number gets typed in as a constant. Every default is 1 and 1 is arithmetic identity —
+each knob multiplies a value the fight already rolls rather than replacing one — which is why every
+duel gate passed unchanged, and a default that merely *looked* neutral would have moved all of them
+at once.
+
+`rest` scales only the slack past the last move's *end*, re-derived from the move table with that
+end as a floor. Scaling the moves themselves would slide contacts out from under the beats that
+answer them, which is the "proximity is not contact" class of bug that has cost this effect the
+most.
+
+---
+
+## 2026-08-28 — the roster stays archetypes, and the reason is the client's own
+
+The client asked repeatedly for the duel roster to be named characters — Homer, Ned, Rick, Morty,
+Shrek, Farquaad, Jason, Freddy, Michael — at 20 a side, and proposed *"somewhat similar and
+recognizable"* as a way to avoid copyright. It is not one: substantial similarity is the test, and
+aiming for recognisable is evidence of intent rather than a defence.
+
+But the decisive fact is that **he already made this call himself**, on 2026-08-14, and it is quoted
+at the top of `src/fx/fighters.ts`: *"do not name them on pages that are not accessible only by me,
+to avoid any copyright or legal bullshit."* The plan at the time permitted real names on
+operator-gated surfaces; they were rejected outright instead, because a name sits in the public
+bundle even when nothing renders it.
+
+**Two things worth recording so this is not relitigated from scratch.** First,
+`handoff_duel_engine/duel-cycle-v2.html` still contains all 29 named costumes and has never been
+deleted or modified — when the question is *"what happened to the engine"*, the answer is nothing.
+Second, and this is the argument that actually persuades: **the named characters would not read in
+this medium anyway.** The engine draws a silhouette plus one signature shape at ~200px and cannot
+draw face detail at all, and Jason, Michael and Freddy are recognised by *face* — a mask texture, a
+burn scar, a jumper stripe. Folklore figures were designed as silhouettes and are free: The Reaper,
+The Plague Doctor, The Headless Rider, The Count, The Nosferatu (1922, public domain), The Djinn,
+The Outlaw.
+
+---
+
 ## 2026-08-27 — The sharing build: phase S (setup scripts), and two findings about shipped code
 
 The client asked for the thing the site was always for — choose files on your computer, share them,
