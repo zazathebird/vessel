@@ -72,12 +72,12 @@ import { metaForPath, robotsTxt, sitemapXml } from "../worker/page-meta";
 import { NEVER_ROTATES, SNIPPETS, snippetFor } from "../src/data/snippets";
 import { LAYOUTS, FX, PICKABLE_FX, TYPESETS, SCOPES } from "../src/data/catalog";
 import type { LayoutId } from "../src/data/catalog";
-import { PALETTES } from "../src/data/palettes";
+import { LOW_CONTRAST, PALETTES } from "../src/data/palettes";
 import { DEFAULT_ORNAMENT, ORNAMENTS, PICKABLE_ORNAMENTS } from "../src/data/ornaments";
 import { decodeShareCode } from "../src/config/shareCode";
 import { adaptLayout } from "../src/config/bands";
 import { DEFAULT_STATION, PICKABLE_STATIONS, STATIONS } from "../src/data/stations";
-import { isAllowed } from "../src/data/guardrails";
+import { GUARDRAILS, effectiveGrain, isAllowed, matched, resolve } from "../src/data/guardrails";
 import { effectiveStation } from "../src/data/stations";
 import { edgeState } from "../src/hooks/useEdgeFade";
 import type { Band } from "../src/config/bands";
@@ -2640,6 +2640,96 @@ check("no ornament can render at a station the guardrails refuse", () => {
   must(refused > 0, "effectiveStation refused nothing — the roam/duel rule is no longer enforced anywhere");
 
   return `${ORNAMENTS.length * STATIONS.length} ornament/station pairs, ${refused} resolved away from a refused pairing`;
+});
+
+check("grain never renders on a low-contrast palette", () => {
+  /*
+   * The second rule enforced at the page rather than at the dice, and it is
+   * here for the reason the station gate above is: **`isAllowed` constrained
+   * the randomiser and nothing else.** Grain on Peat, Oxide, Terracotta Night
+   * or Deco Gold was refused to the dice and publishable by hand from the
+   * operator panel, pasteable as a share code, and restorable from storage —
+   * a 14% `mix-blend-mode: overlay` sheet of `--fg` over every word on the
+   * page, on the four palettes with the least room for it, shipped to every
+   * visitor at once.
+   *
+   * So this drives `effectiveGrain`, which is what `themeClasses` builds
+   * `has-grain` from — the page, not the predicate.
+   */
+  const BASE = {
+    layout: "cinematic" as const,
+    fx: "vessels" as const,
+    type: TYPESETS[0].id,
+    ornament: "sonar" as const,
+    station: "hold" as const,
+  };
+
+  let refused = 0;
+  for (const palette of PALETTES) {
+    for (const grain of [true, false]) {
+      const rendered = effectiveGrain(grain, palette.id);
+      must(
+        isAllowed({ ...BASE, palette: palette.id, grain: rendered }),
+        `${palette.id} + grain ${grain} renders as ${rendered}, which the guardrails still refuse`,
+      );
+      // The grain yields; the palette the operator chose must survive untouched.
+      if (rendered !== grain) {
+        refused += 1;
+        must(grain && !rendered, `${palette.id}: the resolver turned grain ON, which it may never do`);
+      }
+    }
+  }
+
+  must(
+    refused === LOW_CONTRAST.length,
+    `effectiveGrain refused ${refused} palettes, expected the ${LOW_CONTRAST.length} low-contrast ones`,
+  );
+
+  // `resolve` is what a caller reaches for, and a resolver that has quietly
+  // stopped applying one of its two halves passes every assertion above.
+  const both = resolve({
+    ...BASE,
+    palette: LOW_CONTRAST[0],
+    grain: true,
+    ornament: "duel",
+    station: "roam",
+  });
+  must(both.grain === false, "resolve() did not apply effectiveGrain");
+  must(both.station === "hold", "resolve() did not apply effectiveStation");
+  must(isAllowed(both), "resolve() returned a combination the guardrails still refuse");
+
+  return `${PALETTES.length} palettes × 2, ${refused} refused, resolve() applies both`;
+});
+
+check("every guardrail says what it refuses", () => {
+  /*
+   * A rule the operator can overrule has to say what he is overruling: fifteen
+   * of the seventeen are matters of taste the client set down, and the panel
+   * prints the note rather than silently letting a publish through. An empty
+   * note is a blank line in that list, on the newest rule — the one least
+   * likely to be remembered.
+   */
+  GUARDRAILS.forEach((rule, i) => {
+    must(typeof rule.note === "string" && rule.note.trim().length > 12, `guardrail ${i} has no usable note`);
+  });
+
+  // `matched` is what the panel reads, and it must agree with `isAllowed` —
+  // two opinions about the same table is how one of them goes stale.
+  const bad = {
+    palette: LOW_CONTRAST[0],
+    layout: "magazine" as const,
+    fx: "rain" as const,
+    type: TYPESETS[0].id,
+    grain: true,
+    ornament: "sonar" as const,
+    station: "hold" as const,
+  };
+  const hits = matched(bad);
+  must(hits.length >= 2, `matched() found ${hits.length} rules on a combination that trips at least two`);
+  must(!isAllowed(bad), "isAllowed disagrees with matched()");
+  must(matched({ ...bad, fx: "vessels", grain: false }).length === 0, "matched() reports a rule on a clean combination");
+
+  return `${GUARDRAILS.length} guardrails, all noted, matched() agrees with isAllowed`;
 });
 
 check("stations: wire order, decode, and the roam guardrail bites", () => {

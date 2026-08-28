@@ -1,0 +1,679 @@
+<meta charset="utf-8">
+<title>Duel Bench</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@400;600;700&display=swap">
+
+<style>
+/*
+ * Committed to one visual world on purpose: the thing being reviewed is drawn
+ * on a dark ground in all twenty-five of the site's palettes, and a light
+ * chrome around it would light-adapt the eye and misreport every contrast
+ * judgement the client is here to make. Every colour is painted explicitly, so
+ * the page holds on either host ground.
+ */
+:root {
+  --ground: #0b0d12;
+  --panel: #12151d;
+  --panel-2: #171b25;
+  --line: #232936;
+  --edge: #333b4d;
+  --ink: #e8ecf5;
+  --muted: #8b93a7;
+  --faint: #5b6478;
+  /* Quiet steel. The blades are the only saturated thing on this page, and
+     they are literal colours the palette never touches — so the chrome stands
+     down rather than competing with the subject. */
+  --accent: #6f8ab7;
+  --live: #ffc46b;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --cond: "IBM Plex Sans Condensed", "IBM Plex Sans", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--cond);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 28px 20px 64px;
+}
+
+/* ---- header ---- */
+
+.head {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+.head h1 {
+  margin: 0;
+  font-family: var(--cond);
+  font-weight: 700;
+  font-size: 26px;
+  letter-spacing: 0.01em;
+}
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--faint);
+}
+.head p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  max-width: 62ch;
+  flex-basis: 100%;
+  padding-top: 8px;
+}
+
+/* ---- the three-column instrument panel ---- */
+
+.rig {
+  display: grid;
+  grid-template-columns: 186px minmax(0, 1fr) 216px;
+  gap: 18px;
+  margin-top: 22px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .rig { grid-template-columns: minmax(0, 1fr); }
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  /* The HUD layout's chamfer, borrowed — this bench reviews an ornament that
+     lives on that layout, and the corner is that layout's own vocabulary. */
+  clip-path: polygon(0 8px, 8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%);
+  padding: 14px;
+}
+.card h2 {
+  margin: 0 0 10px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--faint);
+}
+
+/* ---- the stage ---- */
+
+.stage {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  clip-path: polygon(0 10px, 10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+#stage-frame {
+  position: relative;
+  background: #000;
+  border: 1px solid var(--line);
+  line-height: 0;
+}
+#c { display: block; width: 100%; height: 100%; }
+.scale-note {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--faint);
+  text-align: center;
+}
+
+/* ---- controls ---- */
+
+.transport {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+button, select {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--panel-2);
+  border: 1px solid var(--edge);
+  border-radius: 2px;
+  padding: 7px 12px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+button:hover, select:hover { border-color: var(--accent); }
+button:active { background: var(--line); }
+button:focus-visible, select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+button[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0b0d12;
+  font-weight: 600;
+}
+#play[data-live="1"] { border-color: var(--live); color: var(--live); }
+
+.row { display: flex; flex-direction: column; gap: 9px; }
+.row label {
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.13em;
+  color: var(--faint);
+  display: block;
+  margin-bottom: 4px;
+}
+.row select { width: 100%; }
+.seg { display: flex; gap: 4px; flex-wrap: wrap; }
+.seg button { padding: 6px 9px; flex: 1 1 auto; }
+
+/* ---- telemetry ---- */
+
+.tel { font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; }
+.tel dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; }
+.tel dt { color: var(--faint); }
+.tel dd { margin: 0; text-align: right; overflow: hidden; text-overflow: ellipsis; }
+.tel hr { border: 0; border-top: 1px solid var(--line); margin: 11px 0; }
+.who { display: flex; align-items: center; gap: 7px; margin-bottom: 7px; }
+.swatch { width: 9px; height: 20px; flex: none; }
+.who b { font-family: var(--cond); font-size: 14px; font-weight: 600; letter-spacing: 0.01em; }
+.bar { height: 4px; background: var(--line); margin-top: 5px; }
+.bar i { display: block; height: 100%; background: var(--accent); transition: width 90ms linear; }
+
+/* ---- the question ---- */
+
+.ask { margin-top: 26px; }
+.ask h2 {
+  font-family: var(--cond);
+  font-size: 19px;
+  font-weight: 700;
+  margin: 0 0 4px;
+}
+.ask > p { color: var(--muted); margin: 0 0 16px; max-width: 66ch; font-size: 14px; }
+.faults {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(258px, 1fr));
+  gap: 10px;
+}
+.faults li {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--edge);
+  padding: 11px 13px;
+}
+.faults b {
+  display: block;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 3px;
+}
+.faults span { color: var(--muted); font-size: 13.5px; }
+
+.foot {
+  margin-top: 28px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--faint);
+  line-height: 1.7;
+}
+
+
+/* ---- measured pacing ---- */
+
+.pace { margin-top: 26px; }
+.pace h2 { font-family: var(--cond); font-size: 19px; font-weight: 700; margin: 0 0 4px; }
+.pace > p { color: var(--muted); margin: 0 0 16px; max-width: 66ch; font-size: 14px; }
+.figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.fig {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 12px 13px;
+}
+.fig b {
+  display: block;
+  font-family: var(--mono);
+  font-size: 25px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+}
+.fig span {
+  display: block;
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.13em;
+  color: var(--faint);
+  margin-top: 5px;
+}
+.fig small { display: block; color: var(--muted); font-size: 12.5px; margin-top: 7px; line-height: 1.45; }
+
+.split { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: 12.5px; }
+.split th, .split td { text-align: left; padding: 6px 10px 6px 0; border-bottom: 1px solid var(--line); }
+.split th { color: var(--faint); font-weight: 500; text-transform: uppercase; font-size: 10px; letter-spacing: 0.13em; }
+.split td:last-child, .split th:last-child { text-align: right; padding-right: 0; font-variant-numeric: tabular-nums; }
+.split tr:last-child td { border-bottom: 0; }
+.meter { display: block; height: 3px; background: var(--accent); margin-top: 4px; }
+.scroller { overflow-x: auto; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
+</style>
+
+<div class="wrap">
+  <header class="head">
+    <span class="eyebrow">mcclevarty.ca</span>
+    <h1>Duel Bench</h1>
+    <p>
+      The real engine, playing at real speed. This is the same
+      <code>src/fx/duel.ts</code> and the same camera the hero ornament runs —
+      not a mock-up of it. Watch it, then tell me which of the faults at the
+      bottom you are actually seeing.
+    </p>
+  </header>
+
+  <div class="rig">
+    <div class="card">
+      <h2>Fighters</h2>
+      <div class="row">
+        <div>
+          <label for="fa">Left</label>
+          <select id="fa"></select>
+        </div>
+        <div>
+          <label for="fb">Right</label>
+          <select id="fb"></select>
+        </div>
+        <button type="button" id="reroll">↻ roll a new pair</button>
+        <div>
+          <label for="pal">Palette</label>
+          <select id="pal"></select>
+        </div>
+      </div>
+    </div>
+
+    <div class="stage">
+      <div id="stage-frame"><canvas id="c" width="700" height="700"></canvas></div>
+      <div class="scale-note" id="scale-note"></div>
+      <div class="transport">
+        <button type="button" id="play" data-live="1">⏸ pause</button>
+        <button type="button" id="step">step</button>
+        <button type="button" id="restart">restart</button>
+      </div>
+      <div class="transport" id="speeds"></div>
+      <div class="transport" id="sizes"></div>
+    </div>
+
+    <div class="card tel">
+      <h2>Telemetry</h2>
+      <div id="tel-a"></div>
+      <hr>
+      <div id="tel-b"></div>
+      <hr>
+      <dl>
+        <dt>match</dt><dd id="t-match">—</dd>
+        <dt>gap</dt><dd id="t-gap">—</dd>
+        <dt>hit-stop</dt><dd id="t-stop">—</dd>
+        <dt>sparks</dt><dd id="t-sparks">—</dd>
+        <dt>fps</dt><dd id="t-fps">—</dd>
+      </dl>
+    </div>
+  </div>
+
+
+  <section class="pace">
+    <h2>What the engine actually does, measured</h2>
+    <p>
+      Two hundred complete matches stepped through the real simulation, counting
+      every frame. This is not an opinion about the fight — it is what the fight
+      spends its time doing.
+    </p>
+    <div class="figures">
+      <div class="fig">
+        <b>50.8s</b><span>median match</span>
+        <small>Range 26.5&ndash;72s. The hero slot is on screen while somebody reads a page; almost nobody watches one to the end.</small>
+      </div>
+      <div class="fig">
+        <b>62%</b><span>frames doing nothing</span>
+        <small>Standing in guard, advancing, circling or backstepping. Nearly two thirds of the fight is the gap between exchanges.</small>
+      </div>
+      <div class="fig">
+        <b>12%</b><span>frames striking</span>
+        <small>Every attack in the move table added together &mdash; rising, overhead, diagonal, thrust and leap.</small>
+      </div>
+      <div class="fig">
+        <b>1.9%</b><span>frames in hit-stop</span>
+        <small>The freeze on contact that makes a blow read as a blow. It is the whole impact budget, and it is very small.</small>
+      </div>
+    </div>
+    <div class="scroller">
+      <table class="split">
+        <thead><tr><th>Where the frames go</th><th>Share</th></tr></thead>
+        <tbody>
+          <tr><td>guard &mdash; standing still<span class="meter" style="width:44.6%"></span></td><td>44.6%</td></tr>
+          <tr><td>advance<span class="meter" style="width:9.7%"></span></td><td>9.7%</td></tr>
+          <tr><td>stagger &mdash; taking a hit<span class="meter" style="width:6.7%"></span></td><td>6.7%</td></tr>
+          <tr><td>circle<span class="meter" style="width:4.5%"></span></td><td>4.5%</td></tr>
+          <tr><td>strike, rising<span class="meter" style="width:3.2%"></span></td><td>3.2%</td></tr>
+          <tr><td>backstep<span class="meter" style="width:3.0%"></span></td><td>3.0%</td></tr>
+          <tr><td>strike, overhead<span class="meter" style="width:3.0%"></span></td><td>3.0%</td></tr>
+          <tr><td>strike, diagonal<span class="meter" style="width:2.8%"></span></td><td>2.8%</td></tr>
+          <tr><td>knockdown<span class="meter" style="width:2.8%"></span></td><td>2.8%</td></tr>
+          <tr><td>everything else &mdash; 26 more moves<span class="meter" style="width:19.7%"></span></td><td>19.7%</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="margin-top:16px">
+      All thirty-five modules do run, so the choreography is not repeating itself
+      &mdash; the problem is density, not variety. If what you are seeing is
+      &ldquo;two figures standing about&rdquo;, that is fault 3, and these numbers
+      say you are right.
+    </p>
+  </section>
+
+  <section class="ask">
+    <h2>“The battles are still lacking” — which one is it?</h2>
+    <p>
+      Every one of these is a different fix in a different part of the engine,
+      and they pull against each other, so guessing wrong makes the fight worse.
+      Reply with the numbers that match what you are watching. More than one is
+      fine, and “none of these, it’s ___” is the most useful answer of all.
+    </p>
+    <ol class="faults">
+      <li><b>1 · repetitive</b><span>The same exchanges keep coming round. You start recognising a move before it happens.</span></li>
+      <li><b>2 · no impact</b><span>Blades meet and nothing happens. Hits don’t feel like they cost anything.</span></li>
+      <li><b>3 · too slow</b><span>Floaty. They drift rather than commit, and the pauses between exchanges are dead air.</span></li>
+      <li><b>4 · too busy</b><span>Constant motion, no rhythm. Nothing lands because nothing is ever still.</span></li>
+      <li><b>5 · can’t read it</b><span>At ornament size it’s two smudges. You can’t tell who is who or what just happened.</span></li>
+      <li><b>6 · no stakes</b><span>It never builds. Somebody dies and it didn’t feel like the fight was going anywhere.</span></li>
+      <li><b>7 · bad footwork</b><span>They slide, skate or stand in the wrong place. The feet don’t sell the weight.</span></li>
+      <li><b>8 · not a swordfight</b><span>The individual moves are fine but it doesn’t look like two people fighting each other.</span></li>
+    </ol>
+  </section>
+
+  <p class="foot">
+    Keys — <b>space</b> play/pause · <b>→</b> step one frame · <b>R</b> restart<br>
+    Blades are literal colours (blue/green = one side, red = the other) and never
+    recolour with the palette; everything else on the canvas does. Two fighters
+    from the same side will both carry the same blade colour — that pairing
+    cannot occur on the site, and it is offered here only so you can compare
+    costumes side by side.
+  </p>
+</div>
+
+<script>/*__DUEL_BUNDLE__*/</script>
+<script>
+(function () {
+  var D = window.__DUEL;
+  var c = document.getElementById("c");
+  var ctx = c.getContext("2d");
+  var frame = document.getElementById("stage-frame");
+
+  var STYLES = Object.keys(D.FIGHTERS);
+  var st = null;
+  var cam = null;
+  var seenMatches = 0;
+  var playing = true;
+  var speed = 1;
+  var pending = 0;
+  var last = performance.now();
+  var fps = 0;
+  var palIndex = 9;
+  var displayPx = 360;
+
+  /* ---- build the controls ---- */
+
+  function fill(sel, ids) {
+    ids.forEach(function (id) {
+      var o = document.createElement("option");
+      o.value = id;
+      o.textContent = id;
+      sel.appendChild(o);
+    });
+  }
+  var fa = document.getElementById("fa");
+  var fb = document.getElementById("fb");
+  fill(fa, STYLES);
+  fill(fb, STYLES);
+
+  var pal = document.getElementById("pal");
+  D.PALETTES.forEach(function (p, i) {
+    var o = document.createElement("option");
+    o.value = String(i);
+    o.textContent = p.name;
+    pal.appendChild(o);
+  });
+  pal.value = String(palIndex);
+  pal.addEventListener("change", function () { palIndex = Number(pal.value); });
+
+  function seg(host, values, current, label, onPick) {
+    values.forEach(function (v) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.textContent = label(v);
+      b.setAttribute("aria-pressed", String(v === current()));
+      b.addEventListener("click", function () {
+        onPick(v);
+        Array.prototype.forEach.call(host.children, function (child, i) {
+          child.setAttribute("aria-pressed", String(values[i] === current()));
+        });
+      });
+      host.appendChild(b);
+    });
+  }
+  seg(
+    document.getElementById("speeds"),
+    [0.25, 0.5, 1, 2],
+    function () { return speed; },
+    function (v) { return v + "×"; },
+    function (v) { speed = v; }
+  );
+  seg(
+    document.getElementById("sizes"),
+    [200, 360, 700],
+    function () { return displayPx; },
+    function (v) { return v === 200 ? "phone" : v === 360 ? "desk" : "full"; },
+    function (v) { displayPx = v; size(); }
+  );
+
+  function size() {
+    frame.style.width = displayPx + "px";
+    frame.style.height = displayPx + "px";
+    document.getElementById("scale-note").textContent =
+      displayPx === 700
+        ? "700px — the raw buffer. Bigger than the site ever shows it."
+        : displayPx + "px — roughly the hero slot on " +
+          (displayPx === 200 ? "a phone" : "a desktop") + ".";
+  }
+
+  /* ---- the fight ---- */
+
+  function start(a, b) {
+    st = D.createDuel(a, b);
+    // No pool, so the pairing holds across match resets — the bench is here to
+    // let one pair be watched, and re-rolling underneath the reviewer is what
+    // the site does, not what a bench should.
+    st.pool = null;
+    cam = null;
+    seenMatches = st.matches;
+    fa.value = a;
+    fb.value = b;
+    // Repaint immediately rather than waiting for the loop: `render` and
+    // `telemetry` are hoisted declarations, and a bench that shows the previous
+    // pair until the next animation frame is a bench that lies while paused.
+    render(1);
+    telemetry();
+  }
+
+  function reroll() {
+    var pair = D.DUEL_POOLS.duel;
+    var g = pair.good[Math.floor(Math.random() * pair.good.length)];
+    var e = pair.evil[Math.floor(Math.random() * pair.evil.length)];
+    if (Math.random() < 0.5) start(g, e); else start(e, g);
+  }
+
+  fa.addEventListener("change", function () { start(fa.value, fb.value); });
+  fb.addEventListener("change", function () { start(fa.value, fb.value); });
+  document.getElementById("reroll").addEventListener("click", reroll);
+  document.getElementById("restart").addEventListener("click", function () {
+    start(fa.value, fb.value);
+  });
+
+  var playBtn = document.getElementById("play");
+  function setPlaying(on) {
+    playing = on;
+    playBtn.textContent = on ? "⏸ pause" : "▶ play";
+    playBtn.dataset.live = on ? "1" : "0";
+  }
+  playBtn.addEventListener("click", function () { setPlaying(!playing); });
+  document.getElementById("step").addEventListener("click", function () {
+    setPlaying(false);
+    stepOne();
+  });
+
+  document.addEventListener("keydown", function (e) {
+    if (e.target && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
+    if (e.code === "Space") { e.preventDefault(); setPlaying(!playing); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); setPlaying(false); stepOne(); }
+    else if (e.key === "r" || e.key === "R") { start(fa.value, fb.value); }
+  });
+
+  /* ---- telemetry ---- */
+
+  function fighterPanel(host, f, side) {
+    host.innerHTML =
+      '<div class="who"><span class="swatch" style="background:' +
+      D.BLADE_COLORS[f.style] + '"></span><b>' + f.style + '</b></div>' +
+      '<dl>' +
+      '<dt>' + side + '</dt><dd>' + (f.facing === 1 ? "facing →" : "← facing") + '</dd>' +
+      '<dt>action</dt><dd>' + f.action + '</dd>' +
+      '<dt>move</dt><dd>' + f.move + '</dd>' +
+      '<dt>frame</dt><dd>' + Math.round(f.mf) + '</dd>' +
+      '<dt>health</dt><dd>' + Math.max(0, Math.round(f.health)) + '</dd>' +
+      '</dl>' +
+      '<div class="bar"><i style="width:' + Math.max(0, Math.min(100, f.health)) + '%"></i></div>';
+  }
+
+  var telA = document.getElementById("tel-a");
+  var telB = document.getElementById("tel-b");
+  var tMatch = document.getElementById("t-match");
+  var tGap = document.getElementById("t-gap");
+  var tStop = document.getElementById("t-stop");
+  var tSparks = document.getElementById("t-sparks");
+  var tFps = document.getElementById("t-fps");
+  var telClock = 0;
+
+  function telemetry() {
+    fighterPanel(telA, st.a, "left");
+    fighterPanel(telB, st.b, "right");
+    tMatch.textContent = String(st.matches) + (st.over > 0 ? " · over" : "");
+    tGap.textContent = Math.round(Math.abs((st.a.x - st.b.x))) + "u";
+    tStop.textContent = String(Math.round(st.hitStop));
+    tSparks.textContent = String(st.sparks.length);
+    tFps.textContent = String(Math.round(fps));
+  }
+
+  /* ---- the loop ---- */
+
+  /*
+   * The draw, lifted out of the loop on purpose. Everything used to live inside
+   * `tick`, which meant **Step advanced the simulation and showed nothing** —
+   * the picture only caught up on the next animation frame, and in an
+   * environment where `requestAnimationFrame` is parked there is no next
+   * animation frame. Stepping is the one control that has to work when the loop
+   * does not.
+   */
+  function render(elapsed) {
+    var p = D.PALETTES[palIndex] || D.PALETTES[0];
+    ctx.clearRect(0, 0, c.width, c.height);
+
+    // A match reset is a cut, not a pan — the same rule the ornament follows.
+    if (st.matches !== seenMatches) { seenMatches = st.matches; cam = null; }
+
+    var shot = D.duelCamera(st, c.width, c.height, cam, elapsed);
+    cam = shot.cam;
+    D.drawDuel(ctx, st, {
+      x: shot.x, y: shot.y, scale: shot.scale,
+      ink: p.fg,
+      bladeA: D.BLADE_COLORS[st.a.style],
+      bladeB: D.BLADE_COLORS[st.b.style],
+      core: p.fg, spark: p.a2, line: p.line,
+      bars: true, kick: true, dim: 1,
+    });
+  }
+
+  function stepOne() {
+    D.advanceDuel(st, 1);
+    render(1);
+    telemetry();
+  }
+
+  function tick(now) {
+    requestAnimationFrame(tick);
+
+    var elapsed = Math.min(3, Math.max(0.2, (now - last) / (1000 / 60)));
+    last = now;
+    fps = fps * 0.9 + (60 / elapsed) * 0.1;
+
+    if (playing) {
+      /*
+       * Whole frames only, one call each. `advanceDuel` clamps its own
+       * accumulator to 4, so a single bulk call for N frames silently advances
+       * four — the trap `duel-shot.mjs` records. Fractional speeds are handled
+       * out here, which is also what makes 0.25× a real quarter-speed replay of
+       * the same simulation rather than a different one.
+       */
+      pending += elapsed * speed;
+      var guard = 0;
+      while (pending >= 1 && guard < 8) { D.advanceDuel(st, 1); pending -= 1; guard += 1; }
+      if (guard >= 8) pending = 0;
+    }
+
+    render(elapsed);
+
+    // Four readouts a second. At 60 it is unreadable and it is the one part of
+    // this page that would otherwise cost more than the fight it is reporting.
+    telClock += elapsed;
+    if (telClock >= 15) { telClock = 0; telemetry(); }
+  }
+
+  size();
+  reroll();
+  render(1);
+  telemetry();
+  requestAnimationFrame(tick);
+})();
+</script>
