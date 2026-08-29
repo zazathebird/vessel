@@ -180,6 +180,19 @@ reversed at the client's request; `docs/DECISIONS.md` carries the reversal and h
    time needs. **Still not gateable**, like the rest of the visibility work: no rasteriser, so those
    numbers are the baseline rather than an assertion.
 
+8. ~~**`orbits` is the dimmest thing that is not deliberately sparse.**~~ **Done 2026-08-29 — and the
+   reported fault was not the real one.** It was noted as using ~30% of the canvas; it does better
+   than that, and what was actually wrong is that **the outer four rings were not drawn at all**.
+   They were stroked in `--line` at 0.32 alpha and below, and `--line` is the hairline border token
+   at 1.22–1.61:1 — on canvas that is *absent*, not faint. Most of the ellipse area in the frame was
+   missing, so the effect read as dots and arcs floating rather than as an orrery. Recession is now
+   carried by alpha over one token; tilt 0.34 → 0.42 and base radius 0.062 → 0.070 so it fills the
+   frame it is the background of. Peak 14 → 17 on Xerox, 24 on Nebula.
+
+   **This was the third time `--line` has been the bug** (sonar's channels 2026-08-17, telemetry's
+   baselines and these rings today), so it is a rule in `CLAUDE.md` now rather than three separate
+   fixes. A sweep of `src/fx/effects.ts` found no fourth instance.
+
 ### Not started, unchanged from yesterday
 
 Per-page appearance (see the 2026-08-27 section below), and publishing the setup scripts.

@@ -1454,7 +1454,14 @@ const bokeh: Effect = ({ ctx, w, h, p, t, boost, mx, my }, cache) => {
 };
 
 /** How far the orbital plane is squashed vertically — a system seen near edge-on. */
-const ORBIT_TILT = 0.34;
+/*
+ * How far the system is tipped away from the viewer. **0.34 → 0.42 on
+ * 2026-08-29**: at 0.34 the orrery was squashed into a band across the upper
+ * half and left the bottom third of a full-bleed background empty. It is still
+ * well short of face-on, which would lose the depth the near/far body ordering
+ * is built on.
+ */
+const ORBIT_TILT = 0.42;
 /** And rolled, so it is not axis-aligned either. */
 const ORBIT_ROLL = 0.14;
 
@@ -1488,7 +1495,10 @@ const orbits: Effect = ({ ctx, w, h, p, t, beat, mx, my }) => {
   const rs = Math.sin(ORBIT_ROLL);
 
   const place = (i: number) => {
-    const r = Math.min(w, h) * 0.062 * Math.pow(i, 1.22);
+    // 0.062 → 0.070 (2026-08-29). The seventh ring reached about three
+    // quarters of the frame's width; this is a background, so it should fill
+    // the frame it is the background of.
+    const r = Math.min(w, h) * 0.07 * Math.pow(i, 1.22);
     const ang = t * (1.4 / Math.pow(i, 1.47)) + i;
     const ox = Math.cos(ang) * r;
     const oy = Math.sin(ang) * r * ORBIT_TILT;
@@ -1528,13 +1538,23 @@ const orbits: Effect = ({ ctx, w, h, p, t, beat, mx, my }) => {
 
   for (let i = 1; i <= 7; i++) {
     const q = place(i);
-    // The field fades outward instead of stopping at a hard seventh ring.
-    // `faint` on the *inner* rings, `line` on the outer — measured on all 25
-    // palettes `faint` is the brighter of the two on canvas, so the original
-    // assignment (outer = faint "so they recede") made the outer rings pop
-    // forward and inverted the hierarchy it was stating.
-    ctx.strokeStyle = i > 4 ? p.line : p.faint;
-    ctx.globalAlpha = 0.62 - i * 0.06;
+    /*
+     * The field fades outward instead of stopping at a hard seventh ring, and
+     * **the recession is carried by alpha alone** (2026-08-29).
+     *
+     * It used to switch token — `faint` inside, `line` outside — which is the
+     * third place on this site `--line` was asked to carry a stroke somebody
+     * needed to see. It cannot: it is the hairline *border* token and measures
+     * about 1.2:1, so the outer four rings, at 0.32 alpha and below, were
+     * simply not there. That is most of the ellipse area in the frame, and it
+     * is why this read as dots and arcs floating in space rather than as an
+     * orrery — the orbits were missing from Orbits.
+     *
+     * One token and a ramp says the same thing about depth without asking a
+     * colour to be two brightnesses at once.
+     */
+    ctx.strokeStyle = p.faint;
+    ctx.globalAlpha = 0.66 - i * 0.055;
     ctx.lineWidth = i < 3 ? 1.2 : 1;
     ctx.beginPath();
     ctx.ellipse(cx, cy, q.r, q.r * ORBIT_TILT, ORBIT_ROLL, 0, TAU);

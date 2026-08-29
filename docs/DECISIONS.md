@@ -13,6 +13,44 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-29 — the orbits were missing from Orbits, and `--line` has now been the bug three times
+
+Taken on the client's *"your call"* after the telemetry rebuild, on the last effect the measurements
+still put at the bottom.
+
+**The reported problem was composition and the real one was a token.** `orbits` was noted as using
+about 30% of the canvas. It does better than that — the seventh ring already reached roughly three
+quarters of the frame's width — and the thing actually wrong was that **the outer four rings were
+not being drawn at all**. They were stroked in `--line` at `0.62 - i * 0.06`, so 0.32 alpha and
+below, and `--line` is the hairline *border* token at 1.22–1.61:1. That is most of the ellipse area
+in the frame, which is why the effect read as dots and arcs floating in space rather than as an
+orrery.
+
+The recession is now carried by **alpha alone**, over one token. Asking a colour to be two
+brightnesses at once is what hid them: the switch to `--line` on the outer rings was *stating* depth
+and *destroying* the shape it was stating it about.
+
+**This is the third instance of the same mistake**, and it is worth naming as a class rather than as
+three bugs: the sonar's channel colours (2026-08-17), `telemetry`'s lane baselines (earlier today)
+and these rings. The accessibility notes have said since the beginning that `--line` is not a
+contrast-bearing colour; what was missing is that on canvas it does not read as *faint*, it reads as
+**absent**. `CLAUDE.md` carries it as a rule now, and a sweep of `src/fx/effects.ts` found no fourth
+instance — the one remaining canvas use is the duel's ground line, which is a hairline on purpose.
+
+Two composition changes went with it, both modest: the tilt 0.34 → 0.42, because at 0.34 the system
+was squashed into a band across the upper half and left the bottom third of a full-bleed background
+empty; and the base radius 0.062 → 0.070, because a background should fill the frame it is the
+background of. Neither goes near face-on, which would lose the depth the near/far body ordering is
+built on.
+
+Measured on Xerox: peak **14 → 17**, coverage 1.8% → 2.9%; on Nebula it reaches 24. It stays quiet
+deliberately — it sits behind body copy — and the fix was never about loudness. It was that the
+orbits were missing.
+
+`npm run check` is **52 green**, unchanged: a rendering change, and visibility cannot be gated.
+
+---
+
 ## 2026-08-29 — the sine-band family, and what actually separates three effects
 
 The 2026-08-28 entry left `flow`, `telemetry` and `aurora` as three effects doing one job — three

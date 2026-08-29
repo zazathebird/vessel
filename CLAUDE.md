@@ -635,8 +635,8 @@ covers how to *see* any of this — rAF parks in an automated browser, so use `s
   separates the two, and it is what caught that the reported weakness of `bokeh` and
   `constellation` on Xerox was not real.
 - **The baseline, on Xerox, 2026-08-28:** aurora 108, vessels 71, bokeh 54, flow 50, rain 42,
-  plasma 42, scan 38, pressure 27, tunnel 25, telemetry 23 (was 16, raised 2026-08-29), orbits 14, stars 7,
-  constellation 3.
+  plasma 42, scan 38, pressure 27, tunnel 25, telemetry 23 (was 16), orbits 17 (was 14), stars 7,
+  constellation 3 — the last two are sparse-but-bright by design, not weak.
   `plasma` (22 → 42) and `pressure` (16 → 27) were raised that day; `telemetry` was the weakest thing in the set until 2026-08-29. An effect must stay short of the loud end deliberately — it sits behind body
   copy on palettes already near the contrast floor.
 - **A sub-pixel line loses twice** — it is antialiased into a fraction of the alpha it asked for, so
@@ -653,6 +653,13 @@ covers how to *see* any of this — rAF parks in an automated browser, so use `s
   the lane *boil* — every pixel resamples every frame — which undoes the one thing the playhead
   exists for: the trace must hold still between sweeps. Same rule the duel costumes record for
   `spray`'s wobble.
+- **`--line` is never a canvas stroke somebody needs to see.** It is the hairline *border* token and
+  measures 1.22–1.61:1 — the accessibility section already says it is not a contrast-bearing colour,
+  and on canvas that reads as *absent*, not as faint. It has now been the bug three separate times:
+  the sonar's channel colours (2026-08-17), `telemetry`'s lane baselines and `orbits`' outer four
+  rings (2026-08-29, where it meant **the orbits were missing from Orbits**). Use `--faint` and let
+  **alpha** carry recession — asking one token to be two brightnesses is what hid all three. The one
+  legitimate canvas use left is the duel's ground line, which is a hairline on purpose.
 - **A phase used as `x % 1` needs a positive modulo.** `%` keeps the sign of its left operand, and
   `telemetry`'s trace time is genuinely negative for the first few seconds of a page load — `t`
   starts at zero and each sample subtracts up to a whole playhead period. A negative phase sent the
