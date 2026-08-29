@@ -13,6 +13,78 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-08-29 — the sine-band family, and what actually separates three effects
+
+The 2026-08-28 entry left `flow`, `telemetry` and `aurora` as three effects doing one job — three
+sets of horizontal wavy lines, told apart mainly by which one had a playhead — and `TODO.md` filed it
+as a design question rather than a bug. The client said to go ahead and fix it.
+
+### Frequency is not character
+
+`telemetry` was never badly built. The trace is written by a travelling playhead rather than
+scrolling on its own; there is a hard discontinuity at the head with the previous sweep still
+standing ahead of it; a phosphor-decay gradient runs back along the lane; there is tick furniture and
+a per-lane baseline. None of that was the problem.
+
+**The problem was that all five lanes carried the same two-term sine at five different frequencies.**
+A scope showing five smooth sines is not showing five things, it is showing one thing five times —
+and a smooth wave is exactly what `flow` and `aurora` already are, which is what kept the three of
+them in a family.
+
+**The fix is shape, not brightness.** Each lane now carries a different signal *character*, which is
+what actually distinguishes one channel of a real instrument from the next and what a decorative wave
+never has:
+
+- analogue sine, unchanged;
+- **sample-and-hold steps**, quantised in *both* axes, which no smooth wave can imitate;
+- **a noisy sensor** — signal plus grain;
+- **a sawtooth with a hard reset**, the one shape that is obviously not symmetric, so it reads at a
+  glance even small;
+- **a pulse train**, its duty cycle drifting on a slow sine so it is not a metronome.
+
+No other effect on the site has a square wave or a staircase. Verified by capture on Xerox: the three
+now read as three different things — `flow` is a current carrying particles, `aurora` is a glow
+field, `telemetry` is an instrument panel.
+
+### Two rules that came out of building it
+
+- **Noise in a trace is hashed from the sample index, never `Math.random`.** Random per frame makes
+  the lane *boil* — every pixel resamples every frame — which undoes the one thing the playhead
+  exists for, namely that the trace holds still between sweeps and changes only as the head rewrites
+  it. This is the same rule the duel costumes already record for `spray`'s wobble.
+- **A phase used as `x % 1` needs a positive modulo.** `%` keeps the sign of its left operand, and
+  telemetry's trace time is genuinely negative for the first few seconds of a page load: `t` starts
+  at zero and each sample subtracts up to one whole playhead period. A negative phase sent the
+  sawtooth to −3 and inverted the pulse — both lanes overshooting their own amplitude — and then
+  quietly corrected itself about eight seconds in. **That is the kind of fault nobody reproduces,
+  because by the time you look at it, it has stopped happening.** Caught by reasoning about the sign,
+  then verified by rendering at frame 20, where the overshoot would have shown and does not.
+
+### It was also too dim, and that is a separate fix
+
+The standing sweep was `1A` (26/255) under a `globalAlpha` of 0.62, so the trace body sat at **0.063
+alpha** and only the writing head was ever visible. **The gradient's *shape* is unchanged** — full
+brightness at the writing edge, a hard drop immediately ahead of it — because that shape is the
+entire visual signature of an oscilloscope. Only the levels moved: body `1A` → `40`, the band ahead
+of the head `22` → `4D`, `globalAlpha` 0.62 → 0.82.
+
+Two pieces of furniture were below the floor they were meant to establish, and got the same treatment
+the *channel* colours had already had on 2026-08-17:
+
+- **the ticks**, 0.16 → 0.34 — at 0.16 they read as dirt rather than as a scale;
+- **the lane baselines moved from `--line` to `--faint`.** `--line` is the hairline border token and
+  measures about 1.2:1, so a zero line drawn in it at 0.4 alpha was a rule nobody could see — and a
+  scope with no zero lines is five squiggles.
+
+Measured on Xerox: peak **16 → 23**, coverage **1.7% → 4.3%**. **`telemetry` is no longer the weakest
+effect in the set**, which retires that line in the entry below.
+
+`npm run check` is **52 green**, unchanged — this is a rendering change and visibility cannot be
+gated, for the reason the entry below records: there is no rasteriser, so the numbers above are the
+baseline to compare against and not an assertion.
+
+---
+
 ## 2026-08-28 — the mobile menu, and four visual fixes
 
 ### The report was not the bug: *"the downloads page isnt showing in the menu in mobile"*

@@ -635,13 +635,29 @@ covers how to *see* any of this — rAF parks in an automated browser, so use `s
   separates the two, and it is what caught that the reported weakness of `bokeh` and
   `constellation` on Xerox was not real.
 - **The baseline, on Xerox, 2026-08-28:** aurora 108, vessels 71, bokeh 54, flow 50, rain 42,
-  plasma 42, scan 38, pressure 27, tunnel 25, telemetry 16, orbits 14, stars 7, constellation 3.
-  `plasma` (22 → 42) and `pressure` (16 → 27) were raised that day; **`telemetry` is now the weakest
-  thing in the set.** An effect must stay short of the loud end deliberately — it sits behind body
+  plasma 42, scan 38, pressure 27, tunnel 25, telemetry 23 (was 16, raised 2026-08-29), orbits 14, stars 7,
+  constellation 3.
+  `plasma` (22 → 42) and `pressure` (16 → 27) were raised that day; `telemetry` was the weakest thing in the set until 2026-08-29. An effect must stay short of the loud end deliberately — it sits behind body
   copy on palettes already near the contrast floor.
 - **A sub-pixel line loses twice** — it is antialiased into a fraction of the alpha it asked for, so
   a hairline at low alpha is dimmer than its numbers say. `pressure`'s thin rings went 0.9px → 1.4px
   for that reason, not for weight.
+- **Frequency is not character** (2026-08-29). `flow`, `telemetry` and `aurora` were three effects
+  whose whole read was *horizontal wavy lines*, told apart mainly by which one had a playhead —
+  and `telemetry`'s five lanes were the same two-term sine at five frequencies, which is one thing
+  shown five times rather than five things. Each lane now carries a different **shape**: analogue
+  sine, sample-and-hold steps, a noisy sensor, a sawtooth with a hard reset, and a pulse train.
+  Shape is what distinguishes one channel of a real instrument from the next, and it is what a
+  decorative wave never has. **Reach for a different shape before a different frequency.**
+- **Noise in a trace is hashed from the sample index, never `Math.random`.** Random per frame makes
+  the lane *boil* — every pixel resamples every frame — which undoes the one thing the playhead
+  exists for: the trace must hold still between sweeps. Same rule the duel costumes record for
+  `spray`'s wobble.
+- **A phase used as `x % 1` needs a positive modulo.** `%` keeps the sign of its left operand, and
+  `telemetry`'s trace time is genuinely negative for the first few seconds of a page load — `t`
+  starts at zero and each sample subtracts up to a whole playhead period. A negative phase sent the
+  sawtooth to −3 and inverted the pulse, then corrected itself about eight seconds in, which is the
+  kind of fault nobody reproduces because by the time you look it has stopped happening.
 
 **The choreographer** — fighters decide nothing:
 

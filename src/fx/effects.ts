@@ -1789,6 +1789,86 @@ const TEL_WID = [1.8, 1, 1.6, 1, 1.7];
 /** One traversal of the playhead, in `t` units. */
 const TEL_PERIOD = 1 / 0.13;
 
+/**
+ * **What kind of signal each lane carries** (2026-08-29).
+ *
+ * Every lane used to be the same two-term sine at a different frequency, and
+ * that is what kept this effect in a family with `flow` and `aurora`: three
+ * effects whose whole read was *horizontal wavy lines*, told apart mainly by
+ * which one had the playhead. Frequency is not character. A scope with five
+ * smooth sines on it is not showing five things, it is showing one thing five
+ * times.
+ *
+ * So each lane now carries a different **shape** — the thing that actually
+ * distinguishes one channel of a real instrument from the next, and the thing
+ * a decorative wave never has. It costs nothing: the same sample loop, a
+ * different function inside it.
+ */
+type TelKind = "sine" | "step" | "noisy" | "ramp" | "pulse";
+const TEL_KIND: TelKind[] = ["sine", "step", "noisy", "ramp", "pulse"];
+
+/**
+ * Value hash for the noisy lane, in −1..1.
+ *
+ * **Derived from the sample index, never `Math.random`.** Random per frame
+ * makes noise *boil* — every pixel resamples every frame and the lane becomes
+ * a shimmering band rather than a trace holding still between sweeps, which
+ * would undo the one thing the playhead is for. This is the same rule the duel
+ * costumes record for `spray`'s wobble.
+ */
+function telHash(n: number): number {
+  const x = Math.sin(n * 12.9898) * 43758.5453;
+  return (x - Math.floor(x)) * 2 - 1;
+}
+
+/**
+ * One sample of a lane, in −1..1, at trace-time `tt`.
+ *
+ * `u` is the sample's position along the lane in cycles, so every shape shares
+ * one notion of "how far along" and the lanes cannot drift out of relation to
+ * each other.
+ */
+/**
+ * Phase in 0..1, **positive modulo**.
+ *
+ * A bare `%` keeps the sign of its left operand, and `u` is genuinely negative
+ * for the first few seconds of every page load: `tt` is `t` minus up to one
+ * whole playhead period, and `t` starts at zero. A negative phase sends the
+ * ramp to −3 and inverts the pulse, so the two shaped lanes would overshoot
+ * their own amplitude and then quietly correct themselves about eight seconds
+ * in — the kind of fault nobody reproduces because by the time you look at it
+ * it has stopped happening.
+ */
+function telPhase(u: number): number {
+  const f = (u / REV) % 1;
+  return f < 0 ? f + 1 : f;
+}
+
+function telSample(kind: TelKind, u: number, u2: number, tt: number, n: number): number {
+  switch (kind) {
+    // Sample-and-hold: quantised in *both* axes, which is what a digital
+    // channel looks like and what no smooth wave can imitate.
+    case "step": {
+      const q = Math.floor(u * 1.6);
+      return Math.round(Math.sin(q * 1.7 + tt * 0.3) * 2) / 2;
+    }
+    // A real sensor: the signal, plus grain that holds still between sweeps.
+    case "noisy":
+      return Math.sin(u) * 0.62 + Math.sin(u2) * 0.2 + telHash(n) * 0.34;
+    // Slow charge and hard reset — a sawtooth is the one shape that is
+    // obviously *not* symmetric, so it reads at a glance even small.
+    case "ramp":
+      return telPhase(u) * 2 - 1;
+    // A pulse train, with duty cycle drifting so it is not a metronome.
+    case "pulse": {
+      const duty = 0.34 + Math.sin(tt * 0.21) * 0.12;
+      return telPhase(u) < duty ? 1 : -1;
+    }
+    default:
+      return Math.sin(u) + Math.sin(u2) * 0.45;
+  }
+}
+
 const telemetry: Effect = ({ ctx, w, h, p, t, beat }) => {
   const lanes = 5;
   const head = ((t * 0.13) % 1) * w;
@@ -1805,7 +1885,9 @@ const telemetry: Effect = ({ ctx, w, h, p, t, beat }) => {
    * unreadable, and unreadable numbers are decoration pretending to be data.
    */
   ctx.strokeStyle = p.faint;
-  ctx.globalAlpha = 0.16;
+  // 0.16 put the furniture below the trace it was meant to frame, so the ticks
+  // read as dirt rather than as a scale.
+  ctx.globalAlpha = 0.34;
   ctx.lineWidth = 1;
   ctx.beginPath();
   for (let k = 0; k <= 24; k++) {
@@ -1831,8 +1913,14 @@ const telemetry: Effect = ({ ctx, w, h, p, t, beat }) => {
     const f2 = ((2.67 + i * 0.22) * REV) / w;
     const speed = 0.8 + i * 0.36;
 
-    ctx.strokeStyle = p.line;
-    ctx.globalAlpha = 0.4;
+    /*
+     * The lane's zero line. **`faint`, not `line`** — the same correction the
+     * channel colours above already carry: `--line` is the hairline border
+     * token and measures ~1.2:1, so a baseline drawn in it at 0.4 was a rule
+     * nobody could see, and a scope with no zero lines is five squiggles.
+     */
+    ctx.strokeStyle = p.faint;
+    ctx.globalAlpha = 0.3;
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(0, y0);
@@ -1871,15 +1959,24 @@ const telemetry: Effect = ({ ctx, w, h, p, t, beat }) => {
     const hx = head / w;
     const at = (u: number) => Math.min(1, Math.max(0, u));
     const grad = ctx.createLinearGradient(0, 0, w, 0);
-    grad.addColorStop(0, `${cols[i]}1A`);
-    grad.addColorStop(at(hx - 0.5), `${cols[i]}1A`);
+    /*
+     * **Raised on 2026-08-29.** The standing sweep was `1A` — 26/255 — under a
+     * `globalAlpha` of 0.62, so the trace body sat at 0.063 and only the head
+     * was ever visible. Measured peak 16, the dimmest of the sixteen effects
+     * after Plasma and Pressure were fixed the day before. The shape of the
+     * ramp is unchanged and it is the shape that matters: full brightness at
+     * the writing edge, a hard drop immediately ahead of it to the previous
+     * sweep, which is the entire visual signature of an oscilloscope.
+     */
+    grad.addColorStop(0, `${cols[i]}40`);
+    grad.addColorStop(at(hx - 0.5), `${cols[i]}40`);
     grad.addColorStop(at(hx - 0.002), `${cols[i]}FF`);
-    grad.addColorStop(at(hx), `${cols[i]}22`);
-    grad.addColorStop(1, `${cols[i]}1A`);
+    grad.addColorStop(at(hx), `${cols[i]}4D`);
+    grad.addColorStop(1, `${cols[i]}40`);
     ctx.strokeStyle = grad;
     ctx.lineWidth = TEL_WID[i];
     ctx.lineJoin = "round";
-    ctx.globalAlpha = 0.62;
+    ctx.globalAlpha = 0.82;
     ctx.beginPath();
     for (let x = 0; x <= w; x += 6) {
       // Standard positive modulo: how far back round the lane the head is from
@@ -1887,9 +1984,7 @@ const telemetry: Effect = ({ ctx, w, h, p, t, beat }) => {
       const behind = ((((head - x) % w) + w) % w) / w;
       const tt = t - behind * TEL_PERIOD;
       const py =
-        y0 +
-        Math.sin(x * f1 + tt * speed) * amp +
-        Math.sin(x * f2 - tt * speed * 0.6) * amp * 0.45;
+        y0 + telSample(TEL_KIND[i], x * f1 + tt * speed, x * f2 - tt * speed * 0.6, tt, x) * amp;
       if (x === 0) ctx.moveTo(x, py);
       else ctx.lineTo(x, py);
     }

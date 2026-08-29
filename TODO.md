@@ -163,12 +163,22 @@ reversed at the client's request; `docs/DECISIONS.md` carries the reversal and h
    visitor gets station `hold` on the sonar he is actually shown, where `roam` would have been
    allowed. Conservative rather than wrong. The fix is `theme.ts` taking the resolved ornament, and
    it wants a decision about whether the station should follow what is *drawn* or what is *stored*.
-7. **The sine-band family is three effects doing one job.** `flow`, `telemetry` and `aurora` are all
-   horizontal bands driven by summed sines, and **telemetry is now the weakest effect in the set** at
-   peak 16 — measured, in the pass that fixed Plasma and Pressure. **A live design question, not a
-   bug**: either one of the three is pushed somewhere the other two are not, or the set is simply one
-   effect wide here and one of them should go. It is taste, so it wants his eye rather than a decision
-   from this side, and nothing is broken while it waits.
+7. ~~**The sine-band family is three effects doing one job.**~~ **Done 2026-08-29 — `telemetry` is an
+   instrument now, and it is no longer the weakest effect in the set.** He said to go ahead and fix
+   it, so it stopped being a question of taste. **The finding is the useful part: frequency is not
+   character.** All five of telemetry's lanes carried the same two-term sine at five different
+   frequencies, and five smooth sines is one thing shown five times — which is exactly what `flow`
+   and `aurora` already are, and is what kept the three of them in a family. Each lane now carries a
+   different signal *character*: analogue sine, sample-and-hold steps, a noisy sensor, a sawtooth
+   with a hard reset, and a pulse train whose duty cycle drifts. **No other effect on the site has a
+   square wave or a staircase.** It was separately too dim — the trace body sat at 0.063 alpha, so
+   only the writing head was ever visible — so the levels moved and the lane baselines went from
+   `--line` (about 1.2:1) to `--faint`; **the gradient's shape is untouched**, because that shape is
+   the whole visual signature of an oscilloscope. Measured on Xerox: peak **16 → 23**, coverage
+   **1.7% → 4.3%**. `docs/DECISIONS.md` carries the two rules that came out of building it — noise
+   hashed from the sample index rather than `Math.random`, and the positive modulo a negative trace
+   time needs. **Still not gateable**, like the rest of the visibility work: no rasteriser, so those
+   numbers are the baseline rather than an assertion.
 
 ### Not started, unchanged from yesterday
 
