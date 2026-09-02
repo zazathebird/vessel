@@ -449,7 +449,9 @@ scammer to clone.
 
 ### Per-page appearance — ~~agreed, not started~~ BUILT 2026-09-02
 
-**Built, gated (69 green) and driven end to end in a signed-in browser** — set on one page, absent
+**Built, gated (69 green), driven end to end in a signed-in browser, and DEPLOYED** (commit
+`5b93766`, Worker version `5e7515a1`, `lookPages` verified in the live bundle; additive — nothing
+changes for anybody until an override is published) — set on one page, absent
 on the next, published, cold-loaded through the Worker's injection, cleared. `CLAUDE.md` has the
 invariants (*Per-page appearance*), `docs/DECISIONS.md` the account. The panel's scope switch sets
 "the whole site" or "this page — the one behind the drawer"; every dial below it obeys. What still
