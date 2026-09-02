@@ -722,7 +722,7 @@ export const PAGES: Record<PageId, Page> = {
       { kicker: "the tell that never fails", title: "Nobody real asks for gift cards", body: "No company, no bank, no government department and no police force has ever been paid in Apple, Google Play, Steam or Amazon gift cards. Not once, anywhere. If gift cards come up in any conversation about money you supposedly owe, the conversation is a crime in progress. The same goes for cryptocurrency machines and for couriers sent to collect cash." },
       { kicker: "the tools", title: "Real software, used against you", body: "These are ordinary, legitimate remote-support programs. Technicians use them every day and there is nothing wrong with any of them. The problem is never the program \u2014 it is who asked you to install it, and why.", hasList: true, items: [
         "AnyDesk, TeamViewer, UltraViewer, LogMeIn, Splashtop, ConnectWise",
-        "Windows Quick Assist, which is already on your machine",
+        "Windows Quick Assist, which is already on most machines",
         "Anything they ask you to download from a link they read out to you"
       ] },
       { kicker: "once they are connected", title: "What they do while you watch", body: "If somebody already has control of your screen, these are the things to look for. Several of them exist so that you cannot see what is being done in your name.", hasList: true, items: [
@@ -822,7 +822,7 @@ export const PAGES: Record<PageId, Page> = {
       // client kept this line *because* it was correct — the counts on the 404
       // are jokes that depend on being true — so keeping the word would have
       // been the change, not correcting it. One word; nothing else here moved.
-      { kicker: "suggestion", title: "Try the parts that exist", body: "The site has eleven other pages, and four of them are below. The second one is the only one that reaches me.", hasList: true, items: ["Home — the front page", "Contact — the useful one", "Now — what is on the bench today", "Gallery — the dumping ground"] },
+      { kicker: "suggestion", title: "Try the parts that exist", body: "The site has eleven other pages, and four of them are below. The second one is the only one that reaches me.", hasList: true, items: ["Home — the front page", "Contact — the useful one", "Now — what is in for repair today", "Gallery — the dumping ground"] },
     ],
   },
 };

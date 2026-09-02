@@ -7,7 +7,7 @@ import {
   allowFor,
   resolveDuel,
 } from "../data/duelSettings";
-import type { DuelSettings } from "../data/duelSettings";
+import type { DuelOverride, DuelSettings, DuelTuning } from "../data/duelSettings";
 import { PATHS } from "../data/pageIds";
 import type { PageId } from "../data/pageIds";
 import { PALETTES } from "../data/palettes";
@@ -20,7 +20,7 @@ import {
   createDuelFrom,
   drawDuel,
 } from "../fx/duel";
-import type { DuelState, FighterStyle } from "../fx/duel";
+import type { FighterStyle } from "../fx/duel";
 import { ORNAMENT_PX, duelCamera } from "./DuelOrnament";
 import type { DuelCam } from "./DuelOrnament";
 
@@ -89,10 +89,19 @@ const LOOK = [
 ];
 
 /** Which fields this page states for itself, so the editor can say so. */
-function overriddenKeys(
-  over: Partial<DuelSettings> | undefined,
-): (keyof DuelSettings)[] {
+function overriddenKeys(over: DuelOverride | undefined): (keyof DuelSettings)[] {
   return over ? (Object.keys(over) as (keyof DuelSettings)[]) : [];
+}
+
+/**
+ * Which pacing knobs this page states for itself.
+ *
+ * Separate from `overriddenKeys` because `tuning` is one key holding four, and
+ * counting it as one is what let the editor report *"work sets 1 of its own:
+ * tuning"* while the page had in fact pinned all four — see `DuelOverride`.
+ */
+function overriddenTuning(over: DuelOverride | undefined): (keyof DuelTuning)[] {
+  return over?.tuning ? (Object.keys(over.tuning) as (keyof DuelTuning)[]) : [];
 }
 
 export function DuelSettingsEditor({ enabled }: { enabled: boolean }) {
@@ -108,6 +117,15 @@ export function DuelSettingsEditor({ enabled }: { enabled: boolean }) {
     [site, config.duelPages, target],
   );
   const overrides = overriddenKeys(over);
+  /*
+   * Named one level deep, because `tuning` is one key holding four and saying
+   * "1 of its own: tuning" was true of the object and misleading about the
+   * page — it read as one knob pinned when it was all four. Now that an
+   * override can carry a single knob, the summary has to be able to say so.
+   */
+  const stated = overrides
+    .flatMap((k) => (k === "tuning" ? overriddenTuning(over) : [k]))
+    .map(String);
 
   /**
    * Write one field to whichever target is selected.
@@ -128,6 +146,30 @@ export function DuelSettingsEditor({ enabled }: { enabled: boolean }) {
     });
   };
 
+  /**
+   * Write one *pacing knob*, one level further down.
+   *
+   * `set("tuning", { ...value.tuning, [key]: v })` is what this used to be, and
+   * `value` is the **resolved** settings — so touching one knob on a page wrote
+   * all four at their current resolved values and froze the other three there
+   * for ever. Reproduced signed in: Patience on `/work`, then the site's
+   * Circling 1.00 → 2.50, and `/work` stayed at 1.00. The site object has no
+   * such problem and keeps the whole-object write, because there is nothing
+   * above it to track.
+   */
+  const setTuning = (key: keyof DuelTuning, v: number) => {
+    if (!target) {
+      update({ duel: { ...site, tuning: { ...site.tuning, [key]: v } } });
+      return;
+    }
+    update({
+      duelPages: {
+        ...config.duelPages,
+        [target]: { ...over, tuning: { ...(over?.tuning ?? {}), [key]: v } },
+      },
+    });
+  };
+
   const clearPage = () => {
     if (!target) return;
     const next = { ...config.duelPages };
@@ -143,7 +185,6 @@ export function DuelSettingsEditor({ enabled }: { enabled: boolean }) {
 
   // ---- the preview --------------------------------------------------------
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const stateRef = useRef<DuelState | null>(null);
   const live = useRef({ value, pal });
   useEffect(() => {
     live.current = { value, pal };
@@ -160,7 +201,6 @@ export function DuelSettingsEditor({ enabled }: { enabled: boolean }) {
     const st = value.pin
       ? createDuel(value.pin[0], value.pin[1])
       : createDuelFrom("duel", Math.random, allowFor(value, "duel"));
-    stateRef.current = st;
     let raf = 0;
     let last = performance.now();
     let cam: DuelCam | null = null;
@@ -169,13 +209,25 @@ export function DuelSettingsEditor({ enabled }: { enabled: boolean }) {
     const step = () => {
       raf = requestAnimationFrame(step);
       const now = performance.now();
-      const frames = Math.min(3, Math.max(0.2, (now - last) / (1000 / 60)));
+      // Floor of 0, not 0.2 — see the note on the same clamp in `FxCanvas`.
+      // 0.2 is a 300Hz frame, and rounding a faster one up ran the fight fast.
+      const frames = Math.min(3, Math.max(0, (now - last) / (1000 / 60)));
       last = now;
       const canvas = canvasRef.current;
       if (!canvas || !canvas.isConnected || document.hidden) return;
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
       const { value: v, pal: pi } = live.current;
+      /*
+       * **The preview runs at the tuning it is previewing.** It used to read
+       * the engine's global, which the hero ornament on this same page had
+       * pushed `/admin`'s settings into — so selecting a page target and
+       * dragging Circling, Rest, Impact or Patience wrote the value into
+       * `duelPages[target]` and changed nothing on screen. The one surface
+       * built to judge the pacing was the one that could not show it, and it is
+       * the surface the client is meant to settle these numbers on.
+       */
+      st.tuning = v.tuning;
       advanceDuel(st, frames);
       const p = PALETTES[pi] ?? PALETTES[0];
       ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -185,12 +237,18 @@ export function DuelSettingsEditor({ enabled }: { enabled: boolean }) {
         seen = st.matches;
         cam = null;
       }
-      const shot = duelCamera(st, canvas.width, canvas.height, cam, frames);
+      // Size goes through the camera, not over it — see the note on
+      // `duelCamera`'s `zoom`. Multiplying `shot.scale` here is what this
+      // preview used to do, and it is why the slider appeared to work while the
+      // published site ignored it: this canvas was the only consumer in the
+      // codebase. The preview has to reach the fight by the same route the
+      // ornament does or it is a preview of something nobody is shown.
+      const shot = duelCamera(st, canvas.width, canvas.height, cam, frames, v.zoom);
       cam = shot.cam;
       drawDuel(ctx, st, {
         x: shot.x,
         y: shot.y,
-        scale: shot.scale * v.zoom,
+        scale: shot.scale,
         ink: p.fg,
         paper: p.bg,
         bladeA: BLADE_COLORS[st.a.style],
@@ -255,7 +313,7 @@ export function DuelSettingsEditor({ enabled }: { enabled: boolean }) {
           ? "Editing the whole site."
           : overrides.length === 0
             ? `${target} follows the site. Change anything below and it stops.`
-            : `${target} sets ${overrides.length} of its own: ${overrides.join(", ")}.`}
+            : `${target} sets ${stated.length} of its own: ${stated.join(", ")}.`}
       </p>
 
       <div className="v-duelset-rig">
@@ -392,9 +450,7 @@ export function DuelSettingsEditor({ enabled }: { enabled: boolean }) {
                     max={hi}
                     step={0.05}
                     value={value.tuning[key]}
-                    onChange={(e) =>
-                      set("tuning", { ...value.tuning, [key]: Number(e.target.value) })
-                    }
+                    onChange={(e) => setTuning(key, Number(e.target.value))}
                   />
                   <small>{note}</small>
                 </label>

@@ -1006,6 +1006,31 @@
   width: min(72vw, 300px);
 }
 
+/*
+ * **And the tablet, which the 2026-08-28 pass widened the phone without** —
+ * found 2026-08-30 by rendering the pair at every real slot width instead of
+ * at the one number the shot script had hard-coded.
+ *
+ * `--valve-size` is `min(44vw, 190px)` on the phone, `min(34vw, 240px)` on the
+ * tablet and `min(38vw, 340px)` on the desk, so widening only the phone left
+ * the duel **bigger on a phone (281px at 390) than on a tablet (240px)** — and
+ * the tablet band starts at 561px, where 34vw is **190px**, which is exactly
+ * the slot the note above says renders the pair at about 60px and calls below
+ * the size the costumes were authored for. The band that sits between the two
+ * fixed bands was the one still showing the fault.
+ *
+ * Same reasoning as the phone's, and the same two arguments hold unchanged: no
+ * visitor can be shown a duel, so the cost of a wider hero lands only on the
+ * person who gets the benefit; and `:not(.layout-radial)` keeps the dial's
+ * derived `--dial` width out of it. `52vw` is the tablet's equivalent of the
+ * phone's `72vw` — 292px at 561 and 340px from 654 up, so it reaches the desk
+ * size rather than crossing it.
+ */
+:not(.layout-radial).band-tablet .v-ornament.is-duel,
+:not(.layout-radial).band-tablet .v-ornament.is-duelholy {
+  width: min(52vw, 340px);
+}
+
 /* The dial's size is a variable because the orbit radius is derived from it.
    Two literals that have to agree is exactly how the old orbit drifted out of
    being a circle. */

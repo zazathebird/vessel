@@ -8,7 +8,6 @@ import {
   FEET_Y,
   WORLD_W,
   advanceDuel,
-  applyDuelTuning,
   createDuel,
   createDuelFrom,
   drawDuel,
@@ -148,6 +147,19 @@ export interface DuelCam {
  * confirm the bench.
  *
  * Pass `cam: null` on the first frame to snap rather than ease in.
+ *
+ * **`zoom` is the operator's published Size, and it enters here rather than
+ * multiplying the result** (2026-08-30). It shipped as a multiplier applied to
+ * `scale` *after* this function, in `DuelSettingsEditor`'s preview and nowhere
+ * else — so the slider worked on the one canvas only the operator sees, was
+ * published to every visitor, and the ornament ignored it. Fixing it by copying
+ * that multiplication into the ornament would have been the other half of the
+ * bug: applied after the fit, a Size above 1 voids the one thing this function
+ * exists to guarantee, and `npm run check` drives it at `ORNAMENT_PX` to prove
+ * exactly that guarantee. So Size is **a request bounded by the fit**: it may
+ * push in only into headroom the fit actually has, and it may always pull out.
+ * One clamp, and the preview goes through it too, so the two agree by
+ * construction rather than by both being edited at once.
  */
 export function duelCamera(
   st: DuelState,
@@ -155,6 +167,7 @@ export function duelCamera(
   h: number,
   cam: DuelCam | null,
   frames: number,
+  zoom = 1,
 ): { cam: DuelCam; x: number; y: number; scale: number } {
   const focus = duelFocus(st);
   const feet = h * CAM_FEET;
@@ -168,10 +181,24 @@ export function duelCamera(
    * side is nearly three times as wide as a standing fighter, so at the 190px
    * slot the floor itself was what clipped it, not the easing.
    */
-  const want = Math.max(
-    dying ? CAM_MIN * 0.7 : CAM_MIN,
-    Math.min(CAM_MAX, Math.min(w / (focus.width + CAM_MARGIN * 2), feet / (FEET_Y - focus.top))),
-  );
+  const fit = Math.min(w / (focus.width + CAM_MARGIN * 2), feet / (FEET_Y - focus.top));
+  const base = Math.max(dying ? CAM_MIN * 0.7 : CAM_MIN, Math.min(CAM_MAX, fit));
+  /*
+   * Size, folded in. `z` is clamped here as well as in `validDuelSettings`,
+   * because this is reached by the bench and by `duel-shot` too and a camera
+   * that trusts its caller is a camera with a `NaN` in it.
+   *
+   * Pushing in (`z > 1`) is capped at `fit`, the largest scale that still holds
+   * the whole focus box — so a wide pose simply stops getting bigger instead of
+   * losing a head, and it can never fall *below* what Size 1 would have given.
+   * Pulling out (`z < 1`) is taken literally and is deliberately allowed under
+   * `CAM_MIN`: that floor exists to stop the fight shrinking to nothing by
+   * accident, and a Size the operator has dragged to 0.6 is not an accident.
+   * At `z === 1` both branches collapse to `base`, so this is arithmetic
+   * identity with the shipped camera and the gate's frames do not move.
+   */
+  const z = Number.isFinite(zoom) ? Math.min(1.6, Math.max(0.6, zoom)) : 1;
+  const want = z >= 1 ? Math.min(Math.max(base, base * z), Math.max(base, fit)) : base * z;
   /*
    * A fighter going down is the sharpest correction the camera ever has to
    * make: `drawFighter` lays a corpse on its side, so the pair's extent grows
@@ -268,14 +295,18 @@ export function DuelOrnament({ pairing }: { pairing: DuelPool }) {
   );
 
   /*
-   * The pacing knobs are a module-level global in the engine — see
-   * `applyDuelTuning` for why they stayed one. Pushed in an effect rather than
-   * during render because it is a write to something outside React, and a
-   * render that mutates a global runs twice under StrictMode.
+   * **The pacing knobs ride on this fight's own state now, not on the engine's
+   * global** (2026-08-31) — see `DuelState.tuning`. Writing the global from
+   * here was correct while the engine had one copy, and became wrong the moment
+   * `/admin` started rendering three duels at once: the last host to run its
+   * effect decided the pacing for all of them, and the settings editor's
+   * preview — which is deliberately previewing a *different* page — lost.
+   *
+   * Assigned inside the frame loop below rather than in an effect, so it is
+   * live while a slider is being dragged and needs no dependency list. It is a
+   * write to the fight's own object, not to a module global, so StrictMode's
+   * double render cannot make it mean anything different.
    */
-  useEffect(() => {
-    applyDuelTuning(duel.tuning);
-  }, [duel.tuning]);
 
   const live = useRef({ pal: config.pal, calm: config.calm, saver, duel });
   useEffect(() => {
@@ -317,7 +348,9 @@ export function DuelOrnament({ pairing }: { pairing: DuelPool }) {
 
       const now = performance.now();
       // Elapsed 60Hz frames, clamped exactly as FxCanvas clamps its delta.
-      const frames = Math.min(3, Math.max(0.2, (now - last) / (1000 / 60)));
+      // Floor of 0, not 0.2 — see the note on the same clamp in `FxCanvas`.
+      // 0.2 is a 300Hz frame, and rounding a faster one up ran the fight fast.
+      const frames = Math.min(3, Math.max(0, (now - last) / (1000 / 60)));
       last = now;
 
       const canvas = canvasRef.current;
@@ -326,6 +359,7 @@ export function DuelOrnament({ pairing }: { pairing: DuelPool }) {
       if (!ctx) return;
 
       const { pal, calm, saver: sleeping, duel: v } = live.current;
+      st.tuning = v.tuning;
       if (!calm && !sleeping) advanceDuel(st, frames);
 
       const p = PALETTES[pal] ?? PALETTES[0];
@@ -337,7 +371,7 @@ export function DuelOrnament({ pairing }: { pairing: DuelPool }) {
         seenMatches = st.matches;
         cam = null;
       }
-      const shot = duelCamera(st, w, h, cam, frames);
+      const shot = duelCamera(st, w, h, cam, frames, v.zoom);
       cam = shot.cam;
       drawDuel(ctx, st, {
         x: shot.x,

@@ -104,7 +104,7 @@ export const SNIPPETS: Record<PageId, readonly string[]> = {
   ],
 
   changelog: [
-    "Every change made to this computer repair site, with dates. Nobody needs it \u2014 it is here because quietly deleting things is how a site lies.",
+    "The bigger changes made to this computer repair site, kept. Nobody needs it \u2014 it is here because quietly deleting things is how a site lies.",
   ],
 
   downloads: [

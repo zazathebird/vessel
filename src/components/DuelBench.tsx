@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
+import { useConfig } from "../config/ConfigContext";
 import { PALETTES } from "../data/palettes";
 import {
   BLADE_COLORS,
@@ -51,6 +52,16 @@ const SIZES = [
 ] as const;
 
 export function DuelBench({ enabled }: { enabled: boolean }) {
+  const { config } = useConfig();
+  /*
+   * Read live out of a ref rather than closed over, for the same reason every
+   * other duel host does it: the paint runs from a rAF callback and from the
+   * Step button, both of which outlive the render that made them, and a look
+   * change must not restart the fight underneath somebody watching it.
+   */
+  const look = config.duel;
+  const lookRef = useRef(look);
+  lookRef.current = look;
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const stateRef = useRef<DuelState | null>(null);
   const camRef = useRef<DuelCam | null>(null);
@@ -93,6 +104,13 @@ export function DuelBench({ enabled }: { enabled: boolean }) {
     // underneath the person reviewing them is what the site does, not what a
     // bench should.
     st.pool = null;
+    /*
+     * The bench judges the published fight, pacing included — the same reason
+     * its `bars`, `kick` and `rim` come from `config.duel` rather than the
+     * engine defaults. Assigned per frame below as well, so dragging a knob in
+     * the editor above moves this without restarting the match.
+     */
+    st.tuning = lookRef.current.tuning;
     stateRef.current = st;
     camRef.current = null;
     seenRef.current = st.matches;
@@ -116,7 +134,14 @@ export function DuelBench({ enabled }: { enabled: boolean }) {
         seenRef.current = st.matches;
         camRef.current = null;
       }
-      const shot = duelCamera(st, canvas.width, canvas.height, camRef.current, frames);
+      const shot = duelCamera(
+        st,
+        canvas.width,
+        canvas.height,
+        camRef.current,
+        frames,
+        lookRef.current.zoom,
+      );
       camRef.current = shot.cam;
       drawDuel(ctx, st, {
         x: shot.x,
@@ -134,8 +159,20 @@ export function DuelBench({ enabled }: { enabled: boolean }) {
         core: p.fg,
         spark: p.a2,
         line: p.line,
-        bars: true,
-        kick: true,
+        /*
+         * The published look, not the engine defaults.
+         *
+         * These were `bars: true, kick: true` with no `rim` at all, three lines
+         * under a doc comment promising *"what is judged here is what visitors
+         * get"* — so the one surface whose whole job is judging the fight was
+         * the one drawing it in a costume nobody is shown. `look` is the
+         * **site** object rather than this page's resolution: `/admin` is where
+         * the bench happens to live, not what it is about, and the site default
+         * is what the great majority of pages actually render.
+         */
+        bars: lookRef.current.bars,
+        kick: lookRef.current.kick,
+        rim: lookRef.current.rim,
         dim: 1,
       });
     };
@@ -147,7 +184,9 @@ export function DuelBench({ enabled }: { enabled: boolean }) {
       raf = requestAnimationFrame(step);
 
       const now = performance.now();
-      const frames = Math.min(3, Math.max(0.2, (now - last) / (1000 / 60)));
+      // Floor of 0, not 0.2 — see the note on the same clamp in `FxCanvas`.
+      // 0.2 is a 300Hz frame, and rounding a faster one up ran the fight fast.
+      const frames = Math.min(3, Math.max(0, (now - last) / (1000 / 60)));
       last = now;
 
       const canvas = canvasRef.current;
@@ -166,7 +205,8 @@ export function DuelBench({ enabled }: { enabled: boolean }) {
         pending += frames * live.current.speed;
         let guard = 0;
         while (pending >= 1 && guard < 8) {
-          advanceDuel(st, 1);
+          st.tuning = lookRef.current.tuning;
+      advanceDuel(st, 1);
           pending -= 1;
           guard += 1;
         }
@@ -221,8 +261,9 @@ export function DuelBench({ enabled }: { enabled: boolean }) {
       <h2 className="v-account-title">The duel</h2>
       <p className="v-account-note">
         The engine the hero ornament runs, through the same camera, at the size
-        the hero shows it. The four sliders are a tuning surface — nothing here
-        is saved, published or seen by anybody else.
+        the hero shows it, wearing the look the whole site is set to. Play,
+        step, speed and size are ways of looking — nothing here is saved,
+        published or seen by anybody else. The settings themselves are above.
       </p>
 
       <div className="v-duelbench-rig">

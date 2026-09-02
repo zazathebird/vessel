@@ -2050,7 +2050,7 @@ const telemetry: Effect = ({ ctx, w, h, p, t, beat }) => {
  */
 
 function duelling(pool: DuelPool): Effect {
-  return ({ ctx, w, h, p, t, dt, duel: v }, cache) => {
+  return ({ ctx, w, h, p, dt, duel: v }, cache) => {
     let st = cache.duel;
     /*
      * The pairing is rolled from the pool rather than pinned, here and again on
@@ -2092,7 +2092,14 @@ function duelling(pool: DuelPool): Effect {
      * Every other effect is an ambient field and should surge when the page
      * does. A duel is a performance: it keeps its own tempo.
      */
-    st.prev = t;
+    /*
+     * `st.prev = t` stood here and nothing ever read it. Its declaration
+     * claimed it was "kept for the background effect's delta" and the delta is
+     * `dt`, handed in by `FxCanvas` — the field was left behind by the fix the
+     * paragraph above describes, when the duel stopped deriving its own
+     * timestep from the effect clock. Removed 2026-08-31 rather than left as a
+     * second, stale copy of a number the fight no longer runs on.
+     */
     advanceDuel(st, dt);
 
     /*

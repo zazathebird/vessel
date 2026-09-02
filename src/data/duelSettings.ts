@@ -85,14 +85,29 @@ export interface DuelSettings {
  * the 360,000-frame and 280,000-sequence gates keep passing unchanged. A
  * default that merely *looked* neutral would move every duel gate at once.
  */
-export const DEFAULT_DUEL_TUNING: DuelTuning = {
+/*
+ * **Frozen, because `DEFAULT_CONFIG.duel` hands this exact object out.**
+ *
+ * `types.ts` assigns `DEFAULT_DUEL_SETTINGS` by reference and
+ * `persistence.ts`'s no-published-config branch spreads `DEFAULT_CONFIG`
+ * shallowly — so the module-level object, and this `tuning` inside it, is the
+ * one every un-published visitor's config points at. Nothing mutates either
+ * today (the editor clones on every write, `resetSite` clones, and
+ * `applyDuelTuning` assigns into `DUEL_TUNING`, a different object), so this is
+ * latent rather than live. It is frozen anyway because the failure mode if it
+ * ever stops being latent is the worst kind here: one visitor's edit silently
+ * becoming the default every later visitor is handed, with nothing thrown and
+ * nothing logged. Frozen, the same mistake is a `TypeError` on the line that
+ * makes it — module code is strict, so the write throws rather than passing.
+ */
+export const DEFAULT_DUEL_TUNING: DuelTuning = Object.freeze({
   circling: 1,
   rest: 1,
   impact: 1,
   patience: 1,
-};
+});
 
-export const DEFAULT_DUEL_SETTINGS: DuelSettings = {
+export const DEFAULT_DUEL_SETTINGS: DuelSettings = Object.freeze({
   pin: null,
   good: null,
   evil: null,
@@ -104,10 +119,31 @@ export const DEFAULT_DUEL_SETTINGS: DuelSettings = {
   bars: true,
   kick: true,
   zoom: 1,
+});
+
+/**
+ * One page's disagreement with the site.
+ *
+ * **`tuning` is partial too, and that is not a detail** (2026-08-30). It was
+ * `Partial<DuelSettings>`, whose `tuning` is the whole four-knob object — so
+ * the editor, which writes `{ ...resolved.tuning, [key]: v }`, could not
+ * express "this page disagrees about Patience" and instead wrote all four. The
+ * merge below is a partial merge and did its job faithfully; there was simply
+ * nothing partial left to merge. Reproduced in a signed-in browser: touching
+ * Patience on `/work`, then moving the site's Circling from 1.00 to 2.50, left
+ * `/work` reading 1.00 for ever, while the editor's own summary said *"work
+ * sets 1 of its own: tuning"*.
+ *
+ * That is the failure this file's header says sparse-and-partial exists to
+ * prevent — "sixteen of them would silently go stale" — arriving one level down,
+ * inside the one field that is itself an object.
+ */
+export type DuelOverride = Omit<Partial<DuelSettings>, "tuning"> & {
+  tuning?: Partial<DuelTuning>;
 };
 
-/** Per-page overrides. Sparse, and each entry is partial. */
-export type DuelPageSettings = Partial<Record<PageId, Partial<DuelSettings>>>;
+/** Per-page overrides. Sparse, and each entry is partial, tuning included. */
+export type DuelPageSettings = Partial<Record<PageId, DuelOverride>>;
 
 /** Every knob's band, so the UI, the validator and the gate cannot disagree. */
 export const DUEL_BANDS = {
@@ -148,9 +184,24 @@ export function validDuelSettings(raw: unknown): DuelSettings {
   if (Array.isArray(r.pin) && r.pin.length === 2) {
     const a = style(r.pin[0]);
     const b = style(r.pin[1]);
-    // Both halves or neither. A pin naming one live fighter and one that was
-    // withdrawn is not half a pin, it is a fight with one side missing.
-    if (a && b) out.pin = [a, b];
+    /*
+     * Both halves or neither. A pin naming one live fighter and one that was
+     * withdrawn is not half a pin, it is a fight with one side missing.
+     *
+     * **And the two must be on opposite sides** (2026-08-31). Nothing checked
+     * it, so a published `["ronin", "sentinel"]` was accepted and pinned a
+     * good-versus-good match — which the blade carve-out cannot express (both
+     * swords come out blue or green), which `duel: a pooled fight rotates its
+     * fighters` asserts never happens, and which makes the fairness coin
+     * meaningless because a viewer cannot tell which side is which. `pin`
+     * bypasses `rollPairing` entirely, so it is the one route into the engine
+     * that `ROSTER_GOOD` / `ROSTER_EVIL` do not already guard.
+     *
+     * Refused whole, like every other field here: half a pin is not a fight,
+     * and silently swapping one fighter for a legal opponent would be the
+     * repair this file exists not to do.
+     */
+    if (a && b && FIGHTERS[a].side !== FIGHTERS[b].side) out.pin = [a, b];
   }
 
   for (const side of ["good", "evil"] as const) {
@@ -183,6 +234,43 @@ export function validDuelSettings(raw: unknown): DuelSettings {
   return out;
 }
 
+/**
+ * Did this field survive validation *as itself*?
+ *
+ * `validDuelSettings` answers a refusal by leaving the field at the global
+ * default, and from the outside a refused field and a field that legitimately
+ * equals the default are indistinguishable — which is fine for the site object
+ * and is the whole bug for an override. So the test is identity with what came
+ * in, not with what came out. A partly-salvaged list counts as refused: an
+ * allow-list of `["sentinel", "nonsense"]` is not a shorter allow-list, it is a
+ * list the sender got wrong, and quietly honouring the half of it that parsed
+ * is the repair this file promises not to do.
+ */
+function sameSetting(
+  key: Exclude<keyof DuelSettings, "tuning">,
+  given: unknown,
+  validated: DuelSettings[Exclude<keyof DuelSettings, "tuning">],
+): boolean {
+  if (key === "pin") {
+    return (
+      Array.isArray(given) &&
+      Array.isArray(validated) &&
+      given.length === 2 &&
+      given[0] === validated[0] &&
+      given[1] === validated[1]
+    );
+  }
+  if (key === "good" || key === "evil") {
+    return (
+      Array.isArray(given) &&
+      Array.isArray(validated) &&
+      given.length === validated.length &&
+      given.every((x, i) => x === validated[i])
+    );
+  }
+  return given === validated;
+}
+
 /** Validate the sparse per-page map. An unknown page id is dropped, not kept. */
 export function validDuelPages(raw: unknown): DuelPageSettings {
   const out: DuelPageSettings = {};
@@ -196,11 +284,50 @@ export function validDuelPages(raw: unknown): DuelPageSettings {
      * refusal rules for free; keeping only the present keys is what makes the
      * override *partial*, so a page that says nothing about `zoom` keeps
      * tracking the site default rather than freezing today's value.
+     *
+     * **A key whose value was refused is dropped, not kept at the default** —
+     * which is what "refuses, never repairs" has to mean here and did not.
+     * `validDuelSettings` answers a refusal by leaving the field at the global
+     * default, which is the right answer for the site-wide object and precisely
+     * the wrong one for an override: keeping the key promoted rubbish into a
+     * *working* override pinned to 1, shadowing whatever the site actually
+     * said. `{ work: { zoom: 99 } }` became `{ work: { zoom: 1 } }`, so a site
+     * at 1.4 rendered `/work` at 1.0 and nothing anywhere reported a refusal.
+     * `{ work: { good: [] } }` was worse: an emptying allow-list is refused,
+     * and the refusal became an explicit `good: null` that cancelled the site's
+     * roster restriction on that page.
+     *
+     * Dropping the key is the honest reading — the page simply follows the
+     * site, which is what a page that has said nothing valid has done.
      */
     const full = validDuelSettings(v);
-    const partial: Partial<DuelSettings> = {};
-    for (const key of Object.keys(v as object)) {
-      if (key in full) (partial as Record<string, unknown>)[key] = full[key as keyof DuelSettings];
+    const given = v as Record<string, unknown>;
+    const partial: DuelOverride = {};
+    for (const key of Object.keys(given)) {
+      if (!(key in full)) continue;
+      if (key === "tuning") continue;
+      const k2 = key as Exclude<keyof DuelSettings, "tuning">;
+      // Refused ⇒ the validator handed back the default. Keep the key only when
+      // what came in survived validation as itself.
+      if (!sameSetting(k2, given[key], full[k2])) continue;
+      (partial as Record<string, unknown>)[key] = full[k2];
+    }
+    /*
+     * `tuning` is narrowed the same way one level further down, so a page may
+     * disagree about Patience alone and keep tracking the site on the other
+     * three. Written whole, it froze all four — see `DuelOverride`.
+     */
+    const tGiven = given.tuning;
+    if (tGiven && typeof tGiven === "object") {
+      const tuning: Partial<DuelTuning> = {};
+      for (const key of Object.keys(tGiven as object)) {
+        if (!(key in full.tuning)) continue;
+        const k2 = key as keyof DuelTuning;
+        const [lo, hi] = DUEL_BANDS[k2];
+        if (num((tGiven as Record<string, unknown>)[key], lo, hi) === null) continue;
+        tuning[k2] = full.tuning[k2];
+      }
+      if (Object.keys(tuning).length > 0) partial.tuning = tuning;
     }
     if (Object.keys(partial).length > 0) out[k as PageId] = partial;
   }

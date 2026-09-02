@@ -13,6 +13,350 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-09-02 — the guardrail notice judged by eye, and two small closures
+
+`TODO` items 3 and 4 from the 2026-08-31 list. The gate stays at **66 green**.
+
+**The notice was driven signed in, in all three states** — untripped ("Guardrails — 0 / Nothing
+tripped."), tripped with both row kinds at once (Peat + grain resolving, Ledger + Plasma warning),
+and in calm. A fresh local operator (`guardop`, local D1 only) was minted for it, since `duelop`'s
+TOTP secret was never kept — the fixture script is rerunnable under `OP_HANDLE` for exactly this.
+The verdict: the ordering (warning above Publish), the "Warnings, not refusals" preamble, the
+count in the heading and the resolved rows' coda all read as designed and ship as they are. Two
+observations, one change:
+
+- **The resolved marker was `·` and is `✓`.** A middot opening a paragraph reads as stray
+  punctuation; a check mark says "already handled", which is the row's whole message. It stays
+  `--muted` and `aria-hidden` — the coda sentence carries the meaning for a screen reader.
+- **The ▲ on Peat is quiet, and that is Peat's recorded weakness, not the component's** — danger
+  text on Peat measures 4.25:1, one of the three palettes CLAUDE.md already names as failing on
+  danger. The marker is `var(--a3)` by construction (inline style), so it is as loud as the
+  palette allows.
+- Confirmed live while there: grain chip on + Peat leaves the wrapper without `has-grain` —
+  `effectiveGrain` holding in a real browser, not only in the gate.
+
+**`CostumeCtx.lean` and `.speed` are deleted** — the documented three-file edit (`fighters.ts`,
+`duel.ts`, `check.ts`). The useful finding: `speed` was dead only *as a field*. The local in
+`drawFighter` drives the stride swing (`footX += sin(ph) · 13 · speed`), and deleting it with the
+field failed typecheck **and** the health-bar gate ("speed is not defined") — the gate catching a
+careless delete within a minute of it happening, which is the discipline working as sold. The
+local stays, with a comment saying why it survived its field.
+
+## 2026-08-31 — the rest of the defect list
+
+The 2026-08-30 pass fixed what was reported *and reproduced*; this one clears what the three
+audits found and nobody had acted on. **The gate went 62 → 66.** Every new gate was
+break-verified, and two of them were rewritten because the first version proved nothing.
+
+### `DUEL_TUNING`'s premise was false, and it had a symptom
+
+The note on `applyDuelTuning` argued the knobs could stay a module global because they "cannot vary
+within a page anyway". **`/admin` renders three duels at once** — the hero ornament, the bench, and
+the settings editor's preview — and the editor's entire job is previewing *a different page's*
+settings than the one it is standing on. So the tuning does vary within a page, the last host to run
+its effect decided the pacing for all three, and **selecting a page target and dragging Circling,
+Rest, Impact or Patience changed nothing on the one canvas built to judge them.** That is the surface
+the client is meant to settle those four numbers on.
+
+`DuelState.tuning` carries it per fight now, defaulting **to the `DUEL_TUNING` object by reference**,
+so `applyDuelTuning`, `duel-shot --tune` and every gate that assigns into the global keep working
+untouched. `buildSequence` takes it as a third parameter; `chooseSequence` hands it `st.tuning`. The
+threading the old note rejected turned out to be four call sites, and the reason to pay for it is
+that the premise it was avoiding is not true.
+
+### A 0.2 frame floor made fast displays run a fast world
+
+Every host clamps its delta with `Math.min(3, Math.max(0.2, …))`. The `min` is explained by the
+comment beside it — *"without this, refresh rate silently doubles the speed of the rain and every
+particle field"*. **The floor was undocumented and reintroduced exactly that at the other end**: 0.2
+is a 300Hz frame, so on anything faster the real delta was rounded *up*, and a 500Hz panel ran the
+world **1.67× fast**. 480 and 540Hz displays ship. It is the same class as the client's reported
+*"they speed up at like x50 speed"*, from the opposite direction.
+
+Nothing needed a floor: `advanceDuel` accumulates fractional frames and every effect integrates
+`t += dt`, so a small delta is a small step and two callbacks in the same millisecond correctly move
+nothing. Measured after: 6,000 tenths advance the world 599 frames against 600 whole frames' 600 —
+one frame of binary rounding, against the doubling a floor produced. Floored at 0 in all four hosts.
+
+### A pinned pairing was never checked for alignment
+
+`pin` bypasses `rollPairing`, so it is the one route into the engine that `ROSTER_GOOD` /
+`ROSTER_EVIL` do not guard — and nothing checked it. A published `["ronin", "sentinel"]` was accepted
+and pinned **good against good**: both blades come out blue or green, which the alignment carve-out
+cannot express; the fairness coin means nothing because a viewer cannot tell which side is which; and
+`duel: a pooled fight rotates its fighters` asserts it never happens. Refused whole, like every other
+field here — swapping one fighter for a legal opponent would be the repair this file exists not to
+do. Gated over all 576 orderings: 144 cross-side kept, 288 same-side refused.
+
+### `circling: 0` picked deterministically
+
+The low end of a published slider means "never pick a module that contains no blow". If the pool ever
+consists only of blowless modules, every weight is `weight * 0` and the total is 0 — and the fallback
+was `|| TOTAL_WEIGHT`, the sum over the **whole** module list, which no filtered pool can subtract its
+way through. So the loop never broke and the pick was `pool[0]` every time: not a crash, a silently
+fixed choice at the one setting whose purpose is to change what comes up. A zero-weight pool is
+picked from evenly now.
+
+**The corner is not reachable through the director today** and the gate says so instead of pretending
+otherwise: it needs `circling: 0` *and* a pool whose every survivor is blowless, and the anti-stall
+rail filters to `hits` first. A behavioural test of it could only ever pass, which is not a test, so
+that half is asserted at the source and the reasoning is in the gate.
+
+### Smaller, and all of them the same kind of thing
+
+- **`buildSequence` dropped `b.quick`** when deriving the last move's end, overstating a quick beat by
+  its own windup — the one thing `quick` exists to remove. No module is affected today (0 of 700,000
+  builds has a quick beat as its last-ending one), so it is gated from a module built inside the gate:
+  a check that can only pass is not a check.
+- **`DEFAULT_DUEL_SETTINGS` is frozen.** `DEFAULT_CONFIG.duel` hands out that exact object and
+  `persistence.ts`'s no-published-config branch spreads it shallowly, so it is what every
+  un-published visitor's config points at. Nothing mutates it today; frozen, the day something does
+  is a `TypeError` on the line that does it rather than one visitor's edit silently becoming every
+  later visitor's default.
+- **`DuelState.prev` was written by the background effect and read by nothing.** Its declaration
+  claimed it was "kept for the background effect's delta", and the delta is `dt`, handed in. It was
+  left behind by the fix that stopped the duel deriving its own timestep from the effect clock —
+  a stale second copy of a number the fight no longer runs on.
+- **The published-key gate asked about two keys.** It looked up `duel` and `duelPages` by name, which
+  is a gate for whatever field was being added the day it was written; every key added since was
+  ungated by the same reasoning. The two lists are compared whole now, in both directions.
+  `MAX_CONFIG_BYTES` is gated too — that it is 8,000, that it throws, and that nothing truncates to
+  it.
+- **The director's clock advances before it dispatches**, so beats at `at: 0` and `at: 1` fire on the
+  same frame. Unreachable today and left alone deliberately: moving the increment would shift every
+  beat in the pool by one against the move table, re-basing 280,000 sequences of gated arithmetic to
+  buy an offset nothing uses. Written down instead, with the instruction to use `at: 2`, and with the
+  real contact mapping (`lands(move, at) - 1`) recorded for the first time — the suite asserts it in
+  beat space, where the offset does not exist.
+
+### Two gates that passed while the fix was reverted, again
+
+Worth recording that this keeps happening and what the tell is. The `circling: 0` half first asserted
+that many modules still get picked, which is true whether or not the corner is fixed — it was
+measuring the general case and calling it the corner. The quick-beat half first built a module that
+rolled *short*, which takes the negative-slack path and never consults `ends` at all, so both cases
+returned the same number for a reason that had nothing to do with the fix. **Both were caught by
+breaking the fix and watching nothing happen**, which is the only reason to do it.
+
+---
+
+## 2026-08-30 — the fights, gone over end to end
+
+The brief was *"make sure that the fights are done"*, with a standing instruction to look for
+bugs and graphical faults rather than to build anything. What came back was eleven defects, four
+of which were **a control that appears to work while the thing it names does not move** — the
+most expensive shape a bug can have here, because nothing throws, nothing logs, and the person
+who finds out is the client looking at his own site.
+
+The gate went **52 → 62**. Every new gate was verified by breaking the fix and watching it fail;
+two of them were rewritten because the first version did *not* fail, which is recorded below
+because it is the more useful half.
+
+### The environment could not run its own tooling, and that is why some of this was never found
+
+`node_modules` had **three empty native-binary directories** — `@cloudflare/workerd-linux-64`,
+`wrangler`'s nested `@esbuild/linux-x64`, and the top-level `@esbuild/linux-x64`. So
+`npm run dev:worker` could not start, `npm run build` could not run, and therefore **no operator
+surface had ever been driven in a browser here**: `/admin` needs a session, a session needs the
+Worker, and the Worker needs `workerd`. `npm run check` never noticed because it runs under
+`tsx`/esbuild's JS API rather than the binary. Restored by fetching the three tarballs directly.
+`TODO.md` item 1 had been open since 2026-08-28 saying *"nobody has clicked it"*; this is why.
+
+### `rest: 1` was not arithmetic identity, and had not been since the knobs landed
+
+`CLAUDE.md`: *"Every default is 1 and 1 must stay arithmetic identity."* It is the rule that lets
+360,000 stepped frames and 280,000 generated sequences keep passing with a publishable multiplier
+in front of them. Three of the four knobs held.
+
+`buildSequence` clamped the slack at zero and floored the result at the last move's end:
+
+    const slack = Math.max(0, built.length - end);
+    const length = Math.max(end, Math.round(end + slack * knob(DUEL_TUNING.rest, 0, 4)));
+
+which reproduces `built.length` only when `built.length >= end`. **Four modules deliberately roll
+a length shorter than their last move's own end.** `disengage` rolls
+`ends("circle", away) - r.i(10, 26)` because its trailing circle is a drift and nobody can see a
+drift end early; `pushed` does the same at `- r.i(2, 14)`. Measured over 20,000 builds each, the
+floor added back a mean of **18.07 and 8.04 frames** — the subtraction *entirely* undone, on
+**100%** of builds. `swept-down` lost 23.5% of its rolls, `held-and-struck` 1.3%. Across the pool,
+**6.4% of every build** got a length its module never asked for.
+
+The slack is signed now. Positive slack is rest and scales; **negative slack is a deliberate cut
+and is not rest at all**, so it survives at every setting. Measured after: 700,000 builds, **zero**
+differences at `rest: 1`; at `rest: 0`, 63,622 of 70,000 shortened and every one still contains its
+own last move.
+
+### The health bar was drawn through the costumes, and had been drawn outside the frame for six of them
+
+The bar sat at a flat `f.y - 34`. It is four units tall, so it occupies `[y-34, y-30]`, and **four
+costumes reach into that band**: the gladiator's crest at 34, the witch's hat at 31, the anubis's
+ears and the ringmaster's stovepipe at 30. Rendered at the real 281px phone slot and the 340px desk
+slot, the red bar is drawn *through* the top hat's crown — where it stops reading as a readout at
+all and becomes a band on the hat — and across the prophet's halo.
+
+`duelFocus` had solved exactly this for the camera on 2026-08-19 (*"clearance is per costume,
+because the costumes are not the same height"*) and the bar was never told. Worse, the older half:
+the camera frames to `max(26, headroom + 16)`, so a flat 34 was **already outside the frame for
+every costume below 18 of headroom** — the hermit and the executioner at 17, the apprentice, the
+golem and the viking at 16 — by one to two units on a bar four units tall. Nobody had looked,
+because the camera gate asserts about bodies and `duelFocus` has never been told the readout
+exists. It is `min(max(34, headroom + 8), max(26, headroom + 16))` now: clear of the costume, and
+inside the box the camera is actually fitting.
+
+**The gate for this was written twice, and the first one was worthless.** It restated the formula
+from `headroom` and asserted on its own arithmetic; reverting the renderer to the flat 34 left it
+green. That is the mistake `DUEL_TABLES`' own comment names — *a checker holding its own copy only
+ever confirms its own copy*. It drives `drawDuel` through a recording context now and reads the
+rectangle the renderer emits, attributing it to a fighter **arithmetically** rather than by nearest
+x: the two cross during a `pass`, and a fighter at the top of a somersault is 80 world units above
+the other, so proximity misreads and reports a wild offset against the wrong costume. `BODY_W` is
+exported for that attribution, for the same reason `BODY_H` already was.
+
+### Size published to every visitor and moved nothing
+
+`zoom` was declared, banded, validated, published — and multiplied in exactly one place in the
+codebase: `DuelSettingsEditor`'s preview canvas, which only the operator sees. `DuelOrnament` drew
+at `shot.scale`. So the slider worked where it was dragged and the site ignored it. Same class as
+the downloads editor's `price` vs `priceCents`, arriving through a third door.
+
+**Copying the multiplication into the ornament would have been the other half of the bug.** Applied
+after the fit, a Size above 1 voids the guarantee `duel: the ornament camera never cuts a fighter
+off` exists to prove. The client chose *bounded request* from three options: Size enters
+`duelCamera` and is capped at the fit, so a wide pose stops getting bigger rather than losing a
+head, and it may always pull out — deliberately under `CAM_MIN`, because that floor exists to stop
+the fight shrinking to nothing *by accident* and a Size dragged to 0.6 is not an accident. One
+clamp, and all three hosts go through it, so the preview and the page agree by construction.
+Measured: 60,000 frames at 0.6/1/1.6, none clipped, 1.6 larger on ~40% of them (the rest is where
+the fit binds, which is the knob being bounded rather than the knob being inert).
+
+**That gate was also written twice.** The first drove `duelCamera` directly, so it stayed green
+when the ornament stopped passing the argument — the very bug. It reads the three call sites now.
+The second version *still* passed, because the regex matched `export function duelCamera(`, whose
+own signature carries `zoom = 1`; it is anchored on the assignment.
+
+### A per-page override was not partial to the knob
+
+Reproduced signed in, which is the only place it was visible: set Patience on `/work`, then move
+the site's Circling from 1.00 to 2.50, and `/work` stays at 1.00 — while the editor's own summary
+says *"work sets 1 of its own: tuning"*.
+
+`DuelPageSettings` was `Partial<DuelSettings>`, whose `tuning` is the whole four-knob object, so
+the editor could not express "this page disagrees about Patience" and wrote all four at their
+resolved values. That is the *"sixteen of them would silently go stale"* failure the sparse map
+exists to prevent, one level down, inside the one field that is itself an object. `DuelOverride`
+makes `tuning` partial; the editor writes one knob; the summary names the knob.
+
+The old gate could not see it — it only ever exercised `{ bars: false }`, which is a scalar.
+
+### `validDuelPages` repaired where the file promises it refuses
+
+It validated the whole object and kept every key *present in the input*, taking its value from the
+validated result. `validDuelSettings` answers a refusal by leaving the field at the global default,
+which is right for the site object and precisely wrong for an override: the refusal became a
+**working** override pinned to the default. `{ work: { zoom: 99 } }` became `{ work: { zoom: 1 } }`,
+so a site at 1.4 rendered `/work` at 1.0 with nothing reporting anything. `{ work: { good: [] } }`
+was worse — an emptying allow-list is refused, and the refusal became an explicit `good: null`
+cancelling the site's roster restriction on that page.
+
+A key is dropped now unless what came in survived validation **as itself**, which is what the test
+has to be: from outside, a refused field and a field that legitimately equals the default are
+indistinguishable. A partly-salvaged list counts as refused — `["ronin", "nonsense"]` is not a
+shorter allow-list, it is a list the sender got wrong.
+
+### The operator's own dice could never roll him a duel
+
+`shuffle` and `setMode` both call `roll(config, isOperator)` with stable dependency lists, so both
+callbacks are built once — on the first render, where `isOperator` is still false because the
+session probe has not settled. The file's own note on `live` explains this for the three roll sites
+that read `live.current.isOperator`; these two were missed. It fails *safe*, which is why nothing
+reported it, and it means the shuffle button and the mode picker could never hand the operator a
+duel from either catalogue — the thing `rollableOrnaments(true)` was built for.
+
+### The crouch ran on another move's clock
+
+`drawFighter` branches on `Move.carry` correctly and then one branch named a move id for its
+timing: `MOVES.duck.frames`. Two moves declare `carry: "crouch"` — `duck` at 26 frames and
+`sweep_low` at 32 — so the longer one peaked at `mf 13` when its blade only arrives at the low line
+at `contact: 16` and holds there through 25, then stood the body fully upright for frames 26–32
+with the blade still down.
+
+Gated as the general form rather than as that divisor, because the fault is the shape: any carry
+shared by two moves of different lengths has it. The gate found that **`flatten` and `tumble` are
+also shared by moves of different lengths**, so the same bug had two more places to appear.
+
+### A match reset is a cut, and five fields were showing through it
+
+`clash` is the one with a symptom: a cooldown of up to 30 frames, so a match ending just after a
+blade-on-blade cross opened the next one unable to spark for half a second, and the first exchange
+of the new fight was silently the flattest one in it. `hitStop`, `shake`, `sparks` and `scorch` went
+with it. `dir.pressure` is deliberately *not* asserted at zero by the new gate: the reset sets it to
+0 and `runDirector` runs later in the same `step`, choosing the new match's opening sequence and
+counting it, so 1 on the turnover frame is the rail working.
+
+### A non-finite delta killed the fight permanently
+
+`Math.max(0, NaN)` is `NaN`, so one bad frame count makes `st.acc` `NaN` for ever — `Math.floor(NaN)`
+is `NaN`, `NaN > 0` is false, `acc -= NaN` keeps it `NaN`. Every later call is a silent no-op and the
+fight never restarts short of a remount. The hosts' clamps do not catch it either:
+`Math.min(3, Math.max(0.2, NaN))` is also `NaN`, and every host of this engine writes that line
+against a `performance.now()` delta. Rare to reach; total, silent and unrecoverable when reached.
+
+### The duel was bigger on a phone than on a tablet
+
+The 2026-08-28 pass widened the duels' phone slot to `min(72vw, 300px)` and left the tablet on the
+shared `min(34vw, 240px)`. So the duel rendered **281px on a 390px phone and 240px on a tablet** —
+and the tablet band starts at 561px, where 34vw is **190px**, which is exactly the slot that pass
+describes as rendering the pair at about 60px and calls below the size the costumes were authored
+for. The band between the two fixed bands was the one still showing the fault. Tablet is
+`min(52vw, 340px)` now, on the phone rule's own reasoning: no visitor can be shown a duel, so a
+wider hero costs only the person who gets the benefit.
+
+Found because `scripts/duel-shot.mjs` was still hard-coding **190** as "phone" — the pre-2026-08-28
+number. The tool that exists to answer *"do any two read alike on a phone"* was answering it at two
+thirds of the size the client actually sees, which is the direction that quietly invents work. It
+renders 281 / 240 / 340 now, and its contact sheet's phone cell went 190 → 300.
+
+### Two fighters read as one, and `NEVER_MEET` was empty
+
+`TODO.md` item 0 — *"do any two read as the same fighter?"* — answered by rendering the roster at
+the corrected phone size and then rendering the candidate pairs in a real 281px slot. **The nearest
+pair is not the one the TODO predicted.** It guessed executioner/sentinel; the worst is
+**gunslinger (good) / ringmaster (evil)**, which are both a brim, a boxy crown and a long coat, and
+whose `back` hooks are node-for-node the same path differing by 1–7 units and a hem 7 units higher.
+The only real separator is crown height, 10 against 19 units. They are on opposite sides, so they do
+get drawn together.
+
+The client chose `NEVER_MEET` over redrawing, which is what the mechanism was built for and what
+`fighters.ts` says to do. Three pairs are in it: gunslinger/ringmaster, sentinel/executioner (the
+only two cross-side heavies with no cloth at all, both with a single solid rectangle for a head at
+22×30 and 25×28), and executioner/viking (the closest cross-side pair by proportion signature,
+separated only by the shield).
+
+### The guardrail layer: two rules recorded as closed that never reached the page
+
+`CLAUDE.md` deviation 1 records, as of 2026-08-28, that two of the seventeen guardrails resolve at
+render. `resolve()` had **zero callers in `src/`** — only `scripts/check.ts`. `theme.ts` imported
+`effectiveStation` alone and built `has-grain` from raw `config.grain`, so **grain rendered on Peat,
+Oxide, Terracotta Night and Deco Gold**: a 14% `--fg` overlay across every word on the four
+lowest-contrast palettes, reachable by publish, by share code and from stored config. Only the dice
+were gated. The gate's own comment asserted it drove the page and then tested the resolver in
+isolation.
+
+`matched()` had no caller at all, so of the seventeen rules, fifteen that are meant to *warn* did
+not: every rule carries a mandatory, gated `note` that nothing rendered. The panel prints them now,
+with the resolved ones marked as already handled and nothing disabled — a rule that is the client's
+taste stays his to overrule, and the point is only that he is told.
+
+**`effectiveStation` reads the resolved ornament now** (TODO item 6, which asked for a decision:
+*the station follows what is DRAWN, not what is stored*, because a station is where the ornament
+is). Both directions were live. Signed in with a stored sonar and station `roam`, the operator's
+per-load roll draws a duel about every other load, the resolver was handed `"sonar"` and returned
+`roam` — so the duel faded to 12% and re-acquired three times a revolution, which is the pairing
+`GUARDRAILS` refuses and which the client originally reported. And in the other direction, a
+published `duel` + `roam` resolves to sonar for a signed-out visitor while the resolver still saw
+`"duel"` and emitted `hold`, so the operator published Roam and every visitor got Hold.
+
+
 ## 2026-08-29 — the orbits were missing from Orbits, and `--line` has now been the bug three times
 
 Taken on the client's *"your call"* after the telemetry rebuild, on the last effect the measurements

@@ -34,7 +34,15 @@ import { CommandPalette } from "./components/CommandPalette";
  * must not be able to take the panel or the door with it.
  */
 export default function App() {
-  const { config, layout, band, diving, nav, saver } = useConfig();
+  /*
+   * `ornament` and `fx` are the resolved pair, not `config`'s — the duels are
+   * operator-only and the operator's own ornament is rolled per load, so what
+   * is drawn and what is stored routinely disagree. They are read here because
+   * the wrapper's classes are built from them: see `themeClasses`, whose
+   * station follows the ornament that is on the page rather than the one in
+   * storage.
+   */
+  const { config, layout, band, ornament, fx, diving, nav, saver } = useConfig();
 
   const page = PAGES[config.page];
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -124,7 +132,7 @@ export default function App() {
     <OverlayHostContext.Provider value={hostRef}>
     <div
       ref={hostRef}
-      className={`page-${config.page} ${themeClasses(config, layout, band)}`}
+      className={`page-${config.page} ${themeClasses(config, layout, band, { ornament, fx })}`}
       style={themeVars(config, layout, band)}
     >
       <FxCanvas />

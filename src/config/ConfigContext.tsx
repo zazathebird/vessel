@@ -366,7 +366,14 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     // roll() is random and say() dispatches state — neither may live inside a
     // setConfig updater, which StrictMode double-invokes (the same purity rule
     // `go` was already fixed for). The roll happens here; the updater applies it.
-    const result = roll(live.current.config, isOperator);
+    // `live.current.isOperator`, not the closed-over one. This callback's
+    // dependency list is stable, so it is built once — on the first render,
+    // where `isOperator` is still false because the session probe has not
+    // settled. The three sites named in the note on `live` were fixed for
+    // exactly this; the shuffle button and the mode picker were missed, so the
+    // operator's own dice could never hand him a duel from either catalogue.
+    // It failed safe, which is why nothing reported it.
+    const result = roll(live.current.config, live.current.isOperator);
     if (!result) {
       // 60 attempts all blocked — the scope switches have painted into a corner.
       chime("deny");
@@ -410,7 +417,8 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       if (mode === "tod") {
         patch = { mode, pal: paletteIndexForHour(new Date().getHours()) };
       } else if (mode === "visit") {
-        const result = roll({ ...live.current.config, mode }, isOperator);
+        // Same stale closure as `shuffle` above, same fix, same reason.
+        const result = roll({ ...live.current.config, mode }, live.current.isOperator);
         if (result) patch = { mode, ...result };
       }
       setConfig((previous) => ({ ...previous, ...patch }));

@@ -44,10 +44,10 @@ import {
   duelFocus,
   drawDuel,
   BODY_H,
+  BODY_W,
   DUEL_TABLES,
   DUEL_TUNING,
   DEFAULT_RIM,
-  createDuelFrom,
   GRAVITY,
 } from "../src/fx/duel";
 import { duelCamera, ORNAMENT_PX } from "../src/components/DuelOrnament";
@@ -97,7 +97,8 @@ import { DEFAULT_ORNAMENT, ORNAMENTS, PICKABLE_ORNAMENTS } from "../src/data/orn
 import { decodeShareCode } from "../src/config/shareCode";
 import { adaptLayout } from "../src/config/bands";
 import { DEFAULT_STATION, PICKABLE_STATIONS, STATIONS } from "../src/data/stations";
-import { GUARDRAILS, effectiveGrain, isAllowed, matched, resolve } from "../src/data/guardrails";
+import { GUARDRAILS, combinationOf, effectiveGrain, isAllowed, matched, resolve, warnings } from "../src/data/guardrails";
+import { themeClasses } from "../src/theme";
 import { effectiveStation } from "../src/data/stations";
 import { edgeState } from "../src/hooks/useEdgeFade";
 import type { Band } from "../src/config/bands";
@@ -1854,6 +1855,598 @@ if (!FAST) check("duel: a low sweep passes under the jump that answers it", () =
 });
 
 /*
+ * The four knobs, and the one that was not the identity it claimed to be.
+ *
+ * `CLAUDE.md` states the rule the whole tuning surface rests on: *"Every
+ * default is 1 and 1 must stay arithmetic identity."* It is what lets 360,000
+ * stepped frames and 280,000 generated sequences keep passing while a
+ * publishable multiplier sits in front of them. Three of the four held. `rest`
+ * did not, and it had not since the knobs landed — the gate below is the one
+ * that would have caught it on the day.
+ *
+ * The form was `Math.max(end, round(end + max(0, built.length - end) * rest))`,
+ * which reproduces `built.length` only when `built.length >= end`. **Four
+ * modules deliberately roll a length shorter than their last move's own end**
+ * — `disengage` at `ends("circle", away) - r.i(10, 26)` because a trailing
+ * drift may be cut short and nobody sees it, `pushed` at `- r.i(2, 14)`,
+ * `swept-down` and `held-and-struck` sometimes. For those the clamp threw the
+ * roll away: measured over 20,000 builds each, it added back a mean of 18.07
+ * and 8.04 frames — the subtraction *entirely* undone, on 100% of builds.
+ *
+ * The old gate asserted that `buildSequence` preserves the id and sorts the
+ * beats, and never compared its length to the one the module asked for, which
+ * is the only place the fault was visible.
+ */
+if (!FAST) check("duel: rest is a multiplier on slack, and 1 is arithmetic identity", () => {
+  const before = DUEL_TUNING.rest;
+  try {
+    const ends = (mv: string, at: number) => at + DUEL_TABLES.moves[mv].frames;
+    const seeded = (n: number) => {
+      let x = n >>> 0;
+      return () => ((x = (x * 1664525 + 1013904223) >>> 0) / 4294967296);
+    };
+
+    DUEL_TUNING.rest = 1;
+    let drift = 0;
+    let builds = 0;
+    for (const m of DUEL_TABLES.modules) {
+      for (let i = 0; i < 4000; i += 1) {
+        const asked = m.build(makeRoll(seeded(4242 + i))).length;
+        const got = buildSequence(m, seeded(4242 + i)).length;
+        builds += 1;
+        if (got !== asked) drift += 1;
+      }
+    }
+    must(drift === 0, `rest:1 changed ${drift} of ${builds} sequence lengths — it is not the identity`);
+
+    /*
+     * And the two ends still mean what they say. At `rest: 0` a sequence must
+     * still contain its own last move — that floor is why the clamp was there
+     * — while a module that cut *itself* short keeps its cut, which is the half
+     * the floor was trampling. At `rest: 4` nothing may come out shorter than
+     * the module asked for.
+     */
+    let cut = 0;
+    let holdsLast = 0;
+    let extremes = 0;
+    for (const rest of [0, 4]) {
+      DUEL_TUNING.rest = rest;
+      for (const m of DUEL_TABLES.modules) {
+        for (let i = 0; i < 400; i += 1) {
+          const raw = m.build(makeRoll(seeded(99 + i)));
+          const seq = buildSequence(m, seeded(99 + i));
+          const end = seq.beats.reduce((n, b) => Math.max(n, ends(b.move, b.at)), 0);
+          extremes += 1;
+          if (seq.length >= Math.min(raw.length, end)) holdsLast += 1;
+          if (rest === 0 && seq.length < raw.length) cut += 1;
+          must(
+            rest !== 4 || seq.length >= raw.length,
+            `rest:4 shortened ${m.id} from ${raw.length} to ${seq.length}`,
+          );
+        }
+      }
+    }
+    must(
+      holdsLast === extremes,
+      `${extremes - holdsLast} sequences lost their own last move at an extreme rest`,
+    );
+    must(cut > 0, "rest:0 shortened nothing — the knob is not reaching the slack");
+    return `${builds} builds identical at rest:1, ${cut} shortened at rest:0, last move held in all ${extremes}`;
+  } finally {
+    DUEL_TUNING.rest = before;
+  }
+});
+
+/*
+ * The health bar sat at a flat `f.y - 34` and the costumes are not one height.
+ *
+ * Same finding as `duelFocus`'s per-costume `clear()`, arriving at the other
+ * consumer of `headroom` a roster later and never being applied: the bar is 4
+ * units tall, so it occupies `[y-34, y-30]`, and the gladiator's crest (34),
+ * the witch's hat (31), the anubis's ears and the ringmaster's stovepipe (30)
+ * all reach into that band. Rendered at the real 281px phone slot and the 340px
+ * desk slot, the bar is drawn *through* the top hat's crown — where it stops
+ * reading as a readout at all — and across the prophet's halo.
+ *
+ * Asserted against the declared `headroom`, which the costume gate above
+ * separately re-derives by driving the hooks, so this cannot drift away from
+ * the drawing either.
+ */
+check("duel: the health bar clears every costume, and stays in frame", () => {
+  /*
+   * **Driven, not re-derived.** The first version of this gate restated the
+   * renderer's formula from `headroom` and asserted on its own arithmetic —
+   * which is the mistake `DUEL_TABLES`' own comment names: a checker holding
+   * its own copy only ever confirms its own copy. Reverting the renderer to the
+   * flat `f.y - 34` left it green. So it draws instead, through a recording
+   * context, and reads the rectangle the renderer actually emits.
+   *
+   * The bar is 34 × 4 world units and is drawn outside the body transform, so
+   * at `scale: 1` its coordinates arrive here in world units untouched.
+   */
+  const bars: { x: number; y: number }[] = [];
+  const ctx = new Proxy(
+    {},
+    {
+      get(_t, key: string) {
+        if (key === "fillRect") {
+          return (x: number, y: number, w: number, h: number) => {
+            if (w === 34 && h === 4) bars.push({ x, y });
+          };
+        }
+        if (key === "canvas") return { width: 700, height: 700 };
+        return typeof key === "string" && /^[a-z]/.test(key) ? () => undefined : 0;
+      },
+      set: () => true,
+    },
+  ) as unknown as CanvasRenderingContext2D;
+
+  const view = {
+    x: 0,
+    y: 0,
+    scale: 1,
+    ink: "#fff",
+    bladeA: "#00f",
+    bladeB: "#f00",
+    core: "#fff",
+    spark: "#ff0",
+    line: "#333",
+    bars: true,
+    kick: false,
+    dim: 1,
+  };
+
+  const good = (Object.keys(FIGHTERS) as FighterStyle[]).filter((f) => FIGHTERS[f].side === "good");
+  const evil = (Object.keys(FIGHTERS) as FighterStyle[]).filter((f) => FIGHTERS[f].side === "evil");
+  const seen = new Set<string>();
+  let drawn = 0;
+  let tightest = Infinity;
+  let worst = "";
+
+  for (let k = 0; k < Math.max(good.length, evil.length); k += 1) {
+    const st = createDuel(good[k % good.length], evil[k % evil.length]);
+    for (let i = 0; i < 900; i += 1) {
+      advanceDuel(st, 1);
+      bars.length = 0;
+      drawDuel(ctx, st, view);
+      for (const bar of bars) {
+        /*
+         * Attributed exactly, not by proximity. The bar is emitted at
+         * `centre(f) - 17`, and `centre` is `f.x + BODY_W / 2` — so the match
+         * is arithmetic. Nearest-x looks equivalent and is not: the two cross
+         * during a `pass`, and a fighter at the top of a somersault is 80 world
+         * units above the other, so a misattributed bar reports a wild offset
+         * against the wrong costume's headroom.
+         */
+        const key = bar.x + 17 - BODY_W / 2;
+        const f = Math.abs(key - st.a.x) < 1e-6 ? st.a : st.b;
+        must(
+          Math.abs(key - f.x) < 1e-6,
+          `a 34x4 rectangle at x=${bar.x} belongs to neither fighter — is something else this size?`,
+        );
+        const headroom = FIGHTERS[f.style].headroom;
+        const offset = f.y - bar.y;
+        const clear = Math.max(26, headroom + 16);
+        seen.add(f.style);
+        drawn += 1;
+        must(
+          offset - 4 >= headroom,
+          `${f.style}: the bar's underside is ${(offset - 4).toFixed(1)} above the torso against a costume reaching ${headroom}`,
+        );
+        /*
+         * And it must not escape upward. `duelFocus` frames to
+         * `max(26, headroom + 16)`, so a bar above that is cropped by the very
+         * camera meant to contain it — which a flat 34 was, for every costume
+         * under 18 of headroom, on a bar only four units tall.
+         */
+        must(
+          offset <= clear,
+          `${f.style}: the bar's top edge at ${offset.toFixed(1)} is outside the camera's ${clear} of clearance`,
+        );
+        const slack = offset - 4 - headroom;
+        if (slack < tightest) {
+          tightest = slack;
+          worst = f.style;
+        }
+      }
+    }
+  }
+  must(seen.size === 24, `only ${seen.size} of 24 costumes had a bar drawn over them`);
+  return `${drawn.toLocaleString()} bars drawn over 24 costumes, tightest clearance ${tightest.toFixed(0)} units (${worst})`;
+});
+
+/*
+ * A non-finite delta stops the fight for ever, and nothing says so.
+ *
+ * `Math.max(0, NaN)` is `NaN`, so one bad frame count makes `st.acc` `NaN`
+ * permanently: `Math.floor(NaN)` is `NaN`, `NaN > 0` is false, and `acc -= NaN`
+ * keeps it `NaN`. Every later call is a silent no-op. The hosts' own clamps do
+ * not help — `Math.min(3, Math.max(0.2, NaN))` is also `NaN`, and every host of
+ * this engine writes that same line against a `performance.now()` delta.
+ */
+/*
+ * A carry branch may not name a move.
+ *
+ * `Move.carry` names what the *body* does, and CLAUDE.md's rule is that the
+ * renderer branches on it "rather than on move ids" — which it does, and then
+ * one branch reached for a move id anyway to get its timing. Two moves declare
+ * `carry: "crouch"`: `duck` at 26 frames and `sweep_low` at 32, and the crouch
+ * was driven off `MOVES.duck.frames` for both. So `sweep_low` peaked at `mf 13`
+ * when its blade only arrives at the low line at `contact: 16` and holds there
+ * through 25, then stood the body fully upright for frames 26–32 with the blade
+ * still down.
+ *
+ * Gated as the general form rather than as that one divisor, because the fault
+ * is the shape: any carry shared by two moves of different lengths has it, and
+ * the next one added will not be a crouch.
+ */
+check("duel: the renderer's carry branches name no move", () => {
+  const src = readFileSync("src/fx/duel.ts", "utf8");
+  const { moves } = DUEL_TABLES;
+
+  /*
+   * The gate only has teeth where a carry is shared by moves of *different*
+   * lengths — otherwise the wrong divisor is the right number by luck, which is
+   * how this survived. Assert that such a carry still exists, so the check
+   * cannot quietly become vacuous.
+   */
+  const byCarry = new Map<string, Set<number>>();
+  for (const m of Object.values(moves)) {
+    if (!m.carry) continue;
+    const set = byCarry.get(m.carry) ?? new Set<number>();
+    set.add(m.frames);
+    byCarry.set(m.carry, set);
+  }
+  const shared = [...byCarry].filter(([, lens]) => lens.size > 1).map(([c]) => c);
+  must(
+    shared.length > 0,
+    "no carry is shared by moves of different lengths — this gate proves nothing",
+  );
+
+  /*
+   * Scoped to `drawFighter` alone. The carry names also appear in the move
+   * table and all over the module pool, and a window that runs past the end of
+   * the renderer reports every move id in the choreography.
+   */
+  const from = src.indexOf("function drawFighter(");
+  must(from > 0, "drawFighter has been renamed — this gate no longer reads the renderer");
+  /*
+   * Bounded by the next top-level declaration, `export function` included —
+   * looking only for `\nfunction ` runs the window to the end of the file,
+   * because what follows `drawFighter` is `export function drawDuel`.
+   */
+  const ends = [src.indexOf("\nfunction ", from + 1), src.indexOf("\nexport function ", from + 1)]
+    .filter((i) => i > from);
+  must(ends.length > 0, "drawFighter appears to run to the end of the file");
+  const renderer = src
+    .slice(from, Math.min(...ends))
+    // Comments are where the fault is *explained*, so they name the move on
+    // purpose. Strip them, or this gate fails on its own documentation.
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/[^\n]*/g, "");
+
+  const cuts = [...renderer.matchAll(/carry === "(\w+)"/g)];
+  must(cuts.length >= 3, `only ${cuts.length} carry branches in drawFighter — has it moved?`);
+  for (let i = 0; i < cuts.length; i += 1) {
+    const at = cuts[i].index!;
+    const to = i + 1 < cuts.length ? cuts[i + 1].index! : renderer.length;
+    const named = renderer.slice(at, to).match(/MOVES\.[A-Za-z_$][\w$]*/g);
+    must(
+      named === null,
+      `the ${cuts[i][1]} branch names ${named?.join(", ")} — it must read MOVES[f.move], or a longer move of the same carry runs on a shorter one's clock`,
+    );
+  }
+  return `${cuts.length} carry branches in drawFighter, none naming a move; ${shared.join("/")} shared by different lengths`;
+});
+
+/*
+ * The pacing is per fight, and every host hands its own over.
+ *
+ * `DUEL_TUNING` was a module global on the argument that the knobs "cannot vary
+ * within a page anyway". `/admin` renders **three** duels at once — the hero
+ * ornament, the bench, and the settings editor's preview — and the editor's
+ * whole job is previewing a page other than the one it is standing on. So the
+ * premise was false, the last host to run its effect decided the pacing for all
+ * three, and dragging Circling with a page selected changed nothing on the one
+ * canvas built to judge it.
+ */
+check("duel: the pacing rides on the fight, not on a global", () => {
+  const a = createDuel("hooded", "caped");
+  const b = createDuel("hooded", "caped");
+  must(a.tuning === DUEL_TUNING, "a fresh fight does not default to the engine's tuning");
+
+  // Two fights, two tunings, no bleed.
+  a.tuning = { ...DUEL_TUNING, rest: 0 };
+  b.tuning = { ...DUEL_TUNING, rest: 4 };
+  must(DUEL_TUNING.rest === 1, "assigning one fight's tuning wrote through to the global");
+  must(b.tuning.rest === 4 && a.tuning.rest === 0, "two fights are sharing one tuning object");
+
+  /*
+   * And it must actually reach the builder. Driven rather than read: run both
+   * fights the same distance and compare how much sequence time each spends,
+   * which is the thing `rest` moves.
+   */
+  const span = (st: typeof a) => {
+    let total = 0;
+    let seen = 0;
+    for (let i = 0; i < 40_000; i += 1) {
+      advanceDuel(st, 1);
+      if (st.dir.seq && st.dir.seq.length !== seen) {
+        seen = st.dir.seq.length;
+        total += seen;
+      }
+    }
+    return total;
+  };
+  const slow = span(b);
+  const fast = span(a);
+  must(slow > fast, `rest:4 produced ${slow} frames of sequence against rest:0's ${fast}`);
+
+  /*
+   * **Every host has to hand it over, which the loop above cannot see.** The
+   * editor is the one that was broken and the one that matters; the others are
+   * here so a new host cannot quietly inherit the old global.
+   */
+  for (const [file, what] of [
+    ["src/components/DuelOrnament.tsx", "the hero slot"],
+    ["src/components/DuelSettingsEditor.tsx", "the editor's preview"],
+    ["src/components/DuelBench.tsx", "the bench"],
+  ] as const) {
+    must(
+      /\bst\.tuning\s*=/.test(readFileSync(file, "utf8")),
+      `${what} never assigns st.tuning — its fight will run at whatever another host last set`,
+    );
+  }
+  return "3 hosts assign their own; two fights hold different tunings without bleeding";
+});
+
+/*
+ * A frame delta is floored at 0, not at 0.2.
+ *
+ * The clamp exists so refresh rate does not change how fast the world runs —
+ * `FxCanvas`'s own comment says so. The floor reintroduced that at the other
+ * end: 0.2 is a 300Hz frame, so on anything faster the real delta was rounded
+ * *up* and a 500Hz panel ran 1.67x fast. 480 and 540Hz displays ship. Nothing
+ * needs a floor, because `advanceDuel` accumulates fractional frames.
+ */
+check("every frame clamp floors at zero, so a fast display is not a fast world", () => {
+  const hosts = [
+    "src/fx/FxCanvas.tsx",
+    "src/components/DuelOrnament.tsx",
+    "src/components/DuelBench.tsx",
+    "src/components/DuelSettingsEditor.tsx",
+  ];
+  let clamps = 0;
+  for (const file of hosts) {
+    const src = readFileSync(file, "utf8").replace(/\/\/[^\n]*/g, "");
+    const found = [...src.matchAll(/Math\.min\(3,\s*Math\.max\(([0-9.]+)/g)];
+    must(found.length > 0, `${file} no longer clamps its frame delta — has the loop moved?`);
+    for (const m of found) {
+      clamps += 1;
+      must(
+        Number(m[1]) === 0,
+        `${file} floors its frame delta at ${m[1]} — anything above 0 runs fast on a display faster than ${Math.round(60 / Number(m[1]))}Hz`,
+      );
+    }
+  }
+
+  /*
+   * And the accumulator is what makes a floor unnecessary: many small deltas
+   * must advance the world by the same amount as one large one.
+   *
+   * Measured on `idle`, the world clock, which ticks once per fixed step —
+   * **not on the director or on a position**, because `chooseSequence` throws a
+   * real coin, so two fights given identical time still diverge and comparing
+   * them proves nothing. A tolerance of two frames, because accumulating a
+   * tenth six thousand times is not exactly six hundred in binary floating
+   * point; the fault this guards against is not a rounding frame, it is the
+   * 2x-and-up a floor produces.
+   */
+  const many = createDuel("hooded", "caped");
+  const one = createDuel("hooded", "caped");
+  for (let i = 0; i < 6_000; i += 1) advanceDuel(many, 0.1);
+  for (let i = 0; i < 600; i += 1) advanceDuel(one, 1);
+  must(
+    Math.abs(many.idle - one.idle) <= 2,
+    `6,000 tenths advanced the world ${many.idle} frames against 600 whole frames' ${one.idle} — a small delta is being rounded up`,
+  );
+  return `${clamps} clamps, all floored at 0; 6,000 tenths advance ${many.idle} frames against 600's ${one.idle}`;
+});
+
+/*
+ * A pinned pairing is still one alignment against the other.
+ *
+ * `pin` bypasses `rollPairing`, so it is the one route into the engine that
+ * `ROSTER_GOOD` / `ROSTER_EVIL` do not guard — and nothing checked it. A
+ * published `["ronin", "sentinel"]` was accepted and pinned good-versus-good:
+ * both blades come out blue or green, which the alignment carve-out cannot
+ * express, and which `duel: a pooled fight rotates its fighters` asserts never
+ * happens.
+ */
+/*
+ * Two corners of the pacing knobs that nothing reached.
+ *
+ * **`circling: 0` picked deterministically.** It is the low end of a published
+ * slider and it means "never pick a module that contains no blow". When the
+ * anti-stall rail has already filtered the pool and every survivor happens to
+ * be a zero-blow module, every weight is `weight * 0`, the total is 0, and the
+ * old `|| TOTAL_WEIGHT` fallback was the sum over the *whole* module list —
+ * far larger than anything that pool can subtract, so the loop never broke and
+ * the pick was `pool[0]` every time. Not a crash: a silently fixed choice, at
+ * the one setting whose entire purpose is to change which modules come up.
+ *
+ * **A quick beat's end was overstated by its own windup.** `ends` takes the
+ * flag for the same reason `lands` does, and `buildSequence` was not passing
+ * it. No module is affected today — 0 of 700,000 builds has a quick beat as its
+ * last-ending one — so this is driven from a module built here rather than from
+ * the pool, because a gate that can only pass is not a gate.
+ */
+check("duel: the pacing knobs behave at their corners", () => {
+  const before = { ...DUEL_TUNING };
+  try {
+    // 1. A quick last beat ends a windup earlier, and the length follows.
+    const quickTail = (quick: boolean) => ({
+      id: "gate-quick",
+      weight: 1,
+      range: "close" as const,
+      hits: true,
+      build: () => ({
+        beats: [
+          { who: "ATT" as const, move: "strike_overhead" as const, at: 0, outcome: "blocked" as const },
+          { who: "DEF" as const, move: "thrust" as const, at: 40, outcome: "hit" as const, power: 1, quick },
+        ],
+        /*
+         * Deliberately *above* the last move's end, so there is slack — at
+         * `rest: 0` the length then collapses to exactly that end, which is the
+         * only way the quick flag is observable from outside. Rolling short
+         * instead would take the negative-slack path, which returns the
+         * module's own number untouched and never consults `ends` at all.
+         */
+        length: 200,
+      }),
+    });
+    const windup = DUEL_TABLES.moves.thrust.windup ?? 0;
+    must(windup > 0, "thrust has no windup, so this gate cannot tell the two cases apart");
+    const plain = buildSequence(quickTail(false), Math.random, { ...DUEL_TUNING, rest: 0 }).length;
+    const quick = buildSequence(quickTail(true), Math.random, { ...DUEL_TUNING, rest: 0 }).length;
+    must(
+      plain - quick === windup,
+      `a quick last beat should end ${windup} frames earlier; got ${plain} vs ${quick}`,
+    );
+
+    // 2. `circling: 0` must still spread its picks, and must still reach the
+    //    blowless modules it is meant to suppress rather than eliminate.
+    const st = createDuel("hooded", "caped");
+    st.tuning = { ...DUEL_TUNING, circling: 0 };
+    const seen = new Set<string>();
+    for (let i = 0; i < 120_000; i += 1) {
+      advanceDuel(st, 1);
+      if (st.dir.seq) seen.add(st.dir.seq.id);
+    }
+    must(
+      seen.size > 6,
+      `circling:0 only ever reached ${seen.size} module(s) in 120,000 frames — the weighted pick has collapsed`,
+    );
+
+    /*
+     * 3. The zero-total branch, asserted at the source.
+     *
+     * **This corner is not reachable through the director today** and saying so
+     * is the point: it needs `circling: 0` *and* a pool whose every survivor is
+     * blowless, and the anti-stall rail filters to `hits` before that can
+     * happen. So a behavioural test of it can only ever pass, which is not a
+     * test. What is checkable is that the fallback is a *uniform pick* and not
+     * a magic total: the old form fell back to the sum over the whole module
+     * list, which no filtered pool can subtract its way through, so the loop
+     * never broke and the pick was `pool[0]` every single time — deterministic,
+     * silent, at the one setting whose purpose is to change what comes up.
+     */
+    const src = readFileSync("src/fx/duel.ts", "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    must(
+      /const total = pool\.reduce\([^;]*, 0\);/.test(src),
+      "the pick's total has a fallback again — a pool that weighs nothing must be picked from evenly",
+    );
+    must(
+      /if \(total > 0\)/.test(src),
+      "the pick no longer guards on a zero total",
+    );
+    return `quick tail ends ${windup} frames earlier; circling:0 still reaches ${seen.size} modules; the zero-weight pool is picked evenly`;
+  } finally {
+    Object.assign(DUEL_TUNING, before);
+  }
+});
+
+check("a pinned duel is good against evil, or it is refused", () => {
+  const good = (Object.keys(FIGHTERS) as FighterStyle[]).filter((f) => FIGHTERS[f].side === "good");
+  const evil = (Object.keys(FIGHTERS) as FighterStyle[]).filter((f) => FIGHTERS[f].side === "evil");
+  let refused = 0;
+  let kept = 0;
+  for (const a of good) {
+    for (const b of good) {
+      if (validDuelSettings({ pin: [a, b] }).pin !== null) {
+        must(false, `a good-vs-good pin [${a}, ${b}] was accepted`);
+      }
+      refused += 1;
+    }
+  }
+  for (const a of evil) {
+    for (const b of evil) {
+      must(validDuelSettings({ pin: [a, b] }).pin === null, `an evil-vs-evil pin [${a}, ${b}] was accepted`);
+      refused += 1;
+    }
+  }
+  for (const a of good) {
+    for (const b of evil) {
+      const pin = validDuelSettings({ pin: [a, b] }).pin;
+      must(pin !== null, `a legal pin [${a}, ${b}] was refused`);
+      kept += 1;
+      must(validDuelSettings({ pin: [b, a] }).pin !== null, `[${b}, ${a}] was refused in the other order`);
+    }
+  }
+  // Refused whole, never repaired into a legal pairing.
+  must(validDuelSettings({ pin: ["ronin", "nonsense"] }).pin === null, "half a pin was repaired");
+  return `${kept} cross-side pins kept, ${refused} same-side pins refused`;
+});
+
+check("duel: a bad frame count cannot kill the fight", () => {
+  const st = createDuel("hooded", "caped");
+  advanceDuel(st, 120);
+  const before = st.a.x;
+  for (const bad of [NaN, Infinity, -Infinity]) {
+    advanceDuel(st, bad as number);
+    must(Number.isFinite(st.acc), `advanceDuel(${String(bad)}) left the accumulator at ${st.acc}`);
+  }
+  advanceDuel(st, 120);
+  must(st.a.x !== before || st.dir.f > 0, "the fight did not advance after a bad delta");
+  return "NaN, +Inf and -Inf dropped; the fight kept running";
+});
+
+/*
+ * A match reset is a cut, and nothing may survive a cut.
+ *
+ * `clash` is the one with a symptom: a cooldown of up to 30 frames, so a match
+ * ending just after a blade cross opened the next one unable to spark for half
+ * a second, and the first exchange of the new fight was silently the flattest
+ * in it. The rest are bounded and mostly drained by the 200-frame hold, which
+ * is exactly why they were easy to leave out.
+ */
+if (!FAST) check("duel: a match reset carries nothing over from the last fight", () => {
+  const st = createDuelFrom("duel");
+  let resets = 0;
+  let dirty = 0;
+  let seen = st.matches;
+  for (let i = 0; i < 240_000 && resets < 6; i += 1) {
+    advanceDuel(st, 1);
+    if (st.matches !== seen) {
+      seen = st.matches;
+      resets += 1;
+      /*
+       * `dir.pressure` is deliberately not tested for zero here. The reset sets
+       * it to 0 and `runDirector` runs later in the same `step`, choosing the
+       * new match's opening sequence and counting it — so 1 on the frame the
+       * match turns over is the rail working, not the old match leaking. Its
+       * own gate asserts the reset; what this one is about is the transient
+       * *drawing* state, which has no such excuse.
+       */
+      if (
+        st.clash !== 0 ||
+        st.hitStop !== 0 ||
+        st.sparks.length !== 0 ||
+        st.scorch.length !== 0 ||
+        st.shake.x !== 0 ||
+        st.shake.y !== 0 ||
+        st.dir.pressure > 1
+      ) {
+        dirty += 1;
+      }
+    }
+  }
+  must(resets >= 3, `only ${resets} match resets in 240,000 frames — is the fight converging?`);
+  must(dirty === 0, `${dirty} of ${resets} resets carried transient state into the next match`);
+  return `${resets} resets, all clean`;
+});
+
+/*
  * The roster (phase 2 of `docs/DUEL-ABSORB.md`), and why a costume needs a gate
  * at all when it is "only drawing".
  *
@@ -2264,7 +2857,39 @@ check("duel: every costume is stroked, framed and aligned", () => {
    * the reach on a body nobody has and the declaration it is checking against
    * is a number about a fighter that does not exist.
    */
-  const body = (kind: FighterKind, t: number, vx: number, airborne: boolean): CostumeCtx => {
+  /*
+   * **The off hand moves, and pinning it is how a slab shipped for two days.**
+   *
+   * This drove one pose — a guard at `(14, 14)` — across the whole 400 × 5 × 2
+   * sweep, so every mark that hangs off a *hand* was measured in exactly one
+   * position: the viking's shield, the ronin's and hollow's sleeves, the
+   * gladiator's arm bands, the nosferatu's fingers. `drawFighter` moves that
+   * hand to three hard-coded places for `force`, `kicking` and `thrown`, and
+   * swings it through an arc the rest of the time — and at `force` the viking's
+   * shield covered **60% of the torso box at 60% of body alpha** against a rule
+   * of "over 45% cover ⇒ at most 35% alpha", while the arc took it to 36.9
+   * units sideways against the 34 the camera frames. Both invisible here.
+   *
+   * The three literals are the renderer's own, and the arc is sampled at the
+   * extremes the guard reaches. A costume gate that cannot move the arms is a
+   * costume gate for a statue.
+   */
+  const OFF_HANDS = [
+    { x: 14, y: 14 }, // the guard this gate used to be the whole of
+    { x: -4, y: 21 }, // `force`
+    { x: -22, y: 12 }, // `kicking`
+    { x: -8, y: 28 }, // `thrown`
+    { x: 12, y: 4 }, // the holding arc, near end
+    { x: 27, y: 10 }, // the holding arc, far end
+  ] as const;
+
+  const body = (
+    kind: FighterKind,
+    t: number,
+    vx: number,
+    airborne: boolean,
+    offHand: { x: number; y: number } = { x: 14, y: 14 },
+  ): CostumeCtx => {
     const breath = Math.sin(t * 0.045) * 1.1;
     const headY = -8 + breath * 0.6;
     return {
@@ -2276,9 +2901,7 @@ check("duel: every costume is stroked, framed and aligned", () => {
       hipY: 42 + (airborne ? 0 : kind.stance.settle),
       hipX: 7,
       feetY: 70,
-      lean: vx * 1.4,
       vx,
-      speed: Math.min(1, Math.abs(vx) / 2.2),
       airborne,
       t,
       phase: (t * 0.37) % (Math.PI * 2),
@@ -2294,8 +2917,10 @@ check("duel: every costume is stroked, framed and aligned", () => {
       alpha: 0.85,
       hand: { x: 22, y: 6 },
       elbow: { x: 16, y: 14 },
-      offHand: { x: 14, y: 14 },
-      offElbow: { x: -2, y: 26 },
+      offHand,
+      // The off elbow trails its hand rather than staying put, or a mark drawn
+      // between the two is measured on a limb that does not bend.
+      offElbow: { x: (offHand.x - 2) / 2 - 2, y: (offHand.y + 26) / 2 },
       lw: (n: number) => n,
     };
   };
@@ -2318,10 +2943,12 @@ check("duel: every costume is stroked, framed and aligned", () => {
     for (let t = 0; t < 400; t += 1) {
       for (const vx of [-3.5, -1.2, 0, 1.2, 3.5]) {
         for (const airborne of [false, true]) {
-          const c = body(kind, t, vx, airborne);
-          kind.back?.(rec.ctx as unknown as CanvasRenderingContext2D, c);
-          kind.head?.(rec.ctx as unknown as CanvasRenderingContext2D, c);
-          kind.overlay?.(rec.ctx as unknown as CanvasRenderingContext2D, c);
+          for (const offHand of OFF_HANDS) {
+            const c = body(kind, t, vx, airborne, offHand);
+            kind.back?.(rec.ctx as unknown as CanvasRenderingContext2D, c);
+            kind.head?.(rec.ctx as unknown as CanvasRenderingContext2D, c);
+            kind.overlay?.(rec.ctx as unknown as CanvasRenderingContext2D, c);
+          }
         }
       }
     }
@@ -2835,17 +3462,68 @@ check("the duel settings publish, refuse rubbish, and default to a no-op", () =>
   //    silently on publish — the operator's own browser shows a setting that
   //    never reached anybody else, which is the hardest kind of bug to be told
   //    about because the person reporting it cannot see it.
-  const workerKeys = readFileSync("worker/site-config.ts", "utf8");
+  /*
+   * **Compared as whole lists, not looked up key by key** (2026-08-31). Asking
+   * only about `duel` and `duelPages` is a gate for the field that was being
+   * added the day it was written; the invariant is that the two arrays *agree*,
+   * and every field added since has been ungated by exactly the same reasoning.
+   * A key in one list and not the other is silently dropped on publish — the
+   * operator's browser shows a setting that reached nobody, which is the
+   * hardest kind of bug to be told about because the person reporting it cannot
+   * see it.
+   */
+  const workerSrc = readFileSync("worker/site-config.ts", "utf8");
+  // Anchored on the declaration, not on the first `[` after the name — the
+  // loose form ran past it into a later array and reported station labels as
+  // missing published keys.
+  const workerBlock = workerSrc.match(/const PUBLISHED_KEYS = \[([\s\S]*?)\n\]/);
+  must(workerBlock !== null, "the Worker's PUBLISHED_KEYS array could not be read");
+  const workerSet = new Set(
+    // Comments first — the list documents itself line by line, and one of those
+    // comments quotes "Roam" and "Hold" to explain why `station` matters.
+    [
+      ...workerBlock![1]
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/\/\/[^\n]*/g, "")
+        .matchAll(/"([A-Za-z0-9_]+)"/g),
+    ].map((m) => m[1]),
+  );
+  const clientSet = new Set(PUBLISHED_KEYS as readonly string[]);
+  must(workerSet.size > 10, `only ${workerSet.size} keys parsed out of the Worker's list`);
+  const onlyClient = [...clientSet].filter((k) => !workerSet.has(k));
+  const onlyWorker = [...workerSet].filter((k) => !clientSet.has(k));
+  must(
+    onlyClient.length === 0,
+    `the Worker's PUBLISHED_KEYS is missing ${onlyClient.join(", ")} — those values are dropped on publish`,
+  );
+  must(
+    onlyWorker.length === 0,
+    `the client's PUBLISHED_KEYS is missing ${onlyWorker.join(", ")} — those values are dropped on load`,
+  );
   for (const key of ["duel", "duelPages"]) {
-    must(
-      (PUBLISHED_KEYS as readonly string[]).includes(key),
-      `${key} is missing from the client's PUBLISHED_KEYS`,
-    );
-    must(
-      new RegExp(`^\\s*"${key}",`, "m").test(workerKeys),
-      `${key} is missing from the Worker's PUBLISHED_KEYS`,
-    );
+    must(clientSet.has(key), `${key} is missing from PUBLISHED_KEYS`);
   }
+
+  /*
+   * The size ceiling, which `duelPages` is the reason for: it is the first
+   * published key that grows without anybody editing `worker/site-config.ts`.
+   * **It must refuse, not truncate** — a truncated payload injects a half
+   * object that `loadConfig` then correctly refuses field by field, leaving the
+   * operator watching settings silently not apply.
+   */
+  must(
+    /MAX_CONFIG_BYTES\s*=\s*8_?000/.test(workerSrc),
+    "MAX_CONFIG_BYTES is no longer 8,000 — duelPages is why it was raised",
+  );
+  const ceiling = workerSrc.slice(workerSrc.indexOf("MAX_CONFIG_BYTES"));
+  must(
+    /> MAX_CONFIG_BYTES/.test(ceiling) && /throw|BadRequest/.test(ceiling),
+    "the config size ceiling no longer throws — a truncating publish fails silently",
+  );
+  must(
+    !/slice\(0, MAX_CONFIG_BYTES|substring\(0, MAX_CONFIG_BYTES/.test(workerSrc),
+    "the config is being truncated to the ceiling instead of refused",
+  );
 
   // 3. It is published to every visitor, so it is validated field by field and
   //    refuses rather than repairs. A half-accepted duel setting is one the
@@ -2928,6 +3606,188 @@ check("the duel settings publish, refuse rubbish, and default to a no-op", () =>
   }
   return `${rubbish.length} malformed payloads refused, override stays partial, restriction held over ${matches} matches`;
 });
+
+/*
+ * An override is partial *all the way down*, and Size actually reaches the page.
+ *
+ * Both of these are the same class of fault and both were live: a control that
+ * appears to work while the thing it names does not move.
+ *
+ * **`tuning` was one key holding four.** `DuelPageSettings` was
+ * `Partial<DuelSettings>`, whose `tuning` is the whole four-knob object, so the
+ * editor could not express "this page disagrees about Patience" and wrote all
+ * four. Reproduced in a signed-in browser: Patience on `/work`, then the site's
+ * Circling 1.00 → 2.50, and `/work` read 1.00 for ever — while the editor's own
+ * summary said *"work sets 1 of its own: tuning"*. That is precisely the
+ * "sixteen of them would silently go stale" failure the sparse map exists to
+ * prevent, one level down. The old gate only ever exercised a `{ bars: false }`
+ * override, which is a scalar and cannot show it.
+ *
+ * **`validDuelPages` repaired where it promised to refuse.** It validated the
+ * whole object and kept every key *present in the input*, taking its value from
+ * the validated result — so a refused field survived as an override pinned to
+ * the global default. `{ work: { zoom: 99 } }` became `{ work: { zoom: 1 } }`,
+ * and a site at 1.4 then rendered `/work` at 1.0 with nothing reporting a
+ * refusal. Worse for a list: an emptying allow-list is refused, and the refusal
+ * became an explicit `good: null` cancelling the site's roster restriction on
+ * that page.
+ */
+check("a page override is partial to the knob, and a refused field is dropped", () => {
+  const site: DuelSettings = {
+    ...DEFAULT_DUEL_SETTINGS,
+    zoom: 1.4,
+    good: ["ronin", "sentinel"],
+    tuning: { ...DEFAULT_DUEL_TUNING, circling: 2.5, rest: 1.5 },
+  };
+
+  // 1. One knob, and only that knob, stops tracking the site.
+  const onePages = validDuelPages({ work: { tuning: { patience: 2.5 } } });
+  must(
+    JSON.stringify(onePages.work?.tuning) === JSON.stringify({ patience: 2.5 }),
+    `a one-knob override came back as ${JSON.stringify(onePages.work?.tuning)}`,
+  );
+  const onWork = resolveDuel(site, onePages, "work");
+  must(onWork.tuning.patience === 2.5, "the page's own knob did not apply");
+  must(
+    onWork.tuning.circling === 2.5 && onWork.tuning.rest === 1.5,
+    `the other knobs froze at ${JSON.stringify(onWork.tuning)} instead of tracking the site`,
+  );
+
+  // 2. Moving the site moves every knob the page has not spoken about.
+  const moved = { ...site, tuning: { ...site.tuning, circling: 0.5 } };
+  must(
+    resolveDuel(moved, onePages, "work").tuning.circling === 0.5,
+    "a page that never mentioned circling did not follow the site",
+  );
+
+  // 3. A refused field is dropped, so the page keeps following the site.
+  for (const [label, raw] of [
+    ["an out-of-band number", { work: { zoom: 99 } }],
+    ["an emptying allow-list", { work: { good: [] } }],
+    ["a wrong-side allow-list", { work: { good: ["ringmaster"] } }],
+    ["a half-valid allow-list", { work: { good: ["ronin", "nonsense"] } }],
+    ["an out-of-band knob", { work: { tuning: { rest: -1 } } }],
+    ["a non-numeric knob", { work: { tuning: { impact: "fast" } } }],
+  ] as const) {
+    const pages = validDuelPages(raw);
+    must(
+      pages.work === undefined,
+      `${label} survived as ${JSON.stringify(pages.work)} instead of being dropped`,
+    );
+    must(
+      JSON.stringify(resolveDuel(site, pages, "work")) === JSON.stringify(site),
+      `${label} changed what /work resolves to`,
+    );
+  }
+
+  // 4. And a good value beside a refused one still lands, alone.
+  const mixed = validDuelPages({ work: { zoom: 1.2, rim: 99 } });
+  must(
+    JSON.stringify(mixed.work) === JSON.stringify({ zoom: 1.2 }),
+    `a mixed override came back as ${JSON.stringify(mixed.work)}`,
+  );
+  return "one knob stays one knob, 6 refused fields dropped, the good half of a mixed override kept";
+});
+
+/*
+ * Size reaches the fight, and cannot break the camera's one promise.
+ *
+ * `zoom` was validated, banded, published — and multiplied in exactly one place
+ * in the codebase: `DuelSettingsEditor`'s preview canvas, which only the
+ * operator sees. `DuelOrnament` drew at `shot.scale`. So the slider worked
+ * where it was dragged, published to every visitor, and moved nothing. Copying
+ * that multiplication into the ornament would have been the other half of the
+ * bug — applied after the fit, a Size above 1 voids the guarantee the camera
+ * gate above exists to prove — so it goes *through* the camera instead.
+ */
+check("the duel's Size reaches the camera and never cuts a fighter off", () => {
+  const st = createDuelFrom("duel");
+  advanceDuel(st, 400);
+  const at = (z: number) => duelCamera(st, ORNAMENT_PX, ORNAMENT_PX, null, 1, z);
+
+  // 1 is arithmetic identity with the camera as it shipped.
+  must(
+    at(1).scale === duelCamera(st, ORNAMENT_PX, ORNAMENT_PX, null, 1).scale,
+    "Size 1 is not the same picture as no Size at all",
+  );
+  // Monotonic, and it actually moves.
+  must(at(0.6).scale < at(1).scale, "Size 0.6 did not pull back");
+  must(at(1.6).scale >= at(1).scale, "Size 1.6 went the wrong way");
+
+  /*
+   * The promise, over a real fight rather than one frame: whatever Size says,
+   * the whole focus box stays inside the slot. This is the same assertion the
+   * camera gate makes, driven at both ends of the band.
+   */
+  let frames = 0;
+  let grew = 0;
+  const clipped: Record<string, number> = {};
+  for (const z of [0.6, 1, 1.6]) {
+    /*
+     * Measured exactly as the camera gate above measures it — in world units,
+     * with the kick counted against the frame and half a unit of tolerance,
+     * because this is about a body leaving the picture and not about the last
+     * decimal of an eased scale. A stricter test here would report a fault the
+     * camera has always had rather than one Size introduced.
+     */
+    const fight = createDuel("hooded", "caped");
+    let cam: DuelCam | null = null;
+    clipped[z] = 0;
+    for (let i = 0; i < 20_000; i += 1) {
+      advanceDuel(fight, 1);
+      const shot = duelCamera(fight, ORNAMENT_PX, ORNAMENT_PX, cam, 1, z);
+      const plain = duelCamera(fight, ORNAMENT_PX, ORNAMENT_PX, cam, 1);
+      cam = shot.cam;
+      const f = duelFocus(fight);
+      frames += 1;
+      const viewLo = -shot.x / shot.scale;
+      const viewHi = (ORNAMENT_PX - shot.x) / shot.scale;
+      const lo = f.cx - f.width / 2 + fight.shake.x;
+      const hi = f.cx + f.width / 2 + fight.shake.x;
+      if (Math.max(viewLo - lo, hi - viewHi, 0) > 0.5) clipped[z] += 1;
+      if (z === 1.6 && shot.scale > plain.scale) grew += 1;
+    }
+  }
+  const bad = Object.entries(clipped).filter(([, n]) => n > 0);
+  must(
+    bad.length === 0,
+    `Size put a fighter outside the slot: ${bad.map(([z, n]) => `${n} frames at ${z}`).join(", ")}`,
+  );
+  must(grew > 0, "Size 1.6 never made the pair larger on any frame — the knob is inert");
+
+  /*
+   * **And every home of the fight has to hand it over**, which the loop above
+   * cannot see: it drives `duelCamera` directly, so it stays green if a caller
+   * stops passing the setting — which is precisely the bug being fixed. The
+   * only honest test of "does the control reach the page" is to read the page.
+   */
+  for (const [file, what] of [
+    ["src/components/DuelOrnament.tsx", "the hero slot"],
+    ["src/components/DuelSettingsEditor.tsx", "the editor's own preview"],
+    ["src/components/DuelBench.tsx", "the bench"],
+  ] as const) {
+    const src = readFileSync(file, "utf8");
+    /*
+     * Anchored on the assignment, because `DuelOrnament.tsx` both *declares*
+     * `duelCamera` and calls it — and the declaration's own signature carries
+     * `zoom = 1`, so a bare `duelCamera\(` matches the definition, finds the
+     * word and passes while every call site has dropped the argument. Verified
+     * by deleting the argument from the ornament and watching this stay green.
+     */
+    const call = src.match(/=\s*duelCamera\([^;]*?\)/s);
+    must(call !== null, `${what} no longer calls duelCamera at all`);
+    must(
+      /zoom/.test(call![0]),
+      `${what} calls duelCamera without a zoom — Size will publish and move nothing there`,
+    );
+    must(
+      !/shot\.scale\s*\*/.test(src),
+      `${what} multiplies shot.scale itself; Size goes through the camera or it voids the fit`,
+    );
+  }
+  return `${frames} frames at Size 0.6/1/1.6, none clipped, 1.6 larger on ${grew}; 3 hosts pass it through`;
+});
+
 
 check("catalogues match the documented counts", () => {
   must(LAYOUTS.length === 14, `${LAYOUTS.length} layouts, expected 14`);
@@ -3177,6 +4037,155 @@ check("every guardrail says what it refuses", () => {
   must(matched({ ...bad, fx: "vessels", grain: false }).length === 0, "matched() reports a rule on a clean combination");
 
   return `${GUARDRAILS.length} guardrails, all noted, matched() agrees with isAllowed`;
+});
+
+/*
+ * ---- The three gates that drive the WRAPPER, not the predicate --------------
+ *
+ * The two gates above are the ones that were green on 2026-08-29 while the page
+ * was shipping both faults they exist to prevent. They tested `effectiveGrain`
+ * and `effectiveStation` in isolation and asserted, in a comment, that
+ * `themeClasses` builds its classes from them — and it did not: `resolve()` had
+ * no caller in `src/` at all, and the station was being resolved against the
+ * stored ornament rather than the drawn one. A resolver nothing calls passes
+ * every test written about the resolver.
+ *
+ * So these three drive the real function with a real `Config` and read the
+ * class string the wrapper actually gets. "Does the thing it claims to do
+ * actually happen" is the whole remit of this file, and for two days the answer
+ * for these two rules was no.
+ */
+
+const CLASSES = (config: Config, ornament: Config["ornament"], layout: LayoutId = "cinematic") =>
+  themeClasses(config, layout, "desk", { ornament, fx: config.fx }).split(" ");
+
+check("the wrapper's classes drop grain on a low-contrast palette", () => {
+  let dropped = 0;
+  for (let pal = 0; pal < PALETTES.length; pal += 1) {
+    const low = LOW_CONTRAST.includes(PALETTES[pal].id);
+    const classes = CLASSES({ ...DEFAULT_CONFIG, pal, grain: true, calm: false }, DEFAULT_ORNAMENT);
+    must(
+      classes.includes("has-grain") !== low,
+      low
+        ? `${PALETTES[pal].id} renders has-grain — a 14% --fg overlay over every word on a low-contrast palette`
+        : `${PALETTES[pal].id} lost has-grain, which the guardrails permit and the operator asked for`,
+    );
+    if (low) dropped += 1;
+  }
+  must(dropped === LOW_CONTRAST.length, `only ${dropped} of ${LOW_CONTRAST.length} low-contrast palettes dropped grain`);
+
+  // Calm's gate is a different question and must survive untouched: calm hides
+  // the canvas and drops the texture whatever the palette is.
+  must(
+    !CLASSES({ ...DEFAULT_CONFIG, pal: 0, grain: true, calm: true }, DEFAULT_ORNAMENT).includes("has-grain"),
+    "calm no longer suppresses grain",
+  );
+  // And a resolver that refuses everything would pass every assertion above.
+  must(
+    CLASSES({ ...DEFAULT_CONFIG, pal: 0, grain: false, calm: false }, DEFAULT_ORNAMENT).includes("has-grain") === false &&
+      CLASSES({ ...DEFAULT_CONFIG, pal: 0, grain: true, calm: false }, DEFAULT_ORNAMENT).includes("has-grain"),
+    "the wrapper is no longer reading config.grain at all",
+  );
+
+  return `${PALETTES.length} palettes driven through themeClasses, ${dropped} drop grain, calm still strips it`;
+});
+
+check("the wrapper's station follows the ornament that is DRAWN", () => {
+  /*
+   * Both directions, because the bug was both directions at once and they look
+   * nothing alike — see the comment on the station class in `src/theme.ts`.
+   */
+  const stationOf = (classes: string[]) => classes.find((c) => c.startsWith("station-"));
+  const roaming = { ...DEFAULT_CONFIG, station: "roam" as const, calm: false };
+
+  // The premise: a signed-out visitor is never drawn a duel. If this ever stops
+  // being true the two assertions below stop meaning what they say.
+  const seen = visibleOrnament("duel", false);
+  must(seen !== "duel" && seen !== "duelholy", `a signed-out visitor was drawn ${seen}`);
+
+  // (a) Published duel + roam. The ornament resolves to the default for a
+  // visitor, so there is no fight to lose and roam must survive — the operator
+  // published Roam and every visitor was getting Hold.
+  must(
+    stationOf(CLASSES({ ...roaming, ornament: "duel" }, seen)) === "station-roam",
+    "a visitor's resolved sonar is still being stationed as though it were the stored duel",
+  );
+
+  // (b) Stored sonar + roam, drawn as a duel by the operator's per-load roll —
+  // roughly every other signed-in load. The guardrail must bite on what is on
+  // the page, not on what is in storage.
+  must(
+    stationOf(CLASSES({ ...roaming, ornament: "sonar" }, "duel")) === "station-hold",
+    "a rolled duel is roaming — it fades to 12% and re-acquires three times a revolution",
+  );
+
+  // (c) The operator drawing exactly what he stored, which is the only case the
+  // old code got right, and the case a regression would keep passing.
+  must(stationOf(CLASSES({ ...roaming, ornament: "duel" }, "duel")) === "station-hold", "a stored, drawn duel is roaming");
+
+  // (d) Nothing else yields: roam on an ambient instrument is the setting.
+  must(stationOf(CLASSES({ ...roaming, ornament: "sonar" }, "sonar")) === "station-roam", "roam no longer reaches the page at all");
+
+  return "duel drawn → hold, duel stored but sonar drawn → roam, sonar drawn → roam";
+});
+
+check("the panel prints every guardrail the operator trips", () => {
+  /*
+   * `matched()` was exported, documented as the thing the panel reads, and
+   * imported nowhere in `src/`. Fifteen of the seventeen rules exist only to be
+   * shown to the operator, so fifteen of the seventeen did nothing whatsoever.
+   * This drives the list the panel renders and then checks that the surface
+   * renders it, because either half alone is what let the last one through.
+   */
+  const tripping = combinationOf({
+    pal: PALETTES.findIndex((p) => p.id === LOW_CONTRAST[0]),
+    layout: "magazine",
+    fx: "rain", // Magazine may not use it — taste, so it warns and publishes
+    ornament: "duel",
+    station: "roam", // resolved at render
+    type: 0,
+    grain: true, // resolved at render, on a low-contrast palette
+  });
+
+  const list = warnings(tripping);
+  must(list.length === matched(tripping).length, "warnings() and matched() disagree about the same combination");
+  must(list.length >= 3, `warnings() found ${list.length} rules on a combination that trips at least three`);
+  must(
+    list.some((w) => w.resolved) && list.some((w) => !w.resolved),
+    "warnings() no longer tells a rule the page fixes from one that publishes as it looks",
+  );
+  must(list.every((w) => w.rule.note.trim().length > 12), "a warning carries no note to print");
+  must(warnings(resolve(tripping)).every((w) => !w.resolved), "a resolved combination still reports a resolvable rule");
+
+  // The clean case has to be clean, or the panel cries wolf on every setup.
+  must(warnings(combinationOf({ ...DEFAULT_CONFIG, ornament: "sonar", station: "hold", grain: false })).length === 0, "warnings() reports a rule on a default setup");
+
+  // The notes are React keys in the panel, so two rules sharing one would
+  // silently render as a single warning.
+  must(new Set(GUARDRAILS.map((r) => r.note)).size === GUARDRAILS.length, "two guardrails share a note — they collide as keys");
+
+  /*
+   * And the surface. A pure function nothing calls is exactly the failure being
+   * fixed here, so the gate has to look at the panel as well as at the list.
+   */
+  const panel = readFileSync("src/components/SiteConfigPanel.tsx", "utf8");
+  must(/import \{[^}]*\bwarnings\b[^}]*\} from "\.\.\/data\/guardrails"/.test(panel), "the panel no longer reads the guardrails");
+  must(/combinationOf\(/.test(panel), "the panel builds a Combination by hand — combinationOf is the one constructor");
+  /*
+   * The note as *content*, on its own line — not merely mentioned. `rule.note`
+   * is also this list's React key, so a looser test for the string passes on a
+   * panel that renders "a guardrail was tripped" seventeen times. Verified by
+   * making exactly that edit.
+   */
+  must(/\n\s*\{rule\.note\}\n/.test(panel), "the panel no longer prints the notes themselves");
+  must(/tripped\.map\(/.test(panel), "the panel is not enumerating the list — one warning is not the list");
+  must(/aria-live="polite"/.test(panel), "the guardrail list is not announced");
+  // Warnings, never refusals: taste is the client's to overrule.
+  must(!/disabled=\{[^}]*tripped/.test(panel), "the panel is gating a control on a guardrail — these warn, they do not refuse");
+  // `--faint` is not a text colour (2.78–4.09:1 on all 25 palettes).
+  must(!/var\(--faint\)/.test(panel), "the panel is painting text with --faint");
+
+  return `${list.length} warnings on a tripping setup, ${list.filter((w) => w.resolved).length} resolved at render, the panel prints them`;
 });
 
 check("stations: wire order, decode, and the roam guardrail bites", () => {
@@ -3584,7 +4593,7 @@ check("the served head carries exactly one description", () => {
    * catches the form all three took: the fault established *before* anything
    * starts, which is the boundary the $150 sits on.
    */
-  const RETIRED = [/free diagnos/i, /free diag\b/i, /pay nothing/i, /no fix,? no fee/i, /guarantee/i];
+  const RETIRED = [/free diagnos/i, /free diag\b/i, /pay nothing/i, /no fix,? no fee/i, /guarantee/i, /on the bench/i];
   const IMPLIED_FREE_DIAGNOSIS =
     /(what(?:'s| is) wrong|the (?:likely )?fault)[^.]{0,80}\b(before (?:anything|any work|I) (?:starts|start|begin|touch)|before it is taken apart)/i;
   const copy = JSON.stringify(PAGES);

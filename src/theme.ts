@@ -2,8 +2,9 @@ import type { CSSProperties } from "react";
 
 import { LOW_CONTRAST, PALETTES } from "./data/palettes";
 import { TYPESETS } from "./data/catalog";
-import { effectiveStation } from "./data/stations";
-import type { LayoutId } from "./data/catalog";
+import { combinationOf, resolve } from "./data/guardrails";
+import type { FxId, LayoutId } from "./data/catalog";
+import type { OrnamentId } from "./data/ornaments";
 import { BAND_TOKENS } from "./config/bands";
 import type { Band } from "./config/bands";
 import type { Config } from "./config/types";
@@ -209,14 +210,69 @@ export function themeVars(config: Config, layout: LayoutId, band: Band): CSSProp
 /**
  * Class names on the wrapper, so CSS can branch on layout and calm without
  * every component threading props down.
+ *
+ * **`drawn` is the ornament and the effect actually on the page, not the ones
+ * `config` stores**, and that fourth argument is the entire point of this
+ * signature (2026-08-30). `ConfigContext` already resolves both — the duels
+ * are operator-only, and a signed-in operator gets an ornament rolled fresh
+ * per load — and it exposes them beside the adapted layout precisely so that
+ * what renders can be built from what renders. `layout` is the adapted one for
+ * the same reason. Reading `config` for any of the three answers a question
+ * about what is *kept*, which is not the question the wrapper is asking.
  */
-export function themeClasses(config: Config, layout: LayoutId, band: Band): string {
+export function themeClasses(
+  config: Config,
+  layout: LayoutId,
+  band: Band,
+  drawn: { ornament: OrnamentId; fx: FxId },
+): string {
+  /*
+   * **The guardrails, resolved on the way to the page** (2026-08-30).
+   *
+   * `resolve()` was written on 2026-08-28 to be "called on the way to the
+   * wrapper's classes" — those are its own words in `guardrails.ts` — and then
+   * had **no caller anywhere in `src/`**: only `scripts/check.ts`. So the two
+   * rules that are meant to be enforced at render were enforced nowhere except
+   * the dice, exactly the state the 2026-08-28 entry claims to have ended.
+   * Building the classes from `combinationOf` + `resolve` is what makes that
+   * claim true, and it means a third rule promoted to resolving at render lands
+   * here without this function needing to know about it.
+   *
+   * Stored config is left untouched, as ever: this is presentation, and the
+   * operator's own choice re-emerges the moment the pairing stops being refused.
+   */
+  const rendered = resolve(
+    combinationOf({
+      pal: config.pal,
+      layout,
+      fx: drawn.fx,
+      ornament: drawn.ornament,
+      station: config.station,
+      type: config.type,
+      grain: config.grain,
+    }),
+  );
+
   return [
     "vessel",
     `layout-${layout}`,
     `band-${band}`,
     config.calm ? "is-calm" : "is-alive",
-    config.grain && !config.calm ? "has-grain" : null,
+    /*
+     * **The resolved grain, not `config.grain`.** This line read the stored
+     * value for two days after the resolver existed to correct it, so grain
+     * rendered on Peat, Oxide, Terracotta Night and Deco Gold by publish, by
+     * share code (bit 1) and from stored config — a 14% `--fg` overlay across
+     * every word on the page, on the four palettes with the least room for it.
+     * The randomiser was the only one of the four routes the rule ever reached,
+     * which is the same shape of miss the station rule made, and the gate that
+     * was meant to catch it asserted `effectiveGrain` in isolation and never
+     * drove this function.
+     *
+     * Calm's gate stays exactly where it was and is a different question: calm
+     * hides the canvas and drops the texture outright, whatever the palette.
+     */
+    rendered.grain && !config.calm ? "has-grain" : null,
     config.breathe && !config.calm ? "has-breathe" : null,
     config.cursor && !config.calm ? "has-cursor" : null,
     // Gated here, not in CSS: entrances.css can then assume calm is absent,
@@ -239,13 +295,30 @@ export function themeClasses(config: Config, layout: LayoutId, band: Band): stri
      * being "the absence of the others".
      */
     /*
-     * **The resolved station, not the stored one.** `effectiveStation` refuses
-     * roam on a duel, which the guardrail table has forbidden since 2026-08-18
-     * and which nothing enforced on any path except the dice — see the comment
-     * on the resolver. The stored value survives untouched, so switching the
-     * ornament away from a duel brings roam back on its own.
+     * **The resolved station, resolved against the ornament that is DRAWN**
+     * (2026-08-30 — the decision TODO 6 asked for, made here because a station
+     * is *where the ornament is* and can therefore only be resolved against the
+     * ornament actually on the page). `effectiveStation` refuses roam on a duel,
+     * which the guardrail table has forbidden since 2026-08-18. The stored value
+     * survives untouched, so switching the ornament away from a duel brings roam
+     * back on its own.
+     *
+     * Handed `config.ornament` this was wrong in **both** directions at once,
+     * and the two failures look nothing alike:
+     *
+     *  - **The guardrail was defeated for the operator.** Signed in with a
+     *    stored `sonar` and `roam`, the per-load roll draws a duel about every
+     *    other load; the resolver was handed `sonar`, found nothing to refuse,
+     *    and the fight faded to 12% and was re-acquired at a new bearing three
+     *    times a revolution — the exact pairing the table forbids, and the exact
+     *    thing the client reported.
+     *  - **The published station was silently downgraded for every visitor.**
+     *    Published `duel` + `roam` resolves the ornament to `sonar` for anybody
+     *    signed out, but the resolver still saw `duel` and emitted
+     *    `station-hold`: the operator publishes Roam, and every visitor gets
+     *    Hold on an ornament that has nothing to lose by roaming.
      */
-    `station-${effectiveStation(config.station, config.ornament)}`,
+    `station-${rendered.station}`,
   ]
     .filter(Boolean)
     .join(" ");

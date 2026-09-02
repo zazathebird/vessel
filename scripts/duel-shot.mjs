@@ -141,8 +141,15 @@ function label(text, x, y) {
 }
 
 /* One fighter per cell, in the guard it stands in, at the size the ornament
- * camera actually renders (~109px figure on desk, ~61px on a phone). The pair
- * is drawn clipped to the cell and offset so the subject lands in the middle. */
+ * camera actually renders (~109px figure on desk, ~95px on a phone). The pair
+ * is drawn clipped to the cell and offset so the subject lands in the middle.
+ *
+ * The phone cell was 190 and gave a 61px figure, which was true of the ~172px
+ * slot the duels used to get. They were widened to min(72vw,300) on
+ * 2026-08-28 and nothing here was told, so the tool that exists to answer
+ * "do any two read alike on a phone" was answering it at two thirds of the
+ * size the client actually sees — a harder question than the real one, which
+ * is the direction that quietly invents work. */
 function sheet(px, tag, frame) {
   const q = new URLSearchParams(location.search);
   const only = (q.get('only') || '').split(',').filter(Boolean);
@@ -365,7 +372,7 @@ function hitStrip(kind, pool, before, n, tag) {
     await moveStrip('blade_throw', 'throw-deflected', ['hooded', 'caped'], 12, 5, 'throw-deflected');
   }
   if (mode === 'sheet' || mode === 'all') {
-    await sheet(190, 'phone', 0);
+    await sheet(300, 'phone', 0);
     await sheet(340, 'desk', 0);
     await sheet(340, 'desk-moving', 300);
   }
@@ -384,9 +391,17 @@ function hitStrip(kind, pool, before, n, tag) {
     await strip(['prophet', 'horned'], 600, 12, 7, 'holy');
   }
   if (mode === 'scale' || mode === 'all') {
-    const st = D.createDuel('maned', 'cowled');
+    /* The three numbers are the real slot widths, and they are NOT the same
+     * rule for every band. The valve-size token is min(44vw,190) /
+     * min(34vw,240) /
+     * min(38vw,340), and the duels alone override the phone to min(72vw,300)
+     * — 281 on a 390px phone. So the phone slot is *wider* than the tablet's,
+     * which is why both are here: 281 is what the client sees on a phone and
+     * 240 is what he sees on a tablet, and one of those was never widened. */
+    const pair = (new URLSearchParams(location.search).get('only') || '').split(',').filter(Boolean);
+    const st = D.createDuel(pair[0] || 'maned', pair[1] || 'cowled');
     run(st, 420);
-    for (const [px, tag] of [[190, 'phone'], [340, 'desk']]) {
+    for (const [px, tag] of [[281, 'phone'], [240, 'tablet'], [340, 'desk']]) {
       bg(px, px);
       const fx = D.duelFocus(st);
       const scale = Math.min(px / Math.max(150, fx.width + 92), 2.9);

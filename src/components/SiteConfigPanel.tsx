@@ -9,6 +9,7 @@ import { saveCalmPreference, saveSoundPreference } from "../config/persistence";
 import { decodeShareCode, encodeShareCode } from "../config/shareCode";
 import { LAYOUTS, MODES, PICKABLE_FX, SCOPES, TYPESETS } from "../data/catalog";
 import type { ScopeId } from "../data/catalog";
+import { combinationOf, warnings } from "../data/guardrails";
 import { PICKABLE_ORNAMENTS } from "../data/ornaments";
 import { PICKABLE_STATIONS } from "../data/stations";
 import { PALETTES } from "../data/palettes";
@@ -85,6 +86,32 @@ export function SiteConfigPanel() {
   if (!panelOpen) return null;
 
   const code = encodeShareCode(config);
+
+  /*
+   * Every guardrail this setup trips, in the table's order (2026-08-30).
+   *
+   * **Built from the STORED config, deliberately, and not from what is drawn.**
+   * The wrapper resolves two of the seventeen on the way to the page, so a
+   * combination built from the rendered ornament and the rendered grain can
+   * never match those two — the operator would be shown fifteen rules and
+   * silently kept from the two that are actively changing his site under him.
+   * The stored values are also exactly what `publish` sends, which is the
+   * question this section is standing next to.
+   *
+   * `config.layout`, not the adapted one, for the same reason: a phone
+   * collapsing Mosaic to Stack is not a thing he is publishing.
+   */
+  const tripped = warnings(
+    combinationOf({
+      pal: config.pal,
+      layout: config.layout,
+      fx: config.fx,
+      ornament: config.ornament,
+      station: config.station,
+      type: config.type,
+      grain: config.grain,
+    }),
+  );
 
   const toggleScope = (id: ScopeId) =>
     update({ scope: { ...config.scope, [id]: !config.scope[id] } });
@@ -475,6 +502,65 @@ export function SiteConfigPanel() {
             apply
           </button>
         </form>
+      </section>
+
+      {/*
+       * The guardrails, in words, at the moment they are tripped (2026-08-30).
+       *
+       * Fifteen of the seventeen rules are the client's taste written down, and
+       * taste is his to overrule — so this **warns and never refuses**: no chip
+       * is disabled, no publish is blocked, nothing above this is greyed out.
+       * The one thing he may not do is overrule a rule without being told, and
+       * for two days that was the only thing on offer, because `matched()` had
+       * no caller at all.
+       *
+       * It sits directly above Publish, which is the same ordering rule
+       * `/setup` and the downloads page follow: the warning goes above the act
+       * it is about, because somebody working through a page is following steps
+       * rather than reading it.
+       *
+       * **Rendered whether or not anything is tripped, and that is what makes
+       * it announce.** A live region has to be in the document before its
+       * content changes — the same finding `PasswordField` records for
+       * `role="alert"` firing on insertion. Flipping a chip then inserts a
+       * sentence into a region a screen reader is already watching; mounting
+       * the whole panel does not interrupt, which is right, since a drawer that
+       * reads three warnings at you on open is a drawer nobody opens.
+       */}
+      <section className="v-panel-section" aria-live="polite">
+        <h2 className="v-panel-label">Guardrails — {tripped.length}</h2>
+        {tripped.length === 0 ? (
+          <p className="v-panel-note">Nothing tripped. This setup breaks none of the site's rules.</p>
+        ) : (
+          /*
+            The first line says what the section is *for*, because a red
+            triangle above a publish button reads as "blocked" and this one is
+            not: fifteen of the seventeen rules are the client's taste, and
+            taste is his to overrule. Saying so once, at the top, is cheaper
+            than a reassurance repeated on every row.
+          */
+          <p className="v-panel-note">
+            Warnings, not refusals. Publishing works exactly as it does with none of these.
+          </p>
+        )}
+        {/* An empty list renders nothing, so this needs no guard of its own. */}
+        {tripped.map(({ rule, resolved }) => (
+          <p key={rule.note} className="v-panel-note">
+            {/*
+              `--a3` is the danger token and is exempt from calm's collapse, so
+              a warning stays a warning in the mode every reduced-motion visitor
+              lands in. The marker is decoration, so it is hidden rather than
+              read out as the name of a triangle. A resolved rule is a notice
+              rather than a warning and gets `--muted`, which is a text colour
+              on all 25 palettes — `--faint` (2.78–4.09:1) is not.
+            */}
+            <span aria-hidden="true" style={{ color: resolved ? "var(--muted)" : "var(--a3)" }}>
+              {resolved ? "✓ " : "▲ "}
+            </span>
+            {rule.note}
+            {resolved ? " The page already renders this the allowed way." : ""}
+          </p>
+        ))}
       </section>
 
       {/*

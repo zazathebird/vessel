@@ -64,7 +64,15 @@ export const WORLD_W = 700;
 export const WORLD_H = 350;
 /** Top of a grounded body; the feet line is FLOOR_Y + BODY_H. */
 const FLOOR_Y = 200;
-const BODY_W = 30;
+/**
+ * Shoulder to shoulder, and exported for the same reason `BODY_H` is: the
+ * health-bar gate has to attribute a recorded rectangle to the fighter it was
+ * drawn over, the renderer emits it at `centre(f) - 17`, and `centre` is
+ * `f.x + BODY_W / 2`. A checker with its own copy of that 30 would be
+ * confirming its own copy — and it matters here, because nearest-x attribution
+ * looks equivalent and silently misreads every frame the two fighters cross.
+ */
+export const BODY_W = 30;
 /**
  * Head-to-heel, and exported for one reason: `scripts/check.ts` measures whether
  * a low sweep genuinely passes under a jumping fighter's *feet*, and a checker
@@ -270,6 +278,25 @@ export interface DuelState {
    * be told about.
    */
   allow: RosterAllow | null;
+  /**
+   * The pacing knobs this fight runs at.
+   *
+   * **This used to be read straight off the `DUEL_TUNING` global, and the note
+   * on `applyDuelTuning` argued that was right because the knobs "cannot vary
+   * within a page anyway". That premise was false** (2026-08-31). `/admin`
+   * renders three duels at once — the hero ornament, the bench, and the
+   * settings editor's preview — and the editor's whole job is previewing a
+   * *different page's* settings than the one it is standing on. So dragging
+   * Circling with a page selected wrote into `duelPages[target]` and the
+   * preview went on running at `/admin`'s tuning: the surface built for judging
+   * the pacing was the one surface that could not show it.
+   *
+   * On the state, each host owns its own and there is nothing to race over.
+   * **It defaults to the `DUEL_TUNING` object itself, by reference**, so a
+   * fight nobody configures still tracks the global — which is what
+   * `duel-shot --tune` and the gates assign into, and why they need no change.
+   */
+  tuning: DuelTuning;
   a: Fighter;
   b: Fighter;
   sparks: Spark[];
@@ -308,8 +335,6 @@ export interface DuelState {
   over: number;
   /** Fractional-frame accumulator behind the fixed 60Hz timestep. */
   acc: number;
-  /** Previous effect-clock reading, kept for the background effect's delta. */
-  prev: number;
   /** World clock in frames — drives the idle bob and blade flicker. */
   idle: number;
 }
@@ -354,6 +379,10 @@ export function createDuel(left: FighterStyle, right: FighterStyle): DuelState {
   return {
     pool: null,
     allow: null,
+    // The global itself, by reference — a fight nobody configures keeps
+    // tracking whatever `applyDuelTuning` was last given, which is what the
+    // bench, `duel-shot --tune` and every gate rely on.
+    tuning: DUEL_TUNING,
     a: makeFighter(START_A, 1, left),
     b: makeFighter(START_B, -1, right),
     sparks: [],
@@ -365,7 +394,6 @@ export function createDuel(left: FighterStyle, right: FighterStyle): DuelState {
     matches: 0,
     over: 0,
     acc: 0,
-    prev: 0,
     idle: 0,
   };
 }
@@ -2726,7 +2754,17 @@ const MODULES: Module[] = [
           { who: "ATT", move: "strike_overhead", at: 0, outcome: "blocked" },
           { who: "DEF", move: "parry_high", at: 16 },
           { who: "DEF", move: "thrust", at: 28, outcome: "hit", power: r.n(0.9, 1.0), quick: true },
-          { who: "ATT", move: "stagger", at: 32 },
+          // Derived, not typed — the one reaction beat in the pool that was a
+          // literal. It read 32, which is what `lands("thrust", 28, true)`
+          // returns today, so it was correct and fixed against three numbers it
+          // did not name: `thrust.contact`, `thrust.windup` and this beat's own
+          // `at`. Only half the desync was catchable — a derived value moving
+          // *later* than 32 puts the reaction before its cause and the gate
+          // fires, while one moving *earlier* lands the stagger late and
+          // nothing notices. The module's fixedness is the point and survives:
+          // this is still one number, it is just now the same number the move
+          // table says.
+          { who: "ATT", move: "stagger", at: lands("thrust", 28, true) },
           { who: "DEF", move: "guard", at: guard },
           { who: "ATT", move: "backstep", at: back },
         ],
@@ -3064,8 +3102,6 @@ const MODULES: Module[] = [
   },
 ];
 
-const TOTAL_WEIGHT = MODULES.reduce((n, m) => n + m.weight, 0);
-
 /**
  * Build one module into a concrete sequence.
  *
@@ -3102,10 +3138,19 @@ const TOTAL_WEIGHT = MODULES.reduce((n, m) => n + m.weight, 0);
  * **REVERSED 2026-08-28, at the client's request** — *"i want complete options
  * for the duels for everyone n djust for mysef."* These four are `Config.duel`
  * now, published to every visitor and settable per page, and this object is the
- * live value they are pushed into by `applyDuelTuning`. It stays a module
+ * live value they are pushed into by `applyDuelTuning`. It stayed a module
  * global because `buildSequence` below is handed a module and an rng and no
  * state, so carrying it would mean a parameter through the director, the module
  * pool and the builder to express something that cannot vary within a page.
+ *
+ * **That last clause was wrong, and this is now the *default* rather than the
+ * only copy** (2026-08-31). `/admin` renders three duels at once, and the
+ * settings editor's whole job is previewing a page other than the one it is
+ * standing on — so the tuning demonstrably varies within a page, and dragging
+ * a knob with a page selected moved nothing in the preview built to judge it.
+ * `DuelState.tuning` carries it per fight; this object is what a state that
+ * says nothing points at, which keeps `applyDuelTuning`, `duel-shot --tune`
+ * and every gate working exactly as before.
  *
  * Share codes are still excluded, and that half is unchanged and now settled
  * (2026-08-28): a code is a picture of the look and these are a document. See
@@ -3120,7 +3165,14 @@ const TOTAL_WEIGHT = MODULES.reduce((n, m) => n + m.weight, 0);
  * **30.6% of module picks contain no blow at all**. Those are the numbers the
  * knobs exist to move.
  */
-export const DUEL_TUNING = {
+export interface DuelTuning {
+  rest: number;
+  circling: number;
+  impact: number;
+  patience: number;
+}
+
+export const DUEL_TUNING: DuelTuning = {
   /**
    * Multiplier on the trailing rest each module rolls for itself — the slack
    * between the last move *ending* and the sequence ending. Below 1 the
@@ -3169,7 +3221,11 @@ function knob(v: number, lo: number, hi: number): number {
   return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : 1;
 }
 
-export function buildSequence(module: Module, rng: () => number = Math.random): Sequence {
+export function buildSequence(
+  module: Module,
+  rng: () => number = Math.random,
+  tuning: DuelTuning = DUEL_TUNING,
+): Sequence {
   const built = module.build(makeRoll(rng));
   const beats = built.beats.slice().sort((x, y) => x.at - y.at);
   /*
@@ -3179,12 +3235,43 @@ export function buildSequence(module: Module, rng: () => number = Math.random): 
    * Scaling the whole length would cut into the closing move itself, which is
    * the exact bug the `step-in` comment records shipping once already.
    *
-   * `Math.max` with `end` is the floor and it is load-bearing: at `rest: 0` a
-   * sequence must still contain its own last move.
+   * The floor is load-bearing: at `rest: 0` a sequence must still contain its
+   * own last move.
+   *
+   * **But the floor may only apply where there is slack to scale, and getting
+   * that wrong cost `rest: 1` its arithmetic identity for eleven days.** The
+   * form here was `Math.max(end, …)` over a slack clamped at zero, which
+   * reproduces `built.length` only when `built.length >= end` — and **four
+   * modules deliberately roll a length *shorter* than their last move's end.**
+   * `disengage` rolls `ends("circle", away) - r.i(10, 26)` because its trailing
+   * circle is a drift and nobody can see a drift end early; `pushed` does the
+   * same with `- r.i(2, 14)`. Measured over 20,000 builds each, the clamp added
+   * back a mean of 18.07 and 8.04 frames — the subtraction was *entirely*
+   * undone, on 100% of builds, since the knobs landed. `swept-down` lost 23.9%
+   * of its rolls and `held-and-struck` 1.3%; across the whole pool 7.8% of picks
+   * got a length the module never asked for.
+   *
+   * So the slack is signed. Positive slack is rest and scales; **negative slack
+   * is a deliberate cut and is not rest at all**, so it is returned untouched at
+   * every knob setting. At `rest: 1` both branches are `built.length` exactly,
+   * which is the identity the 360,000-frame and 280,000-sequence gates rest on;
+   * at `rest: 0` a module with slack collapses to `end` and a module that cut
+   * itself short still keeps its cut.
    */
-  const end = beats.reduce((n, b) => Math.max(n, ends(b.move, b.at)), 0);
-  const slack = Math.max(0, built.length - end);
-  const length = Math.max(end, Math.round(end + slack * knob(DUEL_TUNING.rest, 0, 4)));
+  /*
+   * `b.quick` is part of the beat and has to travel with it. `ends` takes it
+   * for the same reason `lands` does — a quick entry starts the move at the
+   * frame its blade stops loading, so it *finishes* a `windup` earlier too —
+   * and dropping it here overstated a quick beat's end by that windup. No
+   * module is affected today (measured: 0 of 700,000 builds has a quick beat as
+   * its last-ending one), but this number is what the rest floor is built on,
+   * so a module whose closing beat is a riposte would be silently over-extended
+   * by the one thing `quick` exists to remove.
+   */
+  const end = beats.reduce((n, b) => Math.max(n, ends(b.move, b.at, b.quick)), 0);
+  const slack = built.length - end;
+  const length =
+    slack > 0 ? Math.round(end + slack * knob(tuning.rest, 0, 4)) : built.length;
   return { id: module.id, length, beats };
 }
 
@@ -3299,7 +3386,7 @@ function chooseSequence(st: DuelState): void {
    * as it ends, and it is why matches converge at all; just do not raise the
    * threshold expecting to touch an edge case, because it is the ending.
    */
-  const hard = st.dir.pressure > 22 * knob(DUEL_TUNING.patience, 0.2, 3);
+  const hard = st.dir.pressure > 22 * knob(st.tuning.patience, 0.2, 3);
   if (hard) pool = pool.filter((m) => m.hits);
   if (pool.length === 0) pool = MODULES.filter((m) => m.range === "any");
   if (pool.length === 0) pool = MODULES;
@@ -3310,19 +3397,35 @@ function chooseSequence(st: DuelState): void {
    * weight. At the default of 1 this is `m.weight` exactly, so the shipped
    * distribution — and every gate that measures it — is untouched.
    */
-  const circling = knob(DUEL_TUNING.circling, 0, 3);
+  const circling = knob(st.tuning.circling, 0, 3);
   const weigh = (m: Module) => (m.hits ? m.weight : m.weight * circling);
-  const total = pool.reduce((n, m) => n + weigh(m), 0) || TOTAL_WEIGHT;
-  let roll = Math.random() * total;
-  let pick = pool[0];
-  for (const m of pool) {
-    roll -= weigh(m);
-    if (roll <= 0) {
-      pick = m;
-      break;
+  /*
+   * **A pool that weighs nothing is picked from evenly, not fallen through.**
+   *
+   * `circling: 0` is a legal setting — it is the low end of a published slider,
+   * and it means "never pick a module that contains no blow". When the rail has
+   * already filtered the pool and every survivor happens to be a zero-blow
+   * module, every weight is `weight * 0` and the total is 0. The old fallback
+   * was `|| TOTAL_WEIGHT`, the sum over the *whole* module list, which is far
+   * larger than anything this pool can subtract — so `roll` never reached zero,
+   * the loop never broke, and `pick` stayed `pool[0]` on every pass. Not a
+   * crash: a silently deterministic pick, at the one setting whose whole
+   * purpose is to change which modules come up.
+   */
+  const total = pool.reduce((n, m) => n + weigh(m), 0);
+  let pick = pool[Math.floor(Math.random() * pool.length)];
+  if (total > 0) {
+    let roll = Math.random() * total;
+    pick = pool[0];
+    for (const m of pool) {
+      roll -= weigh(m);
+      if (roll <= 0) {
+        pick = m;
+        break;
+      }
     }
   }
-  st.dir.seq = buildSequence(pick);
+  st.dir.seq = buildSequence(pick, Math.random, st.tuning);
   st.dir.f = 0;
   st.dir.next = 0;
   /*
@@ -3369,6 +3472,30 @@ function runDirector(st: DuelState): void {
     return;
   }
   const seq = st.dir.seq;
+  /*
+   * **The clock advances before the dispatch, so beat frames 0 and 1 fire
+   * together.** `st.dir.f` starts at 0 and is incremented here, so the first
+   * pass through this loop is at `f === 1` and a beat written `at: 0` and one
+   * written `at: 1` both satisfy `at <= f` on the same frame — a one-frame
+   * offset a module author could reasonably write and silently would not get.
+   *
+   * Not a live fault: no builder in the pool emits a beat at `at: 1` (verified
+   * over 700,000 generated sequences), and `at: 0` is the conventional opener.
+   * It is written down rather than "fixed" because moving the increment below
+   * the loop would shift **every** beat in the pool by one frame against the
+   * move table, and every reaction frame in it is derived from that table —
+   * which is 280,000 sequences and 360,000 stepped frames of gated arithmetic
+   * re-based to buy an offset nothing currently uses. **If a module ever needs
+   * one, give it `at: 2`.**
+   *
+   * The related mapping, also worth having written down once: a beat scheduled
+   * at `at` resolves its contact at director frame `lands(move, at) - 1`,
+   * because `setMove` sets `mf = 0` and `stepFighter` increments it to 1 within
+   * the same step. So a reaction lands one frame after its cause, which is
+   * correct and is what the check suite asserts — but the suite asserts it in
+   * *beat* space, where the offset does not exist, so this is the only place
+   * the real mapping is recorded.
+   */
   st.dir.f += 1;
   while (st.dir.next < seq.beats.length && seq.beats[st.dir.next].at <= st.dir.f) {
     const b = seq.beats[st.dir.next];
@@ -3409,7 +3536,7 @@ function resolveContact(st: DuelState, f: Fighter, foe: Fighter, m: Move): void 
     // Hit-stop: both fighters' move clocks freeze for two frames while the
     // sparks keep flying. Two frames is nothing to describe and a great deal to
     // watch — it is the cheapest weight cue available.
-    st.hitStop = Math.round(2 * knob(DUEL_TUNING.impact, 0, 6));
+    st.hitStop = Math.round(2 * knob(st.tuning.impact, 0, 6));
   } else if (f.outcome === "blocked") {
     // The true crossing of the two blades — `bladeGap` returns the closest
     // approach of the two segments and the midpoint between them.
@@ -3512,7 +3639,7 @@ function resolveContact(st: DuelState, f: Fighter, foe: Fighter, m: Move): void 
      * an empty hand would.
      */
     if (thrownBlade(f) === null) f.bounce = 5;
-    st.hitStop = Math.round(3 * knob(DUEL_TUNING.impact, 0, 6));
+    st.hitStop = Math.round(3 * knob(st.tuning.impact, 0, 6));
   } else if (f.outcome === "miss" && tip.ty > FLOOR_Y + BODY_H - 6) {
     // A swing that finishes in the floor throws sparks off it — and along it,
     // the way the blade was travelling, rather than straight up out of it.
@@ -3723,7 +3850,7 @@ function stepLock(st: DuelState): void {
   // The break, on the last frame the move exists: the press fails all at once.
   if (mf >= total - 1) {
     spawnSparks(st, near.x, near.y, 22, 0, -1.4);
-    st.hitStop = Math.round(2 * knob(DUEL_TUNING.impact, 0, 6));
+    st.hitStop = Math.round(2 * knob(st.tuning.impact, 0, 6));
   }
 }
 
@@ -3783,6 +3910,26 @@ function step(st: DuelState): void {
        */
       st.dir.pressure = 0;
       st.dir.chain = 0;
+      /*
+       * **The transient state clears with them, because a match reset is a cut
+       * and nothing may survive a cut** — the same reasoning the camera's own
+       * note gives for teleporting rather than easing.
+       *
+       * `clash` is the one with a visible symptom: it is a cooldown of up to 30
+       * frames, so a match that ended just after a blade-on-blade cross opened
+       * the next one unable to spark for up to half a second, and the first
+       * exchange of the new fight was silently the flattest one in it. The rest
+       * are bounded and the 200-frame hold drains most of them in practice,
+       * which is exactly why they were easy to leave out: they are all
+       * cosmetic, all short-lived, and all of them are the previous fight
+       * showing through the cut.
+       */
+      st.clash = 0;
+      st.hitStop = 0;
+      st.shake.x = 0;
+      st.shake.y = 0;
+      st.sparks.length = 0;
+      st.scorch.length = 0;
     }
   }
 
@@ -4127,9 +4274,20 @@ function stepSparks(st: DuelState): void {
  * Advance the fight by `frames` 60Hz frames (fractions accumulate). Callers
  * clamp their own deltas; this caps steps per call so a stall can never
  * teleport a match.
+ *
+ * **A non-finite `frames` is dropped, not clamped, and that guard is the whole
+ * of the fix for a fault that has no way back.** `Math.max(0, NaN)` is `NaN`,
+ * so one bad delta makes `st.acc` `NaN` for ever: `Math.floor(NaN)` is `NaN`,
+ * `NaN > 0` is false, and `st.acc -= NaN` keeps it `NaN`. Every later call is a
+ * silent no-op — the fight stops mid-stride and never restarts short of a
+ * remount, with nothing logged. The callers' own clamps do not catch it either,
+ * because `Math.min(3, Math.max(0.2, NaN))` is also `NaN`; every host of this
+ * engine writes that same line against a `performance.now()` delta. It takes a
+ * non-finite delta to reach, which is rare — and the cost of being wrong about
+ * how rare is a duel that is permanently dead on somebody's machine.
  */
 export function advanceDuel(st: DuelState, frames: number): void {
-  st.acc = Math.min(4, st.acc + Math.max(0, frames));
+  st.acc = Math.min(4, st.acc + (Number.isFinite(frames) ? Math.max(0, frames) : 0));
   let steps = Math.floor(st.acc);
   st.acc -= steps;
   while (steps > 0) {
@@ -4499,8 +4657,19 @@ function drawFighter(
      * pose made of new parts is a smudge while a change of proportion is
      * legible. It rises and falls on a sine so the deepest point sits in the
      * middle of the move, which is where `strike_level` holds its blade.
+     *
+     * **The divisor is this move's own frame count, not `duck`'s.** Two moves
+     * declare `carry: "crouch"` — `duck` at 26 frames and `sweep_low` at 32 —
+     * and hard-coding `MOVES.duck.frames` drove the longer one off the shorter
+     * one's clock: `sweep_low` peaked at `mf 13` when its blade only reaches the
+     * low line at `contact: 16` and holds there through `mf 25`, then stood the
+     * body fully upright for frames 26–32 while the blade was still down. The
+     * branch reads `carry` correctly and then named a move id, which is the one
+     * place in the renderer that did; every other carry branch already derives
+     * from `MOVES[f.move]`. A low sweep is a whole-body drop and it has to stay
+     * dropped for as long as the blade is down there.
      */
-    const p = Math.min(1, f.mf / MOVES.duck.frames);
+    const p = Math.min(1, f.mf / MOVES[f.move].frames);
     const crouch = Math.sin(Math.PI * p) * 0.34;
     ctx.translate(0, cxFeet);
     ctx.scale(1 + crouch * 0.2, 1 - crouch);
@@ -4511,9 +4680,11 @@ function drawFighter(
   const localVx = f.vx * f.facing;
   /** Lean into travel, knocked back by a fresh hit. The feet stay planted. */
   const lean = Math.max(-5, Math.min(5, localVx * 1.4)) - f.flash * 4;
+  // 0–1 travel speed. Drives the stride swing below; it left `CostumeCtx`
+  // (2026-09-02) because no costume read it there, not because nothing does.
+  const speed = Math.min(1, Math.abs(localVx) / 2.2);
   const breath = Math.sin(st.idle * 0.045 + f.phase) * 1.1;
   const airborne = f.y < FLOOR_Y - 0.5;
-  const speed = Math.min(1, Math.abs(localVx) / 2.2);
   // -8, not -15: at -15 there were a measured 9.02 world units of empty canvas
   // between the top of the spine stroke and the bottom of the head disc — over
   // half a head, reading as a head floating clear of the shoulders, and none of
@@ -4678,9 +4849,7 @@ function drawFighter(
     hipY,
     hipX: HIP_X,
     feetY: BODY_H,
-    lean,
     vx: Math.max(-3.5, Math.min(3.5, localVx)),
-    speed,
     airborne,
     t: st.idle,
     phase: f.phase,
@@ -5132,14 +5301,45 @@ function drawFighter(
 
   // The health bar is drawn outside the body transform: inside it, the mirror
   // would fill it from the wrong end and the landing squash would bounce it.
+  /*
+   * **The bar clears the costume, because the costumes are not the same
+   * height** — the same finding `duelFocus`'s `clear()` records, arriving at
+   * the other consumer of `headroom` a roster later.
+   *
+   * This was a flat `f.y - 34`, which is a head plus air and was right when the
+   * marks all sat on a skull. It is 4 units tall, so it occupies the band
+   * `[y-34, y-30]`, and **four costumes reach into that band**: the gladiator's
+   * crest at 34, the witch's hat at 31, and the anubis's ears and the
+   * ringmaster's stovepipe at 30. Rendered at the real 281px phone slot and the
+   * 340px desk slot, the red bar is drawn *through* the top hat's crown — where
+   * it stops reading as a readout at all and becomes a band on the hat — and
+   * across the prophet's halo, which is 29 and clears by one unit on paper but
+   * not once the ring has a stroke width.
+   *
+   * `headroom + 8` puts the bar's underside 4 units above the tallest mark.
+   *
+   * **And the ceiling is the camera's, which turned out to be the older half of
+   * the same bug.** `duelFocus` frames to `max(26, headroom + 16)` above the
+   * origin, so a flat 34 was *already* outside the frame for every costume
+   * below 18 of headroom — the hermit and the executioner at 17, the
+   * apprentice, the golem and the viking at 16 — by one or two units, on a bar
+   * only four units tall. Nobody had looked, because the camera gate asserts
+   * about bodies and `duelFocus` has never been told the readout exists. Taking
+   * the minimum keeps the bar inside the box the camera is actually fitting,
+   * and it moves those six down by at most two units, which is under a pixel at
+   * every slot the site draws.
+   */
   if (v.bars && !dead) {
     const barFade = v.barAlpha ?? 1;
+    const headroom = FIGHTERS[f.style].headroom;
+    const barY =
+      f.y - Math.min(Math.max(34, headroom + 8), Math.max(26, headroom + 16));
     ctx.globalAlpha = 0.3 * v.dim * barFade;
     ctx.fillStyle = v.ink;
-    ctx.fillRect(cx - 17, f.y - 34, 34, 4);
+    ctx.fillRect(cx - 17, barY, 34, 4);
     ctx.globalAlpha = 0.9 * v.dim * barFade;
     ctx.fillStyle = blade;
-    ctx.fillRect(cx - 17, f.y - 34, 34 * (f.health / MAX_HEALTH), 4);
+    ctx.fillRect(cx - 17, barY, 34 * (f.health / MAX_HEALTH), 4);
   }
 
   ctx.globalAlpha = 1;
@@ -5236,17 +5436,23 @@ export function duelFocus(st: DuelState): { cx: number; width: number; top: numb
       const at = (th: number) =>
         (Math.abs(Math.cos(th)) * (BODY_W / 2) + Math.abs(Math.sin(th)) * reach) * shrink;
       /*
-       * **The widest the turn is still going to get, not the widest it is** —
-       * the same anticipation `top` uses for a jumper's apex, and for the same
-       * reason. Reporting the instantaneous width is correct and still clips,
-       * because pulling back takes frames: measured over 300,000, the honest
-       * instantaneous span left 2.38% of turning frames with a body over the
-       * edge. A turn is monotonic and its end is known when it starts, so the
-       * whole pull-back can happen while the figure is still upright.
+       * **The width this instant, deliberately — and this comment used to
+       * describe the rejected alternative as though it were what shipped.**
        *
-       * The maximum of `w·|cos| + h·|sin|` over the remainder is `h` if the
-       * sweep still crosses a quarter turn, and otherwise sits at one of its
-       * two ends.
+       * The alternative is the obvious one, and it is the same anticipation
+       * `top` uses for a jumper's apex: report the widest the turn is still
+       * going to get, since a turn is monotonic and its end is known when it
+       * starts, so the whole pull-back could happen while the figure is still
+       * upright. It was built and measured, and `DuelOrnament.tsx` (see the
+       * note above `duelCamera`'s clamp) records the result: **433 → 429** of
+       * the frames it was meant to rescue. It buys four frames and costs a
+       * camera that flinches backwards the moment anybody starts to turn.
+       *
+       * So the clamp downstream is the thing that changed, and this line is
+       * not. The old text is preserved here rather than deleted because the
+       * next reader will have the same idea, and the answer is that it has been
+       * tried: `w·|cos θ| + h·|sin θ|` evaluated at the current angle is what
+       * the renderer is actually drawing, and the camera is told the truth.
        */
       half = at(p * TAU * spin);
     }

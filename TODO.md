@@ -6,6 +6,138 @@ what is left to do.
 
 ---
 
+## 2026-08-31 — the rest of the defect list
+
+`npm run check` is **66 green**, up from 62. Yesterday's pass fixed what was reported and
+reproduced; this one clears everything the three audits found and nobody had acted on.
+`docs/DECISIONS.md` has the account. **Still not deployed.**
+
+Ten more, and the two that matter: **the four pacing sliders did not move the editor's own preview
+when a page was selected** (the surface item 2 below is meant to be done on), and **a display faster
+than 300Hz ran the whole site's motion fast** — an undocumented `Math.max(0.2, …)` floor that
+reintroduced the exact fault its own neighbouring comment says the clamp prevents. Also: a pinned
+pairing was never checked for alignment, so a published pin could put good against good;
+`circling: 0` picked deterministically; `buildSequence` dropped `b.quick`; the shared default config
+object was mutable; a dead `DuelState.prev`; and the published-key gate asked about two keys by name
+instead of comparing the two lists.
+
+**Two more gates passed while the fix was reverted** and had to be rewritten — that is four across
+the two days. The tell in both cases was a gate measuring the general case and calling it the corner.
+`CLAUDE.md`'s checks section now says this out loud: if a new gate does not fail when you break the
+fix, it is not a gate yet.
+
+### Next, in order
+
+1. **Get the client's numbers off the four sliders.** The only item that needs him, and the sliders
+   are worth more than they were two days ago: **Size works**, `rest` is a real multiplier rather
+   than one that was being clamped away, and **the preview now responds when a page is selected**,
+   which it did not.
+2. **Deploy.** Nothing from 2026-08-30 or 2026-08-31 is deployed. `npm run deploy` runs the full gate
+   as `predeploy`. **A machine that has never installed will need the three native binaries** — see
+   the environment note in the 2026-08-30 section; they are `node_modules` and are not committed.
+3. ~~**Look at the panel's guardrail notice.**~~ **Done 2026-09-02** — driven signed in (fresh
+   local operator), judged tripped (Peat+grain resolved, Ledger+Plasma warning), untripped, and in
+   calm. The structure, ordering, copy and count all hold; the one change made is the resolved
+   marker, `·` → `✓` — a middot opening a paragraph read as stray punctuation, not as "already
+   handled". The ▲ is quiet on Peat because Peat is one of the three known-weak danger palettes
+   (4.25:1), which is the recorded position, not a defect. `effectiveGrain` confirmed in the live
+   DOM: grain chip on + Peat = no `has-grain` on the wrapper.
+4. ~~`c.lean` and `c.speed` on `CostumeCtx`~~ **Deleted 2026-09-02**, the three-file edit as
+   documented. One finding: `speed` was only dead *as a field* — the local in `drawFighter` drives
+   the stride swing and stays (the first delete took it and the health-bar gate caught it, which is
+   that gate earning its keep). `c.hx` **is** a trap and is still documented loudly.
+5. **The Nosferatu is the tightest costume on the roster at exactly 34 units sideways**, against a
+   limit of 34 — zero margin. It measured 21 until the costume gate started sweeping the off hand on
+   2026-08-31; the reach was always there, in the `force` and `thrown` poses the gate had never
+   driven. It is inside its rule, so it was left alone rather than churned, but it is the one costume
+   where widening anything at all fails the gate. (The Viking was 36.9 in the same sweep — over — and
+   was fixed to 32.)
+6. The director's clock advances before it dispatches, so beats at `at: 0` and `at: 1` fire together.
+   Unreachable today and deliberately not "fixed" — moving the increment re-bases every beat in the
+   pool against the move table. **If a module ever needs that offset, give it `at: 2`.**
+
+## 2026-08-30 — the fights, gone over end to end
+
+`npm run check` is **62 green**, up from 52. Eleven defects, four of them the same shape: **a control
+that appears to work while the thing it names does not move.** `docs/DECISIONS.md` has the full
+account with the measurements; `CLAUDE.md` has the invariants that came out of it. Nothing is
+deployed — see *Next* below.
+
+**Items 0, 1 and 6 below are closed.** Item 2 still needs the client and nothing else does.
+
+### The environment could not run its own tooling, which is why item 1 had never been done
+
+`node_modules` had three **empty** native-binary directories — `@cloudflare/workerd-linux-64`,
+wrangler's nested `@esbuild/linux-x64`, and the top-level `@esbuild/linux-x64`. So `npm run dev:worker`
+could not start and `npm run build` could not run, and therefore **no operator surface had ever been
+driven in a browser here**: `/admin` needs a session, a session needs the Worker, the Worker needs
+`workerd`. `npm run check` never noticed, because it runs under esbuild's JS API rather than the
+binary. Restored by fetching the three tarballs directly. **If a fresh clone cannot start the Worker,
+check for empty `bin/` directories before anything else.**
+
+### What was wrong
+
+- **`rest: 1` was not arithmetic identity** and had not been since the knobs landed. Four modules roll
+  a length shorter than their last move's end; the floor threw that roll away, undoing `disengage`'s
+  and `pushed`'s subtraction *entirely* on 100% of builds. Now 0 differences in 700,000 builds.
+- **The health bar was drawn through the costumes** — through the ringmaster's top hat and across the
+  prophet's halo — and had been drawn partly *outside the camera's frame* for six of them since
+  `headroom` was introduced.
+- **The published Size slider moved nothing.** It was multiplied only in the operator's own preview.
+- **A per-page override was not partial to the knob**: touching Patience on `/work` froze the other
+  three. Reproduced and re-verified signed in, which is the only place it is visible.
+- **`validDuelPages` repaired where the file promises it refuses**, turning rubbish into a working
+  override pinned to the default.
+- **The operator's shuffle button and mode picker could never roll him a duel** — a stale closure over
+  `isOperator`, which is false until the session probe settles.
+- **The crouch ran on another move's clock**, so `sweep_low` stood upright while its blade was still
+  down.
+- **Five fields showed through a match reset**, `clash` visibly.
+- **A non-finite delta killed the fight permanently and silently.**
+- **The duel was bigger on a phone than on a tablet**, and 190px at the bottom of the tablet band.
+- **The guardrail layer's 2026-08-28 entry was not true**: `resolve()` and `matched()` had no callers
+  in `src/`, so grain still rendered on the four lowest-contrast palettes and no guardrail note was
+  ever shown.
+
+### Item 0 answered: two fighters did read as one, and not the pair that was predicted
+
+Rendered the roster at the *corrected* phone size, then the candidates in a real 281px slot. The guess
+here was executioner/sentinel; the worst is **gunslinger / ringmaster** — both a brim, a boxy crown
+and a long coat, `back` hooks node-for-node the same path, separated only by crown height. The client
+chose `NEVER_MEET` over redrawing. Three pairs are in it: gunslinger/ringmaster,
+sentinel/executioner, executioner/viking.
+
+Four costume faults were fixed while the roster was open: the **viking's shield** covered 60% of the
+torso box at 60% alpha and reached 36.9 units sideways (both invisible to a gate that pinned the off
+hand — now swept), the **devil's** and **anubis's** paired head marks were drawn far-bright-last so
+the depth was inverted, the **anubis's** ears sat 1.04 units apart and flooded with `paper`, and the
+**valkyrie's** wings still overlapped by 8 units.
+
+### Next, in order
+
+0. ~~**Look at the twenty-four fighters on a phone.**~~ **Done 2026-08-30** — see above.
+1. ~~**Drive the duel settings editor in a real signed-in browser.**~~ **Done 2026-08-30.** It found
+   the partial-override bug, and the per-page check it asked for (*"set one page, load another, and
+   confirm it did not follow"*) now passes: `/work` keeps its own Patience while tracking the site's
+   Circling and Rest, and `/about` follows the site.
+2. **Get the client's numbers off the sliders.** Unchanged, and now the only item that needs him. The
+   pacing fix is the same work whatever the fighters look like, and his eye is the one thing that
+   cannot be substituted for. Note the sliders are worth more than they were: **Size actually works
+   now**, and `rest` is a real multiplier rather than one that was being clamped away.
+3. **Deploy.** Nothing from 2026-08-30 is deployed. `npm run deploy` runs the full gate as
+   `predeploy`; the three restored binaries are `node_modules` and are not committed, so a machine
+   that has never installed will need them.
+4. **The panel's guardrail notice** is built — it prints every matched note above Publish, with the
+   two resolved rules marked as already handled. It has **not been looked at by eye**; it is an
+   operator surface and this session verified it only by gate.
+5. `c.lean` and `c.speed` on `CostumeCtx` are read by no costume and cannot be deleted from
+   `fighters.ts` alone — they are written by typed literals in `duel.ts` and `check.ts`, so it is a
+   three-file edit. Documented in place, no trap, no hurry. `c.hx` **is** a trap and is now documented
+   loudly: the `head` hook runs inside `translate(neckX, 0)` and `hx` *is* `neckX`, so the first head
+   costume to use it as documented gets double the lean.
+
+---
+
 ## 2026-08-28 — guardrails reach the page, and the duel becomes reviewable
 
 `npm run check` is **52 green**, up from 46. Deployed today: `75ef788` (the carve, and the roster
@@ -104,7 +236,9 @@ reversed at the client's request; `docs/DECISIONS.md` carries the reversal and h
 
 ### Next, in order
 
-0. **Look at the twenty-four fighters on a phone.** Top of the list because it is cheap and it is the
+0. ~~**Look at the twenty-four fighters on a phone.**~~ **CLOSED 2026-08-30 — see the section above.**
+   The answer was yes, and the pair was not the one this entry predicted. Kept for its reasoning.
+   Top of the list because it is cheap and it is the
    only unanswered question left about them — everything else about the roster is gated.
    **Do any two read as the same fighter?** Open the duel on `/admin`, or watch the hero ornament
    **signed in** — since today a signed-out visitor cannot be shown a duel by any route, so a logged-out
@@ -124,7 +258,8 @@ reversed at the client's request; `docs/DECISIONS.md` carries the reversal and h
    a light palette is added** — that is the condition to watch, not a browser pass. `rim: 0` turns the
    carve off and is the rollback either way.
 
-1. **Drive the duel settings editor in a real signed-in browser.** Nobody has clicked it. It is an
+1. ~~**Drive the duel settings editor in a real signed-in browser.**~~ **CLOSED 2026-08-30.** Nobody
+   had clicked it because the Worker could not start here; it can now. Nobody has clicked it. It is an
    operator surface behind a session, which is one of the things `npm run check` says out loud it
    cannot verify, and it is now the surface the next item is done *on* — the four knobs moved off the
    bench onto it when they became a published field. Check a per-page override in particular: set one
@@ -158,7 +293,10 @@ reversed at the client's request; `docs/DECISIONS.md` carries the reversal and h
    with a publish button. Gated (`a share code carries the look and never the duel`) and verified by
    widening `SharedConfig` to see it fail. **Reopen only if he asks for a look he can hand somebody
    that carries the duel with it** — and the answer then is a second format, not a widened first one.
-6. **`effectiveStation` reads `config.ornament`, not the resolved one.** Small, cosmetic, and
+6. ~~**`effectiveStation` reads `config.ornament`, not the resolved one.**~~ **CLOSED 2026-08-30, and
+   it was not cosmetic** — both directions were live, including the operator's rolled duel being
+   stationed `roam` and fading out twice a revolution. The decision this asked for: **the station
+   follows what is drawn.** Small, cosmetic, and
    recorded so it is not re-discovered as a bug: publish a duel with station `roam` and a signed-out
    visitor gets station `hold` on the sonar he is actually shown, where `roam` would have been
    allowed. Conservative rather than wrong. The fix is `theme.ts` taking the resolved ornament, and

@@ -224,6 +224,40 @@ export function matched(c: Combination): Guardrail[] {
   return GUARDRAILS.filter((rule) => ruleMatches(rule, c));
 }
 
+/**
+ * What the operator is tripping, and whether the page will quietly fix it —
+ * the list the panel prints (2026-08-30).
+ *
+ * The file header has promised since 2026-08-28 that "the panel reads
+ * `matched()` and prints the note", and `matched` had **no caller in `src/`**:
+ * of the seventeen rules, two resolved at render and fifteen were meant to warn,
+ * and none of the fifteen warned. Every rule carries a `note` that is required,
+ * gated for length, written to be read by a person, and rendered nowhere. A
+ * rule that is the client's taste is his to overrule — that is the doctrine —
+ * but overruling it *without being told* is not overruling it, it is not
+ * knowing about it, and the two are indistinguishable from the operator's side.
+ *
+ * `resolved` is the difference between the two kinds of rule, and it is
+ * computed rather than declared: a rule that stops matching once `resolve()`
+ * has run is one the page corrects on its own, so the note is a *notice* — this
+ * is why your Roam is rendering as Hold — where the rest are warnings about
+ * something that will publish exactly as it looks. Deriving it means promoting
+ * a sixteenth rule to resolving at render needs no edit here and cannot leave
+ * the panel describing the old behaviour.
+ */
+export interface GuardrailWarning {
+  rule: Guardrail;
+  /** The page already yields on this one; the note explains what it did. */
+  resolved: boolean;
+}
+
+export function warnings(c: Combination): GuardrailWarning[] {
+  // Identity, not equality: both lists are filtered out of `GUARDRAILS`, so the
+  // objects are the same objects and nothing has to be given an id to compare.
+  const remaining = new Set(matched(resolve(c)));
+  return matched(c).map((rule) => ({ rule, resolved: !remaining.has(rule) }));
+}
+
 /** A combination is allowed when no guardrail matches it. */
 export function isAllowed(c: Combination): boolean {
   return !GUARDRAILS.some((rule) => ruleMatches(rule, c));

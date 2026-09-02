@@ -235,9 +235,19 @@ export function FxCanvas() {
       // doubles the speed of the rain and every particle field. Clamped so a
       // long stall (a backgrounded tab, a slow first paint) cannot jump the
       // world forward, and pinned to 1 at 60fps so nothing changes there.
+      //
+      // **The floor is 0, and it used to be 0.2, which reintroduced the very
+      // fault the paragraph above describes at the other end** (2026-08-31).
+      // 0.2 is a 300Hz frame; on anything faster the real delta is smaller and
+      // was being rounded *up*, so a 500Hz panel ran the world 1.67x fast —
+      // the same class as the reported "they speed up at like x50 speed", from
+      // the opposite direction. 480 and 540Hz displays ship. Nothing needs a
+      // floor: `advanceDuel` accumulates fractional frames and every effect
+      // integrates `t += dt`, so a very small delta is simply a small step and
+      // two callbacks in the same millisecond correctly move nothing.
       const now = performance.now();
       const frameMs = now - lastFrameAt;
-      const dt = Math.min(3, Math.max(0.2, frameMs / (1000 / 60)));
+      const dt = Math.min(3, Math.max(0, frameMs / (1000 / 60)));
       lastFrameAt = now;
 
       const canvas = canvasRef.current;

@@ -99,22 +99,66 @@ export type FighterStyle =
  * alignment is declared *twice*, here and as `side` on the roster entry, and
  * `npm run check` fails if the two disagree — a good fighter holding a red
  * blade is the one way this carve-out can silently stop meaning anything.
+ *
+ * ## The evil side is one red, and it was two until 2026-08-31
+ *
+ * Six evil fighters carried `#ff3b30` and the other six `#ff2929`: 18 points
+ * of green and 7 of blue apart, and nothing else. **ΔE2000 1.80 as authored,
+ * and 1.4–1.8 as it actually composites** — the blade is three passes (an
+ * additive glow at 0.22 over 11 units, a mid stroke at 0.5 over 4, and a
+ * 1.6-unit core in `v.core`, which is a *palette* colour and covers the middle
+ * of the stroke outright), so what carries the hue is a 4-unit band at half
+ * alpha with a white line down it, on a figure 95–110px tall, swinging. A
+ * ΔE2000 of 1 is the threshold for two flat patches held side by side under
+ * good light. Neither of those conditions is ever true here.
+ *
+ * **Why a second red existed is not written down anywhere in this file or in
+ * `docs/DUEL.md`, and the only thing it can have been is variety** — the same
+ * instinct that gives the good side two colours. The instinct is right and the
+ * execution was not, because *a colour that splits a side into two groups is a
+ * claim that the two groups differ*, and here they do not: the twelve are one
+ * side, one pool, one coin, and no field on the roster correlates with which
+ * red a fighter held. A claim nobody can see is not a subtle claim, it is a
+ * second constant to keep in step for nothing — and the next fighter added
+ * would have had to be assigned one of them by a rule that does not exist.
+ *
+ * **The good side's blue/green stays, and it is not the same case.** It is not
+ * *information* either — the split there is undocumented too, and no viewer is
+ * ever asked to read a grouping out of it, because `DUEL_POOLS` puts one
+ * alignment against the other so two good fighters never share a frame. What
+ * it is is **variety across matches**, which needs only to be *seen*: measured
+ * the same way, blue against green is **ΔE2000 41–42 composited**, 24–29× the
+ * two reds and about the same distance as blue is from red. Green is also an
+ * *ink* on this roster and not only a blade — the prophet's halo is drawn in
+ * `c.blade` (see the comment there), which is what keeps it from being a new
+ * literal — so collapsing the good side would take a costume with it.
+ *
+ * **`#ff3b30` is the survivor, and which one is not arbitrary.**
+ * `scripts/duel-shot.mjs` hard-codes it as `bladeB` in two places, so keeping
+ * it means every still that harness renders shows the red the roster actually
+ * carries; keeping `#ff2929` would have left the only tool anybody reviews
+ * this effect in drawing a colour no fighter has.
+ *
+ * The gate needed no edit: `scripts/check.ts` holds a `GOOD` set of the two
+ * good colours and asserts an evil fighter's blade is *not* in it, so it tests
+ * the boundary rather than the membership — which is the right shape for it,
+ * and is why collapsing a side passes on the assertion it should.
  */
 export const BLADE_COLORS: Record<FighterStyle, string> = {
   hooded: "#3d9bff",
   maned: "#3d9bff",
   caped: "#ff3b30",
   cowled: "#ff3b30",
-  horned: "#ff2929",
-  crowned: "#ff2929",
+  horned: "#ff3b30",
+  crowned: "#ff3b30",
   ronin: "#3d9bff",
   gladiator: "#37d67a",
   plague: "#ff3b30",
-  golem: "#ff2929",
+  golem: "#ff3b30",
   nosferatu: "#ff3b30",
   musketeer: "#3d9bff",
   valkyrie: "#37d67a",
-  executioner: "#ff2929",
+  executioner: "#ff3b30",
   witch: "#ff3b30",
   sentinel: "#37d67a",
   prophet: "#37d67a",
@@ -122,9 +166,9 @@ export const BLADE_COLORS: Record<FighterStyle, string> = {
   astronaut: "#3d9bff",
   gunslinger: "#37d67a",
   viking: "#3d9bff",
-  pharaoh: "#ff2929",
+  pharaoh: "#ff3b30",
   anubis: "#ff3b30",
-  ringmaster: "#ff2929",
+  ringmaster: "#ff3b30",
 };
 
 /** Which end of the fight a costume belongs to. Decides the blade colour and,
@@ -141,7 +185,22 @@ export type Alignment = "good" | "evil";
  * retuned; one that reads `c.shX` moves with it.
  */
 export interface CostumeCtx {
-  /** Centre of the head disc. `hx` is already leaned and hunched. */
+  /**
+   * Centre of the head disc, already leaned and hunched.
+   *
+   * **It is a trap in the `head` slot, and in that slot only.** `drawFighter`
+   * calls the head hook inside `ctx.translate(neckX, 0)` precisely so a costume
+   * can write `0` for the centre line of the skull — and `hx` *is* `neckX`. A
+   * head hook that used this "as documented" would apply the lean and the hunch
+   * a second time, which on the hollow (`hunch: 4.6`) puts the mark most of a
+   * head-width forward of the head it is drawn on, in the one slot that carries
+   * most of the recognition. The `back` and `overlay` hooks are **not**
+   * translated, so it is the honest number in both of those, which is why it is
+   * documented rather than deleted.
+   *
+   * No costume reads it today: every `head` hook here is written about `0`, and
+   * that is the convention to keep.
+   */
   hx: number;
   hy: number;
   /** Head radius. */
@@ -153,12 +212,11 @@ export interface CostumeCtx {
   hipX: number;
   /** The feet line. */
   feetY: number;
-  /** Lean into travel, in local units. */
-  lean: number;
-  /** Forward travel this frame: positive is the way the fighter faces. */
+  /** Forward travel this frame: positive is the way the fighter faces.
+   *  Clamped, and the number anything that trails should hang off — the lean
+   *  is already in the body underneath. (`lean` and `speed` used to sit here,
+   *  read by no costume; deleted 2026-09-02.) */
   vx: number;
-  /** 0–1 travel speed, for costume that trails. */
-  speed: number;
   /** True while the fighter is off the ground. */
   airborne: boolean;
   /** World clock in frames, and this fighter's desync phase. */
@@ -405,10 +463,29 @@ function solid(
   ctx.fill();
   if (c.rim > 0) {
     /*
-     * An inner shadow along the shaded edge, clipped to the mass, so a helmet
-     * has a top and an underside rather than being a flat cut-out. Offset
-     * up-and-left because the arena's light is above and behind the fighters,
-     * which is also where `lightBone` puts the blade's.
+     * An inner shadow along one edge, clipped to the mass, so a helmet has a
+     * top and an underside rather than being a flat cut-out.
+     *
+     * **It is not a scene light, and this comment used to say it was.** The
+     * offset is `translate(-1.5, 2.2)`: canvas y grows downward, so that is
+     * back-and-*down*, not the "up-and-left, because the arena's light is above
+     * and behind" the old text described. And it is applied inside the
+     * `scale(facing, 1)` the whole figure is drawn in, so the two fighters in a
+     * duel — who face each other by construction — are shaded from opposite
+     * world directions. No single light anywhere in the arena produces that.
+     *
+     * What it actually is, is a **body-relative** convention: every mark on
+     * every costume is shaded along its own lower-back inside edge, so the
+     * shading reads as *form* (this shape has a near face and a far one) rather
+     * than as *illumination* (the sun is over there). That is a weaker claim
+     * than a light and it is the one the drawing can keep.
+     *
+     * **The offset is deliberately left alone.** At `0.34 * fill`, clipped to a
+     * mark that is a few pixels across at the ornament's ~61px figure, it
+     * registers as thickness and never as a direction — and re-deriving it from
+     * `lightBone`'s world light would put it on the *front* edge for whichever
+     * fighter faces left, where the mark's own ink outline already sits, buying
+     * an invisible correction at the cost of half the roster's interior edge.
      *
      * **Clipped, which is what keeps it from being the 2026-08-14 slab.** It is
      * a second value *inside* one mark, not a second value across the body: it
@@ -438,9 +515,9 @@ function solid(
  * at — the ornament camera puts the median figure at ~61px on a phone and
  * ~109px on desk, which is enough for a torso-level mark and nowhere near
  * enough for a face. Where two fighters could be confused at a glance they go
- * in `NEVER_MEET`, which is empty today; the old answer was to keep them in
- * separate pools, and that cost four of eight costumes to solve a problem
- * with at most a couple of pairs.
+ * in `NEVER_MEET`, which carries **three pairs** since 2026-08-30; the old
+ * answer was to keep them in separate pools, and that cost four of eight
+ * costumes to solve a problem with, as it turned out, exactly three pairs.
  *
  * ## Twenty-four, twelve a side (2026-08-28)
  *
@@ -469,7 +546,17 @@ function solid(
  * **Three rules came out of building the forty, and each one cost a costume
  * before it was written down. All three survive their own exhibits** — the
  * falconer, the reaper and the monk were among the sixteen cut, so the lessons
- * are now older than anything you can look at:
+ * are now older than anything you can look at.
+ *
+ * **The seraph went with them, and it is named here because it is the one cut
+ * costume the comments below kept reasoning from.** It was a fan of feathers
+ * behind the shoulders, and what it taught the roster was that a fan is read by
+ * the *gaps* in it and not by the count of its parts — three heavy strokes with
+ * air between them say "feathers" where seven touching ones say "cloak". Three
+ * comments (the gladiator's arm bands, the musketeer's plume, the valkyrie's
+ * wings) cited it by name into 2026-08-30, sending anybody who wanted to look
+ * at it round a roster it has not been in since 2026-08-28. They now carry the
+ * finding instead of the fighter. The three rules:
  *
  * 1. **Two shapes on one head need a gap between them, or they merge into a
  *    third shape neither of them is.** The plague doctor's beak left the brow
@@ -752,6 +839,27 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
        * leaves the temples sideways, turns at the width of the shoulders and
        * only then rises. The near one is longer and the far one shorter and
        * dimmer, so the pair reads as depth rather than as one flat mark.
+       *
+       * **"Out" is drawn as "back", and until 2026-08-30 both horns went the
+       * same way.** This is a profile view: sideways is into the screen and
+       * cannot be drawn at all, so the sweep is rendered as travel along −x.
+       * With roots at −3 and +3 sweeping to −18 and −12, the two masses shared
+       * ten units of x and most of their height — one shape with a seam in it,
+       * which is the merge rule this file records three costumes lost to. They
+       * are pulled apart along the skyline instead: **the tips are the read**,
+       * and there are now two of them, 21 units apart at two different heights,
+       * with four units of clear skull between the near horn's root at −4 and
+       * the far horn's tip at 0 — more than the 3.4 two `DEFAULT_RIM` carves
+       * take up, so the gap survives the rims rather than being flooded by them.
+       * The far horn rises off the brow and is foreshortened; the near one
+       * sweeps the full width of the crown behind it.
+       *
+       * **Far first, near second**, which is the other half of the fix. The
+       * carve lays each mark down in `paper` before its ink, so whichever horn
+       * is drawn last gouges the one drawn before it — and it must be the near,
+       * bright one doing the gouging or the depth is inverted and the dim horn
+       * composites on top of the bright one. Same order as the valkyrie's
+       * wings; the anubis's ears had the same inversion and were fixed with it.
        */
       const horn = (root: number, out: number, up: number, thick: number, a: number) => {
         // Each horn is a mass that tapers: out along the top edge, back along
@@ -768,9 +876,10 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
       // The far one is dimmer, not thinner or shorter: at 0.5 alpha and half
       // the reach it dropped out of the silhouette entirely on a phone and the
       // fighter grew a single scythe. Depth is worth about 25% of alpha here
-      // and no more.
-      horn(-3, -18, 20, 5, 1);
-      horn(3, -12, 17, 4.4, 0.75);
+      // and no more — and it is worth *only* alpha, so the far horn keeps 16
+      // of the near one's 20 units of rise rather than being shrunk into a nub.
+      horn(7, 1, 16, 4.2, 0.75);
+      horn(-4, -20, 20, 5, 1);
     },
     back: (ctx, c) => {
       const lash = Math.sin(c.t * 0.055 + c.phase) * 3 - c.vx * 1.4;
@@ -931,10 +1040,13 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
       solid(ctx, c, 0.28, 2.6, 0.88);
     },
     overlay: (ctx, c) => {
-      // Both sleeves, wide and drooping past the hands. On the off arm it is a
-      // shape; on the sword arm it is deliberately shorter, because a sleeve
-      // over the hand doing the work would hide the one silhouette the fight is
-      // actually about.
+      // **One sleeve, and one cuff.** The off arm gets the sleeve — a wide
+      // mass drooping past the hand, which is the mark. The sword arm gets a
+      // single stroked arc off the elbow and nothing over the hand at all,
+      // deliberately: a sleeve over the hand doing the work would hide the one
+      // silhouette the fight is actually about. The comment here read "both
+      // sleeves" until 2026-08-30 and sent a reader looking for a second mass
+      // that has never been drawn.
       ctx.beginPath();
       ctx.moveTo(c.offElbow.x - 5, c.offElbow.y - 2);
       ctx.quadraticCurveTo(c.offElbow.x - 6, c.offElbow.y + 15, c.offHand.x - 1, c.offHand.y + 6);
@@ -1049,8 +1161,12 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
     },
     overlay: (ctx, c) => {
       // Three bands climbing the sword arm from shoulder to elbow. Drawn as
-      // separate masses rather than one sleeve: the gaps are what read as
-      // banding, exactly as the seraph's feathers do.
+      // separate masses rather than as one sleeve, because **the gaps are what
+      // read as banding** — the finding the seraph's fan of feathers left the
+      // roster before it was cut (see the note above `FIGHTERS`): at this size
+      // a repeated mark is read by the air between its parts, so three with
+      // clear skin between them say "banded" where five touching ones say
+      // "sleeve".
       for (let i = 0; i < 3; i += 1) {
         const t = i / 2;
         const x = c.shX - 2 + (c.elbow.x - c.shX + 2) * t;
@@ -1225,9 +1341,14 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
 
   /**
    * The musketeer: a broad brim and a plume that streams off the back of it.
-   * The plume is the mark — a brimmed hat alone is the plague doctor's, and
-   * these two are the only hats on the roster, so the difference between them
-   * has to be a whole shape rather than a proportion.
+   * The plume is the mark, and it has to be, because **a brim identifies
+   * nobody here**: five of the twenty-four wear one — the plague doctor, the
+   * witch, the gunslinger, the ringmaster and this. (This comment claimed until
+   * 2026-08-30 that "these two are the only hats on the roster", which was true
+   * of neither the count nor the pairing it was reasoning about.) So each of the
+   * five is told apart by what stands *on* the brim and nothing else: a beak, a
+   * bent cone, a dented crown, a stovepipe, and here a plume that leaves the
+   * silhouette backwards where every other one of them goes up.
    */
   musketeer: {
     label: "The Musketeer",
@@ -1252,8 +1373,9 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
       ctx.closePath();
       solid(ctx, c, 0.88, 2.4);
       // Three strokes, splaying as they go back. Fewer and heavier than looks
-      // right on paper — the same lesson the seraph's feathers taught, and for
-      // the same reason: the gaps are what read as a plume.
+      // right on paper, for the reason the gladiator's arm bands are three and
+      // not five: **the gaps are what read as a plume**, so a stroke removed
+      // buys more than a stroke added. Seven fine ones drew a smudge.
       for (let i = 0; i < 3; i += 1) {
         ink(ctx, c, 2.6 - i * 0.4, 0.9 - i * 0.12);
         ctx.moveTo(-r + 1, c.hy - r - 4);
@@ -1275,11 +1397,13 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
   },
 
   /**
-   * The valkyrie: wings at the temples rather than at the back. Deliberately
-   * the same idea as the seraph solved in the other place — the seraph's span
-   * is behind the shoulders and this one's is on the skull, and at ornament
-   * size *where* a shape sits separates two fighters more reliably than what
-   * the shape is.
+   * The valkyrie: wings at the temples rather than at the back. That placement
+   * is the decision — at ornament size **where a shape sits separates two
+   * fighters more reliably than what the shape is**, so a span behind the
+   * shoulders and a span on the skull are two different silhouettes built out
+   * of one idea, and this roster only has room for the second. (The first was
+   * the seraph's, cut on 2026-08-28; this comment cited it by name until
+   * 2026-08-30, when there was nothing left to compare against.)
    */
   valkyrie: {
     label: "The Valkyrie",
@@ -1300,21 +1424,44 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
       solid(ctx, c, 0.9, 2.4);
       /*
        * The two wings have to be pulled well apart or they composite into one
-       * flap and the fighter reads as wearing a cap with an ear. The far one
-       * is forward *and* low, the near one back and high, and each is broad
-       * enough to be a wing rather than a blade — the seraph's lesson about
-       * gaps, applied to a pair instead of to a fan.
+       * flap and the fighter reads as wearing a cap with an ear. **This costume
+       * is the exhibit for that rule and it was still failing it**: at
+       * `dx = -6.84` and `dx = 2.16` the two spans were x ∈ [−19.84, −2.84] and
+       * [−10.84, 6.16] — eight units of overlap, both roots inside the other's
+       * mass, over the same twelve units of height. The comment above them said
+       * they were "pulled well apart", which is the shape of thing this file
+       * exists to stop being true only in prose.
+       *
+       * Pulled apart for real, and the lever is **span, not just position**.
+       * Two 17-unit wings cannot clear each other on a 16-unit skull however
+       * they are placed, so the far one is *foreshortened* — which is what a
+       * far wing does anyway — and the pair now reads back-to-front rather than
+       * side-by-side: the near wing is long, low-rooted and sweeps the whole
+       * width of the crown behind the head (x ∈ [−23.84, −4.19]); the far one
+       * is short, rooted on the brow and clears the cap forward of it (x ∈
+       * [0.54, 12.33]). **4.73 units of gap between them**, against the 3.4 two
+       * `DEFAULT_RIM` carves occupy — so the gap is still a gap after the rims
+       * are drawn, which is the number that actually matters and the one the
+       * old pair had none of.
+       *
+       * **Far first, near second.** The carve lays every mark down in `paper`
+       * before its ink, so the last one drawn cuts the one under it: drawn the
+       * other way round the dim wing gouges the bright one and the depth
+       * inverts. This costume already had it right and the devil's horns and
+       * the anubis's ears did not, which is why they now match it.
        */
-      const wing = (dx: number, alpha: number, lift: number) => {
+      const wing = (dx: number, span: number, alpha: number, lift: number) => {
         ctx.beginPath();
         ctx.moveTo(dx, c.hy - 2);
-        ctx.quadraticCurveTo(dx - 8, c.hy - 9 - lift, dx - 13, c.hy - 18 - lift);
-        ctx.quadraticCurveTo(dx - 1, c.hy - 13 - lift, dx + 4, c.hy - 4);
+        ctx.quadraticCurveTo(dx - span * 0.53, c.hy - 9 - lift, dx - span, c.hy - 18 - lift);
+        ctx.quadraticCurveTo(dx - span * 0.07, c.hy - 13 - lift, dx + span * 0.31, c.hy - 4);
         ctx.closePath();
         solid(ctx, c, 0.82 * alpha, 2.2, alpha);
       };
-      wing(-r + 10, 0.45, -7);
-      wing(-r + 1, 1, 2);
+      // Rooted a unit or so outside the cap's two edges, one each way, which is
+      // the readable form of "on opposite sides of the same helmet".
+      wing(r + 1.7, 9, 0.45, -4);
+      wing(-r - 1, 15, 1, 2);
     },
     back: (ctx, c) => {
       // One braid to the hip, swinging behind. Stroked and single: two braids
@@ -1359,8 +1506,19 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
       solid(ctx, c, 0.93, 2.8);
     },
     overlay: (ctx, c) => {
-      // A belt wide enough to read at the waist, and bare arms above it. The
-      // belt clears the torso box entirely, so it is a mark and may be solid.
+      /*
+       * A belt wide enough to read at the waist, and bare arms above it.
+       *
+       * **It does not quite clear the torso box, which this said it did.** The
+       * belt spans `hipY − 3 … hipY + 4`, and `hipY` is 46 standing (the stance
+       * settles 4) but 42 airborne and dead, where the settle is suppressed —
+       * so it sits at y 43…50 on its feet and y 39…46 in the air, against a box
+       * that ends at 40. Measured across the whole sweep it covers **3.2% of
+       * the torso at 80% of body alpha**, which is a mark by any reading of the
+       * rule and nowhere near the 45% where cloth alpha starts. The conclusion
+       * survives; the premise did not, and a premise that is checkable is worth
+       * more here than a conclusion that is right by luck.
+       */
       ctx.beginPath();
       ctx.moveTo(-11, c.hipY - 3);
       ctx.lineTo(11, c.hipY - 3);
@@ -1393,8 +1551,13 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
       ctx.quadraticCurveTo(-6, c.hy - r - 10, r - 1, c.hy - r - 1);
       ctx.closePath();
       solid(ctx, c, 0.9, 2.4);
-      // Hair, hanging out from under the brim. Two strokes a side and no more:
-      // more than that is a mane, and a mane belongs to the apprentice.
+      // Hair, hanging out from under the brim — **two strands, both on the
+      // back**, which is what the loop draws and not the "two a side" this used
+      // to claim. Hair on the front would fall over the face and the face is
+      // the one place this costume has nothing to say; hair behind reads at the
+      // jawline against the cone's lean and costs no width. Two and no more,
+      // either way: more than that is a mane, and a mane belongs to the
+      // apprentice.
       for (let i = 0; i < 2; i += 1) {
         ink(ctx, c, 2, 0.8);
         ctx.moveTo(-r - 1 + i * 2, c.hy - r + 3);
@@ -1630,9 +1793,18 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
   },
 
   /**
-   * A dented crown under a wide brim, over a duster split to the knee.
-   * The brim is the widest thing above the shoulders on the good side and the
-   * duster is the only split hem, so it is told apart top and bottom.
+   * A dented crown under a wide brim, over a duster split to the knee. The brim
+   * is the widest thing above the shoulders on the good side, at 33.7 units
+   * against the musketeer's 32.
+   *
+   * **The duster is not "the only split hem", which is what this used to say.**
+   * The ringmaster's tails are the same shape — the same nine nodes in the same
+   * order, within seven units of these, with the hem seven units higher — so
+   * the split says *nothing* about which of the two is on screen and the top of
+   * the costume has to carry the whole read on its own. It is the reason the
+   * pair is in `NEVER_MEET`, and the reason the claim was worth correcting
+   * rather than deleting: it was the specific sentence that stopped anybody
+   * looking.
    */
   gunslinger: {
     label: "The Gunslinger",
@@ -1711,10 +1883,47 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
       ctx.lineTo(-2, c.hy + 20);
       ctx.closePath();
       solid(ctx, c, 0.88, 2.4);
-      // uraeus hooking forward off the brow
+      /*
+       * The uraeus, rearing off the *crown* of the nemes and not out of the
+       * middle of it (moved 2026-08-31, and moved rather than deleted, which
+       * is the whole of the difference between this mark and the two that went
+       * the same day).
+       *
+       * It used to start at `hy - r - 1` — **2.5 units inside the nemes fill**,
+       * whose crown apex is at `hy - r - 3.5` once the quadratic is flattened,
+       * not at the `hy - r - 5` the control point reads as. Measured through a
+       * recording context: 8 of its 25 centreline points sat inside the mass,
+       * and there `strokeInk`'s carve laid 5.8 units of `paper` at full alpha
+       * across the one edge this costume is *for* — the docstring above says
+       * the flare is the read, and the flare was being notched at its apex to
+       * make room for a line that, being ink on ink, contributed nothing. The
+       * other 17 points were already clear and already reading; the mark was
+       * two-thirds right and rooted in the one place it could do damage.
+       *
+       * So it is translated, not enlarged — the rule this file loses costumes
+       * to. Same length (11.2 units against 11.3), same 2.4-unit stroke, same
+       * forward hook; the root moves to `(1, hy - r - 4)`, **0.53 units clear**
+       * of the crown edge under it, and the arc peaks **3.4 units** clear at
+       * `x = 6.5`. Both numbers are chosen against `DEFAULT_RIM`: 3.4 is twice
+       * it and is this file's standing figure for a gap that survives being
+       * drawn, and 0.53 is inside it *deliberately*, so the carve at the root
+       * still bites the headband and the cobra reads as socketed into it
+       * rather than as the detached accessory the reference engine warns about.
+       * Nothing of it is inside the mass now, so nothing of it is a groove.
+       *
+       * **`headroom` is unchanged at 18 and that is a constraint, not a
+       * coincidence.** The gate measures reach from raw path points, control
+       * points included, so a quadratic declares most of the way to its control
+       * point and not to the curve. Taken at the same instant — the top of the
+       * breath cycle, where `hy` is −2.66 — the control at `hy - r - 7` sits
+       * 17.66 units up and rounds to the declared 18, while the arc itself
+       * peaks at 16.29. Lifting the hook any further would have moved the
+       * camera's clearance for every match this fighter is in, for an arc
+       * nobody would have seen get taller.
+       */
       ink(ctx, c, 2.4, 0.9);
-      ctx.moveTo(0, c.hy - r - 1);
-      ctx.quadraticCurveTo(6, c.hy - r - 6, 10, c.hy - r - 2);
+      ctx.moveTo(1, c.hy - r - 4);
+      ctx.quadraticCurveTo(7, c.hy - r - 7, 11, c.hy - r - 4.5);
       strokeInk(ctx, c, 2.4, 0.9);
     },
     overlay: (ctx, c) => {
@@ -1728,10 +1937,26 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
   },
 
   /**
-   * A flared helm with a nasal bar, a wedge of beard, and a disc on the
-   * off hand. The widest costume on the roster at 31.7 units sideways — the
-   * shield is a fixed shape on the hand rather than something that trails, so
-   * it does not grow with travel and stays inside the 34 the camera frames.
+   * A flared helm, a wedge of beard, and a shield on the off arm. The shield is
+   * the signature and the only thing that separates this silhouette from the
+   * executioner's, which is why `NEVER_MEET` pairs them rather than one of them
+   * being cut.
+   *
+   * **It said "a flared helm with a nasal bar" until 2026-08-31**, which is the
+   * third false claim this docstring has carried and is worth the line: the
+   * nasal was deleted that day and a summary naming a mark that is not drawn is
+   * how the next reader decides the costume already has one. See the head hook.
+   *
+   * **The two claims that used to be here were both false** (found 2026-08-30,
+   * corrected the same day). It said "the widest costume on the roster at 31.7
+   * units": the widest are The Mask and The Devil at 32, and this one measured
+   * **36.9**. And it said the shield "does not grow with travel and stays
+   * inside the 34 the camera frames": it does not trail, which is true and is
+   * beside the point, because it was pinned to the off hand and `drawFighter`
+   * *moves that hand* — to (−22, 12) for a kick, to (−8, 28) for a throw, and
+   * anywhere on the guard arc, whose x runs [−16.93, 26.89] over one turn. The
+   * shield rode it out to x = −36.0 and +36.9, past the frame, on a costume
+   * whose own helm and beard reach 13. See the overlay for what it does now.
    */
   viking: {
     label: "The Viking",
@@ -1749,7 +1974,7 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
       ctx.quadraticCurveTo(0, c.hy + 8, -r - 1, c.hy + 1);
       ctx.closePath();
       solid(ctx, c, 0.9, 2.6);
-      // helm: rounded cap with a flared rim and a nasal bar
+      // helm: a rounded cap with a flared rim
       ctx.beginPath();
       ctx.moveTo(-r - 3, c.hy + 1);
       ctx.quadraticCurveTo(-r - 3, c.hy - r - 5, 0, c.hy - r - 5);
@@ -1758,28 +1983,107 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
       ctx.lineTo(-r - 5, c.hy + 3);
       ctx.closePath();
       solid(ctx, c, 0.94, 2.8);
-      ink(ctx, c, 2.2, 0.9);
-      ctx.moveTo(1, c.hy + 2);
-      ctx.lineTo(1, c.hy + 8);
-      strokeInk(ctx, c, 2.2, 0.9);
+      /*
+       * **The nasal bar is gone (2026-08-31), and it could not be moved.** It
+       * ran from `hy + 2` to `hy + 8` at `x = 1`, which put its top unit inside
+       * the helm (filled 0.94) and its bottom three and a half inside the beard
+       * (0.9) — measured through a recording context, its own outline at
+       * half-width sat **3.53 units deep inside the union of the two** at the
+       * tightest point, so it changed no silhouette anywhere in the idle cycle.
+       * Six units of stroke, of which none was ever an edge.
+       *
+       * What was left of it was `strokeInk`'s carve, `2.2 + 2 × 1.7 = 5.6`
+       * units of `paper` at full alpha, and the two things it touched were
+       * **0.0 units away in both directions**: the helm's rim above and the
+       * beard's brow below. That is the anubis's finding arriving from the
+       * other side — the standing number in this file is that a gap under
+       * `2 × DEFAULT_RIM` is not a gap once it is drawn, and a gap of zero is
+       * an overlap. The bar's carve merged with both neighbours' carves into
+       * one connected dark shape, so at the sheet it read as a *tab welding the
+       * helm to the beard*, and at the phone slot's 0.87px per unit its own ink
+       * was 1.9px of a colour 13% off the mass either side of it.
+       *
+       * It is deleted rather than relocated because there is nowhere for it to
+       * go. A nasal is legible only as a break in the **helm's own outline**,
+       * and this helm ends in a flat flared rim at `hy + 3` with the beard's
+       * brow at `hy + 4.5` under it: 1.5 units of open face, less than half the
+       * 3.4 the carve needs. Moving the mark within that band moves it from one
+       * mass to the other. Making it a spur of the rim is not a move, it is a
+       * different helm — and the helm is what `NEVER_MEET` pairs this fighter
+       * with the executioner over. The signature is the shield, and the shield
+       * is untouched.
+       */
     },
     overlay: (ctx, c) => {
-      // round shield on the off hand
+      /*
+       * The round shield, **strapped to the arm rather than pinned to the fist**
+       * (2026-08-30). Three things were wrong with the pinned version and the
+       * first two are rule breaches, not taste:
+       *
+       * 1. **It was a slab.** A 24 × 25 mass at 0.6 of body alpha covered
+       *    **60.2%** of the torso box at the `force` hand and **48.7%** at
+       *    `thrown` — the rule is that anything over 45% is cloth over the body
+       *    and gets at most 35% of the body's alpha, and this was a shield in
+       *    the literal sense the 2026-08-14 rejection was about. The check
+       *    suite drives one off-hand position (14, 14), which is a guard, so it
+       *    never saw either.
+       * 2. **It left the frame**, out to ±36.9 against the 34 `duelFocus`
+       *    reserves — see the note above.
+       * 3. A shield held at arm's length also reads as a *dish*. It is worn on
+       *    the forearm, so drawing it there is both the fix and the truth.
+       *
+       * **The frame is a clamp on the centre, not a damping of it.** The first
+       * attempt pulled the centre 70% of the way from the off shoulder to the
+       * hand, which bounds the excursion beautifully and destroys the costume:
+       * `drawFighter` draws the `head` hook *after* `overlay`, so the beard —
+       * which reaches x = 11.16 — is painted over the shield, and a shield
+       * dragged back onto the chest is a faint ring behind a beard. Rendered at
+       * 640px it read as a halo. What makes the disc a shield is that it
+       * **projects past the beard**, so the position at the hand is the whole
+       * mark and the only thing that may be touched is where that position is
+       * allowed to *stop*.
+       *
+       * So the centre is the hand, clamped to ±20. At `rx` 12 that is **32
+       * units at the very worst**, two inside the frame, against 36.9 before —
+       * and it is 32 for *every* hand position that will ever exist rather than
+       * for the ones anybody has enumerated, which is the property the old
+       * geometry lacked and the reason this is a clamp rather than a wider
+       * envelope. It bites only at the extremes: 3 units of slide at the
+       * `kicking` hand, ~4 at the far end of the guard arc, none at all in
+       * guard, at `force` or at `thrown`. A strap on a forearm reaching its
+       * stop is a thing that happens; a shield leaving the picture is not.
+       *
+       * The **fill drops 0.6 → 0.34**, one point under the 0.35 cloth ceiling,
+       * and that is the half that closes the rule for good: worst measured
+       * cover is still **60.2%** of the torso box at the `force` hand, so this
+       * passes on the alpha clause and not on the cover one, and no hand
+       * position anybody adds later can turn it back into the slab. The boss
+       * stays solid — it covers **6.5%**, which is a mark by any reading.
+       *
+       * What carries the read at that alpha is the **edge**: a 3.2-wide carved
+       * outline at full ink, the heaviest on the roster, with the solid boss at
+       * its centre. A heavy ring with a solid middle, the beard showing through
+       * it, is a shield. A disc filled at 0.6 was a dish.
+       */
+      const cx = Math.max(-20, Math.min(20, c.offHand.x - 2));
+      const cy = c.offHand.y + 3;
       ctx.beginPath();
-      ctx.ellipse(c.offHand.x - 2, c.offHand.y + 3, 12, 12.5, 0, 0, Math.PI * 2);
+      ctx.ellipse(cx, cy, 12, 12.5, 0, 0, Math.PI * 2);
       ctx.closePath();
-      solid(ctx, c, 0.6, 2.8, 0.95);
+      solid(ctx, c, 0.34, 3.2, 1);
       ctx.beginPath();
-      ctx.ellipse(c.offHand.x - 2, c.offHand.y + 3, 3.4, 3.6, 0, 0, Math.PI * 2);
+      ctx.ellipse(cx, cy, 3.4, 3.6, 0, 0, Math.PI * 2);
       ctx.closePath();
       solid(ctx, c, 0.9, 2.2, 0.9);
     },
   },
 
   /**
-   * Two ears standing straight up, and a muzzle that clears the
-   * shoulder. The ears are the tallest thing on the evil side, which is why its
-   * headroom is the roster's second largest.
+   * Two ears standing straight up, and a muzzle that clears the shoulder. The
+   * ears are the tallest thing on this costume by some way, which is what its
+   * headroom of 30 is paying for — **joint third on the roster, not "the second
+   * largest"** as this said until 2026-08-30: the gladiator's crest declares 34
+   * and the witch's cone 31, and the ringmaster's stovepipe is 30 as well.
    */
   anubis: {
     label: "The Anubis",
@@ -1789,21 +2093,44 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
     headroom: 30,
     head: (ctx, c) => {
       const r = c.hr;
-      // two tall tapered ears, standing straight up and well apart
-      for (const s of [-1, 1]) {
+      /*
+       * Two tall tapered ears, standing straight up and **actually apart**
+       * (2026-08-30). This head carries three marks and until now they were
+       * spaced at about a pixel: 1.04 units between the two ears at the base and
+       * 1.5 from each ear to the muzzle, on a head that is 0.87 px per unit at
+       * the phone slot — so the gaps were sub-pixel *and* narrower than
+       * `DEFAULT_RIM` is at 1.7, which meant the two `paper` carves either side
+       * of each gap overlapped and filled it in with background. Three marks
+       * became one forked mass, and the carve, which exists to separate
+       * touching shapes, was what closed them.
+       *
+       * So the standing number for this file is **twice `DEFAULT_RIM`, 3.4
+       * units** — below that a gap is not a gap once it is drawn. The ears are
+       * moved outboard to sit either side of the skull rather than on top of
+       * it: 7.04 units between them at the base. The muzzle drops two units and
+       * starts a unit forward, putting 4.52 between it and the near ear's lower
+       * corner. **Nothing was enlarged**, which is the rule this file records
+       * three lost costumes for: a gap is fixed by moving a shape.
+       *
+       * **Far ear first, near ear second**, so the near one's carve cuts the far
+       * one and not the other way about — the same inversion the devil's horns
+       * had, and the order the valkyrie's wings have always used.
+       */
+      for (const s of [1, -1]) {
         const a = s < 0 ? 1 : 0.78;
         ctx.beginPath();
-        ctx.moveTo(s * (r - 4), c.hy - r + 3);
-        ctx.quadraticCurveTo(s * (r + 1), c.hy - r - 12, s * (r - 2), c.hy - r - 19);
-        ctx.quadraticCurveTo(s * (r - 6), c.hy - r - 8, s * (r - 7), c.hy - r + 2);
+        ctx.moveTo(s * (r - 1), c.hy - r + 3);
+        ctx.quadraticCurveTo(s * (r + 4), c.hy - r - 12, s * (r + 1), c.hy - r - 19);
+        ctx.quadraticCurveTo(s * (r - 3), c.hy - r - 8, s * (r - 4), c.hy - r + 2);
         ctx.closePath();
         solid(ctx, c, 0.88 * a, 2.4, a);
       }
-      // muzzle: a long wedge forward, clear of the shoulders
+      // muzzle: a long wedge forward, clear of the shoulders and now clear of
+      // the near ear as well — its top edge is at `hy - 1` rather than `hy - 3`.
       ctx.beginPath();
-      ctx.moveTo(0, c.hy - 3);
-      ctx.quadraticCurveTo(r + 10, c.hy - 2, r + 15, c.hy + 6);
-      ctx.quadraticCurveTo(r + 4, c.hy + 9, 0, c.hy + 7);
+      ctx.moveTo(1, c.hy - 1);
+      ctx.quadraticCurveTo(r + 10, c.hy, r + 15, c.hy + 8);
+      ctx.quadraticCurveTo(r + 4, c.hy + 11, 1, c.hy + 9);
       ctx.closePath();
       solid(ctx, c, 0.9, 2.4);
     },
@@ -1829,9 +2156,16 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
 
   /**
    * A stovepipe taller than it is wide, over tails cut to two points.
-   * The hat and the gunslinger's are the two brimmed shapes left on the roster
-   * — three were cut for reading alike — and these two differ in the one
-   * dimension that survives 61px: the crown's height.
+   *
+   * **There are five brims on this roster, not two** — the plague doctor's, the
+   * musketeer's, the witch's, the gunslinger's and this one. The claim that
+   * "three were cut for reading alike" and these were what survived stood here
+   * until 2026-08-30 and was doing real work, because it is the reason nobody
+   * went looking at the pair this one is genuinely confusable with. The
+   * separator it names is right and is the only one there is: **crown height**,
+   * 19 units here against the gunslinger's 10. That is the whole difference at
+   * 61px, and the rest of the costume repeats him — see `NEVER_MEET`, where the
+   * two are now kept out of the same fight.
    */
   ringmaster: {
     label: "The Ringmaster",
@@ -1853,11 +2187,40 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
       ctx.lineTo(r - 2, c.hy - r);
       ctx.closePath();
       solid(ctx, c, 0.92, 2.8);
-      // moustache, so the head shape is not a bare oval under the hat
-      ink(ctx, c, 2.4, 0.85);
-      ctx.moveTo(-4, c.hy + 4);
-      ctx.quadraticCurveTo(0, c.hy + 7, 5, c.hy + 3);
-      strokeInk(ctx, c, 2.4, 0.85);
+      /*
+       * **There was a moustache here until 2026-08-31, and what it drew was a
+       * hole.** Its stated job — *"so the head shape is not a bare oval under
+       * the hat"* — is rule 3 stated backwards: interior detail is not a
+       * costume, and this engine cannot draw a face at all. What it cost is
+       * worth writing down, because the same arithmetic condemns any ink mark
+       * laid on an ink mass and there are twenty-four costumes to make it in.
+       *
+       * Measured by driving this hook through a recording context: a 9.87-unit
+       * stroke whose centreline was **25/25 points inside the head disc**, and
+       * whose own outline at half-width never got closer than **0.83 units** to
+       * escaping it — so it changed no silhouette at any point of the idle
+       * cycle. It was therefore ink at `0.85 × 0.85` sitting on ink at `0.85`,
+       * a difference of 13% of the `fg`–`bg` range and in the *wrong direction*
+       * — but that was not what showed. What showed was `strokeInk`'s carve:
+       * `paper` at `globalAlpha` 1, `2.4 + 2 × 1.7 = 5.8` units wide, against a
+       * head disc 15.4 units across. **A third of the face wiped to background
+       * with a dimmer line down the middle**, which reads as a slot cut in the
+       * skull and is what the contact sheet showed at 300px.
+       *
+       * The rule the carve documentation already states and this is the
+       * corollary of: a mark is laid down in `paper` so it *stops where the
+       * shape behind it starts*. Given nothing behind it to stop against —
+       * given the same ink, at the same alpha, on the same plane — the carve is
+       * the only thing left of the mark, and a carve on its own is a groove.
+       * **An ink mark drawn wholly inside an ink mass draws a hole, never a
+       * mark.** Check the containment before adding one; the cost is about 1%
+       * of a frame either way, so a mark that reads as damage is not a cheap
+       * mistake, it is a paid-for one.
+       *
+       * The silhouette is deliberately untouched by this: the stovepipe is the
+       * whole read, its 19 units of crown against the gunslinger's 10 is the
+       * only separator the pair has, and `NEVER_MEET` carries the rest.
+       */
     },
     overlay: (ctx, c) => {
       // high collar standing off the neck
@@ -1886,41 +2249,6 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
 };
 
 /**
- * Which fighters each duel draws from. Every pool is one side against the
- * other, so a match is always good against evil and the blade colours always
- * disagree — that half is load-bearing and unchanged.
- *
- * **Both pools are now the whole roster (2026-08-27, client).** They used to be
- * a themed four each — the order's fight and the war in heaven — and the cost
- * of that was measured rather than argued: with two good and two evil per pool,
- * **four of the eight costumes were unreachable for any given visitor**, only
- * four of the twenty-eight pairs could ever occur, and **72.7% of match resets
- * brought back at least one fighter from the previous match** (23.9% returned
- * the identical pair). The ornament id *is* the pool key and the ornament is
- * published site config, so which half of the roster a visitor could see was
- * fixed for everyone. The client's report was "only a couple characters get
- * chosen ever, always starts with the same characters", and he was right.
- *
- * Merged: all eight are reachable, sixteen pairs instead of four, per-fighter
- * appearance evens out at ~25% instead of ~52%, and back-to-back identical
- * pairings fall from 24% to 7%.
- *
- * **And derived, since 2026-08-28.** The pools were four hand-written ids each,
- * which is exactly how four costumes came to be unreachable without anyone
- * noticing: a list and a roster that have to agree are two places to forget.
- * `ROSTER_GOOD` and `ROSTER_EVIL` filter `FIGHTERS` on the `side` field the
- * blade-colour carve-out is already checked against, so a fighter is rollable
- * the moment it is declared and the only way to withhold one is to delete it.
- * At twelve a side that is 144 pairs per pool and 288 rolled orderings.
- *
- * **What this gave up, stated because it was a real reason.** The roster
- * comment above says confusable fighters were kept in different pools so they
- * never meet. That protection is gone, and it is replaced by a specific
- * exclusion list rather than by splitting the roster in half again — a blunt
- * instrument that cost four costumes to solve a problem with at most a couple
- * of pairs. Add to `NEVER_MEET` if two of them turn out to read alike.
- */
-/**
  * The two sides, derived from the roster rather than typed out.
  *
  * They used to be four hand-written ids per pool, which is how four of the
@@ -1938,6 +2266,40 @@ const ROSTER_EVIL = (Object.keys(FIGHTERS) as FighterStyle[]).filter(
   (s) => FIGHTERS[s].side === "evil",
 );
 
+/**
+ * Which fighters each duel draws from. Every pool is one side against the
+ * other, so a match is always good against evil and the blade colours always
+ * disagree — that half is load-bearing and unchanged.
+ *
+ * **This block used to be attached to `ROSTER_GOOD`**, three declarations above
+ * the thing it describes, which is how the eight-fighter arithmetic in it
+ * survived two roster changes with a corrected paragraph sitting directly
+ * underneath it. It is on `DUEL_POOLS` now, and the numbers are the roster's.
+ *
+ * **Both pools are the whole roster (2026-08-27, client).** They used to be a
+ * themed four each — the order's fight and the war in heaven — and the cost of
+ * that was measured rather than argued: with two good and two evil per pool,
+ * **four of the eight costumes were unreachable for any given visitor**, only
+ * four of the twenty-eight pairs could ever occur, and **72.7% of match resets
+ * brought back at least one fighter from the previous match** (23.9% returned
+ * the identical pair). The ornament id *is* the pool key and the ornament is
+ * published site config, so which half of the roster a visitor could see was
+ * fixed for everyone. The client's report was "only a couple characters get
+ * chosen ever, always starts with the same characters", and he was right.
+ *
+ * Merged, and then grown to twenty-four on 2026-08-28: **every fighter is
+ * reachable from every pool**, which is 144 pairs and 288 rolled orderings a
+ * side rather than four, a per-fighter appearance rate of ~8.3% rather than the
+ * ~52% two-of-four gave the lucky half, and back-to-back identical pairings at
+ * about 0.7% rather than 24%.
+ *
+ * **What the merge gave up, stated because it was a real reason.** The roster
+ * note above says confusable fighters were kept in different pools so they
+ * never meet. That protection is gone, and it is replaced by `NEVER_MEET`
+ * rather than by splitting the roster in half again — a blunt instrument that
+ * cost four costumes to solve a problem which, once somebody actually measured
+ * it, was three pairs.
+ */
 export const DUEL_POOLS: Record<DuelPool, { good: FighterStyle[]; evil: FighterStyle[] }> = {
   duel: {
     good: ROSTER_GOOD,
@@ -1951,13 +2313,51 @@ export const DUEL_POOLS: Record<DuelPool, { good: FighterStyle[]; evil: FighterS
 
 /**
  * Pairs that must never be drawn together because they read alike at ornament
- * size. Empty today and deliberately kept: it is the mechanism that replaces
- * the old pool split, so the next "these two look the same" report is one entry
- * rather than a re-halving of the roster.
+ * size. It is the mechanism that replaced the old pool split, so a "these two
+ * look the same" finding costs one entry rather than a re-halving of the
+ * roster — and on 2026-08-30 it was finally used, with the client approving
+ * these three and no others.
  *
- * Order-insensitive. `npm run check` asserts every entry names real fighters.
+ * **Three, and each one is a measurement rather than an impression.** None of
+ * them is a reason to cut a costume: every pair here is fine on its own and
+ * only fails side by side, which is exactly the case this list exists for.
+ *
+ * 1. **The Gunslinger and The Ringmaster.** Brim, boxy crown, long coat, in
+ *    that order, on both. Their `back` hooks are the same path node for node —
+ *    same move, same two curves, same five line segments, same closing curve —
+ *    differing by between 1 and 7 units per node, and the ringmaster's hem sits
+ *    7 units higher. The one real separator is crown height, 19 units against
+ *    10, which is about eight pixels at the phone slot's ~95px figure and is
+ *    gone the moment either one turns. Verified by rendering the pair at the
+ *    real 281px phone slot rather than at sheet size, which is the whole point:
+ *    on the contact sheet at 300px they are plainly two hats.
+ * 2. **The Sentinel and The Executioner.** The only two heavies on opposite
+ *    sides carrying no cloth at all — neither declares a `back` hook — and both
+ *    put a single solid rectangle where the head goes: 22 × 30 units against
+ *    25 × 28, on shoulders of 1.24 and 1.32 and weights of 1.26 and 1.36. The
+ *    Golem is the third block head and is *not* here, because it is separated
+ *    by proportion the way the sentinel's own note claims: 25 × 22, squat, on
+ *    1.42 shoulders. These two are not separated by anything of the kind.
+ * 3. **The Executioner and The Viking.** The closest cross-side pair on the
+ *    roster by proportion signature — shoulder, weight, hunch, head, build and
+ *    the stance triple — at 0.140 on the audit's normalisation and first by a
+ *    wide margin on any: min-max scaled over the roster it is 0.071, against
+ *    0.090 for the next pair. What separates them is the viking's shield, one
+ *    shape, which is why that shield is worth the trouble the overlay above
+ *    goes to rather than being shrunk out of the way.
+ *
+ * Order-insensitive. `npm run check` asserts every entry names real fighters,
+ * that a pair is not a fighter against itself, that the two are on opposite
+ * sides (a same-side pair could never be rolled and would be protection that
+ * does nothing), that `rollPairing` never emits one, and that the coverage
+ * count subtracts exactly these — the gate reads this list rather than a
+ * constant, so adding a fourth entry needs no edit there.
  */
-export const NEVER_MEET: ReadonlyArray<readonly [FighterStyle, FighterStyle]> = [];
+export const NEVER_MEET: ReadonlyArray<readonly [FighterStyle, FighterStyle]> = [
+  ["gunslinger", "ringmaster"],
+  ["sentinel", "executioner"],
+  ["executioner", "viking"],
+];
 
 function forbidden(a: FighterStyle, b: FighterStyle): boolean {
   return NEVER_MEET.some(
@@ -2008,10 +2408,20 @@ export function rollPairing(
   let g = good[Math.floor(rng() * good.length) % good.length];
   let e = evil[Math.floor(rng() * evil.length) % evil.length];
 
-  // Re-roll a forbidden pairing rather than filtering the pools, so the draw
-  // stays uniform over what is allowed and an empty NEVER_MEET costs nothing.
-  // Bounded: a runaway list must not spin here, and falling through with the
-  // last roll is better than hanging the ornament.
+  /*
+   * Re-roll a forbidden pairing rather than filtering the pools, so the draw
+   * stays uniform over what is allowed and an empty `NEVER_MEET` costs nothing.
+   * Bounded: a runaway list must not spin here, and falling through with the
+   * last roll is better than hanging the ornament.
+   *
+   * **Re-rolling rather than filtering is also what makes it impossible to
+   * empty a side**, which is the failure mode a "just remove him from the pool"
+   * fix has: with three entries out of 144 pairings, the exclusion touches a
+   * pair and never a fighter, so every one of the twenty-four stays rollable
+   * and `allowFor`'s guarantee that neither side is empty is untouched. The
+   * fall-through is not a hole either, only a bound: a specific forbidden pair
+   * would have to be drawn nine times running to survive, which is 144⁻⁹.
+   */
   for (let attempt = 0; attempt < 8 && forbidden(g, e); attempt += 1) {
     g = good[Math.floor(rng() * good.length) % good.length];
     e = evil[Math.floor(rng() * evil.length) % evil.length];
