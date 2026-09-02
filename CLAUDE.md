@@ -137,6 +137,39 @@ Absent or malformed, it returns null and the defaults render. **`loadConfig` val
 field by field** — a published layout id that no longer exists would render an unstyled page for
 every visitor at once.
 
+### Per-page appearance
+
+**`Config.lookPages` is `duelPages` for the look itself** (2026-09-02, agreed 2026-08-27): a sparse
+map of *partial* per-page overrides over eleven dials (`pal`, `layout`, `fx`, `ornament`, `type`,
+`station`, and the five appearance booleans). Partial is load-bearing for the same reason as
+`duelPages` — a page names only what it disagrees with and keeps tracking the site for the rest.
+The invariants:
+
+- **`applyLook` in `theme.ts` is the one seam**, and `ConfigContext` exposes its result as `look`.
+  **Components render from `look`, never from `config`'s appearance dials** — gated by a source
+  scan (the panel and the command palette are the allow-list, because their job is the stored
+  value). `config` stays what is *kept*: the panel edits it, publish sends it, share codes encode
+  it. A page with no override passes through `applyLook` as the same object, by reference.
+- **The override goes through the same guardrail resolution as the site** — an override's grain on
+  Peat is still dropped at render, and the panel's warning list judges the *merged* pair, because
+  that is what publish makes the page render.
+- **The panel's "this page" scope means the page behind the drawer, deliberately** — the live
+  preview is the page itself, so editing a page you cannot see would be the duel editor's
+  preview-elsewhere fault rebuilt. To dress another page, go there first. Behaviour, presets and
+  setup codes stay site-level whatever the scope says.
+- **A page that pins its own ornament beats the operator's per-load roll** — the roll already
+  yields to an explicit pick, and an override is that pick made earlier.
+- **`validLookPages` refuses and drops; it never repairs** — the `validDuelPages` doctrine,
+  identity-tested. A refused dial kept at a default would be a working override shadowing the
+  site.
+- **Share codes carry none of it** — same decision as the duel settings, same reasoning: a code is
+  a picture of the look, `lookPages` is a document, and the compromise (site dials without the
+  map) is the thing to refuse. Site config is the distribution mechanism.
+- **`MAX_CONFIG_BYTES` is 12,000** (was 8,000): `lookPages` is the second published key that
+  grows. Still refuses, never truncates.
+- Transition on navigation is the 2026-08-27 decision by construction: the palette override rides
+  the same token swap as every palette change (0.9s bleed), and layout/type snap with the classes.
+
 ### Session and account routing
 
 `src/auth/SessionContext.tsx` is **deliberately separate from `ConfigContext`**, which §11 requires

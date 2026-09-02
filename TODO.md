@@ -447,7 +447,15 @@ and the SHA-256 is served from the same page over the same TLS connection as the
 so against the stated threat it does close to nothing. Every one of those signals is free for a
 scammer to clone.
 
-### Per-page appearance — agreed, not started
+### Per-page appearance — ~~agreed, not started~~ BUILT 2026-09-02
+
+**Built, gated (69 green) and driven end to end in a signed-in browser** — set on one page, absent
+on the next, published, cold-loaded through the Worker's injection, cleared. `CLAUDE.md` has the
+invariants (*Per-page appearance*), `docs/DECISIONS.md` the account. The panel's scope switch sets
+"the whole site" or "this page — the one behind the drawer"; every dial below it obeys. What still
+wants the client's eye: whether "this page means the page you are standing on" matches how he
+wants to work, and the section's look itself — both are his taste, not bugs. The paragraph below
+is kept for the constraints it recorded, all of which held.
 
 Client wants **every dial on all seventeen pages**, set from the admin panel. Transition decided:
 **bleed the colour, snap the structure** — the 0.9s palette bleed is the site's signature, but a

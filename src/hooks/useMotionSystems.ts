@@ -26,12 +26,14 @@ export function useMotionSystems({
   /** Changes whenever the card list does, so the tilt targets are re-collected. */
   gridKey: string;
 }): void {
-  const { config, band, layout, saver } = useConfig();
+  const { config, look, band, layout, saver } = useConfig();
   const cardsRef = useRef<HTMLElement[]>([]);
 
-  const live = useRef({ calm: config.calm, cursor: config.cursor, saver, tilt: SUPPORTS_TILT[band] });
+  // `look.cursor` (2026-09-02): the glow is appearance, so a page override
+  // reaches it. Calm has no per-page form and stays on `config`.
+  const live = useRef({ calm: config.calm, cursor: look.cursor, saver, tilt: SUPPORTS_TILT[band] });
   useEffect(() => {
-    live.current = { calm: config.calm, cursor: config.cursor, saver, tilt: SUPPORTS_TILT[band] };
+    live.current = { calm: config.calm, cursor: look.cursor, saver, tilt: SUPPORTS_TILT[band] };
   });
 
   // Re-collect the cards after every page, layout or band change. Holding the

@@ -64,6 +64,10 @@ export const PUBLISHED_KEYS = [
   // a visitor.
   "duel",
   "duelPages",
+  // Per-page appearance (2026-09-02) — same kept-in-step rule, same shape of
+  // failure if the Worker's list misses it: the override saves, previews
+  // locally, and never reaches a visitor.
+  "lookPages",
 ] as const;
 
 /** Narrow a full config down to the slice that gets published. */

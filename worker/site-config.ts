@@ -57,6 +57,9 @@ const PUBLISHED_KEYS = [
   // from becoming a head tag nobody can serve.
   "duel",
   "duelPages",
+  // Per-page appearance (2026-09-02) — same kept-in-step rule as `duelPages`,
+  // and the second published key that grows without anybody editing this file.
+  "lookPages",
 ] as const;
 
 /**
@@ -75,15 +78,21 @@ const PUBLISHED_KEYS = [
  * pathological case rather than the expected one — the editor writes only the
  * fields a page actually disagrees with, and a realistic override (a pinned
  * pairing and the four knobs) is ~120 bytes, so seventeen pages is ~2KB.
- * 8,000 covers the realistic case with room, and still refuses the
- * pathological one rather than putting 7KB into the head of every page.
+ *
+ * **Raised again from 8,000 on 2026-09-02, when `lookPages` landed** — the
+ * second key that grows. A fully-specified page look (all eleven dials) is
+ * ~150 bytes, so seventeen of those is ~2.6KB pathological and a realistic
+ * few-pages-few-dials map is a few hundred bytes. 12,000 covers both features
+ * used together realistically (~5KB) with the same headroom 8,000 gave the
+ * duel alone, and still refuses the fully-pathological pair (~9.5KB + base)
+ * rather than putting 12KB into the head of every page.
  *
  * **It fails loudly and has to keep doing so.** Truncating here would inject
  * a half-object that `loadConfig` would then correctly refuse field by field,
  * and the operator would see settings silently not apply with nothing to
  * explain it.
  */
-const MAX_CONFIG_BYTES = 8_000;
+const MAX_CONFIG_BYTES = 12_000;
 
 /**
  * Cache the published row inside the isolate for a few seconds.
@@ -158,11 +167,11 @@ export async function publishSiteConfig(request: Request, env: Env): Promise<Res
   const encoded = JSON.stringify(clean);
   if (encoded.length > MAX_CONFIG_BYTES) {
     // Says the two numbers, because the only way to act on this is to know how
-    // far over it is — and the thing to remove is almost certainly a per-page
-    // duel override, which is the only key here that grows.
+    // far over it is — and the thing to remove is a per-page override, duel or
+    // look, which are the only keys here that grow.
     throw new BadRequest(
       `That config is ${encoded.length} bytes and the limit is ${MAX_CONFIG_BYTES}. ` +
-        "Clear a per-page duel override — those are the only settings that grow.",
+        "Clear a per-page duel or look override — those are the only settings that grow.",
     );
   }
 

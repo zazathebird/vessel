@@ -30,11 +30,22 @@ import {
 } from "./persistence";
 import { describeRoll, roll } from "./randomiser";
 import { useSession } from "../auth/SessionContext";
+import { applyLook } from "../theme";
 import { DEFAULT_CONFIG } from "./types";
 import type { Config } from "./types";
 
 interface ConfigContextValue {
   config: Config;
+  /**
+   * The stored config with the current page's `lookPages` override laid on
+   * top (2026-09-02) — `applyLook`, memoised. **Anything that renders
+   * appearance reads this, never `config`**: the theme wrapper, the canvas
+   * palette, the cursor glow, the slot captions. `config` stays what is
+   * *kept* — the panel edits it, `publish` sends it, the share code encodes
+   * it — exactly the stored-versus-drawn split the adapted layout and the
+   * resolved ornament already follow.
+   */
+  look: Config;
   /**
    * Calm is on because the OS asked for reduced motion and the visitor has
    * expressed no preference of their own. Read by `Greeting.tsx`, which is the
@@ -193,6 +204,16 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
 
   const [config, setConfig] = useState<Config>(boot.config);
 
+  /*
+   * The current page's look — `applyLook` is the seam per-page appearance goes
+   * through (2026-09-02). Computed here, once, so every derived value below
+   * (adapted layout, resolved ornament and fx, audio tuning) and every
+   * consumer of the context reads one answer rather than each re-merging.
+   * Memoised on `config` because the override lives inside it (`lookPages`
+   * and `page` are both fields), so no second dependency can go stale.
+   */
+  const look = useMemo(() => applyLook(config), [config]);
+
   /**
    * Calm is on because the operating system asked for it, and the visitor has
    * still expressed nothing either way.
@@ -259,8 +280,11 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   // the audio module imports nothing and cannot hold a second opinion about
   // which palette is current.
   useEffect(() => {
-    setAudioPalette(config.pal);
-  }, [config.pal]);
+    // The look's palette, not the stored one: pitch derives from the palette
+    // exactly as every colour does, and a page overriding its palette would
+    // otherwise sound like the site while looking like itself.
+    setAudioPalette(look.pal);
+  }, [look.pal]);
 
   // Give the audio device back the moment sound is not wanted. A live
   // AudioContext marks the tab as playing audio and can hold a Bluetooth
@@ -712,6 +736,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   const value = useMemo<ConfigContextValue>(
     () => ({
       config,
+      look,
       calmBySystem,
       chooseMotion,
       update,
@@ -719,18 +744,28 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       sub,
       shuffle,
       band,
-      layout: adaptLayout(config.layout, band),
-      adapted: isAdapted(config.layout, band),
+      // The look's layout, so a page override reaches the band adaptation the
+      // same way the stored value always has.
+      layout: adaptLayout(look.layout, band),
+      adapted: isAdapted(look.layout, band),
       /*
        * The rolled ornament wins for an operator until he picks one himself;
        * for everybody else the duels resolve away. `visibleFx` carries no roll
        * — he asked for a random *ornament*, and a background effect that
        * changed under the page every load is a different request.
+       *
+       * **A page that pins its own ornament beats the per-load roll** — the
+       * roll already yields the moment he picks an ornament himself, and an
+       * override on this page is exactly that pick, made earlier. Without
+       * this, the one page he deliberately dressed would keep rolling under
+       * him and the override would look broken to the only person who set it.
        */
       ornament: isOperator
-        ? (operatorRoll ?? config.ornament)
-        : visibleOrnament(config.ornament, false),
-      fx: visibleFx(config.fx, isOperator),
+        ? config.lookPages[config.page]?.ornament !== undefined
+          ? look.ornament
+          : (operatorRoll ?? look.ornament)
+        : visibleOrnament(look.ornament, false),
+      fx: visibleFx(look.fx, isOperator),
       toast,
       say,
       chime,
@@ -754,6 +789,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     }),
     [
       config,
+      look,
       calmBySystem,
       chooseMotion,
       update,

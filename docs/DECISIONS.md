@@ -13,6 +13,28 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-09-02 (night) — per-page appearance, built
+
+The 2026-08-27 agreement ("every dial on all seventeen pages", client) built end to end. The gate
+goes **67 → 69**, both new gates break-verified three ways (unmerged seam, App handed the stored
+config, validator repairing), and the loop was driven in a real signed-in browser against the
+local Worker: an override set on `/about` recoloured it live with the toast saying *"Solarpunk, on
+about only"*, home stayed on the site's palette, the override survived navigation both ways,
+published as `{"about":{"pal":5}}`, cold-loaded through the injected head in the right colour with
+no bleed, and *clear — follow the site* put it back and republished clean.
+
+The decisions, recorded in `CLAUDE.md`'s new *Per-page appearance* section: `lookPages` is
+`duelPages` for the look (sparse, partial, refused-not-repaired); `applyLook` is the one seam and
+`look` on the context is the one answer, with a source-scan gate keeping components off `config`'s
+appearance dials; the panel's "this page" scope is the page behind the drawer, because the live
+preview *is* the page; a pinned ornament beats the per-load roll; share codes stay a picture of
+the look and carry none of it; `MAX_CONFIG_BYTES` 8,000 → 12,000 for the second growing key.
+
+Two things worth knowing that are not invariants: the randomiser keeps rolling the *base* under a
+pinned dial (pinning is the point — the operator sees the override note in the panel, not a broken
+roll), and the eleven-dial list deliberately excludes `calm`/`sound` (the visitor's), `mode`/
+`scope` (the site's behaviour) and the duel (it has its own map).
+
 ## 2026-09-02 (later) — three phase-S hardening items, closed
 
 TODO 2026-08-27 items 2, 5 and 6, none needing the client. The gate goes **66 → 67**.

@@ -10,6 +10,7 @@ import { decodeShareCode, encodeShareCode } from "../config/shareCode";
 import { LAYOUTS, MODES, PICKABLE_FX, SCOPES, TYPESETS } from "../data/catalog";
 import type { ScopeId } from "../data/catalog";
 import { combinationOf, warnings } from "../data/guardrails";
+import type { PageLook } from "../data/lookSettings";
 import { PICKABLE_ORNAMENTS } from "../data/ornaments";
 import { PICKABLE_STATIONS } from "../data/stations";
 import { PALETTES } from "../data/palettes";
@@ -29,6 +30,16 @@ export function SiteConfigPanel() {
   const { refresh } = useSession();
   const panelRef = useRef<HTMLElement | null>(null);
   const [pasted, setPasted] = useState("");
+  /**
+   * What the look controls below are setting: the whole site, or the page the
+   * panel is standing on (2026-09-02 — client, 2026-08-27: every dial on all
+   * seventeen pages). **"This page" means the page behind the drawer,
+   * deliberately** — the panel's live preview *is* the site, so editing a page
+   * you are not looking at would be dragging sliders with the canvas that
+   * judges them somewhere else, which is the exact fault the duel editor's
+   * preview exists to prevent. To dress another page, go there first.
+   */
+  const [target, setTarget] = useState<"site" | "page">("site");
   const [publishState, setPublishState] = useState<"idle" | "publishing" | "published">("idle");
   const [leaving, setLeaving] = useState(false);
 
@@ -88,6 +99,30 @@ export function SiteConfigPanel() {
   const code = encodeShareCode(config);
 
   /*
+   * The look controls' plumbing (2026-09-02). In site mode they read and write
+   * `config` exactly as they always have. In page mode they read the page's
+   * *effective* value — site with the override on top, which is what the page
+   * is showing — and write only the touched dial into `lookPages[page]`,
+   * keeping the override partial so untouched dials keep tracking the site.
+   */
+  const pageLook: PageLook = config.lookPages[config.page] ?? {};
+  const overridden = Object.keys(pageLook).length;
+  const eff = target === "page" ? { ...config, ...pageLook } : config;
+  const setLook = (patch: PageLook) => {
+    if (target === "site") {
+      update(patch);
+      return;
+    }
+    update({ lookPages: { ...config.lookPages, [config.page]: { ...pageLook, ...patch } } });
+  };
+  const clearLook = () => {
+    const next = { ...config.lookPages };
+    delete next[config.page];
+    update({ lookPages: next });
+    say(`${config.page} follows the site again`);
+  };
+
+  /*
    * Every guardrail this setup trips, in the table's order (2026-08-30).
    *
    * **Built from the STORED config, deliberately, and not from what is drawn.**
@@ -98,18 +133,24 @@ export function SiteConfigPanel() {
    * The stored values are also exactly what `publish` sends, which is the
    * question this section is standing next to.
    *
+   * **The current page's stored override is part of that** (2026-09-02): the
+   * page in front of him renders the merged pair, and publish sends both
+   * halves, so the combination judged is the merge — still stored values, not
+   * drawn ones.
+   *
    * `config.layout`, not the adapted one, for the same reason: a phone
    * collapsing Mosaic to Stack is not a thing he is publishing.
    */
+  const judged = { ...config, ...pageLook };
   const tripped = warnings(
     combinationOf({
-      pal: config.pal,
-      layout: config.layout,
-      fx: config.fx,
-      ornament: config.ornament,
-      station: config.station,
-      type: config.type,
-      grain: config.grain,
+      pal: judged.pal,
+      layout: judged.layout,
+      fx: judged.fx,
+      ornament: judged.ornament,
+      station: judged.station,
+      type: judged.type,
+      grain: judged.grain,
     }),
   );
 
@@ -201,6 +242,54 @@ export function SiteConfigPanel() {
         </div>
       </section>
 
+      {/*
+        The look scope (2026-09-02): whether the dials below dress the whole
+        site or the page behind this drawer. It sits above the first dial it
+        governs — the same ordering rule the guardrail notice follows — and
+        "this page" is always the page you are standing on, because the live
+        preview is the page itself. Behaviour, presets and setup codes above
+        and below are the site's regardless; a per-page randomiser or a
+        per-page share code would each be a different feature.
+      */}
+      <section className="v-panel-section">
+        <h2 className="v-panel-label">These dials set</h2>
+        <div className="v-chip-row">
+          <button
+            type="button"
+            className={`chip${target === "site" ? " is-active" : ""}`}
+            aria-pressed={target === "site"}
+            onClick={() => setTarget("site")}
+          >
+            the whole site
+          </button>
+          <button
+            type="button"
+            className={`chip${target === "page" ? " is-active" : ""}`}
+            aria-pressed={target === "page"}
+            onClick={() => setTarget("page")}
+          >
+            this page — {config.page}
+          </button>
+        </div>
+        {overridden > 0 ? (
+          <>
+            <p className="v-panel-note">
+              {config.page} sets {overridden} of its own: {Object.keys(pageLook).join(", ")}.
+              Every other dial follows the site.
+            </p>
+            <button type="button" className="chip" onClick={clearLook}>
+              clear — follow the site
+            </button>
+          </>
+        ) : (
+          <p className="v-panel-note">
+            {target === "page"
+              ? `${config.page} follows the site. Touch a dial below to give it one of its own.`
+              : "Every page follows the site unless it is given a dial of its own."}
+          </p>
+        )}
+      </section>
+
       <section className="v-panel-section">
         <h2 className="v-panel-label">Palette — {PALETTES.length}</h2>
         <div className="v-swatches">
@@ -208,9 +297,9 @@ export function SiteConfigPanel() {
             <button
               key={palette.id}
               type="button"
-              className={`v-swatch${config.pal === i ? " is-active" : ""}`}
+              className={`v-swatch${eff.pal === i ? " is-active" : ""}`}
               style={{ background: palette.bg }}
-              aria-pressed={config.pal === i}
+              aria-pressed={eff.pal === i}
               onClick={() => {
                 /*
                  * **This used to also write `mode: "static"`, and that was the
@@ -229,11 +318,13 @@ export function SiteConfigPanel() {
                  * worse than the overwrite it was avoiding. So: pick the
                  * palette, leave the mode alone, and *say* what will happen.
                  */
-                update({ pal: i });
+                setLook({ pal: i });
                 say(
-                  config.mode === "static"
-                    ? palette.name
-                    : `${palette.name} — the randomiser will roll over this`,
+                  target === "page"
+                    ? `${palette.name}, on ${config.page} only`
+                    : config.mode === "static"
+                      ? palette.name
+                      : `${palette.name} — the randomiser will roll over this`,
                 );
               }}
             >
@@ -280,11 +371,11 @@ export function SiteConfigPanel() {
             <button
               key={layout.id}
               type="button"
-              className={`chip${config.layout === layout.id ? " is-active" : ""}`}
-              aria-pressed={config.layout === layout.id}
+              className={`chip${eff.layout === layout.id ? " is-active" : ""}`}
+              aria-pressed={eff.layout === layout.id}
               onClick={() => {
-                update({ layout: layout.id });
-                say(`${layout.label} layout`);
+                setLook({ layout: layout.id });
+                say(target === "page" ? `${layout.label}, on ${config.page} only` : `${layout.label} layout`);
               }}
             >
               {layout.label}
@@ -302,11 +393,11 @@ export function SiteConfigPanel() {
             <button
               key={effect.id}
               type="button"
-              className={`chip${config.fx === effect.id ? " is-active" : ""}`}
-              aria-pressed={config.fx === effect.id}
+              className={`chip${eff.fx === effect.id ? " is-active" : ""}`}
+              aria-pressed={eff.fx === effect.id}
               onClick={() => {
-                update({ fx: effect.id });
-                say(effect.label);
+                setLook({ fx: effect.id });
+                say(target === "page" ? `${effect.label}, on ${config.page} only` : effect.label);
               }}
             >
               {effect.label}
@@ -322,10 +413,10 @@ export function SiteConfigPanel() {
             <button
               key={ornament.id}
               type="button"
-              className={`chip${config.ornament === ornament.id ? " is-active" : ""}`}
-              aria-pressed={config.ornament === ornament.id}
+              className={`chip${eff.ornament === ornament.id ? " is-active" : ""}`}
+              aria-pressed={eff.ornament === ornament.id}
               onClick={() => {
-                update({ ornament: ornament.id });
+                setLook({ ornament: ornament.id });
                 say(ornament.id === "none" ? "ornament off" : ornament.label);
               }}
             >
@@ -349,11 +440,11 @@ export function SiteConfigPanel() {
             <button
               key={station.id}
               type="button"
-              className={`chip${config.station === station.id ? " is-active" : ""}`}
-              aria-pressed={config.station === station.id}
+              className={`chip${eff.station === station.id ? " is-active" : ""}`}
+              aria-pressed={eff.station === station.id}
               title={station.note}
               onClick={() => {
-                update({ station: station.id });
+                setLook({ station: station.id });
                 say(station.label);
               }}
             >
@@ -370,9 +461,9 @@ export function SiteConfigPanel() {
             <button
               key={set.id}
               type="button"
-              className={`chip${config.type === i ? " is-active" : ""}`}
-              aria-pressed={config.type === i}
-              onClick={() => update({ type: i })}
+              className={`chip${eff.type === i ? " is-active" : ""}`}
+              aria-pressed={eff.type === i}
+              onClick={() => setLook({ type: i })}
             >
               {set.label}
             </button>
@@ -385,33 +476,33 @@ export function SiteConfigPanel() {
         <div className="v-chip-row">
           <button
             type="button"
-            className={`chip${config.grain ? " is-active" : ""}`}
-            aria-pressed={config.grain}
-            onClick={() => update({ grain: !config.grain })}
+            className={`chip${eff.grain ? " is-active" : ""}`}
+            aria-pressed={eff.grain}
+            onClick={() => setLook({ grain: !eff.grain })}
           >
             Grain
           </button>
           <button
             type="button"
-            className={`chip${config.breathe ? " is-active" : ""}`}
-            aria-pressed={config.breathe}
-            onClick={() => update({ breathe: !config.breathe })}
+            className={`chip${eff.breathe ? " is-active" : ""}`}
+            aria-pressed={eff.breathe}
+            onClick={() => setLook({ breathe: !eff.breathe })}
           >
             Breathing
           </button>
           <button
             type="button"
-            className={`chip${config.cursor ? " is-active" : ""}`}
-            aria-pressed={config.cursor}
-            onClick={() => update({ cursor: !config.cursor })}
+            className={`chip${eff.cursor ? " is-active" : ""}`}
+            aria-pressed={eff.cursor}
+            onClick={() => setLook({ cursor: !eff.cursor })}
           >
             Cursor glow
           </button>
           <button
             type="button"
-            className={`chip${config.entrances ? " is-active" : ""}`}
-            aria-pressed={config.entrances}
-            onClick={() => update({ entrances: !config.entrances })}
+            className={`chip${eff.entrances ? " is-active" : ""}`}
+            aria-pressed={eff.entrances}
+            onClick={() => setLook({ entrances: !eff.entrances })}
           >
             Entrances
           </button>
@@ -447,9 +538,9 @@ export function SiteConfigPanel() {
           */}
           <button
             type="button"
-            className={`chip${config.slots ? " is-active" : ""}`}
-            aria-pressed={config.slots}
-            onClick={() => update({ slots: !config.slots })}
+            className={`chip${eff.slots ? " is-active" : ""}`}
+            aria-pressed={eff.slots}
+            onClick={() => setLook({ slots: !eff.slots })}
           >
             Slot labels
           </button>

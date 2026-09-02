@@ -3,6 +3,7 @@ import type { OrnamentId } from "../data/ornaments";
 import { DEFAULT_ORNAMENT } from "../data/ornaments";
 import type { DuelPageSettings, DuelSettings } from "../data/duelSettings";
 import { DEFAULT_DUEL_SETTINGS } from "../data/duelSettings";
+import type { PageLooks } from "../data/lookSettings";
 import type { PageId } from "../data/pageIds";
 import type { StationId } from "../data/stations";
 import { DEFAULT_STATION } from "../data/stations";
@@ -113,6 +114,20 @@ export interface Config {
    * moves. A page that says nothing about `zoom` keeps tracking the default.
    */
   duelPages: DuelPageSettings;
+  /**
+   * Per-page appearance overrides (2026-09-02, agreed 2026-08-27 — client:
+   * every dial on all seventeen pages). Sparse and partial like `duelPages`:
+   * a page names only the dials it disagrees with and follows the site for
+   * everything else.
+   *
+   * **Applied through `applyLook` in `theme.ts`, on the way to the page** —
+   * this field never rewrites the site-level ones, so clearing an override
+   * puts the page straight back on the site's look, and the randomiser keeps
+   * rolling the base underneath a pinned dial ("bleed the colour, snap the
+   * structure" composes with `mode: "visit"` by construction, which was the
+   * 2026-08-27 requirement).
+   */
+  lookPages: PageLooks;
 }
 
 export const DEFAULT_CONFIG: Config = {
@@ -134,6 +149,7 @@ export const DEFAULT_CONFIG: Config = {
   station: DEFAULT_STATION, // centred, with the float the slot has always had
   duel: DEFAULT_DUEL_SETTINGS, // every knob at what the engine already does
   duelPages: {}, // no page disagrees with the site until one is told to
+  lookPages: {}, // same rule for the look itself
 
   unlocked: false,
 };

@@ -98,7 +98,8 @@ import { decodeShareCode } from "../src/config/shareCode";
 import { adaptLayout } from "../src/config/bands";
 import { DEFAULT_STATION, PICKABLE_STATIONS, STATIONS } from "../src/data/stations";
 import { GUARDRAILS, combinationOf, effectiveGrain, isAllowed, matched, resolve, warnings } from "../src/data/guardrails";
-import { themeClasses } from "../src/theme";
+import { applyLook, themeClasses, themeVars } from "../src/theme";
+import { validLookPages } from "../src/data/lookSettings";
 import { effectiveStation } from "../src/data/stations";
 import { edgeState } from "../src/hooks/useEdgeFade";
 import type { Band } from "../src/config/bands";
@@ -3505,15 +3506,16 @@ check("the duel settings publish, refuse rubbish, and default to a no-op", () =>
   }
 
   /*
-   * The size ceiling, which `duelPages` is the reason for: it is the first
-   * published key that grows without anybody editing `worker/site-config.ts`.
-   * **It must refuse, not truncate** — a truncated payload injects a half
-   * object that `loadConfig` then correctly refuses field by field, leaving the
-   * operator watching settings silently not apply.
+   * The size ceiling, which the two growing keys are the reason for:
+   * `duelPages` (2026-08-28, raised it to 8,000) and `lookPages` (2026-09-02,
+   * to 12,000) are the published keys that grow without anybody editing
+   * `worker/site-config.ts`. **It must refuse, not truncate** — a truncated
+   * payload injects a half object that `loadConfig` then correctly refuses
+   * field by field, leaving the operator watching settings silently not apply.
    */
   must(
-    /MAX_CONFIG_BYTES\s*=\s*8_?000/.test(workerSrc),
-    "MAX_CONFIG_BYTES is no longer 8,000 — duelPages is why it was raised",
+    /MAX_CONFIG_BYTES\s*=\s*12_?000/.test(workerSrc),
+    "MAX_CONFIG_BYTES is no longer 12,000 — duelPages and lookPages are why it sits there",
   );
   const ceiling = workerSrc.slice(workerSrc.indexOf("MAX_CONFIG_BYTES"));
   must(
@@ -4186,6 +4188,159 @@ check("the panel prints every guardrail the operator trips", () => {
   must(!/var\(--faint\)/.test(panel), "the panel is painting text with --faint");
 
   return `${list.length} warnings on a tripping setup, ${list.filter((w) => w.resolved).length} resolved at render, the panel prints them`;
+});
+
+/*
+ * ---- Per-page appearance (2026-09-02) ---------------------------------------
+ *
+ * `lookPages` is `duelPages` for the look itself: a sparse map of partial
+ * overrides, published, validated by refusal, applied on the way to the page.
+ * The two gates below follow the two disciplines this file keeps re-learning:
+ * drive the function the page actually renders through (`applyLook`, and then
+ * the wrapper built from its result), and test the validator on identity with
+ * what came in rather than with what came out.
+ */
+
+check("a page's look override reaches the page, and only that page", () => {
+  const peat = PALETTES.findIndex((p) => p.id === LOW_CONTRAST[0]);
+  const cfg: Config = {
+    ...DEFAULT_CONFIG,
+    page: "work",
+    calm: false,
+    grain: false,
+    lookPages: { work: { pal: peat, layout: "ledger", fx: "plasma", grain: true, slots: true } },
+  };
+
+  // The merge itself: named dials override, unnamed dials track the site.
+  const shown = applyLook(cfg);
+  must(
+    shown.pal === peat && shown.layout === "ledger" && shown.fx === "plasma" && shown.slots,
+    "applyLook did not lay the override over the site config",
+  );
+  must(shown.type === cfg.type && shown.ornament === cfg.ornament, "applyLook changed a dial the override does not name");
+  must(cfg.pal === DEFAULT_CONFIG.pal && !cfg.slots, "applyLook mutated the stored config");
+
+  // A page with no override passes through as the same object — reference
+  // equality, so sixteen untouched pages cost nothing per render.
+  const other: Config = { ...cfg, page: "about" };
+  must(applyLook(other) === other, "a page with no override must pass through untouched");
+
+  // The wrapper: the override's palette reaches the tokens, and the override's
+  // grain goes through the same guardrail resolution the site's does — Peat is
+  // low-contrast, so has-grain must be dropped even though the override asks.
+  const vars = themeVars(shown, "ledger", "desk") as Record<string, string>;
+  must(vars["--bg"] === PALETTES[peat].bg, "the override's palette did not reach the wrapper's tokens");
+  must(
+    !CLASSES(shown, DEFAULT_ORNAMENT, "ledger").includes("has-grain"),
+    "an override's grain walked past the low-contrast guardrail",
+  );
+
+  // The taste rules see the merged pair too: Ledger + Plasma is a warning the
+  // operator must be shown before he publishes it.
+  const merged = warnings(
+    combinationOf({
+      pal: shown.pal,
+      layout: shown.layout,
+      fx: shown.fx,
+      ornament: shown.ornament,
+      station: shown.station,
+      type: shown.type,
+      grain: shown.grain,
+    }),
+  );
+  must(
+    merged.some((w) => !w.resolved) && merged.some((w) => w.resolved),
+    "the merged combination no longer trips the rules the override walks into",
+  );
+
+  /*
+   * And the call sites, because driving the seam alone stays green when a host
+   * stops going through it — the Size slider shipped exactly that way. The
+   * context must derive through applyLook, the derived layout and fx must read
+   * the look, and App must hand the look (never the stored config) to both
+   * halves of the wrapper.
+   */
+  const ctx = readFileSync("src/config/ConfigContext.tsx", "utf8");
+  must(/applyLook\(config\)/.test(ctx), "ConfigContext no longer derives the look through applyLook");
+  must(/adaptLayout\(look\.layout/.test(ctx), "the adapted layout reads the stored config, so a layout override never renders");
+  must(/visibleFx\(look\.fx/.test(ctx), "the resolved fx reads the stored config, so an effect override never renders");
+  const app = readFileSync("src/App.tsx", "utf8");
+  must(
+    /themeClasses\(look,/.test(app) && /themeVars\(look,/.test(app),
+    "App.tsx hands the stored config to the theme — the override never reaches the wrapper",
+  );
+
+  /*
+   * No renderer outside the config layer may read a stored appearance dial —
+   * `look` is the one answer. The allowlist is the surfaces whose *job* is the
+   * stored value: the panel (it edits it), the command palette (site-level
+   * toggles), and this scan strips comments the way the custom-property gate
+   * does, because Ornament.tsx names `config.ornament` in prose.
+   */
+  const ALLOWED = new Set(["SiteConfigPanel.tsx", "CommandPalette.tsx"]);
+  const DIALS = /\bconfig\.(pal|layout|fx|ornament|type|station|grain|breathe|cursor|slots|entrances)\b/;
+  const offenders: string[] = [];
+  for (const dir of ["src/components", "src/fx", "src/hooks"]) {
+    for (const file of readdirSync(dir)) {
+      if (!/\.(ts|tsx)$/.test(file) || ALLOWED.has(file)) continue;
+      const src = readFileSync(join(dir, file), "utf8")
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/\/\/[^\n]*/g, "");
+      if (DIALS.test(src)) offenders.push(join(dir, file));
+    }
+  }
+  must(
+    offenders.length === 0,
+    `stored appearance dials read outside the config layer (read \`look\` instead): ${offenders.join(", ")}`,
+  );
+
+  return "override merges, guards resolve on the merge, all three call sites go through the seam";
+});
+
+check("a page look override refuses rubbish and never repairs it", () => {
+  // Identity with what came in: a valid partial survives exactly as sent.
+  const good = { work: { pal: 3, layout: "ledger", grain: false }, about: { fx: "plasma" } };
+  must(
+    JSON.stringify(validLookPages(good)) === JSON.stringify(good),
+    "a valid override did not round-trip identically",
+  );
+
+  // A refused field is DROPPED — an override pinned to a default is a working
+  // override shadowing whatever the site later says, the validDuelPages bug.
+  const mixed = validLookPages({ work: { pal: 999, layout: "nope", grain: "yes", fx: "plasma" } });
+  must(
+    JSON.stringify(mixed) === JSON.stringify({ work: { fx: "plasma" } }),
+    `refused fields were kept or repaired: ${JSON.stringify(mixed)}`,
+  );
+
+  // An override emptied by refusals is dropped whole — {} and absence must
+  // mean the same thing, or the panel's override count lies.
+  must(!("work" in validLookPages({ work: { pal: -1 } })), "an emptied override survived as {}");
+
+  // Unknown pages and non-object shapes are dropped, never guessed at.
+  must(Object.keys(validLookPages({ nothome: { pal: 1 } })).length === 0, "an unknown page key survived");
+  must(Object.keys(validLookPages("0-7-5")).length === 0, "a string was accepted as a look map");
+  must(Object.keys(validLookPages([{ pal: 1 }])).length === 0, "an array was accepted as a look map");
+  must(Object.keys(validLookPages({ work: [3] })).length === 0, "an array was accepted as an override");
+
+  // A hidden catalogue entry is stored-valid: hidden is unlisted, not invalid.
+  must(
+    validLookPages({ home: { ornament: "duelholy" } }).home?.ornament === "duelholy",
+    "a hidden ornament was refused — hidden means unlisted, not invalid",
+  );
+
+  // Fractional and out-of-range indices refuse rather than clamp.
+  must(!("home" in validLookPages({ home: { pal: 2.5 } })), "a fractional palette index was accepted");
+  must(!("home" in validLookPages({ home: { type: TYPESETS.length } })), "an out-of-range typeset was accepted");
+
+  // And the wiring: loadConfig must actually pass the field through this.
+  const persistence = readFileSync("src/config/persistence.ts", "utf8");
+  must(
+    /lookPages: validLookPages\(saved\.lookPages\)/.test(persistence),
+    "loadConfig no longer validates lookPages through validLookPages",
+  );
+
+  return "valid overrides round-trip; rubbish is dropped, never repaired or defaulted";
 });
 
 check("stations: wire order, decode, and the roam guardrail bites", () => {

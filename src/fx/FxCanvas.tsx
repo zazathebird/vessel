@@ -56,7 +56,7 @@ export function FxCanvas() {
    * is a full-bleed background, so reading `config.fx` here would put a duel
    * across the whole page for every visitor.
    */
-  const { config, saver, fx } = useConfig();
+  const { config, look, saver, fx } = useConfig();
 
   /*
    * The duel settings in force on this page, kept in a ref so the rAF loop sees
@@ -131,9 +131,12 @@ export function FxCanvas() {
   const quality = useRef(storedTier() ?? 1);
   const refit = useRef<(() => void) | null>(null);
 
-  const live = useRef({ fx, pal: config.pal, calm: config.calm, saver });
+  // `look.pal`, not `config.pal` (2026-09-02): the canvas paints the palette
+  // the page is showing, per-page override included — `fx` is already the
+  // resolved one for the same reason.
+  const live = useRef({ fx, pal: look.pal, calm: config.calm, saver });
   useEffect(() => {
-    live.current = { fx, pal: config.pal, calm: config.calm, saver };
+    live.current = { fx, pal: look.pal, calm: config.calm, saver };
   });
 
   // Buffer sizing. Separate from the render loop so a resize never touches the

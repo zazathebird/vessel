@@ -5,6 +5,7 @@ import { STATIONS } from "../data/stations";
 import { PATHS } from "../data/pageIds";
 import type { PageId } from "../data/pageIds";
 import { validDuelPages, validDuelSettings } from "../data/duelSettings";
+import { validLookPages } from "../data/lookSettings";
 import { DEFAULT_CONFIG } from "./types";
 import type { Config, Scopes } from "./types";
 import { publishedConfig } from "./siteConfig";
@@ -103,6 +104,7 @@ export function loadConfig(): Config {
     // per field, so one bad number cannot take the duel down with it.
     duel: validDuelSettings(saved.duel),
     duelPages: validDuelPages(saved.duelPages),
+    lookPages: validLookPages(saved.lookPages),
     type: index(saved.type, TYPESETS.length, DEFAULT_CONFIG.type),
     mode: oneOf(saved.mode, MODES.map((m) => m.id), DEFAULT_CONFIG.mode),
     scope,

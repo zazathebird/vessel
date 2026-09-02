@@ -8,7 +8,7 @@ import { EmailReveal } from "./EmailReveal";
  * this component only ever renders structure and copy.
  */
 export function ContentBlock({ block, index }: { block: PageBlock; index: number }) {
-  const { config } = useConfig();
+  const { look } = useConfig();
   return (
     <article
       className={`v-block${block.loud ? " is-loud" : ""}`}
@@ -58,7 +58,7 @@ export function ContentBlock({ block, index }: { block: PageBlock; index: number
             which is useful while the real photographs are still going in and
             meaningless to a visitor who cannot change it.
           */}
-          {config.slots && <span className="v-tile-caption">{block.tile}</span>}
+          {look.slots && <span className="v-tile-caption">{block.tile}</span>}
         </div>
       )}
 

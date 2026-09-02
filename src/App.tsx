@@ -42,7 +42,7 @@ export default function App() {
    * station follows the ornament that is on the page rather than the one in
    * storage.
    */
-  const { config, layout, band, ornament, fx, diving, nav, saver } = useConfig();
+  const { config, look, layout, band, ornament, fx, diving, nav, saver } = useConfig();
 
   const page = PAGES[config.page];
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -132,8 +132,14 @@ export default function App() {
     <OverlayHostContext.Provider value={hostRef}>
     <div
       ref={hostRef}
-      className={`page-${config.page} ${themeClasses(config, layout, band, { ornament, fx })}`}
-      style={themeVars(config, layout, band)}
+      /*
+       * `look`, not `config` (2026-09-02): the wrapper is built from what the
+       * page shows, and a per-page override is part of that the same way the
+       * adapted layout and the resolved ornament are. `config.page` is routing
+       * and identical on both.
+       */
+      className={`page-${config.page} ${themeClasses(look, layout, band, { ornament, fx })}`}
+      style={themeVars(look, layout, band)}
     >
       <FxCanvas />
       <div className="v-vignette" aria-hidden="true" />

@@ -281,7 +281,7 @@ export function duelCamera(
 }
 
 export function DuelOrnament({ pairing }: { pairing: DuelPool }) {
-  const { config, saver } = useConfig();
+  const { config, look, saver } = useConfig();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   /*
@@ -308,9 +308,11 @@ export function DuelOrnament({ pairing }: { pairing: DuelPool }) {
    * double render cannot make it mean anything different.
    */
 
-  const live = useRef({ pal: config.pal, calm: config.calm, saver, duel });
+  // `look.pal`, not `config.pal` (2026-09-02): the fight is drawn in the
+  // palette the page is showing, override included.
+  const live = useRef({ pal: look.pal, calm: config.calm, saver, duel });
   useEffect(() => {
-    live.current = { pal: config.pal, calm: config.calm, saver, duel };
+    live.current = { pal: look.pal, calm: config.calm, saver, duel };
   });
 
   useEffect(() => {

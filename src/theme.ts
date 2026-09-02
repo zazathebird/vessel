@@ -16,6 +16,24 @@ import type { Config } from "./config/types";
  * re-render of styles — which is what makes the .9s palette bleed work.
  */
 
+/**
+ * The page's look: the stored config with the current page's override laid on
+ * top (2026-09-02). **This is the seam per-page appearance goes through, and
+ * everything downstream of `ConfigContext` reads its result** — the wrapper's
+ * vars and classes, the canvas palette, the audio tuning, the slot captions.
+ * Stored config is untouched, as ever: clearing an override puts the page
+ * straight back on the site's look, and the randomiser keeps rolling the base
+ * underneath a pinned dial.
+ *
+ * Pure and exported so the gate can drive the same function the page renders
+ * through, rather than re-deriving the merge and confirming its own copy.
+ */
+export function applyLook(config: Config): Config {
+  const override = config.lookPages[config.page];
+  if (!override) return config;
+  return { ...config, ...override };
+}
+
 const DEFAULT_RADIUS = "16px";
 const CALM_RADIUS = "6px";
 
