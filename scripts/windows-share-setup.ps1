@@ -1,4 +1,4 @@
-<#
+﻿<#
     Set this Windows machine up to share folders with mcclevarty.ca.
 
     WHAT THIS IS

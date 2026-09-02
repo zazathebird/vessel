@@ -1,5 +1,5 @@
 @echo off
-REM  Sharing setup for mcclevarty.ca — the double-clickable way in.
+REM  Sharing setup for mcclevarty.ca - the double-clickable way in.
 REM
 REM  All this does is start the PowerShell script sitting next to it. It exists
 REM  because double-clicking a .ps1 file opens it in Notepad rather than running
@@ -35,7 +35,7 @@ pause
 if not exist "%~dp0windows-share-setup.ps1" (
     echo.
     echo   windows-share-setup.ps1 is not in this folder.
-    echo   Both files need to be together — download them again, into the same place.
+    echo   Both files need to be together - download them again, into the same place.
     echo.
     pause
     exit /b 1

@@ -36,6 +36,9 @@ SITE_ORIGIN="https://mcclevarty.ca"
 SHARE_PAGE="${SITE_ORIGIN}/share"
 AGENT_LABEL="ca.mcclevarty.sharing-tab"
 MARKER=".mcclevarty-share-root"
+# Where the pre-setup AC sleep value (minutes) is kept so --undo can put it
+# back. Deliberately NOT in $SHARE_ROOT — undo empties that.
+SLEEP_STATE="$HOME/Library/Application Support/mcclevarty-share.sleep-was"
 
 SHARE_ROOT="${HOME}/Shared"
 KEEP_RUNNING=0
@@ -100,17 +103,19 @@ assert_macos() {
 # be talked through installing over the telephone.
 # ---------------------------------------------------------------------------
 json_string() {
-    # Escapes per RFC 8259, including the control characters the decoder
-    # refuses outright.
+    # Control characters are STRIPPED, never escaped (2026-09-02). The site's
+    # decoder refuses a label or path carrying one either way, so escaping only
+    # moved the refusal to the paste box — after the links were already made.
+    # Unlike Windows, this filesystem genuinely allows a newline in a folder
+    # name, and the stripped form is the only one a person can recognise in the
+    # checklist the label exists for.
     LC_ALL=C awk 'BEGIN{
         s = ARGV[1]; out = "\""
         for (i = 1; i <= length(s); i++) {
-            c = substr(s, i, 1); n = index(" ", c)
+            c = substr(s, i, 1)
             if (c == "\"") out = out "\\\""
             else if (c == "\\") out = out "\\\\"
-            else if (c == "\n") out = out "\\n"
-            else if (c == "\r") out = out "\\r"
-            else if (c == "\t") out = out "\\t"
+            else if (c < " " || c == "\177") continue
             else out = out c
         }
         print out "\""
@@ -346,6 +351,17 @@ disable_sleep() {
     fi
 
     if sudo -v 2>/dev/null; then
+        # Record what the AC sleep value was BEFORE the first change, so --undo
+        # can restore it (2026-09-02). Only the first run records: a re-run
+        # would otherwise overwrite the real value with our own 0.
+        if [ ! -f "$SLEEP_STATE" ]; then
+            local was
+            was="$(pmset -g custom 2>/dev/null | awk '/AC Power/{ac=1} ac && $1=="sleep"{print $2; exit}')"
+            case "$was" in
+                *[!0-9]*|"") : ;; # unparseable — record nothing, restore nothing
+                *) printf '%s\n' "$was" > "$SLEEP_STATE" ;;
+            esac
+        fi
         sudo pmset -c sleep 0 || manual "Could not change the sleep setting. System Settings > Lock Screen."
         good "This Mac will not sleep while plugged in. The display still sleeps."
     else
@@ -376,6 +392,11 @@ do_undo() {
             run rm "$entry"
             good "Removed the link $(basename "$entry") (the folder it pointed at is untouched)"
         done
+        # The saved code file is this script's litter, same as the links.
+        if [ -f "$SHARE_ROOT/setup-code.txt" ]; then
+            run rm -f "$SHARE_ROOT/setup-code.txt"
+            good "Removed setup-code.txt."
+        fi
         run rm -f "$SHARE_ROOT/$MARKER"
         note "Left $SHARE_ROOT itself in place, in case you put something in it."
     else
@@ -387,6 +408,26 @@ do_undo() {
         launchctl unload "$plist" 2>/dev/null || true
         run rm -f "$plist"
         good "Removed the login item."
+    fi
+
+    # Put the AC sleep setting back the way it was found, if setup changed it.
+    if [ -f "$SLEEP_STATE" ]; then
+        local was
+        was="$(cat "$SLEEP_STATE")"
+        case "$was" in
+            *[!0-9]*|"")
+                warn "The saved sleep value in $SLEEP_STATE is unreadable; not restoring it." ;;
+            *)
+                if [ "$DRY_RUN" -eq 1 ]; then
+                    note "would: sudo pmset -c sleep $was"
+                elif sudo -v 2>/dev/null && sudo pmset -c sleep "$was"; then
+                    rm -f "$SLEEP_STATE"
+                    good "Sleep on mains restored to what it was before setup ($was minutes)."
+                else
+                    warn "Could not restore the sleep setting (needs your password)."
+                    warn "Its old value ($was minutes) stays saved; run --undo again, or set it in System Settings > Lock Screen."
+                fi ;;
+        esac
     fi
 
     note ""

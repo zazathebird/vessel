@@ -4724,6 +4724,39 @@ check("setup codes round-trip, and refuse everything malformed", () => {
 });
 
 /*
+ * The published Windows downloads keep their encodings (2026-09-02, closing
+ * TODO 2026-08-27 item 2 — and both halves were live regressions when checked:
+ * the .ps1 had no BOM and launch.bat carried em dashes over LF endings).
+ *
+ * Windows PowerShell 5.1 reads a BOM-less file with the ANSI code page, so a
+ * .ps1 full of em dashes renders as mojibake on a page whose whole pitch is
+ * "read it before you run it"; cmd.exe has no BOM story at all, so the only
+ * safe batch file is pure ASCII with CRLF. `setup-bundle.sh` refuses to bundle
+ * on the same three faults; this gate catches them at edit time, where
+ * check:fast runs, rather than on the rare day somebody publishes.
+ */
+check("the Windows setup downloads keep their encodings", () => {
+  const ps1 = readFileSync("scripts/windows-share-setup.ps1");
+  must(
+    ps1[0] === 0xef && ps1[1] === 0xbb && ps1[2] === 0xbf,
+    "windows-share-setup.ps1 has lost its UTF-8 BOM — PowerShell 5.1 reads it as ANSI",
+  );
+  const bat = readFileSync("scripts/launch.bat");
+  for (const byte of bat) {
+    must(
+      byte < 0x80,
+      "launch.bat contains a non-ASCII byte — cmd.exe reads it with the ANSI code page",
+    );
+  }
+  const lines = bat.toString("ascii").split("\n");
+  for (const [i, line] of lines.entries()) {
+    if (i === lines.length - 1 && line === "") continue;
+    must(line.endsWith("\r"), `launch.bat line ${i + 1} is missing its CR — the file must stay CRLF`);
+  }
+  return "the .ps1 carries its BOM; launch.bat is ASCII with CRLF endings";
+});
+
+/*
  * The setup scripts' blocked-folder lists (SPEC-SHARING.md §4).
  *
  * These are a SECURITY CONTROL and the only one there is. A link to a blocked

@@ -38,6 +38,30 @@ esac
 rm -rf "$OUT"
 mkdir -p "$OUT"
 
+# Two encoding facts the bundle refuses to ship without, because each fails at
+# the customer and not here (2026-09-02, TODO 2026-08-27 item 2):
+#
+#   - The .ps1 must be UTF-8 WITH a BOM. Windows PowerShell 5.1 reads a BOM-less
+#     file with the ANSI code page, so its em dashes render as mojibake on a
+#     page whose whole pitch is "read it before you run it".
+#   - launch.bat must be ASCII with CRLF endings. cmd.exe has no BOM story at
+#     all, so the only safe batch file is one with nothing above 0x7F in it.
+#
+# Assert, never repair: a silent fix here means the repo copy and the published
+# copy differ, and the repo copy is what the check suite greps.
+if [ "$(head -c 3 "$HERE/windows-share-setup.ps1" | od -An -tx1 | tr -d ' \n')" != "efbbbf" ]; then
+    printf 'windows-share-setup.ps1 has lost its UTF-8 BOM; PowerShell 5.1 would read it as ANSI\n' >&2
+    exit 1
+fi
+if LC_ALL=C grep -q $'[^ -~\r\t]' "$HERE/launch.bat"; then
+    printf 'launch.bat contains non-ASCII bytes; cmd.exe reads them with the ANSI code page\n' >&2
+    exit 1
+fi
+if ! grep -q $'\r$' "$HERE/launch.bat"; then
+    printf 'launch.bat has lost its CRLF line endings\n' >&2
+    exit 1
+fi
+
 for name in "${FILES[@]}"; do
     src="$HERE/$name"
     if [ ! -f "$src" ]; then

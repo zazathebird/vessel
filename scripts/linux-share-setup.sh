@@ -40,6 +40,10 @@ SITE_ORIGIN="https://mcclevarty.ca"
 SHARE_PAGE="${SITE_ORIGIN}/share"
 AUTOSTART_NAME="mcclevarty-sharing-tab.desktop"
 MARKER=".mcclevarty-share-root"
+# Where the pre-setup idle-suspend value is kept so --undo can put it back.
+# Deliberately NOT in $SHARE_ROOT: undo empties that, and losing the note and
+# the thing it restores in the same breath is the failure this file prevents.
+SLEEP_STATE="${XDG_CONFIG_HOME:-$HOME/.config}/mcclevarty-share.sleep-was"
 
 SHARE_ROOT="${HOME}/Shared"
 KEEP_RUNNING=0
@@ -91,15 +95,19 @@ assert_linux_desktop() {
 # JSON and the setup code — hand-rolled, so there is no `jq` to install.
 # ---------------------------------------------------------------------------
 json_string() {
+    # Control characters are STRIPPED, never escaped (2026-09-02). The site's
+    # decoder refuses a label or path carrying one either way, so escaping only
+    # moved the refusal to the paste box — after the links were already made.
+    # Unlike Windows, this filesystem genuinely allows a newline in a folder
+    # name, and the stripped form is the only one a person can recognise in the
+    # checklist the label exists for.
     LC_ALL=C awk 'BEGIN{
         s = ARGV[1]; out = "\""
         for (i = 1; i <= length(s); i++) {
             c = substr(s, i, 1)
             if (c == "\"") out = out "\\\""
             else if (c == "\\") out = out "\\\\"
-            else if (c == "\n") out = out "\\n"
-            else if (c == "\r") out = out "\\r"
-            else if (c == "\t") out = out "\\t"
+            else if (c < " " || c == "\177") continue
             else out = out c
         }
         print out "\""
@@ -356,6 +364,13 @@ disable_sleep() {
     # desktop to solve a problem in one browser tab.
     if command -v gsettings >/dev/null 2>&1 && \
        gsettings writable org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type >/dev/null 2>&1; then
+        # Record what the setting was BEFORE the first change, so --undo can
+        # restore it (2026-09-02). Only the first run records: a re-run would
+        # otherwise overwrite the real value with our own 'nothing'.
+        if [ "$DRY_RUN" -eq 0 ] && [ ! -f "$SLEEP_STATE" ]; then
+            mkdir -p "$(dirname "$SLEEP_STATE")"
+            gsettings get org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type > "$SLEEP_STATE" 2>/dev/null || rm -f "$SLEEP_STATE"
+        fi
         run gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type "'nothing'"
         good "This machine will not suspend on idle while plugged in."
     else
@@ -381,6 +396,11 @@ do_undo() {
             run rm "$entry"
             good "Removed the link $(basename "$entry") (the folder it pointed at is untouched)"
         done
+        # The saved code file is this script's litter, same as the links.
+        if [ -f "$SHARE_ROOT/setup-code.txt" ]; then
+            run rm -f "$SHARE_ROOT/setup-code.txt"
+            good "Removed setup-code.txt."
+        fi
         run rm -f "$SHARE_ROOT/$MARKER"
         note "Left $SHARE_ROOT itself in place, in case you put something in it."
     else
@@ -391,6 +411,19 @@ do_undo() {
     if [ -f "$file" ]; then
         run rm -f "$file"
         good "Removed the autostart entry."
+    fi
+
+    # Put idle suspend back the way it was found, if a setup run changed it.
+    if [ -f "$SLEEP_STATE" ]; then
+        local was
+        was="$(cat "$SLEEP_STATE")"
+        if command -v gsettings >/dev/null 2>&1 && [ -n "$was" ]; then
+            run gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type "$was"
+            run rm -f "$SLEEP_STATE"
+            good "Idle suspend restored to what it was before setup ($was)."
+        else
+            warn "Could not restore the idle-suspend setting; its old value is in $SLEEP_STATE."
+        fi
     fi
 
     note ""

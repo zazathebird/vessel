@@ -32,9 +32,10 @@ fix, it is not a gate yet.
    are worth more than they were two days ago: **Size works**, `rest` is a real multiplier rather
    than one that was being clamped away, and **the preview now responds when a page is selected**,
    which it did not.
-2. **Deploy.** Nothing from 2026-08-30 or 2026-08-31 is deployed. `npm run deploy` runs the full gate
-   as `predeploy`. **A machine that has never installed will need the three native binaries** — see
-   the environment note in the 2026-08-30 section; they are `node_modules` and are not committed.
+2. ~~**Deploy.**~~ **Done 2026-09-02** — commit `05b9f34`, Worker version `90e3cbce`, the full
+   66-check gate as predeploy. Verified in the shipped bundle (not the repo): the live
+   `/assets/index-07sgLn1h.js` carries the guardrail notice strings. The three native binaries
+   note still applies to any machine that has never installed.
 3. ~~**Look at the panel's guardrail notice.**~~ **Done 2026-09-02** — driven signed in (fresh
    local operator), judged tripped (Peat+grain resolved, Ledger+Plasma warning), untripped, and in
    calm. The structure, ordering, copy and count all hold; the one change made is the resolved
@@ -359,10 +360,11 @@ browser, so **phase S adds no server route, table or credential.**
 1. **Publish it.** `bash scripts/setup-bundle.sh` builds the bundle; `docs/DOWNLOADS.md` is the
    upload runbook; `docs/setup-downloads-copy.md` is the page copy, already claim-audited. Nothing is
    uploaded yet, so nothing about phase S is live.
-2. **The `.ps1` must ship as UTF-8 with a BOM.** Windows PowerShell 5.1 reads a BOM-less file with
-   the ANSI code page, so its twelve em dashes render as `â€"` — on a page whose whole pitch is
-   "read it before you run it". `launch.bat` wants ASCII + CRLF for the same reason. Make
-   `setup-bundle.sh` assert both so it cannot regress.
+2. ~~**The `.ps1` must ship as UTF-8 with a BOM.**~~ **Done 2026-09-02** — and both halves were
+   live regressions when checked: the repo `.ps1` had no BOM and `launch.bat` carried two em dashes
+   over LF-only endings. The `.ps1` has its BOM, the `.bat` is ASCII + CRLF, and `setup-bundle.sh`
+   refuses to build on any of the three faults (assert, never repair — a silent fix would make the
+   published copy differ from the one the check suite greps). All three refusals break-verified.
 3. **Run it on real Windows and a real Mac.** Neither has been. See `docs/SHARING-SETUP.md` for
    exactly what *was* exercised — the Windows script has been parsed and partly executed under
    PowerShell 7, which is not the 5.1 target.
@@ -371,9 +373,16 @@ browser, so **phase S adds no server route, table or credential.**
    sensitive-path check by construction and Chromium's own unit test says so — but **nobody has
    watched it happen** and Chromium tests junctions nowhere. The scripts offer it as "worth a try";
    the checklist does not depend on it; the download page must not promise it.
-5. `--undo` does not restore the sleep settings it changed, and leaves `setup-code.txt` behind.
-6. The shell `json_string` should **strip** control characters rather than escape them — the decoder
-   refuses them either way, so escaping only moves the failure later.
+5. ~~`--undo` does not restore the sleep settings it changed, and leaves `setup-code.txt` behind.~~
+   **Done 2026-09-02.** Both scripts record the pre-setup value on the *first* change only (a
+   re-run must not overwrite the real value with our own), keep it outside `$SHARE_ROOT` (undo
+   empties that), and restore it on `--undo` — macOS re-asks for the password and keeps the saved
+   value for a retry if refused; a corrupted saved value is refused, never passed to `pmset`.
+   `setup-code.txt` is removed with the links. Linux undo exercised end to end in a scratch root.
+6. ~~The shell `json_string` should **strip** control characters rather than escape them~~ — **done
+   2026-09-02**, both shell scripts. The PowerShell escaper deliberately keeps escaping: Win32
+   forbids control characters in file and computer names, so its branch is unreachable there, and
+   the check suite greps that script's exact template.
 
 ### The duel — three faults, all found and fixed
 

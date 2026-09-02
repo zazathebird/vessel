@@ -13,6 +13,28 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-09-02 (later) — three phase-S hardening items, closed
+
+TODO 2026-08-27 items 2, 5 and 6, none needing the client. The gate goes **66 → 67**.
+
+- **Both encoding requirements were live regressions when checked**: the repo `.ps1` had **no BOM**
+  and `launch.bat` carried two em dashes over **LF-only** endings — exactly the mojibake-at-the-
+  customer failures the TODO predicted. Fixed (BOM added; the `.bat` is ASCII + CRLF, the em
+  dashes now plain hyphens), `setup-bundle.sh` refuses to bundle on any of the three faults, and a
+  new check-suite gate catches them at *edit* time, where `check:fast` runs, rather than on the
+  rare day somebody publishes. Bundle refusals and the gate both break-verified.
+- **`--undo` restores the sleep setting and removes `setup-code.txt`** in both shell scripts. The
+  pre-setup value is recorded on the *first* change only (a re-run must not overwrite the real
+  value with our own), lives outside `$SHARE_ROOT` (undo empties that), and is restored on undo —
+  macOS re-asks for the password and keeps the saved value for a retry if refused, and a value
+  that is not a plain number is refused rather than handed to `pmset`. Linux undo exercised end to
+  end in a scratch root: link gone, target untouched, code file gone, setting restored.
+- **The shell `json_string` strips control characters** instead of escaping them — the decoder
+  refuses a label carrying one either way, so escaping only moved the refusal to the paste box,
+  after the links were made. The PowerShell escaper deliberately still escapes: Win32 forbids
+  control characters in file and computer names, so its branch is unreachable there, and the
+  check suite greps that script's exact template.
+
 ## 2026-09-02 — the guardrail notice judged by eye, and two small closures
 
 `TODO` items 3 and 4 from the 2026-08-31 list. The gate stays at **66 green**.
