@@ -73,6 +73,46 @@ export function checkIterations(iterations: number, floor: number): number {
   return iterations;
 }
 
+/**
+ * The *other* half of the same response, which was unguarded.
+ *
+ * `challenge` hands back two KDF parameters and only one of them was checked.
+ * The salt went into PBKDF2 with no length, type or shape test at any call
+ * site, so anything that could forge that response — the threat `checkIterations`
+ * above is written against — could send `salt: ""` (legal in WebCrypto) or one
+ * constant salt to every account, and the whole point of a salt is gone: a
+ * single precomputation, reusable across every account and, with a constant,
+ * across every deployment. That converts the offline-grinding risk already
+ * flagged for client sign-off (CLAUDE.md item 2) from per-account work into one
+ * table — and the same table yields the *wrapping* key, which is the half this
+ * file's header promises the server cannot compute.
+ *
+ * The salt is generated in the browser at signup (`newKdfParams`), so
+ * `challenge` is the only place a client ever accepts a server-chosen one, and
+ * the Worker itself already refuses anything but 16 bytes on the way in
+ * (`worker/accounts.ts`, `KDF_SALT_BYTES`). This is the browser declining to
+ * take the server's word for a value it can check for itself.
+ *
+ * Refuse, never clamp or pad, for exactly `checkIterations`' reason: a
+ * "corrected" salt derives a secret the server does not hold, and the failure
+ * would present as a wrong password. Same wording, deliberately — from where the
+ * person is standing it is the same fault.
+ *
+ * **What this does not close, so nobody later reads it as complete:** a forged
+ * `challenge` returning a *plausible* 16 random bytes — one attacker-chosen
+ * salt per account, or the same 16 bytes to everybody — passes this check and
+ * always will. The client has nothing to compare against; the salt is stored
+ * only on the server, and there is no second channel to confirm it over. What
+ * the length check buys is that the degenerate cases, which are the ones worth
+ * a precomputed table, are refused. The residual belongs to the protocol.
+ */
+export function checkSalt(salt: Uint8Array): Uint8Array {
+  if (!(salt instanceof Uint8Array) || salt.length !== SALT_BYTES) {
+    throw new Error("The server sent implausible key-derivation parameters. Refusing.");
+  }
+  return salt;
+}
+
 /** The stored, per-account KDF parameters. Sent to the browser before sign-in. */
 export interface KdfParams {
   salt: Uint8Array;
@@ -160,11 +200,25 @@ async function split(
   return { authSecret: toBase64Url(authBits), wrappingKey };
 }
 
+/*
+ * Both entry points check the salt here rather than leaving it to their callers,
+ * and that is the difference between this guard and `checkIterations`.
+ *
+ * There are eight places a server-supplied salt enters the browser
+ * (`flows.ts` ×5, `passkeys.ts` ×2, `share/unlock.ts` ×1), every one of them
+ * `salt: fromBase64Url(kdf.salt)` inside a `KdfParams` literal, and every one of
+ * them ends up in one of these two functions. A guard the caller has to
+ * remember is a guard the ninth caller forgets — the same reasoning
+ * `worker/accounts.ts` records for keeping rate limiting inside `assertPassword`
+ * rather than in its callers. Checked before `pbkdf2`, so a bad parameter costs
+ * nothing and fails where it can still be explained.
+ */
 export async function deriveFromPassword(
   password: string,
   params: KdfParams,
 ): Promise<DerivedCredential> {
-  return split(await pbkdf2(password, params.salt, params.iterations), params.salt);
+  const salt = checkSalt(params.salt);
+  return split(await pbkdf2(password, salt, params.iterations), salt);
 }
 
 /**
@@ -177,8 +231,6 @@ export async function deriveFromRecoveryCode(
   code: string,
   params: KdfParams,
 ): Promise<DerivedCredential> {
-  return split(
-    await pbkdf2(normaliseRecoveryCode(code), params.salt, params.iterations),
-    params.salt,
-  );
+  const salt = checkSalt(params.salt);
+  return split(await pbkdf2(normaliseRecoveryCode(code), salt, params.iterations), salt);
 }

@@ -5,6 +5,16 @@
  * rather than repeated per handler — a check that has to be remembered five
  * times is a check that will eventually be forgotten once.
  *
+ * **Every route that writes requires the password as well**, through `proven()`
+ * below, for the same reason `accounts.ts` demands one before a credential
+ * change: a session says who you are, never how you proved it. The four writes
+ * here are the most privileged on the site and three of them are irreversible —
+ * a stolen cookie that could reach them grants itself the operator flag and
+ * outlives the session it was stolen from, or deletes somebody's key slots. The
+ * read (`listAccounts`) deliberately does not ask: it changes nothing, and a
+ * password prompt in front of a list is a password typed often enough to be
+ * typed carelessly.
+ *
  * **What is deliberately absent is the point of the file.** There is no route
  * that reads another account's key slot, wrapped or otherwise, and there is no
  * route that sets somebody's password. SPEC-ACCOUNTS.md §4 allows the operator
@@ -17,7 +27,14 @@
 
 import { BadRequest } from "./encoding";
 import type { Env } from "./env";
-import { auditStatement, json, noStore, readJson, requireAccount } from "./accounts";
+import {
+  assertPassword,
+  auditStatement,
+  json,
+  noStore,
+  readJson,
+  requireAccount,
+} from "./accounts";
 
 interface AdminAccountRow {
   id: string;
@@ -36,6 +53,30 @@ async function operator(request: Request, env: Env) {
   const account = await requireAccount(request, env);
   if (account.is_operator !== 1) throw new BadRequest("Only the operator can do that.", 403);
   return account;
+}
+
+/**
+ * The caller and the body, for a route that writes: a signed-in operator who has
+ * just re-presented their own password.
+ *
+ * One helper rather than the same two lines in four handlers, on this file's own
+ * doctrine — the fifth admin write somebody adds inherits the proof by calling
+ * the same thing everything else calls. `assertPassword` carries its own rate
+ * limiting (see the note on it in `accounts.ts`), so this adds a bucket rather
+ * than an unthrottled password oracle behind a session.
+ *
+ * The proof is taken **before** `target()` runs, so a wrong password is refused
+ * without first reporting whether the named account exists.
+ *
+ * The password proved is always the *caller's*. It is a credential check, not an
+ * authorisation over the target — the operator flag is the authorisation, and it
+ * has already been checked.
+ */
+async function proven(request: Request, env: Env) {
+  const caller = await operator(request, env);
+  const body = await readJson(request);
+  await assertPassword(request, env, caller, body.authSecret);
+  return { caller, body };
 }
 
 /** The target account named by the request body, which must exist. */
@@ -104,8 +145,7 @@ export async function listAccounts(request: Request, env: Env): Promise<Response
  * the production database. Refusing costs one click and saves that.
  */
 export async function setOperator(request: Request, env: Env): Promise<Response> {
-  const caller = await operator(request, env);
-  const body = await readJson(request);
+  const { caller, body } = await proven(request, env);
   const account = await target(env, body);
   const wanted = body.isOperator === true;
 
@@ -158,8 +198,7 @@ export async function setOperator(request: Request, env: Env): Promise<Response>
  * which is worth showing on the screen rather than only knowing here.
  */
 export async function resetTotp(request: Request, env: Env): Promise<Response> {
-  const caller = await operator(request, env);
-  const body = await readJson(request);
+  const { caller, body } = await proven(request, env);
   const account = await target(env, body);
 
   await env.DB.batch([
@@ -202,8 +241,7 @@ export async function resetTotp(request: Request, env: Env): Promise<Response> {
  *   because their codes cannot sign in again.
  */
 export async function resetPassword(request: Request, env: Env): Promise<Response> {
-  const caller = await operator(request, env);
-  const body = await readJson(request);
+  const { caller, body } = await proven(request, env);
   const account = await target(env, body);
 
   if (account.id === caller.id) {
@@ -260,8 +298,7 @@ export async function resetPassword(request: Request, env: Env): Promise<Respons
  * deleting an account.
  */
 export async function deleteAccount(request: Request, env: Env): Promise<Response> {
-  const caller = await operator(request, env);
-  const body = await readJson(request);
+  const { caller, body } = await proven(request, env);
   const account = await target(env, body);
 
   if (account.id === caller.id) {

@@ -1,3 +1,532 @@
+# Security audit — 2026-09-03
+
+A full pass over the Worker, the auth stack, the download catalogue, the four setup scripts and
+both host scripts, commissioned by the client, with remediation. Everything below was **found by
+reading the code against its own comments** and then reproduced — either against the local Worker
+or, for the shell, by executing the real functions out of the real scripts.
+
+**Nothing here is deployed.** `npm run check` is 70 green (69 → 70; one gate added) and
+`npm run test:auth` 365, both against local D1.
+
+**Numbering continues the sequence this document already uses** (1–14), because items in it are
+cited by number elsewhere. Findings are grouped as before: **fixed**, **checked and sound**,
+**needs the client**, and what could not be verified from here.
+
+---
+
+## Fixed in this pass
+
+### 15. WebAuthn challenges were bound but never spent
+
+`worker/passkeys.ts`, plus a new `migrations/0008_passkey_replay.sql`.
+
+A captured sign-in request body — token, `clientDataJSON`, `authenticatorData`, signature, all of
+it — posted again **verbatim** minted a fresh session, every time, for the five minutes the
+stateless token stayed alive. `verifyAssertion` binds the response to a challenge; it cannot make
+that challenge single-use, because the same signed bytes answer the same challenge for ever.
+**Binding is not spending**, and this codebase had conflated the two in three places: `session.ts`,
+`webauthn.ts`, and this document's own *reviewed and deliberately left alone* list.
+
+That defeats the specific argument §4 rests on. The passkey path takes no TOTP stage and no rate
+limiting *because* a failed attempt is supposed to require forging a P-256 signature. **A replay
+forges nothing.**
+
+Registration had the same shape one step down: one token registered as many *different*
+authenticators as anybody cared to send, because the credential-id uniqueness index only ever
+refused an *identical* replay.
+
+Both ceremonies now consume their challenge in a conditional UPDATE whose guard rides in the
+write's own `WHERE` clause, zero `meta.changes` being the refusal — the `passkeys.remove` doctrine,
+and the `totp.last_step` shape from migration 0002 one credential kind over. Check-then-act would
+not close it: two copies of the same body would both read the challenge unspent, which is the
+attack rather than a race around it.
+
+**There is deliberately no challenge table.** The stateless token stays the design and a table of
+live challenges stays the rejected option.
+
+**The guard is monotonic in the token's issue time, and an equality guard was written first and was
+still bypassable.** `last_challenge <> ?` refuses only the challenge stored *most recently*, so two
+captured bodies alternated are each different from the one stored just before them and each is
+accepted, indefinitely; a single captured body reopens the same way the moment any other sign-in on
+that credential lands in between, which two tabs or one retry is enough to arrange. The test is on
+`last_challenge_at` instead (`worker/passkeys.ts:245`, `:482`) — a challenge minted no later than
+the last one spent is refused, whatever it is — so every old body is dead for good. The digest
+column stays beside it as a conjunct, never an alternative: it can only refuse more, and it is the
+half that depends on no clock.
+
+**What monotonic costs, stated rather than discovered later:** a genuine ceremony completed *out of
+order* is refused — two tabs opened in one order and finished in the other. That is the property
+0002 already accepts for TOTP, the answer is "start again", and pressing the button again works.
+An escape hatch for it would be the alternation hole one millisecond wide.
+
+**Also here, and separate**: `credentials` had no row cap for passkeys. `assertPassword` throttles
+a *failing* caller and `recordSuccess` resets the account bucket on every success, so a loop that
+keeps succeeding was unthrottled by design and one password plus one session could grow that table
+until D1 said stop. `MAX_PASSKEYS = 20` (`worker/passkeys.ts:87`), asked after the password so the
+row count is not something an unproven caller can measure.
+
+### 16. Every admin route was authorised by the session alone
+
+`worker/admin.ts`. Four writes — grant/revoke the operator flag, reset TOTP, reset a password,
+delete an account — took `operator(request, env)` and nothing else. **A session says who you are,
+never how you proved it.** A stolen operator cookie could POST to `/api/admin/operator` and grant
+itself the flag *permanently*, outliving the session it was lifted from and surviving both the
+30-minute expiry and a sign-out; `resetPassword` and `deleteAccount` destroy key slots
+irreversibly.
+
+`proven()` (`worker/admin.ts:75`) is the chokepoint: caller, body, and `assertPassword` on the
+caller's own password before `target()` runs, so a wrong password is refused without first
+reporting whether the named account exists. One helper rather than the same two lines in four
+handlers, on this file's own doctrine — the fifth admin write somebody adds inherits the proof.
+`assertPassword` carries its own rate limiting, so this adds a bucket rather than an unthrottled
+password oracle behind a session.
+
+**`listAccounts` deliberately does not ask.** It changes nothing, and a password prompt in front of
+a list is a password typed often enough to be typed carelessly.
+
+The proof is the *caller's* password: a credential check, not an authorisation over the target —
+the operator flag is the authorisation and has already been checked.
+
+Verified by breaking it: with the proof removed the new harness gate reports `status 200` and
+`operator flag is now true`.
+
+The client half (`src/auth/api.ts`, `src/components/Admin.tsx`) takes `authSecret` as a **required**
+argument so a new caller cannot omit it and find the 401 in production, and all four buttons now
+open a confirm dialog. Asking for the password is not a step bolted onto the confirmation, it *is*
+the confirmation — and granting operator, the one action here that escalates rather than destroys,
+was the one with no confirmation at all.
+
+### 17. A file-scoped download code outlived its file, and opened somebody else's page
+
+`worker/downloadPages.ts`, `worker/downloads.ts`.
+
+`deletePage` deleted `download_codes WHERE slug = ?`. A file-scoped code stores `slug = NULL,
+item_id = <id>`, so that statement never matched one: the code was left **dormant, not revoked**,
+and `opened()` re-resolves `item_id` against `download_files` at every redemption.
+
+The comment that made this look safe said an id "is not re-usable the way a slug is, because
+`saveFile` would have to be given the same id by hand". **That was false.**
+`suggestFromFilename` derives the id from the filename and the editor auto-fills it, so re-adding
+the same program produces the same id every time, by hand and without meaning to. Proven end to
+end: customer A's code, after A's page was deleted and the same program was re-added on customer
+B's page, passed the gate for B's bytes and rendered B's page in full — title, private prose, every
+file's name and price.
+
+Three fixes, because there are three ways the pairing comes apart:
+
+- `deletePage` deletes file-scoped rows **first**, by subquery, because after the page goes the
+  files cascade and nothing can find them (`worker/downloadPages.ts:660`). `deleteFile` deletes
+  them too (`:936`) — the grants line beside it always had; the asymmetry was the tell.
+- A file-scoped code now records, in `slug`, **the page its file was on when the code was minted**.
+  `opened` refuses if the file has moved since. This is the case no delete can catch:
+  `saveFile`'s `ON CONFLICT (id) DO UPDATE SET slug = excluded.slug` re-points every outstanding
+  code for a file simply by *moving* it. **Refuse, never repair** — following the file to wherever
+  it went is how a ticket ends up naming a page nobody agreed to hand over.
+- `mintCode`'s `granted` refusal now covers a file's page as well as a page scope. It checked only
+  that the file existed, so a code could be minted for a file on a `granted` page — and such a code
+  is not weak, it is inert, which is why `mintCode` refuses to make one at all.
+
+**Codes minted before this deploy carry `slug = NULL` and keep the old behaviour** rather than
+being refused wholesale — see *needs the client* below.
+
+### 18. A space in `$HOME` disabled the entire setup-script blocklist
+
+`scripts/linux-share-setup.sh`, `scripts/macos-share-setup.sh`.
+
+`BLOCK_EXACT` and `BLOCK_PREFIX` were single space-delimited strings, consumed unquoted
+(`for bad in $BLOCK_EXACT`) so that word splitting would produce the entries — which means **IFS
+shattered every `$HOME`-derived entry** into fragments that match nothing. Measured with
+`HOME="/home/bob smith"`: `$HOME`, `~/.ssh`, `~/.gnupg`, `~/.config` and all of `~/.local` were
+allowed. An account name with a space in it is ordinary on macOS, so this is the likelier machine,
+not the exotic one. The `# shellcheck disable=SC2086` sitting above them is what suppressed the
+warning; it is gone with the strings. Both lists are bash arrays now
+(`scripts/linux-share-setup.sh:232`, `scripts/macos-share-setup.sh:263`).
+
+This matters because of the standing rule: **these lists are the only barrier.** Chrome blocks
+sensitive directories as "do not pick", never "do not read", so a link *inside* a picked folder is
+read normally and nothing downstream catches a miss.
+
+Two more holes in the same lists, found while fixing it:
+
+- **Blocked directories with unblocked ancestors are not blocked.** `~/.local/share/keyrings` was
+  refused while `~/.local`, which contains it, was allowed; on Windows,
+  `%LOCALAPPDATA%\Google\Chrome\User Data` was refused while `%LOCALAPPDATA%\Google` was allowed,
+  and `%APPDATA%\Microsoft\Crypto` was refused while `%APPDATA%\Microsoft` — which holds the DPAPI
+  master keys that decrypt what the first one protects — was allowed. The ancestors are named now,
+  along with `~/.var`, `~/.pki`, `~/.docker`, `~/.kube`, `~/.password-store` and their Windows
+  equivalents.
+- **The filesystem root `/` was never blocked at all.** `${bad%/}` reduces that one entry to the
+  empty string, so `/` compared against `""` and passed the list that names it; no prefix entry
+  matches `/` either, and the share-root containment test builds `"$f"/*`, which for `f=/` needs two
+  leading slashes. **Pre-existing, present in HEAD, and missed by the audit** — it was found while
+  building the gate for the rest. The strip no longer empties an entry, and a trailing-slash strip
+  no longer empties `/` at the three other places it is applied.
+
+**The gate for this now executes rather than greps** (`scripts/check.ts`). The old text gate
+reported *"20 required blocklist entries … intact"* the whole time the barrier was open — every
+entry it looks for was present; the consumption was what was broken. The new one slices `canon`,
+`fold_case`, `check_folder` and both arrays out of the real scripts and drives them against two
+throwaway home directories, one of them with a space in the name: 36 verdicts over two scripts.
+It fails against the pre-fix scripts, which is what makes it a gate.
+
+### 19. The folder that was checked and the folder that was linked were different
+
+All three share scripts. `folder_problem` / `Test-ShareableFolder` canonicalised the path, followed
+reparse points, compared *that* against the blocklist — and then **threw it away**, leaving the
+caller to link the path as typed.
+
+So `~/mydocs -> ~/Documents` passed the check and the link recorded `~/mydocs`. Repointing that
+symlink at `~/.ssh` afterwards puts `id_rsa` under the share root, and Chrome reads it: the
+identity checked and the identity shared were simply different, permanently. **It was never a
+race** — no window to lose, nothing to re-check.
+
+Both now return the approved path and the caller links *that* one (`check_folder` prints
+`OK <path>`; `Test-ShareableFolder` takes `-Resolved ([ref] $full)`,
+`scripts/windows-share-setup.ps1:403`). The label is taken off the canonical path too, so it names
+the folder that is actually shared rather than the alias that was typed, and two aliases of one
+folder are now caught as a duplicate rather than becoming two checklist rows for one folder.
+
+Windows also gained a drive-root refusal **before** the reparse walk as well as after it: `C:\`
+trims to `C:`, which is a drive-*relative* path, so `Get-Item -LiteralPath 'C:'` returns the
+process's current directory on C: — and if that happened to be a junction, the walk rewrote the
+path to its target and the drive root was then accepted. 8.3 short names (`C:\PROGRA~1`) were
+already handled.
+
+### 20. JSON injection into the Chromium kiosk managed policy
+
+`scripts/thinkcentre-setup.sh`. The policy file interpolates the kiosk URL, and the **scheme** came
+off the same untrusted line by string surgery — `scheme="${url%%://*}"` — with no validation. The
+URL lives in a 0644 file this script deliberately never overwrites, so a crafted first line closed
+the JSON string and reopened the object: `"URLAllowlist":["*"]` was writable from that file, and
+the result **still passed the script's own `jq empty` gate** while the summary reported the policy
+as written. Every other key went the same way — `DeveloperToolsAvailability`,
+`DefaultFileSystemWriteGuardSetting`. The scheme is matched against a closed set now
+(`scripts/thinkcentre-setup.sh:1625`), never extracted, and a URL that is neither http nor https
+leaves the policy unwritten and says so.
+
+`scripts/pi-setup.sh` had **no option parsing and no URL check at all**, so
+`./pi-setup.sh --no-sandbox` wrote that string into the same never-overwritten file and the
+launcher handed it to Chromium at every boot. It gained `validate_url` (`:78`) — the check
+thinkcentre always had — and **both launchers now terminate their arguments with `--`** before the
+URL, because Chromium reads a leading dash in that file as a flag: `--no-sandbox`,
+`--user-data-dir=/tmp/x` and `--incognito` are every never-do in this project's host invariants,
+reachable by editing one unguarded file.
+
+### 21. The rate-limit bucket was keyed on the whole IP string
+
+`worker/crypto.ts`. `clientKey` HMAC'd the address as it arrived, so **every IPv6 client had an
+unlimited supply of fresh buckets**: rotating addresses inside a single /64 — which is what every
+residential and VPS allocation hands you — produced **zero 429s across 72 attempts**, defeating the
+signup allowance and the client bucket together.
+
+`normaliseIp` (`worker/crypto.ts:152`) truncates to the /64 first. **/64 rather than /48, and the
+reasoning is the reason the client bucket is loose in the first place**: /64 is the smallest unit
+guaranteed to be one customer's subnet, so it closes the attack that costs an attacker nothing,
+while at /48 — where an ISP delegates /56s — one prefix spans up to 256 unrelated households, and a
+stuffing run would become an outage for real visitors. The right answer for a determined attacker
+is two tiers, a /64 at the current allowance and a wider /48 at a much higher one, and that belongs
+in `buckets()` rather than in this helper.
+
+`::ffff:x.x.x.x` and `::x.x.x.x` are left whole — truncating those to /64 would collapse every IPv4
+visitor into one bucket, which is a self-inflicted outage rather than a limit — and an unparseable
+address is keyed whole, which is the old behaviour and the narrow direction.
+
+**No raw address is stored either way**: the value is HMAC'd immediately and names a Durable
+Object, so §9's inventory is unchanged and this is not a spec change. `cf-connecting-ip` is set by
+the edge on every request and `workers_dev` is false, so it is not spoofable in production;
+`X-Forwarded-For` is correctly never read anywhere in this Worker **and must not start being**.
+
+### 22. A 304 broke both the CSP nonce and the publish button
+
+`worker/index.ts`. The shell is not served as it is stored — `withSiteConfig` stamps the published
+look and a per-request nonce, `withPageMeta` stamps the route's title, description and canonical.
+A **304 has no body to stamp, and its headers still got a nonce.** Measured: a 200 carried header
+nonce A against body nonce A, and the same URL with `If-None-Match` returned a 304 carrying header
+nonce B against the body the browser had cached with A. RFC 9111 §4.3.4 says a 304's headers
+*update* the stored response, so the browser then enforces B against A. Invisible today because the
+CSP is report-only. **After the one-header flip in `harden` it blocks `window.__VESSEL_SITE__` on
+every revalidated load** — that is, for every returning visitor — and the site silently falls back
+to its built-in defaults. Recorded here because that flip is a standing intention.
+
+The same 304 is why **publishing never reached anyone holding a cached page.** The ETag belongs to
+the raw asset, computed before any injection, so it is byte-identical for every SPA-fallback route:
+`/`, `/contact` and `/nonexistent-abc` all answered the same validator. A returning visitor
+revalidated, got a 304, and kept whatever config, description and canonical they were served on
+their first visit until `index.html` itself changed at the next deploy. `site-config.ts` documents
+publish latency as "up to ten seconds"; for that visitor it was "until the next build", which
+defeats the feature.
+
+`asset()` (`worker/index.ts:408`) re-fetches a 304 that could be a document with the conditional
+headers removed — **only a document**, since `/fonts/*` and `/photos/*` come through here too and
+are where 304s are worth real bandwidth; a 304 that does not say what it is is re-fetched as well,
+because guessing "not HTML" fails open into the bug. `unvalidatable()` (`:435`) then strips `etag`
+and `last-modified` from what we rewrote, which costs nothing that
+`cache-control: max-age=0, must-revalidate` was not already costing and keeps the re-fetch off the
+common path.
+
+### 23. Byte limits that counted UTF-16 code units
+
+Two places, the same trap `readJson` in `accounts.ts` already documents and fixes.
+
+- **`MAX_CONFIG_BYTES`** (`worker/site-config.ts:184`): 12,121 ASCII characters were refused with
+  *"that config is 12121 bytes"* while **11,921 CJK characters were accepted** — 35,721 actual
+  UTF-8 bytes, roughly 3× the ceiling, every one of them inlined into the `<head>` of every page
+  the site serves. Nothing here is expected to be non-ASCII, which is exactly why it went
+  unnoticed. Still refuses, still never truncates.
+- **The signalling frame cap** (`worker/signal.ts`): a frame of three-byte UTF-8 characters passed
+  a "64KB" check at ~192KB on the wire. The cheap length test stays first to short-circuit the
+  common oversized case; the encode is what makes the limit true. That socket is
+  owner-authenticated, so this is a bound rather than a boundary — but a bound that is 3× what it
+  says is not a bound.
+
+### 24. A missing Worker secret failed open, silently
+
+`worker/index.ts`. `hmacKey` does `encoder.encode(secret)`, and **`TextEncoder.encode(undefined)`
+is the nine bytes of the string `"undefined"`** — so a deploy with no `AUTH_PEPPER` keys every
+stored auth hash on a constant any reader of this repository knows, and the site looks completely
+healthy. `docs/BREAK-GLASS.md` treats *losing* the pepper as an emergency; never setting it was
+quieter than a typo.
+
+`assertSecrets` (`worker/index.ts:354`) refuses to serve at all when one of the four is absent or
+empty — **in production only**, and the discriminator is `cf-ray`, not the hostname. Both obvious
+tests are wrong here: `isLoopback` is false under `wrangler dev` (measured — the local server
+reports the routed hostname `mcclevarty.ca`), and `request.cf` is populated locally too. The edge
+stamps `cf-ray` on every request that reaches a Worker and `wrangler dev` does not. The spoofing
+direction is what makes it sound: a client in production cannot *remove* the header, and sending
+one to the dev server only makes local development stricter. If a future runtime stopped sending
+it, the check quietly stops running rather than taking a correct site down — the right way round
+for a guard whose failure mode is the whole site.
+
+**Presence, not plausibility.** No length floor: a floor is a judgement about somebody else's
+secret, and being wrong about it takes the entire site down.
+
+### 25. The byte route's clock was still an existence oracle
+
+`worker/downloads.ts`. Unifying the status codes closed the obvious half of this and left the
+measurable half open: the route looked the file up, threw on a miss, and only then read the page
+and resolved access — so a non-existent id cost one D1 round trip and an existing-but-refused id
+cost two plus `resolveAccess`. **Measured over sixty interleaved pairs: a median of 9.61ms against
+13.16ms, with "exists" the slower in 59 of them.** That is the whole oracle back, unauthenticated
+and unthrottled, over draft and `granted` pages included, read off a stopwatch instead of a status
+line. `resolveAccess` goes first now and both lookups are issued unconditionally and together, the
+page found through the file's id rather than through `item.slug`; what is left between the two
+paths is one `canDownload`, which touches no network.
+
+Two more in the same file:
+
+- **`claim` resolved what a code opens *after* spending a use.** A code whose file had been
+  withdrawn answered `200 { pages: [], items: [] }` and charged for it — so the customer with a
+  genuine complaint spends all five uses, one empty success at a time, with nothing on screen that
+  reads as a refusal. It is also a positive oracle: an empty 200 says the code exists. A scope that
+  opens nothing is now the same `refused` every other failure throws
+  (`worker/downloads.ts:300`).
+- **`content-disposition`'s `filename*` used `encodeURIComponent`, which is not an RFC 8187
+  ext-value.** It leaves `'`, `(`, `)`, `*` and `!` alone, and of those only `!` is an `attr-char`
+  — so `Bob's tool (v2).exe` produced a field with three apostrophes in it, which a strict parser
+  may read as a different charset and language and a truncated name. Nobody sees a 500; the
+  customer gets a file called something else. `extValue` (`worker/downloads.ts:422`) escapes all
+  five. There is no injection to fix here — `saveFile` refuses quotes, backslashes and control
+  characters on the way in — this is the header being well-formed.
+
+### 26. The setup-code decoder enumerated invisible characters, and could not be complete
+
+`src/share/setupCode.ts`. The deceptive-character refusal named five ranges and missed every other
+invisible code point in Unicode. U+034F, U+2062, U+2063, U+17B4 and U+180E all measure **0.000px**
+of extra rendered width at `.v-setup-name`'s font, so:
+
+```
+{ l: "Invoices",        p: "C:\\Users\\me\\Invoices" }
+{ l: "Invoices\u034F",  p: "C:\\Users\\me" }
+```
+
+decoded cleanly, drew **two rows both reading `Invoices`**, and left the second unticked after the
+person added the folder they meant — the done-set is a Set of exact strings, so neither React nor
+the checklist flags anything. The obvious next click hands over the whole user profile through the
+real picker. That is precisely the failure the duplicate-label refusal exists to prevent, walked
+straight past.
+
+**An enumeration cannot be made complete by adding to it**, so it is gone: `DECEPTIVE`
+(`src/share/setupCode.ts:112`) refuses by Unicode property — `\p{Cf}`, `\p{Cs}`, `\p{Co}`,
+`\p{Cn}`, every `\p{Zs}` bar U+0020 — plus a short named set of blanks that are none of those
+(U+034F is `Mn`, U+2800 is `So`, U+115F/U+1160/U+3164/U+FFA0 are `Lo`). `\p{Cn}` is a stated trade:
+an engine older than a folder name's Unicode version will refuse a brand-new emoji, and renaming a
+folder is cheaper than handing over the wrong one.
+
+`CONTROL` became `\p{Cc}` plus U+2028/U+2029, which adds C1 — **U+0085 NEXT LINE is a line break to
+a text engine and was accepted.** None of the three forges a visible row today, and that is a
+property of `white-space: normal` on `.v-setup-name` rather than of the regex: give that span, or
+`.v-setup-path`, a preserving `white-space` and one label becomes two rows. **The refusal must not
+depend on a CSS declaration in another file.**
+
+Duplicate labels are now compared **after NFKC and stored as sent**. `Réparations` composed and
+decomposed are byte-different and pixel-identical in every font, and the compatibility mappings do
+the same for a fullwidth `Ｉnvoices` or the `ﬁ` ligature — each is the twin-row attack with a
+different character, and each collides in the done-set exactly as an exact duplicate does. Folding
+only the *comparison* keeps refuse-never-repair intact: a normalised label would be a label the
+person's script did not write.
+
+### 27. `challenge` returns two KDF parameters and the browser checked one
+
+`src/auth/derive.ts`. `checkIterations` refuses an implausible iteration count; **the salt went
+into PBKDF2 with no length, type or shape test at any call site.** Anything able to forge that
+response — the same threat `checkIterations` is written against — could send `salt: ""` (legal in
+WebCrypto) or one constant salt to every account, and a salt's whole purpose is gone: a single
+precomputation, reusable across every account and, with a constant, across deployments. That turns
+the offline-grinding exposure already flagged for client sign-off (item 2 of the four in
+`CLAUDE.md`) from per-account work into one table — and the same table yields the **wrapping** key,
+which is the half `derive.ts` promises the server cannot compute.
+
+`checkSalt` (`src/auth/derive.ts:109`) is called inside `deriveFromPassword` and
+`deriveFromRecoveryCode` rather than at their callers, for the reason rate limiting lives inside
+`assertPassword`: there are eight places a server-supplied salt enters the browser and a guard the
+caller has to remember is a guard the ninth caller forgets. Refuse, never clamp or pad — a
+"corrected" salt derives a secret the server does not hold, and presents as a wrong password.
+
+**What it does not close, so nobody later reads it as complete:** a forged `challenge` returning a
+*plausible* 16 random bytes — one attacker-chosen salt per account, or the same 16 to everybody —
+passes this check and always will. The client has nothing to compare against.
+
+### 28. Smaller fixes, recorded so they are not re-found
+
+- **`frame.to` was interpolated into a hibernation tag unvalidated** (`worker/signal.ts:39`). The
+  runtime caps a tag at 256 characters, so an over-long one throws inside `webSocketMessage`, where
+  an unhandled rejection is a refusal nobody sees. A peer id is a `crypto.randomUUID()` this object
+  minted; it is matched against that shape now, before use.
+- **Non-101 responses from the signalling object left without the site's headers.** The 101 is the
+  only response that may skip `harden` — copying one drops its `webSocket` and every upgrade hangs.
+  The object's 426/400/404 are ordinary responses and are hardened now, which makes the rule
+  structural rather than a coincidence that holds while two duplicated checks agree.
+- **`/api/csp-report` buffered an unbounded body, unauthenticated, in front of every other check.**
+  Measured: a 20,000,000-byte POST returned 204 in 1.1s, materialised as a UTF-16 JS string and
+  thrown away, where the same body to `/api/auth/challenge` was refused at 413. Bounded at 8KB on
+  the declared `content-length` *and* on what actually arrives, since a chunked request's header is
+  not evidence. Control characters in what is logged become spaces: a newline in an
+  attacker-supplied string is a forged line in `wrangler tail`, and **the log line being the
+  product** is what makes forging one worth something. No report store; §9 gains no field.
+- **`validLookPages` keyed page ids with `in`**, which walks the prototype chain — `toString`,
+  `valueOf`, `constructor`, `hasOwnProperty` and `isPrototypeOf` all passed as page ids and became
+  overrides keyed on names that are not pages, and with `toString` and `valueOf` both set the
+  returned map stops being coercible and `String(lookPages)` throws.
+  `Object.prototype.hasOwnProperty.call` now, as `validDuelPages` already did
+  (`src/data/lookSettings.ts:95`).
+- **`SessionContext` read `me?.account.isOperator`**, one optional link short: a 200 whose body has
+  no `account` throws a TypeError inside the `useMemo`, which is a blank site rather than the
+  "signed out, site unchanged" degradation that file promises. Nothing but a signed-in operator may
+  read true, so an unreadable answer is the same as no answer.
+- **`QrCode` let the encoder take the page down.** `qrMatrix` throws above 213 bytes, and on the
+  enrolment screen `value` is the server's `otpauth://` URI. A throw inside `useMemo` is a throw
+  during render — a white screen, losing the whole enrolment form over the one part of it that is a
+  convenience. It returns null now; both callers already print the secret and the URI in full
+  (`src/components/QrCode.tsx:77`).
+- **`publishSiteConfig` tested `!account.is_operator`** where the three other copies of that guard
+  test `!== 1`. Nothing reaches it with a value the two forms disagree about today; the point is
+  that four byte-identical guards in four files is how one of them eventually drifts, and the drift
+  here would be an operator gate.
+- **`scripts/thinkcentre-setup.sh`, four**: the `--store` directory was an exact match on the raw
+  string, so `/etc/`, `//etc`, `/etc/systemd` and `/usr/local` were all accepted into
+  `sudo chown ${USER}` — canonicalise, fail closed, prefix-match, the three rules the share scripts
+  already record. `place_user_file` / `place_root_file` returned 0 when they had **not** written the
+  file, and all 23 call sites are `|| true` or an `if` condition, so a failed `cp` fell through to
+  `info "wrote …"` and the summary reported a security control that is not on the disk; they return
+  2 now and verify the destination back against the source, and the policy summary is built from
+  the write rather than from the loop. `ssh_ports` had a `|| ports="22"` fallback that made the
+  fail-closed `die` in `configure_firewall` — the one that says "enabling it without an SSH rule
+  would lock you out" — dead code that could never fire. And the updater's env file, which root
+  sources weekly, is quoted and its account name checked.
+- **`scripts/setup-bundle.sh` guarded its output directory with a denylist of three values**, so
+  `~/Documents`, `../src` and `/etc` were all named by nothing before an `rm -rf`. It is an
+  allowlist now — relative, no `..`, not `.` — plus a `.setup-bundle` marker file, which is the
+  share scripts' `--undo` doctrine: never delete a directory you did not create.
+
+---
+
+## Checked this pass and found sound
+
+Recorded because a clean answer is only worth something if it says what it checked.
+
+- **The CSP nonce is fresh per request and matches the body in production, including on a
+  Cloudflare cache HIT** — `run_worker_first` re-injects on every request. The mismatch in item 22
+  is the 304 path specifically, and it was measured against local dev.
+- **That 304 path cannot occur in production**, which sends no ETag on HTML routes at all. Fixed
+  anyway: it is reachable the moment the assets binding's behaviour or the config changes, and the
+  cost of the fix is a header deletion.
+- **The `www.` host rewrite has no off-by-one.** `"wwww.mcclevarty.ca".startsWith("www.")` is
+  `false`; the suspected bug does not exist.
+- **`/api/auth/challenge` does not disclose whether a handle exists, by timing.** 400 timed
+  requests: real median 27.4ms against decoy 28.1ms. The decoy branch reporting
+  `DEFAULT_ITERATIONS` — the real constant — is what keeps that true, and remains the right choice.
+- **`npm audit`: 0 vulnerabilities.** The runtime closure is still React alone, and no secret
+  appears anywhere in the git history.
+
+---
+
+## Needs the client's decision — not a fix
+
+1. **`credentials.last_challenge` and `last_challenge_at` are fields SPEC-ACCOUNTS §9's inventory
+   does not list**, and §9's own rule is that adding one is a spec change to be argued rather than
+   slipped in. Flagged exactly as `totp.last_step` was, and the recommendation is the same: they
+   store a SHA-256 of a random 32-byte value the server itself minted minutes earlier, and the
+   millisecond it was minted. The timestamp is coarser than `credentials.last_used_at`, which the
+   inventory already covers under activity metadata. Neither identifies anybody and neither reaches
+   anybody.
+2. **Download codes minted before this deploy carry `slug = NULL`** and therefore keep the old
+   behaviour rather than being refused wholesale. Retiring codes already in customers' hands is a
+   business decision, not a security one — a three-line backfill closes the legacy case, and the
+   call on whether to break working codes is the client's.
+
+---
+
+## What this pass could not verify
+
+- **`scripts/macos-share-setup.sh` has not been run on a Mac.** See the functional bug below; the
+  new picker uses only documented AppleScript and mirrors the Linux copy's structure, and only the
+  typed-path fallback was exercised here. It is written, not verified.
+- **Nothing here is deployed**, so every measurement above is against the local Worker and local D1
+  except where it says otherwise (the timing figures, the 20MB report body, the UTF-16 byte counts
+  and the 72-attempt rate-limit run are all local).
+- The standing limits in `CLAUDE.md` are unchanged: `npm run check` has no rasteriser, the operator
+  surfaces need a signed-in session, and a green suite is a floor rather than a verdict.
+
+### One pre-existing functional bug, found and fixed
+
+`scripts/macos-share-setup.sh` **called `choose_folders` and never defined it** — in HEAD too. The
+call is `done < <(choose_folders)`, so on a stock Mac every run without `--folders` printed
+`choose_folders: command not found`, chose nothing, and exited with *"No folders chosen, so there
+is nothing to do."* **The normal interactive path — the one the runbook tells people to use — has
+never worked on macOS.** Linux has had its copy all along; only this file was missing it.
+
+It is written now with `osascript`'s `choose folder`, present on every stock Mac so there is
+nothing to install, keeping the documented channel split: **stdout is a data channel and carries
+only paths**, every prompt and every "Added:" line goes to stderr through `note`/`good`/`warn`,
+because the caller reads the function with `while read < <(…)`. That is the 2026-09-02 lesson, and
+it is why this could not simply reuse the prompts.
+
+**Not tested on macOS hardware.** Stated plainly rather than implied: this replaces a path that was
+certainly broken with one that is probably right, and it wants a real Mac before anybody says it
+works.
+
+---
+
+## Corrections to this document
+
+Two lines in the *Reviewed and deliberately left alone* list below were **false when written**, and
+each was corrected in place with a dated note rather than deleted:
+
+- *"No rate limiting and no TOTP stage on passkey sign-in — a failed attempt is a forged P-256
+  signature."* The premise held; the conclusion did not, because a replay is not an attempt. See
+  item 15.
+- *"Stateless WebAuthn challenge tokens — replay is refused by the credential-id uniqueness
+  index."* That index refuses a duplicate *credential*, which catches an identical registration
+  replay and nothing else. It said nothing at all about assertions, where the whole hole was. See
+  item 15.
+
+A third has simply drifted: the 2026-08-16 table and the FABLE-FINDINGS appendix both describe the
+site-config cap as 2KB. It is `MAX_CONFIG_BYTES = 12_000` today (2,000 → 8,000 for `duelPages`,
+8,000 → 12,000 for `lookPages`), and until item 23 it was counted in UTF-16 code units. Marked in
+place.
+
+---
+
 # Security review — 2026-08-16 (the `hud-pass` branch, which is what production serves)
 
 **Result: no findings.** Recorded because a clean pass is only worth anything if it says what it
@@ -9,7 +538,7 @@ been serving production throughout, without a security review. This closes that 
 | Surface | Verdict | The reason it holds |
 |---|---|---|
 | `worker/site-config.ts` — inline script injection | clear | `raw.replace(/</g, "\\u003c")` runs over `JSON.stringify` output, so `<` can only occur inside a JSON string literal where `<` is a valid escape. Kills `</script>`, `<script` and `<!--` in one stroke. Payload is never re-parsed between escaping and `head.append` |
-| — its D1 provenance | clear | `publishSiteConfig` is the **only** writer of `site_config`; it does `requireAccount` then refuses non-operators, filters to `PUBLISHED_KEYS`, and caps at 2KB. No visitor-reachable path writes that table |
+| — its D1 provenance | clear | `publishSiteConfig` is the **only** writer of `site_config`; it does `requireAccount` then refuses non-operators, filters to `PUBLISHED_KEYS`, and caps at 2KB (**2026-09-03: 12,000 bytes today — 8,000 for `duelPages`, 12,000 for `lookPages` — and until item 23 the cap counted UTF-16 code units, not bytes**). No visitor-reachable path writes that table |
 | — U+2028 / U+2029 | clear, deliberately noted | Unescaped by `JSON.stringify` and they pass the `<` filter, but ES2019 made both legal inside string literals. They cannot terminate a string or inject a statement |
 | `loadConfig` field validation | clear | `pal`/`type` via `Number.isInteger` + range; `layout`/`fx`/`ornament`/`mode`/`page` via `oneOf` against the hardcoded catalogues; `scope` iterated over known keys with values forced boolean; everything else `bool()`. No `else` branch and no spread of the raw object, so an unknown key cannot reach `Config` |
 | `shareCode.ts` decode | clear | Field count checked; each part must match `/^[0-9a-z]+$/` *before* `parseInt(…, 36)`, so no negatives, `NaN` or `Infinity`; `pal`/`type` clamped; `layout`/`fx`/`ornament` resolve through `ARRAY[i] ?? ARRAY[0]` and return `.id`, so the output is always a catalogue-owned string and never attacker text |
@@ -273,11 +802,18 @@ re-litigate them:
 - **Missing `Origin` allowed on state-changing requests** — same-origin GETs and the e2e harness
   omit it; `SameSite` + the present-and-wrong check carry the defence.
 - **No rate limiting and no TOTP stage on passkey sign-in** — §4/§3; UV is the second factor,
-  and a failed attempt is a forged P-256 signature.
+  and a failed attempt is a forged P-256 signature. **(Corrected 2026-09-03: the premise was true
+  and the conclusion was not, because a replay is not an attempt — the challenge was bound and
+  never spent, so a captured body minted a session for five minutes. Item 15. The decision itself
+  stands, now that the argument under it does.)**
 - **`challenge` checks but never consumes rate-limit attempts** — counting salt requests would be
   a lockout primitive against the account's owner.
-- **Stateless WebAuthn challenge tokens** — replay is refused by the credential-id uniqueness
-  index; a challenge table is the rejected alternative.
+- **Stateless WebAuthn challenge tokens** — a challenge table is the rejected alternative, and
+  still is. **(Corrected 2026-09-03: this line read "replay is refused by the credential-id
+  uniqueness index", which was false. That index refuses a duplicate *credential* — an identical
+  registration replay and nothing else — and said nothing at all about assertions, which is where
+  the hole was. Both ceremonies now spend their challenge in a conditional UPDATE, monotonic in the
+  token's issue time; migration 0008 and item 15. Still no challenge table.)**
 - **Signup's 409 handle disclosure** — awaiting client sign-off (list item 4); availability is
   inherently probeable.
 - **Sessions survive password change** (TODO #14) and **`/api/account/slot` authorises on the
@@ -382,6 +918,8 @@ them so they are not re-litigated:
 
 - **Site-config `</script>` breakout: SAFE.** Every `<` in the injected JSON is escaped before
   HTMLRewriter inlines it; content is allowlisted keys, ≤2000 bytes, `JSON.stringify` output.
+  (**2026-09-03: the cap is 12,000 bytes now, and it counts bytes — see item 23.** The escaping,
+  which is what makes this line's verdict true, is unchanged.)
 - **`.dev.vars` is gitignored and was never committed**; it holds only placeholders.
 - **Zero-operator state is unreachable** (last-operator self-revoke and self-delete refused).
 - **Operator flag and account row are re-read from D1 every request** — nothing is cached in

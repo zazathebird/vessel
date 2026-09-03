@@ -182,15 +182,23 @@ export const api = {
   // Operator administration. Each refuses a caller who is not an operator, so a
   // non-operator reaching these gets the Worker's 403 wording rather than a
   // silently empty screen.
+  //
+  // **Every one that writes also carries the operator's own password proof**
+  // (`authSecret`), because the operator flag says who may act and a session
+  // says nothing about how the caller proved they are that person — see
+  // `proven` in `worker/admin.ts`. It is a required argument rather than an
+  // optional one so a new caller cannot omit it and discover the 401 in
+  // production. `adminAccounts` is a read and deliberately does not take one.
   adminAccounts: () => call<{ accounts: AdminAccount[] }>("/api/admin/accounts"),
-  adminSetOperator: (id: string, isOperator: boolean) =>
-    post<{ status: string }>("/api/admin/operator", { id, isOperator }),
-  adminResetTotp: (id: string) => post<{ status: string }>("/api/admin/reset-totp", { id }),
+  adminSetOperator: (id: string, isOperator: boolean, authSecret: string) =>
+    post<{ status: string }>("/api/admin/operator", { id, isOperator, authSecret }),
+  adminResetTotp: (id: string, authSecret: string) =>
+    post<{ status: string }>("/api/admin/reset-totp", { id, authSecret }),
   /** Delete the password credential and its key slot. Returns status only — never key material. */
-  adminResetPassword: (id: string) =>
-    post<{ status: string }>("/api/admin/reset-password", { id }),
-  adminDeleteAccount: (id: string) =>
-    post<{ status: string }>("/api/admin/delete-account", { id }),
+  adminResetPassword: (id: string, authSecret: string) =>
+    post<{ status: string }>("/api/admin/reset-password", { id, authSecret }),
+  adminDeleteAccount: (id: string, authSecret: string) =>
+    post<{ status: string }>("/api/admin/delete-account", { id, authSecret }),
   me: () => call<MeResult>("/api/me"),
   /** Replace the password credential and re-seal its key slot under the new password. */
   changePassword: (body: unknown) => post<{ status: string }>("/api/account/password", body),

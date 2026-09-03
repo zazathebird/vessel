@@ -21,7 +21,8 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { readFileSync, readdirSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { qrMatrix } from "../src/auth/qr";
@@ -4936,9 +4937,22 @@ check("the setup scripts refuse the folders that matter", () => {
   // Parse the actual token lists rather than substring-matching the file: a
   // bare `includes("$HOME")` passes on `$HOME/.ssh` and would have proved
   // nothing about whether the home directory itself is blocked.
+  // Both list forms. They were space-delimited STRINGS until 2026-09-03, and a
+  // string consumed unquoted (`for bad in $BLOCK_EXACT`) splits on IFS — so a
+  // home directory with a space in it shattered every `$HOME`-derived entry and
+  // `~/.ssh`, `~/.gnupg` and `~/.config` all became shareable. They are bash
+  // arrays now. This helper reads either, because a parser that only knows the
+  // shape it was written against reports "no BLOCK_EXACT list" when the list is
+  // right there — which is exactly what it did, taking every assertion below it
+  // out of service at the same time.
   const tokens = (text: string, name: string): string[] => {
-    const m = new RegExp(`${name}="([^"]*)"`).exec(text);
-    return m ? m[1].split(/\s+/).filter(Boolean) : [];
+    const arr = new RegExp(`${name}=\\(([^)]*)\\)`).exec(text);
+    const src = arr ? arr[1] : (new RegExp(`${name}="([^"]*)"`).exec(text) ?? [])[1];
+    if (!src) return [];
+    return src
+      .split(/\s+/)
+      .map((t) => t.replace(/#.*$/, "").replace(/^["']|["']$/g, ""))
+      .filter(Boolean);
   };
 
   const requiredUnix: Record<string, { exact: string[]; prefix: string[] }> = {
@@ -5024,6 +5038,99 @@ check("the setup scripts refuse the folders that matter", () => {
   }
 
   return `3 scripts, ${checked} required blocklist entries, fail-closed and prefix matching intact`;
+});
+
+/*
+ * The same question, EXECUTED.
+ *
+ * The gate above reads the blocklist as text, and on 2026-09-03 that was shown
+ * to be worth very little: the lists were space-delimited strings consumed
+ * unquoted, so a home directory with a space in it split every `$HOME`-derived
+ * entry into fragments and `~/.ssh`, `~/.gnupg`, `~/.config` and the whole of
+ * `~/.local` became shareable. Every entry the text gate requires was present
+ * the entire time. It reported "20 required blocklist entries … intact" while
+ * the barrier CLAUDE.md calls "the ONLY barrier" was open, and its own comment
+ * conceded it was weaker than executing the logic.
+ *
+ * So this one runs the real `check_folder` out of the real script, against
+ * throwaway home directories — one ordinary, one with a space in the name,
+ * which is the case that broke. It fails against the pre-fix scripts, which is
+ * what makes it a gate rather than a description.
+ *
+ * The definitions are sliced out rather than sourced because these scripts run
+ * their whole flow at the top level: sourcing one would try to set up a share.
+ */
+check("the setup scripts REFUSE, driven against a real home directory", () => {
+  // String.raw: the awk program is full of backslashes, and a plain template
+  // literal eats them — `/^\)/` arrives as `/^)/`, which is not a regex, so awk
+  // fails, DEFS comes back empty and every verdict reads BROKEN.
+  const probeScript = String.raw`
+set -uo pipefail
+SRC="$1"; FIX="$2"
+DEFS="$(awk '
+  /^(canon|fold_case|check_folder)\(\)/ { infn=1 }
+  /^(BLOCK_EXACT|BLOCK_PREFIX)=\(/ { inarr=1 }
+  infn { print }
+  infn && /^}/ { infn=0 }
+  inarr && !infn { print }
+  inarr && /^\)/ { inarr=0 }
+' "$SRC")"
+HOME="$FIX"; SHARE_ROOT="$FIX/Shared"
+eval "$DEFS"
+for p in "$FIX" "$FIX/.ssh" "$FIX/.gnupg" "$FIX/.config" "$FIX/.local" \
+         "$FIX/.local/share" /etc / "$FIX/Documents"; do
+  r="$(check_folder "$p" 2>/dev/null | head -1)"
+  case "$r" in OK*) v=ALLOWED ;; NO*) v=refused ;; *) v=BROKEN ;; esac
+  printf '%s\t%s\n' "$v" "$p"
+done
+`;
+
+  const root = mkdtempSync(join(tmpdir(), "vessel-blocklist-"));
+  let driven = 0;
+  try {
+    // "bob smith" is the whole point: an ordinary macOS account name, and the
+    // shape that shattered the list.
+    for (const home of ["plain", "bob smith"]) {
+      const fix = join(root, home);
+      for (const d of [".ssh", ".gnupg", ".config", ".local/share/keyrings", "Documents", "Shared"]) {
+        mkdirSync(join(fix, d), { recursive: true });
+      }
+      for (const file of ["scripts/linux-share-setup.sh", "scripts/macos-share-setup.sh"]) {
+        const out = execFileSync("bash", ["-c", probeScript, "probe", file, fix], {
+          encoding: "utf8",
+        });
+        const verdict = new Map<string, string>();
+        for (const line of out.trim().split("\n")) {
+          const [v, ...rest] = line.split("\t");
+          verdict.set(rest.join("\t"), v);
+        }
+
+        // Everything private must be refused, in BOTH homes. `/` included: the
+        // trailing-slash strip turned that entry into an empty string, so the
+        // filesystem root matched nothing and was shareable in every version
+        // before 2026-09-03.
+        for (const p of [fix, `${fix}/.ssh`, `${fix}/.gnupg`, `${fix}/.config`,
+                         `${fix}/.local`, `${fix}/.local/share`, "/etc", "/"]) {
+          must(
+            verdict.get(p) === "refused",
+            `${file}: ${p.replace(fix, "~")} is ${verdict.get(p) ?? "unresolved"} with HOME="${home}" — that list is the only barrier there is`,
+          );
+          driven += 1;
+        }
+
+        // And it must still be usable: an ordinary folder has to pass, or the
+        // safe answer is "refuse everything" and nobody can share anything.
+        must(
+          verdict.get(`${fix}/Documents`) === "ALLOWED",
+          `${file}: an ordinary folder is refused with HOME="${home}" — the blocklist has become a wall`,
+        );
+        driven += 1;
+      }
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+  return `${driven} verdicts from the real check_folder, over 2 scripts x 2 home directories (one with a space)`;
 });
 
 // ---- 6. Things only a person can judge -------------------------------------

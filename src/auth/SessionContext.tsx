@@ -73,7 +73,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [refresh]);
 
   const value = useMemo<SessionValue>(
-    () => ({ me, known, isOperator: me?.account.isOperator === true, refresh }),
+    // `me?.account?.isOperator`, both links optional. The outer chain covered a
+    // null `me` and not a 200 whose body has no `account` — a `{}` throws a
+    // TypeError inside this `useMemo`, which is a blank site rather than the
+    // "signed out, site unchanged" degradation this file's header promises.
+    // Nothing but a signed-in operator may read true, so an unreadable answer
+    // is the same answer as no answer.
+    () => ({ me, known, isOperator: me?.account?.isOperator === true, refresh }),
     [me, known, refresh],
   );
 

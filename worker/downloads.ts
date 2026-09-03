@@ -136,15 +136,64 @@ async function opened(
   row: CodeRow,
 ): Promise<{ open: string[]; visible: string[]; items: string[] }> {
   if (row.item_id) {
-    const item = await env.DB.prepare("SELECT slug FROM download_files WHERE id = ?")
+    /*
+     * The file is re-read, and so is the page it sits on, and **both halves are
+     * a security check rather than housekeeping**.
+     *
+     * `deletePage` used to leave file-scoped codes alone on the grounds that an
+     * id "is not re-usable the way a slug is, because `saveFile` would have to
+     * be given the same id by hand". That was simply false. `suggestFromFilename`
+     * derives the id from the filename and the editor's file picker auto-fills
+     * it, so re-adding the same program produces the same id every time — and
+     * `saveFile`'s `ON CONFLICT (id) DO UPDATE SET slug = excluded.slug` means
+     * *moving* a file to another page re-points every outstanding code for it
+     * with no delete involved at all. Proven end to end: one customer's code,
+     * after their page was deleted and the same program was re-added on another
+     * customer's page, passed the gate for that customer's bytes and rendered
+     * their page in full — title, private prose, every file's name and price.
+     * `deletePage` and `deleteFile` now delete these rows; this branch is what
+     * catches the move, which no delete can.
+     *
+     * `row.slug` on a file-scoped row is the page the file was on **when the
+     * code was minted** (`mintCode` writes it). If the file has moved since,
+     * the code opens nothing — **refuse, never repair**, which is this module's
+     * rule everywhere else. Following the file to wherever it went is how a
+     * ticket ends up naming a page nobody agreed to hand over.
+     */
+    const item = await env.DB.prepare(
+      `SELECT f.slug, p.visibility, p.status
+         FROM download_files f LEFT JOIN download_pages p ON p.slug = f.slug
+        WHERE f.id = ?`,
+    )
       .bind(row.item_id)
-      .first<{ slug: string }>();
+      .first<{ slug: string; visibility: string | null; status: string | null }>();
     // A scope naming a file that has since been deleted opens nothing. That is
     // the honest outcome; falling back to "everything" is how a withdrawn item
     // gets handed out.
-    return item
-      ? { open: [], visible: [item.slug], items: [row.item_id] }
-      : { open: [], visible: [], items: [] };
+    if (!item) return { open: [], visible: [], items: [] };
+    /*
+     * A row minted before the pin existed carries no slug at all. It keeps the
+     * old behaviour rather than being refused wholesale: retiring codes already
+     * in the operator's customers' hands is his decision, not a deploy's, and
+     * the two deletes close the door those rows came through.
+     */
+    if (row.slug !== null && row.slug !== item.slug) return { open: [], visible: [], items: [] };
+    /*
+     * **The page is named only if a code could ever open it**, for the reason
+     * the unscoped branch below spells out at length: the existence of a page
+     * named after a customer is itself the thing being kept quiet, and `claim`
+     * reads this list straight back to whoever redeemed. `canRead`'s `granted`
+     * branch consults the account's grants alone, and a draft is the operator's
+     * alone, so in both cases the slug was being read out for a page the ticket
+     * could not open — the same fault the unscoped branch was fixed for, in the
+     * one branch nobody re-checked.
+     *
+     * `items` deliberately stays. `canDownload` starts with `canRead`, which
+     * refuses both of these for a ticket holder, so the entry is already inert;
+     * what was leaking was the name, and the name is what is withheld.
+     */
+    const quiet = item.visibility === "granted" || item.status !== "live";
+    return { open: [], visible: quiet ? [] : [item.slug], items: [row.item_id] };
   }
   if (row.slug) {
     /*
@@ -233,6 +282,24 @@ export async function claim(request: Request, env: Env): Promise<Response> {
   if (row.expires_at !== null && row.expires_at < now) throw refused;
   if (row.uses >= row.max_uses) throw refused;
 
+  /*
+   * **What it opens is resolved before the use is spent, and a scope that opens
+   * nothing is a refusal.**
+   *
+   * This used to run after the increment, so a code whose file had been
+   * withdrawn — or whose page had been deleted, or which was minted for a page
+   * a code can never open — answered `200 { pages: [], items: [] }` and charged
+   * a use for it. The customer that happens to is precisely the one with a
+   * genuine complaint, and they spend all five of their uses, one empty success
+   * at a time, with nothing on screen that reads as a refusal for them to
+   * report. It is also a positive oracle: an empty 200 says the code exists.
+   *
+   * The refusal is `refused`, the same one every other failure here throws, for
+   * the reason that one is a single message.
+   */
+  const opens = await opened(env, row);
+  if (!opens.open.length && !opens.visible.length && !opens.items.length) throw refused;
+
   // The count and the day, in the same statement that re-checks the ceiling.
   //
   // The ceiling is in the WHERE clause and not in an `if` above it, following
@@ -260,8 +327,6 @@ export async function claim(request: Request, env: Env): Promise<Response> {
   if (typeof spent !== "number") throw refused;
 
   await recordSuccess(env, names);
-
-  const opens = await opened(env, row);
 
   // The TTL rides on the purpose (`session.ts`), not on this call — one place
   // decides how long each kind of token lives, so none of them can drift.
@@ -336,6 +401,32 @@ export function rangePlan(asked: boolean, served: R2Range | undefined, size: num
 }
 
 /**
+ * The value half of `filename*`, per RFC 8187 — **and `encodeURIComponent` is
+ * not it**, which is a thing it looks exactly like.
+ *
+ * An ext-value is `charset'lang'value`, and the value part may contain only
+ * `attr-char` or a percent escape. `encodeURIComponent` leaves `'`, `(`, `)`,
+ * `*` and `!` alone, and of those only `!` is an attr-char — so an entirely
+ * ordinary name like `Bob's tool (v2).exe` produced a field with three
+ * apostrophes in it, which a strict parser is entitled to read as a different
+ * charset and language and a truncated name, or to reject outright. Nobody sees
+ * a 500; the customer just gets a file called something else on the browsers
+ * that parse the header properly.
+ *
+ * `!` is escaped along with the other four rather than special-cased: a percent
+ * escape is legal for any octet, so this is correct and the exception list is
+ * one rule instead of two. There is no injection here to fix — `saveFile`
+ * refuses quotes, backslashes and control characters on the way in — this is
+ * the header being well-formed.
+ */
+function extValue(name: string): string {
+  return encodeURIComponent(name).replace(
+    /['()*!]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+}
+
+/**
  * Stream one file out of the private bucket.
  *
  * A GET rather than a POST because it is a download: the browser's own manager
@@ -365,14 +456,39 @@ export async function file(request: Request, env: Env, url: URL): Promise<Respon
   const denied = new BadRequest("That download isn't available to you. Check your code and try again.", 403);
 
   const id = url.searchParams.get("item") ?? "";
-  const item = await env.DB.prepare("SELECT * FROM download_files WHERE id = ?")
-    .bind(id)
-    .first<FileRow>();
-  if (!item) throw denied;
-  const page = await env.DB.prepare("SELECT * FROM download_pages WHERE slug = ?")
-    .bind(item.slug)
-    .first<PageRow>();
-  if (!page) throw denied;
+
+  /*
+   * **THE SAME WORK WHETHER THE ROW EXISTS OR NOT, BECAUSE THE CLOCK IS AN
+   * ORACLE TOO.**
+   *
+   * Unifying the status codes above closed the obvious half and left the
+   * measurable one wide open: this route used to look the file up, `throw` on a
+   * miss, and only then read the page and resolve access — so an id that does
+   * not exist cost one D1 round trip and an id that exists but is refused cost
+   * two plus `resolveAccess`. Measured over sixty interleaved pairs: a median
+   * of 9.61ms against 13.16ms, with "exists" the slower of the two in 59 of
+   * them. That is the whole existence oracle back, unauthenticated and
+   * unthrottled, over draft and `granted` pages included — read off a stopwatch
+   * instead of a status line.
+   *
+   * So `resolveAccess` goes first, exactly as `readPage` has always done it,
+   * and both lookups are issued unconditionally and together. The page is found
+   * through the file's id rather than through `item.slug`, which is what lets
+   * it be a query that does not wait to hear whether the file existed. What is
+   * left between the two paths is one `canDownload`, which touches no network.
+   */
+  const access = await resolveAccess(request, env, url);
+  const [item, page] = await Promise.all([
+    env.DB.prepare("SELECT * FROM download_files WHERE id = ?").bind(id).first<FileRow>(),
+    env.DB.prepare(
+      `SELECT p.* FROM download_pages p
+         JOIN download_files f ON f.slug = p.slug
+        WHERE f.id = ?`,
+    )
+      .bind(id)
+      .first<PageRow>(),
+  ]);
+  if (!item || !page) throw denied;
 
   /*
    * **The same question the page render asked, asked by the same function.**
@@ -384,8 +500,10 @@ export async function file(request: Request, env: Env, url: URL): Promise<Respon
    * independently is two places that agree until one of them is edited.
    * `canDownload` starts by asking `canRead` about the page, so bytes can never
    * escape through a page the caller was refused.
+   *
+   * Resolved above rather than here, so that the refusal path does the same
+   * work as the success path — see the note on the lookups.
    */
-  const access = await resolveAccess(request, env, url);
   // One message for every refusal — expired ticket, wrong scope, no grant, a
   // draft page, an id that never existed — for the reason `claim`'s refusal is
   // one message: the shape of the failure is itself information about what
@@ -433,7 +551,7 @@ export async function file(request: Request, env: Env, url: URL): Promise<Respon
   const ascii = item.filename.replace(/[^\x20-\x7E]/g, "_").replace(/["\\]/g, "");
   headers.set(
     "content-disposition",
-    `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(item.filename)}`,
+    `attachment; filename="${ascii}"; filename*=UTF-8''${extValue(item.filename)}`,
   );
   headers.set("cache-control", "private, no-store");
   // Advertised unconditionally, because a browser only *asks* for a range when
@@ -499,6 +617,20 @@ async function operator(request: Request, env: Env) {
 }
 
 /**
+ * The refusal both scopes share, in one place because they are one rule.
+ *
+ * The wording is the operator's own words for the setting — the label on the
+ * radio button in the editor, not the database's `granted` — because this
+ * arrives on a screen where he is choosing between those labels, and a message
+ * naming a value he has never seen is a message he has to translate.
+ */
+function grantedRefusal(subject: string): BadRequest {
+  return new BadRequest(
+    `${subject} is set to “Only people I've named”, which codes cannot open. Give them access by name, or change the page to “Needs an access code”.`,
+  );
+}
+
+/**
  * Mint a code and return it **once**.
  *
  * The plaintext exists for the length of this response and is then
@@ -523,9 +655,41 @@ export async function mintCode(request: Request, env: Env): Promise<Response> {
    */
   const slug = typeof body.slug === "string" && body.slug ? body.slug : null;
   if (itemId && slug) throw new BadRequest("Scope a code to a page or to one file, not both.");
+
+  /*
+   * What goes in the row's `slug` column, which is two things at once and has
+   * to be, because a file-scoped code needs to remember where its file was.
+   *
+   * For a page-scoped code it is the scope itself. For a file-scoped one it is
+   * **the page the file is on at this moment** — the pin `opened` refuses
+   * against when the file has since moved. `opened` reads `item_id` first, so a
+   * row carrying both is a file scope with a pin on it and never a page scope;
+   * `listCodes` and the admin list's `scopeOf` read `item_id` first for the
+   * same reason, so the pin changes nothing the operator sees.
+   */
+  let pageSlug = slug;
+
   if (itemId) {
-    const has = await env.DB.prepare("SELECT id FROM download_files WHERE id = ?").bind(itemId).first();
+    const has = await env.DB.prepare(
+      `SELECT f.slug, p.visibility
+         FROM download_files f LEFT JOIN download_pages p ON p.slug = f.slug
+        WHERE f.id = ?`,
+    )
+      .bind(itemId)
+      .first<{ slug: string; visibility: string | null }>();
     if (!has) throw new BadRequest("No such download.", 404);
+    /*
+     * **The `granted` refusal below applies to a file's page too, and leaving
+     * it off here was the same bug with one more step in it.** The page scope
+     * has refused a `granted` page since it shipped; the file scope checked
+     * that the file existed and nothing else, so the operator could mint a code
+     * for a file sitting on such a page — and `canRead`'s `granted` branch
+     * never looks at a ticket, so it redeems, reports success and opens
+     * nothing. The customer is who finds out, which is exactly what the page
+     * scope's check exists to prevent.
+     */
+    if (has.visibility === "granted") throw grantedRefusal("That file's page");
+    pageSlug = has.slug;
   }
   if (slug) {
     const has = await env.DB.prepare("SELECT slug, visibility FROM download_pages WHERE slug = ?")
@@ -544,11 +708,7 @@ export async function mintCode(request: Request, env: Env): Promise<Response> {
      * customer is who finds out. A draft is deliberately still allowed — minting
      * before publishing is a normal order of work.
      */
-    if (has.visibility === "granted") {
-      throw new BadRequest(
-        "That page is set to “Only people I've named”, which codes cannot open. Give them access by name, or change the page to “Needs an access code”.",
-      );
-    }
+    if (has.visibility === "granted") throw grantedRefusal("That page");
   }
 
   const maxUses = Number.isInteger(body.maxUses) ? Math.min(50, Math.max(1, body.maxUses as number)) : 5;
@@ -596,7 +756,8 @@ export async function mintCode(request: Request, env: Env): Promise<Response> {
       toBlob(await codeHash(env, code)),
       label,
       itemId,
-      slug,
+      // The scope for a page code, the pin for a file code — see `pageSlug`.
+      pageSlug,
       now,
       days ? now + days * 86_400_000 : null,
       maxUses,

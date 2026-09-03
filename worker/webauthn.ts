@@ -13,8 +13,27 @@
  * Registration reads the credential id and COSE key out of `authData`;
  * authentication verifies the signature over
  * `authData || SHA-256(clientDataJSON)` and checks challenge, origin, RP ID
- * hash and the user-verified flag. Sign-count monotonicity is checked but not
- * enforced, because synced passkeys commonly return 0.
+ * hash and the user-verified flag.
+ *
+ * **The sign counter is not checked.** This file parses it and hands it back;
+ * `passkeys.ts` stores `Math.max` of it and the stored value and compares
+ * nothing. That is the right behaviour — a synced passkey commonly reports 0
+ * for ever, so refusing a counter that failed to advance would refuse the
+ * commonest authenticator on the market — but it means **there is no clone
+ * detector here**, and the stored number is a high-water mark and nothing more.
+ * This note used to read "monotonicity is checked but not enforced", which
+ * invites a reader to believe a check exists and to go looking for where it is
+ * ignored. There is no check.
+ *
+ * **`fmt` and `attStmt` are not examined at all**, for the same reason the
+ * aaguid is skipped below: attestation is `none` and the vendor is nobody's
+ * business, so nothing here verifies an attestation statement or even reads
+ * which format claims to be present. The consequence is worth stating plainly —
+ * the attestation object is wholly attacker-chosen, and the CBOR reader above
+ * is the only thing standing between a request body and this parser. That is
+ * what the narrow subset, the depth limit, the refused major types and the
+ * bounds checks in `take`/`length` are for. **Keep them narrow**; widening the
+ * reader to be accommodating widens exactly that surface.
  */
 
 import { BadRequest } from "./encoding";
@@ -214,6 +233,12 @@ function derToP1363(der: Uint8Array): Uint8Array {
  * as a sign-in, the challenge binds the response to the token that asked for
  * it, and the origin is what makes a phishing page's assertion — signed for
  * *its* origin — worthless here.
+ *
+ * **Binding is not spending.** The same signed response answers the same
+ * challenge for ever, so this check cannot stop a captured body being sent
+ * twice; that is `passkeys.ts`'s conditional UPDATE against
+ * `credentials.last_challenge` (migration 0008). This module holds no state and
+ * is not where single-use can live.
  */
 function checkClientData(
   clientDataJSON: Uint8Array,

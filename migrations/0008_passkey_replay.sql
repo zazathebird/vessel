@@ -1,0 +1,82 @@
+-- Two columns, for the same reason as 0002 one credential kind over: a
+-- challenge that has been answered must not be answerable a second time inside
+-- the five minutes its token stays valid.
+--
+-- Both WebAuthn ceremonies were replayable. The `webauthn-signin` token is
+-- stateless and nothing marked its challenge spent, so a captured request body
+-- — token, clientDataJSON, authenticatorData, signature, all of it — could be
+-- posted again verbatim and mint a fresh session every time until the token
+-- expired. That is the one thing this design cannot afford: §4 waives both the
+-- TOTP stage and rate limiting on the assertion path *because* a failed attempt
+-- is supposed to require forging a P-256 signature, and a replay forges
+-- nothing. Registration had the same shape one step down — one token registered
+-- as many different authenticators as anybody cared to send, the credential-id
+-- uniqueness index refusing only an *identical* replay.
+--
+-- No challenge table, deliberately: CLAUDE.md fixes the stateless token as the
+-- design and a table of live challenges is the rejected option. This is the
+-- 0002 answer instead — a conditional UPDATE whose guard lives in the write's
+-- own WHERE clause, with zero `meta.changes` as the refusal. Check-then-act
+-- would let two copies of the same body both read the challenge unspent and
+-- both succeed, which is the attack rather than a race around it.
+--
+-- **The guard is monotonic, and that is the whole of 0002's lesson rather than
+-- half of it.** `totp.last_step` refuses a step at or below the stored one, not
+-- merely a step equal to it. A first cut here stored the last challenge and
+-- refused a repeat of *that* one, which closes the naive double-post and leaves
+-- the interleaved replay wide open: capture two bodies, let the two genuine
+-- sign-ins land, then alternate them — each replay differs from the one stored
+-- immediately before it, so each is accepted, for as long as either token
+-- lives. The same hole opens on a single captured body the moment any other
+-- sign-in on that credential lands in between, which two tabs or one retry is
+-- enough to arrange. So the test is on the token's issue time, which `session.mint`
+-- stamps into every token and `verify` hands back under the MAC: a challenge
+-- minted no later than the last one spent is refused, whatever it is. Every old
+-- body is dead for ever, not just the newest.
+--
+-- The digest column stays beside it as a conjunct, not an alternative. It can
+-- only ever refuse more, it costs 32 bytes and no query, and it is the one half
+-- of the guard that depends on no clock at all: an exact replay is refused by
+-- equality of bytes even if two tokens ever shared a millisecond or an edge's
+-- clock stepped. It holds the SHA-256 of the challenge rather than the
+-- challenge, for the reason `code_hash` is a hash — it is only ever compared for
+-- equality, and a fixed 32 bytes is a smaller thing to leave in a row than the
+-- value a still-live token is carrying.
+--
+-- What monotonic costs, stated rather than discovered later: a genuine ceremony
+-- **completed out of order** is refused — two tabs opened in one order and
+-- finished in the other, where the older token's assertion lands second. This
+-- is exactly the property 0002 already accepts for TOTP, the answer is the same
+-- "start again" every other refusal on these routes gives, and pressing the
+-- button again mints a later token and works. An escape hatch for it — allow a
+-- different challenge sharing the stored timestamp — would be the alternation
+-- hole again, one millisecond wide, and a millisecond of replay window buys
+-- nothing that a retry does not.
+--
+-- One pair of columns and not two, because a challenge is spent on the
+-- credential row that *used* it: sign-in on the passkey that answered the
+-- assertion, registration on the password credential that authorised it. The
+-- passkey's own row does not exist yet at registration time, and
+-- `assertPassword` has just proved the password row does.
+--
+-- No index on either. Neither is ever searched — every read is `WHERE id = ?` or
+-- `WHERE account_id = ? AND kind = 'password'` — and a UNIQUE index here would
+-- fire *ahead of* `idx_credentials_passkey` on a replayed registration, turning
+-- the "that passkey is already registered" 409 into a constraint error whose
+-- message decides which refusal the caller gets.
+--
+-- A separate migration rather than an edit to 0001: local D1 records which
+-- migrations it has run, so editing one in place leaves an existing local
+-- database silently missing the change while reporting itself up to date.
+--
+-- On §9's inventory, whose rule is that a stored field is a spec change to be
+-- argued rather than slipped in: this stores a hash of a random 32-byte value
+-- the server itself minted minutes earlier, and the millisecond it was minted.
+-- The timestamp is coarser than `credentials.last_used_at`, which the inventory
+-- already covers under activity metadata, and the digest is derived from
+-- nothing about the person. Neither identifies anybody and neither reaches
+-- anybody. Flagged to the client rather than assumed, exactly as
+-- `totp.last_step` was.
+
+ALTER TABLE credentials ADD COLUMN last_challenge BLOB;
+ALTER TABLE credentials ADD COLUMN last_challenge_at INTEGER;

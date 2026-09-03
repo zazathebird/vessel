@@ -149,7 +149,15 @@ export async function readSiteConfig(_request: Request, env: Env): Promise<Respo
  */
 export async function publishSiteConfig(request: Request, env: Env): Promise<Response> {
   const account = await requireAccount(request, env);
-  if (!account.is_operator) throw new BadRequest("Only the operator can change the site.", 403);
+  // `!== 1`, not `!is_operator`: the column is an INTEGER flag and the three
+  // other copies of this guard (`admin.ts`, `downloadPages.ts`, `downloads.ts`)
+  // all test it that way. Nothing reaches this line with a value the two forms
+  // disagree about today — the point is that four byte-identical guards in four
+  // files is how one of them eventually drifts, and the drift here would be an
+  // operator gate.
+  if (account.is_operator !== 1) {
+    throw new BadRequest("Only the operator can change the site.", 403);
+  }
 
   const body = await readJson(request);
   const incoming = body.config;
@@ -165,12 +173,21 @@ export async function publishSiteConfig(request: Request, env: Env): Promise<Res
   if (Object.keys(clean).length === 0) throw new BadRequest("Nothing in that config to publish.");
 
   const encoded = JSON.stringify(clean);
-  if (encoded.length > MAX_CONFIG_BYTES) {
+  // **Bytes, measured, not `String.length`** (2026-09-03 audit). `length` counts
+  // UTF-16 code units: 12,121 ASCII characters were refused with "that config is
+  // 12121 bytes" while 11,921 CJK characters were *accepted* — 35,721 actual
+  // UTF-8 bytes, roughly 3× the ceiling, and every one of them went into the
+  // `<head>` of every page the site serves. Nothing here is expected to be
+  // non-ASCII, which is exactly why it went unnoticed. `readJson` in
+  // `accounts.ts` documents and fixes the same trap forty lines away; this file
+  // did not get it. Still refuses, still never truncates.
+  const bytes = new TextEncoder().encode(encoded).byteLength;
+  if (bytes > MAX_CONFIG_BYTES) {
     // Says the two numbers, because the only way to act on this is to know how
     // far over it is — and the thing to remove is a per-page override, duel or
     // look, which are the only keys here that grow.
     throw new BadRequest(
-      `That config is ${encoded.length} bytes and the limit is ${MAX_CONFIG_BYTES}. ` +
+      `That config is ${bytes} bytes and the limit is ${MAX_CONFIG_BYTES}. ` +
         "Clear a per-page duel or look override — those are the only settings that grow.",
     );
   }

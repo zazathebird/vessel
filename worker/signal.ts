@@ -25,6 +25,19 @@ import type { Env } from "./env";
 /** Nothing legitimate here is large — an SDP with candidates is a few KB. */
 const MAX_FRAME_BYTES = 64 * 1024;
 
+/** Measures the frame the way the wire does — see `webSocketMessage`. */
+const encoder = new TextEncoder();
+
+/**
+ * A peer id is a `crypto.randomUUID()` minted by this object and nothing else
+ * (`/connect`, below). `frame.to` arrives from the agent as free text, and it
+ * becomes a **hibernation tag** — which the runtime caps at 256 characters, so
+ * an over-long one can throw inside `webSocketMessage`, where an unhandled
+ * rejection is not a refusal anybody sees. Matching the shape it is supposed to
+ * have costs nothing and makes the tag lookup unreachable with anything else.
+ */
+const PEER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
 /** What a browser tab may send; everything else closes the socket. */
 const BROWSER_TYPES = new Set(["offer", "ice"]);
 /** What the agent may send. `refused` is the fingerprint-check failure (§13). */
@@ -92,7 +105,18 @@ export class MachineSignal {
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
-    if (typeof message !== "string" || message.length > MAX_FRAME_BYTES) {
+    // `message.length` counts UTF-16 code units, not bytes — a frame of
+    // three-byte UTF-8 characters passes a "64KB" check at ~192KB on the wire
+    // (2026-09-03 audit; `readJson` in `accounts.ts` records the same lesson).
+    // The cheap check first short-circuits the encode for the common oversized
+    // case; the encode is what makes the limit true. This socket is
+    // owner-authenticated, so it is a bound rather than a boundary — but a bound
+    // that is 3× what it says is not a bound.
+    if (
+      typeof message !== "string" ||
+      message.length > MAX_FRAME_BYTES ||
+      encoder.encode(message).byteLength > MAX_FRAME_BYTES
+    ) {
       ws.close(1009, "frame too large");
       return;
     }
@@ -127,7 +151,12 @@ export class MachineSignal {
     }
 
     if (who?.role === "agent") {
-      if (!AGENT_TYPES.has(type) || typeof frame.to !== "string") {
+      // `frame.to` is validated for *shape* in the same place as the frame
+      // type, and before it is used: it is about to be interpolated into a
+      // hibernation tag, and a tag is not a string the runtime accepts at any
+      // length. Refuse, never repair — a truncated id would address the wrong
+      // peer, or none, and say nothing.
+      if (!AGENT_TYPES.has(type) || typeof frame.to !== "string" || !PEER_ID.test(frame.to)) {
         ws.close(1003, "unknown frame");
         return;
       }

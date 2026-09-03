@@ -56,7 +56,31 @@ export function QrCode({
    */
   label?: string;
 }) {
-  const modules = useMemo(() => qrMatrix(value), [value]);
+  /*
+   * **The encoder is allowed to refuse, and refusing must not take the page
+   * with it.** `qrMatrix` throws above 213 bytes (`src/auth/qr.ts` stops at
+   * version 10, byte mode, EC level M), and `value` is not ours: on the
+   * enrolment screen it is the server's `otpauth://` URI, whose length is the
+   * issuer plus the handle plus the secret. A throw inside `useMemo` is a throw
+   * during render, which React turns into a white screen — losing the *whole*
+   * enrolment form over the one part of it that is a convenience.
+   *
+   * Null is the right fallback because both callers already render `value` as
+   * text beside the symbol: `TotpEnrol` prints the base32 secret and the URI in
+   * full (deliberately, and for this exact class of reason — the encoder is
+   * hand-written, so a silent wrongness is the failure mode it plans for), and
+   * `ShareLink` has the address in a readonly input with a Copy button. The QR
+   * is the convenience; it was never the credential.
+   */
+  const modules = useMemo(() => {
+    try {
+      return qrMatrix(value);
+    } catch {
+      return null;
+    }
+  }, [value]);
+
+  if (!modules) return null;
 
   const QUIET = 4;
   const span = modules.length + QUIET * 2;

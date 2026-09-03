@@ -33,32 +33,84 @@ const MAX_PATH = 400;
 const MAX_NAME = 40;
 
 /**
- * Control characters and DEL, refused in every field - see `str`.
+ * Line-breaking and control characters, refused in every field - see `str`.
+ *
+ * `\p{Cc}` is C0, DEL **and C1** — the last of which is why this is a property
+ * and not the old `[\u0000-\u001f\u007f]` range: U+0085 NEXT LINE is a line
+ * break to a text engine and was accepted. U+2028 and U+2029 are `Zl`/`Zp`
+ * rather than `Cc`, so they have to be named; they are line and paragraph
+ * separators and belong here for the same reason.
+ *
+ * **None of the three forges a row on the page today**, and that is a property
+ * of the stylesheet rather than of this regex: `.v-setup-name` is
+ * `white-space: normal`, which collapses them. Give that span — or
+ * `.v-setup-path`, which is a filesystem path and an ordinary candidate for
+ * `pre-wrap` — a preserving `white-space` and one label becomes two visible
+ * rows. The refusal must not depend on a CSS declaration in another file.
  *
  * Written as escapes deliberately: a literal control character inside a
  * regex is invisible in a diff and in review, so one deleted by accident
  * leaves a check that silently passes everything it was meant to catch.
  */
-const CONTROL = /[\u0000-\u001f\u007f]/;
+const CONTROL = /[\p{Cc}\u2028\u2029]/u;
 
 /**
  * Characters that make a label lie about what it says.
  *
- * `CONTROL` covers C0 and DEL, which stops a newline forging extra rows. It
- * does not stop a label *rendering* as something other than what is stored,
- * and both fields here are read by a person deciding which folder to hand to
- * the browser — the path is the only thing telling `D:\\Photos` from
- * `C:\\Users\\me\\Photos`, which is why it wraps rather than truncating.
+ * `CONTROL` stops a newline forging extra rows. It does not stop a label
+ * *rendering* as something other than what is stored, and both fields here are
+ * read by a person deciding which folder to hand to the browser — the path is
+ * the only thing telling `D:\\Photos` from `C:\\Users\\me\\Photos`, which is
+ * why it wraps rather than truncating.
  *
- * Refused, not stripped, consistent with the rest of this file:
- *   U+202A-U+202E, U+2066-U+2069  bidi overrides and isolates. `Family \u202EsotohP`
- *                                 renders as `Family Photos` while storing something else.
- *   U+200B-U+200D, U+FEFF, U+00AD zero-width and soft hyphen. Two rows reading
- *                                 `Invoices` where only one is the folder you picked —
- *                                 and `done` is a Set of exact strings, so one ticks off
- *                                 and the other does not, with nothing visible to explain it.
+ * **This refuses by Unicode property rather than by enumeration, and the
+ * enumeration is what was wrong with it.** The old list named five ranges and
+ * missed every other invisible character in Unicode — U+034F, U+2062, U+2063,
+ * U+17B4 and U+180E all measure **0.000px** of extra rendered width at
+ * `.v-setup-name`'s font, trailing or mid-word, so:
+ *
+ *     { l: "Invoices",        p: "C:\\Users\\me\\Invoices" }
+ *     { l: "Invoices\u034F",  p: "C:\\Users\\me" }
+ *
+ * decoded cleanly, drew two rows both reading `Invoices`, and left the second
+ * one unticked after the person added the folder they meant — because
+ * `SharePage`'s done-set is a Set of exact strings and `key={folder.label}`
+ * stays unique, so neither React nor the checklist flags anything. The obvious
+ * next click hands over the whole user profile through the real picker. That is
+ * the exact failure the duplicate-label refusal below exists to prevent, walked
+ * straight past. An enumeration cannot be made complete by adding to it, so it
+ * is gone.
+ *
+ * What is refused, and why each class:
+ *   `\p{Cf}`  every format character — all the bidi overrides and isolates
+ *             (`Family \u202EsotohP` renders as `Family Photos`), the
+ *             zero-widths, the soft hyphen, the BOM, the invisible operators.
+ *   `\p{Cs}`  lone surrogates. With the `u` flag a *paired* surrogate is one
+ *             astral code point and is not matched, so emoji survive; an
+ *             unpaired one (JSON will happily carry `\uD800`) is a character
+ *             no font can draw.
+ *   `\p{Co}`  private use. Draws as whatever the reader's fonts decide, which
+ *             is to say: not knowably anything.
+ *   `\p{Cn}`  unassigned and noncharacters. Deliberate trade, stated plainly:
+ *             an engine older than the folder name's Unicode version will
+ *             refuse a brand-new emoji. Tofu cannot be told from other tofu,
+ *             which is the twin-row failure again, and renaming the folder is
+ *             a cheaper outcome than handing over the wrong one.
+ *   the named set  blanks that are none of the above: U+034F is `Mn`, U+2800 is
+ *             `So`, U+115F/U+1160/U+3164/U+FFA0 are `Lo`, U+17B4/U+17B5 are
+ *             `Mn`, U+180E is `Cf` and is listed anyway so the measured set
+ *             reads as one list. All render at zero or blank width.
+ *             (U+17B5 was not measured; it is U+17B4's twin, same block, same
+ *             category, equally invisible.)
+ *   `\p{Zs}` bar U+0020  a space that is not the space. U+00A0 is
+ *             indistinguishable from U+0020 at any size, and U+3000 is a blank
+ *             of a different width — either makes two labels that read the same.
+ *
+ * `\p{Cc}` is the one `\p{C}` class not here; it is in `CONTROL` above, so
+ * between the two every control-ish code point in Unicode is refused.
  */
-const DECEPTIVE = /[\u00ad\u200b-\u200d\u202a-\u202e\u2066-\u2069\ufeff]/;
+const DECEPTIVE =
+  /[\p{Cf}\p{Cs}\p{Co}\p{Cn}\u034f\u115f\u1160\u17b4\u17b5\u180e\u2800\u3164\uffa0]|(?!\u0020)\p{Zs}/u;
 
 export const SETUP_CODE_PREFIX = "VS1.";
 
@@ -165,9 +217,20 @@ export function decodeSetupCode(input: string): SetupPlan | null {
     // folder the person asked for is silently absent while the list reads
     // complete — the exact failure this decoder's refuse-never-repair rule
     // exists to prevent.
-    if (folders.some((f) => f.label === label.trim())) return null;
+    //
+    // **Compared after NFKC, stored as sent.** Two labels can be different
+    // strings and the same picture: `Réparations` composed and decomposed are
+    // byte-different and pixel-identical in every font, and the compatibility
+    // mappings do the same for a fullwidth `Ｉnvoices` or the `ﬁ` ligature.
+    // Each is the twin-row attack with a different character, and each collides
+    // in the done-set exactly as an exact duplicate does. Folding only the
+    // *comparison* keeps refuse-never-repair intact — a normalised label would
+    // be a label the person's script did not write.
+    const cleanLabel = label.trim();
+    const folded = cleanLabel.normalize("NFKC");
+    if (folders.some((f) => f.label.normalize("NFKC") === folded)) return null;
 
-    folders.push({ label: label.trim(), path: path.trim() });
+    folders.push({ label: cleanLabel, path: path.trim() });
   }
 
   return { machine: machine.trim(), folders };

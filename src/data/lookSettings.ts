@@ -87,7 +87,12 @@ export function validLookPages(value: unknown): PageLooks {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
   const out: PageLooks = {};
   for (const [pageKey, raw] of Object.entries(value as Record<string, unknown>)) {
-    if (!(pageKey in PATHS)) continue;
+    // `hasOwnProperty`, not `in` — `in` walks the prototype chain, so `toString`,
+    // `valueOf`, `constructor`, `hasOwnProperty` and `isPrototypeOf` all passed
+    // as page ids and became overrides keyed on names that are not pages. With
+    // `toString` and `valueOf` both set the returned map stops being coercible
+    // and `String(lookPages)` throws. `validDuelPages` already does it this way.
+    if (!Object.prototype.hasOwnProperty.call(PATHS, pageKey)) continue;
     if (typeof raw !== "object" || raw === null || Array.isArray(raw)) continue;
     const source = raw as Record<string, unknown>;
     const look: PageLook = {};

@@ -13,6 +13,154 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-09-03 — the security pass, and the decisions inside it
+
+A commissioned audit of the Worker, the auth stack, the download catalogue and all six scripts,
+with remediation. The findings, their reproductions and their measurements live in
+`docs/SECURITY-AUDIT.md` (items 15–28); what follows is the part that is a *decision* — the fork
+that was taken and the reason, so nobody takes the other one back. **The gate goes 69 → 70**, one
+new gate, break-verified; `npm run test:auth` is 365. **Nothing is deployed.**
+
+### The shape that recurs: binding is not spending, and a check is not a barrier
+
+Three of the five high findings are one mistake wearing different clothes — **a control that was
+described accurately and did not do the thing the description implied.** The WebAuthn tokens really
+did bind a response to a challenge; nothing spent the challenge. The setup blocklists really did
+name every dangerous directory; a `$HOME` with a space in it split them into fragments before
+anything compared them. The share scripts really did canonicalise a path and follow its reparse
+points; then they discarded the result and linked the path as typed.
+
+So the operative rule this pass adds to the check discipline: **a gate that reads a control as text
+confirms the text.** `npm run check` reported *"20 required blocklist entries … intact"* for the
+whole life of the bug, and every entry it looked for was present. The new gate slices `canon`,
+`fold_case`, `check_folder` and both arrays out of the real scripts and **executes** them against
+two throwaway home directories, one with a space in the name. It fails against the pre-fix scripts.
+That is the same lesson as the 2026-08-30 gates that stayed green with the fix reverted, arriving
+in a language with no types to lean on.
+
+### The WebAuthn guard is monotonic, and the equality version was written first
+
+The obvious guard is `last_challenge <> ?` — refuse a repeat of the challenge stored last. It
+closes the naive double-post and **it is still bypassable**: two captured bodies alternated are
+each different from the one stored immediately before them, so each is accepted, for as long as
+either token lives. A single captured body reopens the same way the moment any other sign-in on
+that credential lands in between, which two tabs or one retry arranges.
+
+The guard is therefore on the token's **issue time** (`last_challenge_at`), which is what migration
+0002 already does for `totp.last_step` — refuse a step at or below the stored one, not merely one
+equal to it. Every old body dies, not just the newest. The digest column stays beside it as a
+conjunct rather than an alternative: it can only refuse more, costs no query, and is the half that
+depends on no clock at all.
+
+**The cost is stated rather than discovered later**: a genuine ceremony finished out of order — two
+tabs opened in one order, completed in the other — is refused, and the answer is "start again". An
+escape hatch (allow a different challenge sharing the stored timestamp) is the alternation hole
+again, one millisecond wide, and a millisecond of replay window buys nothing a retry does not.
+
+**Still no challenge table.** That remains the rejected option in `SPEC-ACCOUNTS` §12 and this did
+not reopen it; the answer was a conditional UPDATE, which is what this codebase reaches for.
+
+### Admin writes take the password; the admin *read* does not
+
+`worker/admin.ts` gains `proven()` on all four writes. The reasoning is already in `accounts.ts`
+for credential changes and it applies here more sharply, because these four are the most privileged
+routes on the site and three of them are irreversible: **a session says who you are, never how you
+proved it.**
+
+`listAccounts` deliberately keeps asking nothing. It changes nothing, and a password prompt in
+front of a list is a password typed often enough to be typed carelessly — which is a real cost,
+paid on the surface where the operator is most likely to be interrupted.
+
+On the client, the password prompt **is** the confirmation rather than a step added to one. That is
+why "make operator" gained a dialog it never had: it is the only action here that escalates rather
+than destroys, and it was the only one with nothing between the click and the write.
+
+### A file-scoped download code now remembers where its file was, and refuses if it moved
+
+The old comment argued that a file id "is not re-usable the way a slug is". It is: the editor
+derives the id from the filename and auto-fills it, so re-adding the same program produces the same
+id without anybody meaning to — and `saveFile`'s upsert re-points every outstanding code for a file
+merely by **moving** it, with no delete involved at all.
+
+Deleting the stale rows fixes the delete case. The move case cannot be fixed by any delete, so a
+file-scoped code stores the page its file was on when it was minted, and `opened` compares. **The
+decision is to refuse rather than follow**, which is this module's rule everywhere else: following
+the file to wherever it went is how a ticket ends up naming a page nobody agreed to hand over.
+
+**Codes minted before this are not retired.** They carry `slug = NULL` and keep the old behaviour;
+breaking codes already in customers' hands is a business decision, so it goes to the client with a
+three-line backfill attached rather than being taken here.
+
+### /64 and not /48
+
+Normalising the rate-limit key to a prefix is not the interesting part; the width is. /64 is the
+smallest unit guaranteed to be one customer's subnet, so it closes an attack that costs an attacker
+nothing. /48 would also cover an attacker on a delegated /56 — and where an ISP hands out /56s, one
+/48 spans up to 256 unrelated households. The client bucket is deliberately loose *because* one
+address is already a household behind NAT, so at /48 a stuffing run stops being an attack on the
+site and becomes an outage for real visitors. **The right answer for a determined attacker is two
+tiers**, a /64 at the current allowance and a /48 at a much higher one, and that belongs in
+`buckets()` rather than in the key helper.
+
+### `cf-ray` is what tells production from development
+
+The missing-secret guard has to refuse in production and must never refuse locally, and both
+obvious discriminators are wrong here: `isLoopback` is false under `wrangler dev` (it reports the
+routed hostname), and `request.cf` is populated locally too. `cf-ray` is stamped by the edge on
+every request that reaches a Worker and is absent locally.
+
+The direction of failure is what makes it the right choice. A client in production **cannot remove**
+the header, so nobody talks their way out of the check; sending one to the dev server only makes
+local development stricter; and if a future runtime stops sending it, the guard quietly stops
+running rather than taking a correctly-configured site down. For a guard whose failure mode is the
+entire site, that is the right way round.
+
+**Presence, not plausibility** — no length floor. A floor is a judgement about somebody else's
+secret, and being wrong about it is an outage.
+
+### Invisible characters are refused by property, and never by enumeration
+
+The setup-code decoder listed five ranges of deceptive characters. Five measured code points
+outside that list render at 0.000px, which is enough for two checklist rows that read identically
+where only one ticks off — the exact failure the duplicate-label refusal exists to prevent.
+
+**An enumeration cannot be made complete by adding to it**, so the enumeration is gone in favour of
+Unicode general categories. `\p{Cn}` is in, as a stated trade: an engine older than a folder name's
+Unicode version refuses a brand-new emoji, and renaming a folder is cheaper than handing over the
+wrong one.
+
+Duplicate labels are compared after NFKC and **stored as sent**. Folding only the comparison keeps
+refuse-never-repair intact: a normalised label would be a label the person's script did not write.
+
+Related, and worth keeping separate in anybody's head: the reason none of the line-break characters
+forged a visible row today is `white-space: normal` on `.v-setup-name`. **The refusal must not
+depend on a CSS declaration in another file**, so it does not.
+
+### Rewritten documents lose their validators
+
+The shell is served as the file on disk plus a per-request nonce, this route's meta and the
+published look, so its ETag is a validator for a body nobody was served — and the *same* validator
+for every SPA-fallback route. Two things were riding on that: a 304's headers carry a fresh nonce
+against a cached body (invisible while the CSP is report-only, and a blank-looking site the day it
+is flipped), and **publishing never reached anyone holding a cached page** — "up to ten seconds"
+was "until the next build" for a returning visitor.
+
+The decision is to **strip the validators from what we rewrote** and re-fetch a document 304
+without them, rather than to compute a new ETag over the injected body. A per-request nonce makes
+every response byte-unique, so an honest ETag would never match and the only thing versioning it
+would buy is a second thing to keep in sync with `withSiteConfig`. Non-documents keep their
+validators untouched: `/fonts/*` is where 304s are worth real bandwidth.
+
+### The macOS picker is written and unverified, and says so
+
+`scripts/macos-share-setup.sh` called `choose_folders` and never defined it — in HEAD too — so the
+interactive path has never worked on that platform. It is written now with `osascript`, mirroring
+the Linux copy and keeping the stdout/stderr split that the 2026-09-02 entry records.
+
+**It has not been run on a Mac.** The documentation says so in those words rather than implying
+verification, because "probably right" and "tested" are different claims and this file is where the
+difference is supposed to be kept.
+
 ## 2026-09-02 (night) — per-page appearance, built
 
 The 2026-08-27 agreement ("every dial on all seventeen pages", client) built end to end. The gate

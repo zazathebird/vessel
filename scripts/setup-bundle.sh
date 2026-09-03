@@ -31,12 +31,33 @@ FILES=(
 )
 
 # `rm -rf` on a positional argument, in a script about trustworthy downloads.
-# `bash setup-bundle.sh ~` would have deleted the home directory.
+#
+# The guard used to be a denylist of three values — "", "/" and $HOME — which is the wrong shape:
+# everything it does not name is deleted, and `bash setup-bundle.sh ~/Documents`, `../src` or
+# `/etc` were all named by nothing. It is an allowlist now, and it is two rules.
+#
+# 1. The path must be relative, free of `..`, and not `.` — so it cannot leave the repo.
+MARKER=".setup-bundle"
 case "$OUT" in
-    ""|"/"|"$HOME"|"$HOME/") printf 'refusing to build into %s\n' "${OUT:-<empty>}" >&2; exit 1 ;;
+    ""|.|./|/*|~*)        printf 'refusing to build into %s: give a relative directory\n' "${OUT:-<empty>}" >&2; exit 1 ;;
+    ..|../*|*/..|*/../*)  printf 'refusing to build into %s: no .. in the output path\n' "$OUT" >&2; exit 1 ;;
 esac
+OUT="${OUT%/}"
+
+# 2. It must be a directory this script built, or one that does not exist yet. The marker is the
+#    same doctrine the share scripts' --undo already follows: never delete a directory you did not
+#    create. Somebody who points this at a folder holding work loses the folder, not the argument.
+if [ -e "$OUT" ]; then
+    if [ ! -d "$OUT" ] || [ ! -f "$OUT/$MARKER" ]; then
+        printf 'refusing to delete %s: it was not built by this script (no %s in it)\n' "$OUT" "$MARKER" >&2
+        printf 'remove it yourself if that is what you meant.\n' >&2
+        exit 1
+    fi
+fi
+
 rm -rf "$OUT"
 mkdir -p "$OUT"
+printf 'Built by scripts/setup-bundle.sh. This file is what lets the next run delete this folder.\n' > "$OUT/$MARKER"
 
 # Two encoding facts the bundle refuses to ship without, because each fails at
 # the customer and not here (2026-09-02, TODO 2026-08-27 item 2):

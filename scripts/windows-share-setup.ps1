@@ -237,9 +237,17 @@ function Select-FoldersInteractively {
     junction to one of them INSIDE a picked folder is read normally — crbug
     40061477 — and this script recommends picking the share root as a single
     folder, so nothing downstream catches a miss.
+
+    -Resolved receives the path this approved, with reparse points followed, and
+    THE CALLER MUST JUNCTION THAT ONE. It used to resolve, check what it
+    resolved to, and hand back nothing — so the caller re-derived an unresolved
+    GetFullPath and linked the alias instead. `mydocs -> Documents` passed, the
+    junction recorded `mydocs`, and repointing that afterwards put whatever it
+    then aimed at under the share root. The identity checked and the identity
+    shared were simply different, permanently; it was never a race.
 #>
 function Test-ShareableFolder {
-    param([string] $Path)
+    param([string] $Path, [ref] $Resolved)
 
     if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
         return "That folder does not exist (or is not a folder): $Path"
@@ -263,6 +271,20 @@ function Test-ShareableFolder {
         $full = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
     } catch {
         return "Could not work out where that folder really is, so it will not be shared: $Path"
+    }
+
+    # THE DRIVE ROOT IS REFUSED HERE, BEFORE THE REPARSE WALK, and the order is
+    # the point. `C:\` trims to `C:`, and `Get-Item -LiteralPath 'C:'` is a
+    # DRIVE-RELATIVE path — it returns the process's current directory on C:,
+    # not the root. If that directory happened to be a junction, the walk below
+    # would rewrite $full to its target, and the drive root would then be
+    # accepted and linked to somewhere else entirely. Refusing the root first
+    # costs nothing: browsers do not issue a handle to one anyway.
+    #
+    # `C:\` is also in $blockExact via GetPathRoot, which trims to the same
+    # `C:`; this catches every OTHER drive letter, which that entry does not.
+    if ($full.Length -le 3) {
+        return "A whole drive cannot be shared: $full`n      Browsers do not issue a handle to a drive root. Share the folders on it."
     }
 
     # RESOLVE REPARSE POINTS BEFORE COMPARING. `GetFullPath` normalises `.`,
@@ -297,6 +319,13 @@ function Test-ShareableFolder {
         return "Could not work out where that folder really is, so it will not be shared: $Path"
     }
 
+    # And again, now the links have been followed: a junction whose TARGET is a
+    # drive root arrives here as `D:`, which the check above never saw and which
+    # $blockExact does not name for any drive but the system one.
+    if ($full.Length -le 3) {
+        return "A whole drive cannot be shared: $full`n      Browsers do not issue a handle to a drive root. Share the folders on it."
+    }
+
     # 8.3 short names are not expanded by GetFullPath, so `C:\PROGRA~1` and
     # `C:\Users\PATRIC~1` walked straight past the list. PROGRA~1 is stable on
     # every Windows install, so this is a deterministic bypass, not a curiosity.
@@ -327,6 +356,14 @@ function Test-ShareableFolder {
     # Blocked along with everything underneath. These are the directories Chrome
     # blocks with block-all-children semantics, which is exactly why the script
     # must not hand them over by a route Chrome never sees.
+    #
+    # BLOCK THE ANCESTOR, NOT THE LEAF. A blocked directory whose parent is
+    # shareable is not blocked at all — nothing downstream catches the miss.
+    # Two were exactly that: %LOCALAPPDATA%\Google\Chrome\User Data was refused
+    # while %LOCALAPPDATA%\Google, which contains it along with the cookies and
+    # Login Data, was allowed; and %APPDATA%\Microsoft\Crypto was refused while
+    # %APPDATA%\Microsoft, which holds the DPAPI master keys that decrypt them,
+    # was allowed. The vendor directories are named instead of their leaves.
     $blockPrefix = @(
         $env:SystemRoot,
         $env:ProgramFiles,
@@ -334,10 +371,13 @@ function Test-ShareableFolder {
         (Join-Path $env:USERPROFILE '.ssh'),
         (Join-Path $env:USERPROFILE '.aws'),
         (Join-Path $env:USERPROFILE '.gnupg'),
-        (Join-Path $env:APPDATA 'Microsoft\Crypto'),
+        (Join-Path $env:USERPROFILE '.docker'),
+        (Join-Path $env:USERPROFILE '.kube'),
+        (Join-Path $env:APPDATA 'Microsoft'),
         (Join-Path $env:APPDATA 'Mozilla'),
-        (Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data'),
-        (Join-Path $env:LOCALAPPDATA 'Microsoft\Edge\User Data')
+        (Join-Path $env:LOCALAPPDATA 'Google'),
+        (Join-Path $env:LOCALAPPDATA 'Microsoft'),
+        (Join-Path $env:LOCALAPPDATA 'Mozilla')
     ) | Where-Object { $_ } | ForEach-Object { $_.TrimEnd('\') }
 
     foreach ($bad in $blockExact) {
@@ -352,10 +392,6 @@ function Test-ShareableFolder {
         }
     }
 
-    if ($full.Length -le 3) {
-        return "A whole drive cannot be shared: $full`n      Browsers do not issue a handle to a drive root. Share the folders on it."
-    }
-
     # A folder that CONTAINS the share root would make the links recursive, and
     # the default share root is inside the profile, so this is reachable.
     $rootFull = $null
@@ -364,6 +400,7 @@ function Test-ShareableFolder {
         return "That folder contains the share folder itself, which would nest without end: $full"
     }
 
+    if ($Resolved) { $Resolved.Value = $full }
     return $null
 }
 
@@ -747,14 +784,18 @@ function Main {
     $usedLabels = @{}
 
     foreach ($path in $selected) {
-        $problem = Test-ShareableFolder -Path $path
+        # $full is the path the check APPROVED, reparse points followed. The
+        # unresolved GetFullPath this used to recompute here checked one folder
+        # and junctioned another.
+        $full = $null
+        $problem = Test-ShareableFolder -Path $path -Resolved ([ref] $full)
         if ($problem) { Write-Fail $problem; continue }
-
-        $full = [System.IO.Path]::GetFullPath($path).TrimEnd('\')
+        if (-not $full) { Write-Fail "Could not work out where that folder really is, so it will not be shared: $path"; continue }
 
         # The label is what the website will call it, and what anybody you later
         # share with will see. The folder's own name is the obvious start; the
-        # person can rename it on the site.
+        # person can rename it on the site. It comes off the resolved path, so it
+        # names the folder that is actually shared rather than the alias typed.
         $label = Split-Path -Leaf $full
         if ([string]::IsNullOrWhiteSpace($label)) { $label = 'Folder' }
         if ($label.Length -gt 40) { $label = $label.Substring(0, 40) }

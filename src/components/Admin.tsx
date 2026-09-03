@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { DownloadCodes } from "./DownloadCodes";
 import { DownloadEditor } from "./DownloadEditor";
 import { DuelBench } from "./DuelBench";
@@ -7,7 +8,8 @@ import { DuelSettingsEditor } from "./DuelSettingsEditor";
 import { useConfig } from "../config/ConfigContext";
 import { useSession } from "../auth/SessionContext";
 import { ApiError, api, type AdminAccount } from "../auth/api";
-import { ConfirmDialog } from "./Dialog";
+import { derivePassword } from "../share/unlock";
+import { Dialog } from "./Dialog";
 
 /**
  * Account administration, for the operator.
@@ -26,6 +28,15 @@ import { ConfirmDialog } from "./Dialog";
  * recovery codes left, and refuses self-reset (change-password is the right
  * tool); the buttons below mirror both refusals as disabled states, but the
  * Worker's word is the one that counts.
+ *
+ * **All four actions confirm with the operator's password**, because all four
+ * write and `worker/admin.ts` demands the credential for a write — a session
+ * says who you are, never how you proved it. Asking is not an extra step bolted
+ * on to the confirmation, it *is* the confirmation: §4 requires the operator be
+ * shown the consequence before confirming, and this is the gesture that follows
+ * it. Which is also why the two chip actions gained dialogs of their own —
+ * granting operator is the one action here that escalates rather than destroys,
+ * and it was the one with no confirmation at all.
  */
 export function Admin() {
   const { say, go } = useConfig();
@@ -34,9 +45,9 @@ export function Admin() {
   const [accounts, setAccounts] = useState<AdminAccount[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  /** The destructive action awaiting its dialog's confirmation, if any. */
+  /** The action awaiting its dialog's confirmation and password, if any. */
   const [confirming, setConfirming] = useState<{
-    kind: "reset" | "delete";
+    kind: ActionKind;
     account: AdminAccount;
   } | null>(null);
 
@@ -56,17 +67,42 @@ export function Admin() {
   }, [isOperator, load]);
 
   /**
-   * Every action is the same shape: run it, say what happened, reload the list.
+   * Open a confirmation, carrying no failure into it — a refusal left over from
+   * the last account would otherwise appear under this one's consequence, where
+   * it reads as a warning about the account being confirmed.
+   */
+  function ask(kind: ActionKind, account: AdminAccount) {
+    setError(null);
+    setConfirming({ kind, account });
+  }
+
+  /**
+   * Every action is the same shape: prove the password, run it, say what
+   * happened, reload the list.
    *
    * Reloading rather than patching state locally is the point — the server's
    * answer is what is true, and an administration screen that drifts from it is
    * how someone deletes the wrong row.
+   *
+   * The password is turned into an auth secret and nothing else: `derivePassword`
+   * is the same call the machine-pairing and slot-opening ceremonies make, and
+   * the plaintext never leaves the browser (§4). Nothing here decides whether it
+   * was right — the Worker does, rate-limited, and its wording is what shows.
+   *
+   * A failure leaves the dialog open with the typing intact, because the
+   * commonest failure is a typo and the second commonest is the wrong account.
    */
-  async function act(id: string, label: string, run: () => Promise<unknown>) {
-    setBusy(id);
+  async function confirmed(password: string) {
+    if (!confirming || !me) return;
+    const { kind, account } = confirming;
+
+    setBusy(account.id);
+    setError(null);
     try {
-      await run();
+      const { authSecret } = await derivePassword(me.account.handle, password);
+      const label = await run(kind, account, authSecret);
       say(label);
+      setConfirming(null);
       await load();
       // Granting or revoking your own operator flag changes what you may see.
       await refresh();
@@ -78,7 +114,6 @@ export function Admin() {
       );
     } finally {
       setBusy(null);
-      setConfirming(null);
     }
   }
 
@@ -111,7 +146,10 @@ export function Admin() {
     <section className="v-account v-admin">
       <h2 className="v-account-title">Accounts</h2>
 
-      {error ? (
+      {/* While a dialog is open the failure is shown inside it: an alert behind
+          a scrim is an alert nobody reads, and a wrong password is answered
+          where it was typed. */}
+      {error && !confirming ? (
         <p className="v-account-error" role="alert">{error}</p>
       ) : null}
 
@@ -146,13 +184,7 @@ export function Admin() {
                     type="button"
                     className="chip"
                     disabled={working}
-                    onClick={() =>
-                      act(
-                        account.id,
-                        account.isOperator ? "operator removed" : "operator granted",
-                        () => api.adminSetOperator(account.id, !account.isOperator),
-                      )
-                    }
+                    onClick={() => ask("operator", account)}
                   >
                     {account.isOperator ? "remove operator" : "make operator"}
                   </button>
@@ -161,21 +193,19 @@ export function Admin() {
                     type="button"
                     className="chip"
                     disabled={working || !account.totp.confirmed}
-                    onClick={() =>
-                      act(account.id, "second factor cleared", () =>
-                        api.adminResetTotp(account.id),
-                      )
-                    }
+                    onClick={() => ask("totp", account)}
                   >
                     reset 2FA
                   </button>
 
-                  {/* Both destructive actions open the §10 confirm dialog with
-                      the consequence in specific terms; the dialogs live after
-                      the list. Self is hidden (change-password is the right
-                      tool for reset, and self-delete is refused) and a reset
-                      with no codes left is disabled — the Worker refuses all
-                      of these anyway; the states just say so before the click. */}
+                  {/* Every action opens the §10 confirm dialog with the
+                      consequence in specific terms and the password that
+                      `worker/admin.ts` requires; the dialog lives after the
+                      list. Self is hidden on the two destructive ones
+                      (change-password is the right tool for reset, and
+                      self-delete is refused) and a reset with no codes left is
+                      disabled — the Worker refuses all of these anyway; the
+                      states just say so before the click. */}
                   {self ? null : (
                     <button
                       type="button"
@@ -185,7 +215,7 @@ export function Admin() {
                         !account.credentials.password ||
                         account.credentials.recoveryCodesRemaining === 0
                       }
-                      onClick={() => setConfirming({ kind: "reset", account })}
+                      onClick={() => ask("reset", account)}
                     >
                       reset password
                     </button>
@@ -196,7 +226,7 @@ export function Admin() {
                       type="button"
                       className="chip"
                       disabled={working}
-                      onClick={() => setConfirming({ kind: "delete", account })}
+                      onClick={() => ask("delete", account)}
                     >
                       delete
                     </button>
@@ -215,53 +245,30 @@ export function Admin() {
         be reset, only deleted: a reset would seal it for good under a milder name.
       </p>
 
-      {/* §4 requirement 2: the operator is shown the consequences before
-          confirming, in terms specific to the account — hence the live counts. */}
-      <ConfirmDialog
-        open={confirming?.kind === "reset"}
-        title={`Reset ${confirming?.account.handle}'s password?`}
-        consequence={
-          <p>
-            Their password and its key slot are deleted — nothing here can read either. They sign
-            back in with one of their {confirming?.account.credentials.recoveryCodesRemaining}{" "}
-            remaining recovery codes and choose a new password from there, and their next sign-in
-            tells them this reset happened.
-          </p>
-        }
-        confirmLabel="Reset password"
-        busyLabel="Resetting…"
-        busy={busy === confirming?.account.id}
-        onConfirm={() =>
-          confirming &&
-          void act(confirming.account.id, `password reset for ${confirming.account.handle}`, () =>
-            api.adminResetPassword(confirming.account.id),
-          )
-        }
-        onClose={() => setConfirming(null)}
-      />
+      <p className="v-account-note">
+        Every button here asks for your password. Being signed in says who you are; the password
+        says it is you at the keyboard, which is the difference that matters on a screen that can
+        delete an account.
+      </p>
 
-      <ConfirmDialog
-        open={confirming?.kind === "delete"}
-        title={`Delete ${confirming?.account.handle}?`}
-        consequence={
-          <p>
-            The account, its credentials, its key slots, its saved setups and its second factor
-            are deleted. There is no undo — the grant key goes with it, and nothing can bring
-            either back.
-          </p>
-        }
-        confirmLabel="Delete account"
-        busyLabel="Deleting…"
-        requireText={confirming?.account.handle ?? ""}
-        busy={busy === confirming?.account.id}
-        onConfirm={() =>
-          confirming &&
-          void act(confirming.account.id, `deleted ${confirming.account.handle}`, () =>
-            api.adminDeleteAccount(confirming.account.id),
-          )
-        }
-        onClose={() => setConfirming(null)}
-      />
+      {/* §4 requirement 2: the operator is shown the consequences before
+          confirming, in terms specific to the account — hence the live counts.
+          Rendered only while there is something to confirm, rather than four
+          dialogs each holding an `open`: one dialog cannot show the wrong
+          account's numbers under another account's title, and a fresh mount is
+          what clears the password box between actions. */}
+      {confirming ? (
+        <ProofDialog
+          {...describe(confirming.kind, confirming.account)}
+          busy={busy === confirming.account.id}
+          error={error}
+          onConfirm={(password) => void confirmed(password)}
+          onClose={() => {
+            setError(null);
+            setConfirming(null);
+          }}
+        />
+      ) : null}
 
       {/* Download codes live on the admin page rather than in the siteconfig
           panel: the panel is *appearance*, and this is neither appearance nor
@@ -283,5 +290,210 @@ export function Admin() {
       <DuelSettingsEditor enabled={isOperator} />
       <DuelBench enabled={isOperator} />
     </section>
+  );
+}
+
+/** The four things this screen can do to an account. Each of them writes. */
+type ActionKind = "operator" | "totp" | "reset" | "delete";
+
+/**
+ * The call an action makes, and the line the toast says once it has.
+ *
+ * One place rather than four closures in the list, so the password proof cannot
+ * be attached to three of them and forgotten on the fourth — the same reasoning
+ * `worker/admin.ts` gives for checking it in one helper on its side.
+ */
+function run(kind: ActionKind, account: AdminAccount, authSecret: string): Promise<string> {
+  switch (kind) {
+    case "operator":
+      return api
+        .adminSetOperator(account.id, !account.isOperator, authSecret)
+        .then(() => (account.isOperator ? "operator removed" : "operator granted"));
+    case "totp":
+      return api.adminResetTotp(account.id, authSecret).then(() => "second factor cleared");
+    case "reset":
+      return api
+        .adminResetPassword(account.id, authSecret)
+        .then(() => `password reset for ${account.handle}`);
+    case "delete":
+      return api.adminDeleteAccount(account.id, authSecret).then(() => `deleted ${account.handle}`);
+  }
+}
+
+/** What a confirmation says and demands. One shape, so the dialog cannot drift. */
+interface Confirmation {
+  title: string;
+  consequence: ReactNode;
+  confirmLabel: string;
+  busyLabel: string;
+  /** §10's rule for account deletion: type the handle before the button lives. */
+  requireText?: string;
+}
+
+/** What the dialog says. The numbers are live, which is the point of §4's rule. */
+function describe(kind: ActionKind, account: AdminAccount): Confirmation {
+  switch (kind) {
+    case "operator":
+      return account.isOperator
+        ? {
+            title: `Remove ${account.handle}'s operator?`,
+            consequence: (
+              <p>
+                {account.handle} keeps the account and loses this screen, the site's appearance and
+                the downloads with it. Nothing of theirs is deleted.
+              </p>
+            ),
+            confirmLabel: "Remove operator",
+            busyLabel: "Removing…",
+          }
+        : {
+            title: `Make ${account.handle} an operator?`,
+            consequence: (
+              <p>
+                {account.handle} gets this screen: every account on the site, and the power to reset
+                a password, delete an account and publish what every visitor sees. It is the same
+                power you are using now.
+              </p>
+            ),
+            confirmLabel: "Make operator",
+            busyLabel: "Granting…",
+          };
+    case "totp":
+      return {
+        title: `Clear ${account.handle}'s second factor?`,
+        consequence: (
+          <p>
+            The authenticator {account.handle} enrolled stops working. Until they enrol another one,
+            their password alone signs them in.
+          </p>
+        ),
+        confirmLabel: "Clear second factor",
+        busyLabel: "Clearing…",
+      };
+    case "reset":
+      return {
+        title: `Reset ${account.handle}'s password?`,
+        consequence: (
+          <p>
+            Their password and its key slot are deleted — nothing here can read either. They sign
+            back in with one of their {account.credentials.recoveryCodesRemaining} remaining
+            recovery codes and choose a new password from there, and their next sign-in tells them
+            this reset happened.
+          </p>
+        ),
+        confirmLabel: "Reset password",
+        busyLabel: "Resetting…",
+      };
+    case "delete":
+      return {
+        title: `Delete ${account.handle}?`,
+        consequence: (
+          <p>
+            The account, its credentials, its key slots, its saved setups and its second factor are
+            deleted. There is no undo — the grant key goes with it, and nothing can bring either
+            back.
+          </p>
+        ),
+        confirmLabel: "Delete account",
+        busyLabel: "Deleting…",
+        requireText: account.handle,
+      };
+  }
+}
+
+/**
+ * A confirmation that also takes the operator's own password.
+ *
+ * Built on `Dialog` rather than on `ConfirmDialog` because the password belongs
+ * to the same gesture as the confirmation: the Worker will not write without it,
+ * and a second dialog after the first would be a second chance to lose track of
+ * which account is being acted on. Everything §10 fixes still comes from the
+ * primitive — the trap, Escape, the portal into the themed wrapper.
+ *
+ * One `<form>` with a `type="submit"` button, per the project's form convention,
+ * so Enter in either field and the button are the same code path.
+ *
+ * The password is component state and dies with the dialog, which is unmounted
+ * on close. It is deliberately not a `PasswordField`: that field's reveal exists
+ * so a password being *set* can be checked before it becomes unrecoverable, and
+ * this one is being re-typed by somebody who already knows it.
+ */
+function ProofDialog({
+  title,
+  consequence,
+  confirmLabel,
+  busyLabel,
+  requireText,
+  busy,
+  error,
+  onConfirm,
+  onClose,
+}: Confirmation & {
+  busy: boolean;
+  error: string | null;
+  onConfirm: (password: string) => void;
+  onClose: () => void;
+}) {
+  const [password, setPassword] = useState("");
+  const [typed, setTyped] = useState("");
+
+  const ready = !busy && password.length > 0 && (!requireText || typed.trim() === requireText);
+
+  return (
+    <Dialog open title={title} onClose={busy ? () => {} : onClose}>
+      <div className="v-dialog-body">{consequence}</div>
+
+      <form
+        className="v-dialog-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (ready) onConfirm(password);
+        }}
+      >
+        {requireText ? (
+          <label className="v-field">
+            <span className="v-field-label">Type {requireText} to confirm</span>
+            <input
+              className="v-input"
+              value={typed}
+              onChange={(event) => setTyped(event.target.value)}
+              spellCheck={false}
+              autoComplete="off"
+              autoFocus
+            />
+          </label>
+        ) : null}
+
+        <label className="v-field">
+          <span className="v-field-label">Your password</span>
+          <input
+            className="v-input"
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            autoComplete="current-password"
+            autoFocus={!requireText}
+          />
+        </label>
+
+        {/* Inside the dialog, not behind it: the failure this most often
+            reports is a mistyped password, and it is answered where it was
+            typed. Kept, along with the typing, so the fix is one keystroke. */}
+        {error ? (
+          <p className="v-account-error" role="alert">
+            {error}
+          </p>
+        ) : null}
+
+        <div className="v-dialog-actions">
+          <button type="button" className="v-btn" onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
+          <button type="submit" className="v-btn v-btn-danger" disabled={!ready}>
+            {busy ? busyLabel : confirmLabel}
+          </button>
+        </div>
+      </form>
+    </Dialog>
   );
 }

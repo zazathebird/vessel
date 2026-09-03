@@ -6,6 +6,39 @@ what is left to do.
 
 ---
 
+## 2026-09-03 — the security pass
+
+A commissioned audit of the Worker, the auth stack, the download catalogue and all six scripts,
+with remediation. Fourteen items fixed (`docs/SECURITY-AUDIT.md` 15–28), the decisions in
+`docs/DECISIONS.md`, the invariants in `CLAUDE.md`. `npm run check` is **70 green**, up from 69,
+the new gate break-verified against the pre-fix scripts; `npm run test:auth` is **365**.
+**Not deployed.**
+
+The shape that recurred, and the one worth carrying forward: **binding is not spending, and a gate
+that reads a control as text confirms the text.** The WebAuthn tokens bound a response to a
+challenge and nothing spent it; the blocklists named every dangerous directory and a `$HOME` with
+a space in it shattered them before anything compared them; the share scripts canonicalised a path
+and then linked the path as typed. `npm run check` reported *"20 required blocklist entries …
+intact"* throughout.
+
+### Next, in order
+
+1. **Two things need the client, neither blocking.**
+   - `credentials.last_challenge` / `last_challenge_at` are fields SPEC-ACCOUNTS §9's inventory
+     does not list, and §9's rule is that adding one is a spec change. Same shape as
+     `totp.last_step`; recommend approving.
+   - Download codes minted before this deploy carry `slug = NULL` and keep the old behaviour.
+     Retiring codes already in customers' hands is a business decision; a three-line backfill
+     closes the legacy case if he wants it closed.
+2. **Deploy.** Migration 0008 must be applied remotely (`npm run db:migrate:remote`) *before* the
+   Worker ships, or every passkey ceremony writes to columns that do not exist.
+3. **`scripts/macos-share-setup.sh` has never been run on a Mac.** Its `choose_folders` was called
+   and never defined — in `HEAD` too — so the interactive path the runbook recommends has never
+   worked there. It is written now and only the typed-path fallback was exercised. It wants a real
+   Mac before anybody says it works.
+
+---
+
 ## 2026-08-31 — the rest of the defect list
 
 `npm run check` is **66 green**, up from 62. Yesterday's pass fixed what was reported and

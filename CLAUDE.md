@@ -896,7 +896,11 @@ covers how to *see* any of this — rAF parks in an automated browser, so use `s
 - **The two `PUBLISHED_KEYS` lists are compared whole, in both directions.** The gate used to look up
   `duel` and `duelPages` by name, which gates the field that was being added the day it was written
   and leaves every later one uncovered by the same reasoning. `MAX_CONFIG_BYTES` is gated too: that
-  it is 8,000, that it throws, and that nothing truncates to it.
+  it is 12,000, that it throws, and that nothing truncates to it — **and, since 2026-09-03, that the
+  ceiling is measured in BYTES.** It compared `JSON.stringify(...).length`, which counts UTF-16 code
+  units, so 11,921 CJK characters were accepted as "under 12,000" at 35,721 actual bytes into the
+  `<head>` of every served page, while the refusal message called the number bytes. `readJson` fixes
+  the identical trap forty lines away in `accounts.ts`; this file had not been given it.
 - **The old note said the knobs stayed a module-level global** (`applyDuelTuning`) when they became publishable, and
   that is deliberate: they are read from `buildSequence`, which is handed a module and an rng and no
   state, so carrying them would mean a parameter through the director, the module pool and the
@@ -920,7 +924,10 @@ covers how to *see* any of this — rAF parks in an automated browser, so use `s
   publishes cannot also be a knob that does not. **There is one publish button for the whole
   appearance**, in the site-config panel; a second one here would be two routes that can disagree
   about what is live.
-- **`MAX_CONFIG_BYTES` is 8,000, up from 2,000, and `duelPages` is why** — it is the first published
+- **`MAX_CONFIG_BYTES` is 12,000, and `duelPages` is why it first moved** (2,000 → 8,000 for
+  `duelPages`, then → 12,000 for `lookPages`; see *Per-page appearance*, which is the entry to
+  believe if these two ever disagree again — they did until 2026-09-03, when this line still said
+  8,000 and the code and the gate both said 12,000). It is the first published
   key that grows without anybody editing `worker/site-config.ts`. It **fails loudly and must keep
   doing so**: truncating would inject a half-object that `loadConfig` then correctly refuses field by
   field, leaving the operator watching settings silently not apply.
@@ -1063,6 +1070,24 @@ environment problem. Until they move above the health check, start the Worker.
 
 ### Decisions that are easy to "fix" back into bugs
 
+- **Every admin route that WRITES demands the caller's password, not just their session**
+  (`proven()` in `worker/admin.ts`, 2026-09-03). A session says who you are, never how you proved
+  it. Gated on the flag alone, a stolen operator cookie POSTed to `/api/admin/operator` and granted
+  itself the operator flag *permanently* — outliving the session it was lifted from, and surviving
+  both the 30-minute expiry and a sign-out; `resetPassword` and `deleteAccount` destroy key slots
+  irreversibly. This is the rule `accounts.ts` already enforced for a credential change, and the
+  five most privileged routes on the site were the ones not obeying it. **`listAccounts` deliberately
+  does not ask** — it is a read, and a password prompt in front of a list is a password typed often
+  enough to be typed carelessly. One helper rather than four inline calls, so the fifth admin write
+  inherits the proof.
+- **The rate-limit bucket is keyed on a NORMALISED address, IPv6 cut to the /64** (`crypto.ts`).
+  Keyed on the whole string, rotating inside one /64 — which every residential and VPS allocation
+  hands you for free — produced **zero** 429s over 72 attempts, defeating the signup allowance and
+  the client bucket together; the account bucket cannot see one password tried against N handles,
+  which is the attack the client bucket exists for. **/64 and not /48 deliberately**: one /48 can
+  span hundreds of unrelated households, so cutting there turns a stuffing run into an outage for
+  real visitors. `X-Forwarded-For` is still never read — do not start.
+
 - **`recordSuccess` resets the account bucket and only *decays* the client bucket** by one — wiping it
   on success hands an attacker a free reset. Client allowance 50, account 5, because one address is a
   household behind NAT. **Signup has a third bucket** (allowance 12), sized just above the harness's
@@ -1097,8 +1122,26 @@ environment problem. Until they move above the health check, start the Worker.
   the server holds is escrow.
 - **Removing a passkey is refused when its slot is the account's last openable one.** Spent recovery
   codes' slots do not count as openable.
-- **The WebAuthn challenge tokens are stateless** — a replayed registration is refused by the
-  credential-id uniqueness index, not a challenge table. **Do not add one.**
+- **The WebAuthn challenge tokens are stateless, and a challenge is BOUND at verification but SPENT
+  in the write** (2026-09-03, migration 0008). **Still no challenge table — do not add one**; that
+  remains the rejected option. What was wrong was the sentence this bullet used to carry: that a
+  replay is caught by the credential-id uniqueness index. That index only ever refused a *duplicate
+  credential*, so it caught an identical registration replay and nothing else, and it said nothing
+  at all about assertions. A captured sign-in body replayed verbatim minted a fresh session every
+  time for the five minutes its token lived — which voids the argument the bullet three above rests
+  on, since a replay forges no signature. Both ceremonies now spend the challenge in a conditional
+  UPDATE whose guard rides in the write's own `WHERE`, zero `meta.changes` being the refusal.
+- **That guard is monotonic in the token's issue time, and an equality test is not good enough.**
+  `last_challenge <> ?` refuses only the *most recent* challenge, so two captured bodies can be
+  alternated indefinitely: spend X1, spend X2, replay X1 (which no longer equals the stored X2),
+  replay X2, for ever. Written that way first and demonstrated bypassable. `last_challenge_at <` is
+  the `totp.last_step` shape from migration 0002 one credential kind over, and it refuses every
+  older challenge rather than one. The cost is that an out-of-order ceremony is refused; the answer
+  to that is to start again.
+- **`credentials` is bounded like every other user-writable table** — `MAX_PASSKEYS`, the
+  `MACHINES_MAX` shape. `assertPassword` throttles a *failing* caller and `recordSuccess` resets the
+  account bucket on every success, so a loop that keeps succeeding is unthrottled by design and the
+  cap is the only bound there is.
 - **Set-password re-wraps; it does not unwrap.** `unwrapSlot` returns a deliberately **non-extractable**
   key, so the flow goes ciphertext-to-ciphertext through `rewrapSlot`; calling `unwrapSlot` here
   typechecks and fails at runtime.
@@ -1224,6 +1267,29 @@ wrong machine is worse than not running. `docs/pi-sharing-host.md` and
   wrote to stdout, the instructions and the "Added:" lines were read back as folder paths - every
   interactive run told the customer their folders did not exist, and with no zenity the prompt
   concatenated onto the typed path and nothing survived.
+- **Those lists are bash ARRAYS, and that is a security property, not a style choice**
+  (2026-09-03). They were space-delimited strings consumed unquoted (`for bad in $BLOCK_EXACT`), so
+  a home directory with a space in it — an ordinary macOS account name — split every `$HOME`-derived
+  entry into fragments and `~/.ssh`, `~/.gnupg`, `~/.config` and the whole of `~/.local` became
+  shareable. Every entry the text gate required was present the entire time. The
+  `# shellcheck disable=SC2086` above the definitions is what suppressed the warning; it is gone, and
+  it must not come back.
+- **A blocked directory must have no shareable ancestor.** `~/.local/share` was shareable while its
+  `keyrings` child was blocked, and the same held for Chrome's `User Data` under `%LOCALAPPDATA%\Google`
+  and the DPAPI keys under `%APPDATA%\Microsoft`. Blocking a leaf and leaving its parent open is the
+  same hole with an extra step.
+- **`/` is an entry in that list and the trailing-slash strip must not empty it.** `${bad%/}` reduces
+  `/` to the empty string, so the filesystem root compared equal to nothing and was shareable in every
+  version until 2026-09-03 — including in `HEAD`, and the audit that found the two rules above missed
+  it. The same strip in the *input* parsers was masking it: `/` arrived as `""` and was reported as
+  "that folder does not exist" rather than refused by name.
+- **The gate for this drives `check_folder`; it does not read the file.** The text gate reported
+  "20 required blocklist entries … intact" throughout, because every entry *was* there and the bug
+  was in how the list was consumed. A gate for "is this barrier standing" has to stand something
+  against it: the current one slices the definitions out of the real script and runs them against
+  throwaway home directories, one of them named with a space, and it fails against the pre-fix
+  scripts. Its own predecessor's comment conceded it was weaker than executing the logic — believe
+  that sentence the next time it appears.
 - **The blocked-folder lists in all three scripts are a security control, and they are the ONLY
   barrier.** A link to a blocked directory inside a picked folder is read normally by Chrome - it
   blocks those as "do not pick", never "do not read" (crbug 40061477) - Chrome's own position is that
@@ -1247,6 +1313,13 @@ wrong machine is worse than not running. `docs/pi-sharing-host.md` and
     paths Chrome blocks with block-all-children semantics. The script was opening what Chrome
     deliberately closed. Windows also blocks `%LOCALAPPDATA%` and `%APPDATA%`, and refuses UNC/device
     paths and 8.3 short names (`C:\PROGRA~1` is stable on every install).
+- **`choose_folders` must exist in every script that calls it.** `macos-share-setup.sh` called it and
+  never defined it — in `HEAD` too — so on a stock Mac every run without `--folders` printed
+  `command not found`, chose nothing, and exited with "No folders chosen". The normal interactive path,
+  the one the runbook tells people to use, had never worked on macOS. It is written now with
+  `osascript`'s own `choose folder`, mirroring the Linux copy, and it obeys the stdout/stderr split
+  below. **It has not been run on a Mac** — only the typed-path fallback was exercised — so it wants a
+  real run before the next bundle is published.
 - **`--undo` removes links, never their targets, and refuses a share folder without its marker file.**
   Deleting through a symlink is how somebody's photographs get deleted. Both are tested.
 - **The scripts leave the lid alone.** They stop idle sleep on mains when asked and warn when they see
@@ -1318,6 +1391,16 @@ per-person access.
 - **An unscoped code opens every live page except the `granted` ones.** `unlisted` stays in
   deliberately: an unscoped code is the operator's "everything paid" code, and withholding those would
   make the widest scope narrower than a page-scoped one.
+- **Deleting a page deletes the codes minted for its FILES as well as for its slug** (2026-09-03).
+  A file-scoped code stores `slug = NULL, item_id = <id>`, so a `WHERE slug = ?` delete never matched
+  one and it was left dormant rather than revoked — and `opened()` re-resolves `item_id` at every
+  redemption, so the moment any row took that id again the old code pointed at it. The comment that
+  made this look safe said an id "is not re-usable the way a slug is, because `saveFile` would have
+  to be given the same id by hand"; that was **false**, because `suggestFromFilename` derives the id
+  from the filename and the editor auto-fills it, so re-adding the same program produces the same id
+  every time without anybody meaning to. Customer A's dead code opened customer B's build and read
+  B's private page in full. `deleteFile` deletes them too, and a code carries the page its file was
+  on at mint so that *moving* a file cannot re-point it either. **Refuse, never repair.**
 - **Deleting a page deletes the codes minted for it**, and `opened` re-reads the page anyway. A slug is
   a re-usable `TEXT PRIMARY KEY` and `download_codes.slug` carries no foreign key, so without this a
   reused address hands an old customer's code to whoever gets the slug next. Deleting is the only
@@ -1410,6 +1493,15 @@ compile" — it was "does the thing it claims to do actually happen". It covers 
 integrity, the QR encoder against the ISO worked example, the duel over 360,000 stepped frames and
 **280,000 generated sequences**, costume legibility, the catalogue counts this file documents, and the
 specific traps named throughout this file.
+
+**A gate that reads the source is testing the source's SHAPE, not its behaviour** (2026-09-03). Two
+separate gates were green throughout the faults they were named after: the blocklist gate parsed the
+entry lists and found every required entry present, while the lists were being consumed in a way that
+shattered them; and the passkey design note asserted a replay was caught by a uniqueness index that had
+never looked at assertions at all. Both were true sentences about the wrong question. **Where a gate can
+execute the thing, it must** — drive the function, read what it emits, and check the fix by breaking it
+first. Three of the gates added that day fail against the pre-fix code, and that is the only evidence
+that they are gates.
 
 **Each gate is there because that exact failure shipped**, and each was verified by breaking it
 deliberately. **When you fix a bug that got past the checks, add a check.** That is the whole discipline.

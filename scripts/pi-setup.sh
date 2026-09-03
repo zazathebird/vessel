@@ -46,6 +46,12 @@ readonly DEFAULT_URL="https://mcclevarty.ca/share"
 
 KIOSK_URL="${1:-${VESSEL_KIOSK_URL:-${DEFAULT_URL}}}"
 
+# Validated below by validate_url(), which thinkcentre-setup.sh has always had and this script had
+# not: there was no option parsing and no URL check at all, so `./pi-setup.sh --no-sandbox` wrote
+# that string into ${URL_FILE} — a file this script deliberately refuses to overwrite — and the
+# launcher then handed it to Chromium for ever. Same reason the launcher terminates its arguments
+# with `--`.
+
 # Collected as we go and printed at the end, because a wall of apt output scrolls the important
 # warnings off the screen and the person running this is usually watching over SSH.
 WARNINGS=()
@@ -56,6 +62,46 @@ info() { printf '    %s\n' "$*"; }
 skip() { printf '    (already done) %s\n' "$*"; }
 warn() { printf '\033[33m    WARNING: %s\033[0m\n' "$*"; WARNINGS+=("$*"); }
 die()  { printf '\n\033[31mERROR: %s\033[0m\n\n' "$*" >&2; exit 1; }
+
+# ---------------------------------------------------------------------------------------------
+# The one argument.
+#
+# Deliberately strict, and the same rule thinkcentre-setup.sh applies: anything outside this set is
+# refused rather than escaped, because the only reason to allow it would be a URL nobody would type
+# on purpose. It is written to a config file this script then refuses to overwrite, and handed to
+# Chromium at every boot — a bad value here is permanent and needs a trip to the machine.
+#
+# There is no other option to parse. Anything beginning with a dash is a flag somebody expected
+# this script to understand, and the honest answer is that it does not.
+# ---------------------------------------------------------------------------------------------
+
+validate_url() {
+    case "${KIOSK_URL}" in
+        -*) die "This script takes one argument, a URL, and no options. Got: '${KIOSK_URL}'
+       Usage: ./scripts/pi-setup.sh [KIOSK_URL]" ;;
+    esac
+
+    case "${KIOSK_URL}" in
+        about:blank) ;;
+        http://*|https://*)
+            if ! printf '%s' "${KIOSK_URL}" \
+                | grep -Eq '^https?://[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]{1,5})?(/[A-Za-z0-9._~:/?#@!$&*+,;=%()-]*)?$'; then
+                die "That URL has characters this script will not put into a config file: '${KIOSK_URL}'
+       Letters, digits, dots, hyphens, an optional port and an ordinary path only."
+            fi
+            case "${KIOSK_URL}" in
+                http://*)
+                    warn "The kiosk URL is plain http. The sharing page authenticates and holds a
+             session cookie; over http both are readable by anything on the path. Use https
+             unless this is a local test."
+                    ;;
+            esac
+            ;;
+        *)
+            die "The kiosk URL must be http://, https:// or about:blank. Got: '${KIOSK_URL}'"
+            ;;
+    esac
+}
 
 # ---------------------------------------------------------------------------------------------
 # Preflight. Everything here is a refusal or a warning, and nothing here changes the machine.
@@ -689,6 +735,11 @@ done
 # launch, or an incognito window, would drop the handle on every restart and turn a two-minute
 # reboot into a trip to the machine with a mouse. If you ever feel like adding --user-data-dir,
 # read this paragraph again first.
+#
+# The `--` before the URL is what makes that paragraph hold. ${URL} is the first line of a 0644
+# file, and without a terminator Chromium reads a line beginning with a dash as a FLAG rather than
+# an address — so `--no-sandbox`, `--user-data-dir=/tmp/x` or `--incognito` typed into that file is
+# every never-do above, reachable by editing one file nobody guards.
 exec "${CHROMIUM}" \
     --kiosk \
     --no-first-run \
@@ -702,7 +753,7 @@ exec "${CHROMIUM}" \
     --disable-background-timer-throttling \
     --disable-backgrounding-occluded-windows \
     --disable-renderer-backgrounding \
-    "${URL}"
+    -- "${URL}"
 LAUNCHER_EOF
 
     if [ -f "${LAUNCHER}" ] && cmp -s "${tmp}" "${LAUNCHER}"; then
@@ -722,7 +773,9 @@ write_unit() {
 
     local tmp
     tmp="$(mktemp)"
-    cat > "${tmp}" <<UNIT_EOF
+    # Quoted delimiter: the unit body is literal, and systemd's own `%h` and `$MAINPID` style
+    # tokens must reach the file rather than being expanded by the shell that wrote it.
+    cat > "${tmp}" <<'UNIT_EOF'
 # Vessel sharing-host kiosk. Written by scripts/pi-setup.sh.
 #
 # This is a *user* unit, in ~/.config/systemd/user, and that is a decision rather than a
@@ -945,6 +998,7 @@ EOF
 }
 
 main() {
+    validate_url
     preflight
     report_storage
     install_packages

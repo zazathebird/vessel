@@ -189,20 +189,88 @@ function cspNonce(): string {
 }
 
 /**
+ * The most a violation report may weigh. A real one is a few hundred bytes of
+ * JSON naming a document URL, a directive and a blocked URI.
+ */
+const MAX_REPORT_BYTES = 8 * 1024;
+
+/**
+ * Read at most `limit` bytes of a request body. `null` means the body was over
+ * the cap and the rest was never read; `""` means there was nothing readable.
+ *
+ * `await request.text()` reads whatever arrives, however much that is. That is
+ * fine behind `readJson`, which is only reachable on routes that have already
+ * been through `crossOrigin` — and it was not fine on `/api/csp-report`, which
+ * sits deliberately in front of that check with no session, no rate limit and
+ * no body cap: the cheapest route on the site (2026-09-03 audit). Measured: a
+ * 20,000,000-byte POST returned 204 in 1.1s, materialised as a UTF-16 JS string
+ * and then thrown away, where the same body to `/api/auth/challenge` was
+ * refused at 413. A few concurrent posts of that shape is an isolate OOM, and an
+ * isolate is shared with in-flight requests that have nothing to do with it.
+ */
+async function readBounded(request: Request, limit: number): Promise<string | null> {
+  const body = request.body;
+  if (!body) return "";
+
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > limit) {
+        // Stop pulling. Cancelling is what makes this a cap rather than a
+        // slower way of reading the whole thing.
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(value);
+    }
+  } catch {
+    // A body that fails mid-read is not a body; the caller decides what that
+    // is worth.
+    return "";
+  }
+
+  const joined = new Uint8Array(total);
+  let at = 0;
+  for (const chunk of chunks) {
+    joined.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  return new TextDecoder().decode(joined);
+}
+
+/**
  * Receive a CSP violation report: log it, store nothing, say 204.
  *
  * The log line is the whole product — `wrangler tail` during a browse session
  * is how the report-only policy gets read before it is enforced. Reports carry
  * page and blocked URLs, which is why they are truncated and never written to
  * D1: §9's inventory gains nothing, deliberately.
+ *
+ * Two bounds, both because this route is unauthenticated and stands in front of
+ * every other check. **The size** — refused on the declared `content-length`
+ * where there is one, and again on what actually arrives, since a chunked or
+ * hostile request's header is not evidence. **The shape of what is logged** —
+ * control characters become spaces, because a newline in an attacker-supplied
+ * string is a forged line in `wrangler tail`, and the log line being the product
+ * is exactly what makes forging one worth something.
  */
 async function cspReport(request: Request): Promise<Response> {
-  try {
-    console.warn("csp-report", (await request.text()).slice(0, 2_048));
-  } catch {
-    // A report that cannot be read still deserves its 204 — the browser is
-    // fire-and-forgetting and there is nobody to complain to.
+  const declared = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > MAX_REPORT_BYTES) {
+    return problem(413, "That report was too large.");
   }
+
+  const text = await readBounded(request, MAX_REPORT_BYTES);
+  if (text === null) return problem(413, "That report was too large.");
+  // A report that could not be read still deserves its 204 — the browser is
+  // fire-and-forgetting and there is nobody to complain to.
+  if (text) console.warn("csp-report", text.slice(0, 2_048).replace(/[\u0000-\u001f\u007f]/g, " "));
+
   return new Response(null, { status: 204 });
 }
 
@@ -240,11 +308,151 @@ function harden(response: Response, csp?: string): Response {
   return out;
 }
 
+/** The four Worker secrets, named once so nothing can check three of them. */
+const SECRETS = ["AUTH_PEPPER", "SESSION_SECRET", "TOTP_ENC_KEY", "RATE_SALT_SEED"] as const;
+
+/** Logged at most once per isolate; a missing secret is a deploy, not a request. */
+let secretsLogged = false;
+
+/**
+ * Refuse to serve at all if a secret is missing — in production (2026-09-03
+ * audit).
+ *
+ * **An unset secret currently fails open, silently.** `hmacKey` does
+ * `encoder.encode(secret)`, and `TextEncoder.encode(undefined)` is the nine
+ * bytes of the string `"undefined"` — so a deploy with no `AUTH_PEPPER` keys
+ * every stored auth hash on a constant that any reader of this repository
+ * knows, and nothing anywhere says so. The site would look completely healthy.
+ * `docs/BREAK-GLASS.md` treats *losing* the pepper as an emergency; *never
+ * setting* it was quieter than a typo.
+ *
+ * **How production is told from development, and why not by hostname.** The
+ * obvious tests are both wrong here: `isLoopback` is false under `wrangler dev`
+ * — measured, the local server reports the routed hostname `mcclevarty.ca`
+ * rather than `127.0.0.1`, which is what the `[dev] upstream_protocol` note in
+ * `wrangler.toml` is about — and `request.cf` is populated locally too, with a
+ * real colo. What is *not* present locally is **`cf-ray`**: the Cloudflare edge
+ * stamps it on every request that reaches a Worker, and `wrangler dev` does not
+ * (the local request carries `cf-connecting-ip` and miniflare's
+ * `mf-original-hostname`, and no `cf-ray`).
+ *
+ * The spoofing direction is the part that makes it sound: a client in
+ * production **cannot remove** `cf-ray`, because the edge adds it — so nobody
+ * can talk their way out of the check. Sending one *to* the dev server only
+ * makes local development stricter, which is nobody's attack. And if a future
+ * runtime stopped sending it, the check would quietly stop running rather than
+ * take a correctly-configured site down, which is the right way round for a
+ * guard whose failure mode is the whole site.
+ *
+ * So `npm run dev:worker` and `npm run test:auth` still run on a fresh clone
+ * with no `.dev.vars` (it is gitignored), and `health`'s `?? "dev-seed"` stays
+ * reachable, exactly where it was always meant to be reachable.
+ *
+ * **Presence, not plausibility.** No length floor: a floor is a judgement about
+ * somebody else's secret, and being wrong about it takes the entire site down.
+ * Absent or empty is not a judgement.
+ */
+function assertSecrets(request: Request, env: Env): Response | null {
+  const missing = SECRETS.filter((name) => {
+    const value = env[name] as unknown;
+    return typeof value !== "string" || value.trim() === "";
+  });
+  if (missing.length === 0) return null;
+
+  // Local development, where `.dev.vars` may legitimately not exist yet.
+  if (!request.headers.has("cf-ray")) return null;
+
+  if (!secretsLogged) {
+    secretsLogged = true;
+    // The names go to `wrangler tail`, never to the visitor: which secret is
+    // missing is configuration, and the person who needs it is reading the log.
+    console.error("missing secrets", missing.join(", "));
+  }
+  return problem(503, "The site is not configured. Try again shortly.");
+}
+
+/**
+ * Fetch from the assets binding, **guaranteeing a body for anything this Worker
+ * is going to rewrite** (2026-09-03 audit).
+ *
+ * The shell is not served as it is stored: `withSiteConfig` stamps the published
+ * look and a fresh CSP nonce into it, and `withPageMeta` stamps this route's
+ * title, description and canonical. A **304 has no body to stamp**, and the
+ * headers still get a nonce — measured, a 200 carried header nonce A and body
+ * nonce A, and the same URL with `If-None-Match` returned a 304 carrying header
+ * nonce B against the body the browser had cached with nonce A. RFC 9111 §4.3.4
+ * says a 304's headers *update* the stored response, so the browser then
+ * enforces B against A. Today that is invisible because the CSP is report-only.
+ * **After the one-header flip in `harden` it blocks `window.__VESSEL_SITE__` on
+ * every revalidated load** — that is, every returning visitor — and the site
+ * silently falls back to its built-in defaults.
+ *
+ * The same 304 is why **publishing never reached anyone holding a cached page**.
+ * The ETag belongs to the raw asset, computed before any injection, so it is
+ * byte-identical for every SPA-fallback route: `/`, `/contact` and
+ * `/nonexistent-abc` all answered `"6ed85f21…"`. A returning visitor
+ * revalidated, got a 304, and kept whatever `__VESSEL_SITE__`, description and
+ * canonical they were served on their first visit until `index.html` itself
+ * changed at the next deploy. `site-config.ts` documents publish latency as "up
+ * to ten seconds"; for that visitor it was "until the next build", which
+ * defeats the publish button — the whole feature.
+ *
+ * So a 304 that could be a document is re-fetched with the conditional headers
+ * removed. **Only a document**: `run_worker_first` sends `/fonts/*` and
+ * `/photos/*` through here too, they are not rewritten, and they are the
+ * responses whose 304s are worth real bandwidth (six webfonts at ~21KB each,
+ * revalidated on every navigation because only `/assets/*` is immutable). A 304
+ * that does not say what it is gets re-fetched as well: guessing "not HTML"
+ * would fail open into exactly the bug above.
+ */
+async function asset(request: Request, env: Env): Promise<Response> {
+  const first = await env.ASSETS.fetch(request);
+  if (first.status !== 304) return first;
+
+  const type = first.headers.get("content-type") ?? "";
+  if (type && !type.includes("text/html")) return first;
+
+  const headers = new Headers(request.headers);
+  headers.delete("if-none-match");
+  headers.delete("if-modified-since");
+  return env.ASSETS.fetch(new Request(request, { headers }));
+}
+
+/**
+ * Drop the validators from a document we rewrote.
+ *
+ * They describe the file on disk, and what leaves here is that file plus a
+ * per-request nonce, this route's meta and the published look — so the ETag is
+ * a validator for a body nobody was served, and it is the *same* validator for
+ * every SPA-fallback route. Removing it costs nothing that
+ * `cache-control: max-age=0, must-revalidate` was not already costing (the
+ * client contacts the server on every navigation either way; the body is
+ * ~2.5KB) and it takes the re-fetch above off the common path, since a client
+ * with no validator sends no conditional request.
+ *
+ * Non-documents keep theirs untouched — that is where 304s are worth having.
+ */
+function unvalidatable(response: Response): Response {
+  const type = response.headers.get("content-type") ?? "";
+  if (!type.includes("text/html")) return response;
+
+  // A header copy; the body is passed through by reference, not buffered.
+  const out = new Response(response.body, response);
+  out.headers.delete("etag");
+  out.headers.delete("last-modified");
+  return out;
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
-    // Before anything else, including the API: a request that arrived in
+    // Before anything else: a Worker missing a secret cannot answer anything
+    // honestly, and answering anyway is what makes it invisible.
+    const unconfigured = assertSecrets(request, env);
+    if (unconfigured) return harden(unconfigured);
+
+    // Then, before the API: a request that arrived in
     // cleartext gets a redirect and nothing else, or the response would ship
     // over http regardless of what it contains.
     const upgrade = httpsRedirect(request, url);
@@ -286,7 +494,9 @@ export default {
       // when there is no row, and the head still needs a title either way.
       const nonce = cspNonce();
       return harden(
-        withPageMeta(await withSiteConfig(await env.ASSETS.fetch(request), env, nonce), url),
+        unvalidatable(
+          withPageMeta(await withSiteConfig(await asset(request, env), env, nonce), url),
+        ),
         cspPolicy(nonce, url),
       );
     }
@@ -582,7 +792,16 @@ async function signalUpgrade(request: Request, env: Env, url: URL): Promise<Resp
   }
 
   const stub = env.SIGNAL.get(env.SIGNAL.idFromName(machineId));
-  return stub.fetch(new Request(`https://signal/connect?role=${role}`, request));
+  const response = await stub.fetch(new Request(`https://signal/connect?role=${role}`, request));
+
+  // **The 101 is the only response that may skip `harden`**, because copying a
+  // response drops its `webSocket` and every upgrade would hang. Everything else
+  // `MachineSignal.fetch` can answer with — its 426, 400 and 404 — is an
+  // ordinary response, and those were leaving without the site's headers on
+  // them. They are unreachable today only because the two checks above duplicate
+  // the object's own; this makes the rule structural rather than a coincidence
+  // that holds while the duplication does.
+  return response.status === 101 ? response : harden(response);
 }
 
 /**

@@ -1252,6 +1252,14 @@ async function main(): Promise<void> {
     // The one thing no API can do, by design. BREAK-GLASS step 1, locally.
     await d1(`UPDATE accounts SET is_operator = 1 WHERE handle = '${adminHandle}'`);
 
+    // Every admin route that WRITES now demands the operator's password as well
+    // as their session (worker/admin.ts `proven`): a session says who you are,
+    // never how you proved it, and a stolen cookie that could reach these would
+    // grant itself the operator flag and outlive the session it came from.
+    // Derived once and reused — the salt does not move, so re-deriving per call
+    // would only spend `challenge` allowance to compute the same 32 bytes.
+    const adminProof = await slotProof(adminHandle, password);
+
     let accounts = (await api.adminAccounts()).accounts;
     const self = accounts.find((row) => row.handle === adminHandle);
     check("flipping is_operator in D1 grants the admin surface", self?.isOperator === true);
@@ -1264,6 +1272,36 @@ async function main(): Promise<void> {
       String(flowsRow?.credentials.recoveryCodesRemaining),
     );
 
+    // The gate for `proven()`. Before it, these four routes were authorised by
+    // the session alone, so a stolen operator cookie could POST here and grant
+    // itself the flag permanently — outliving the session it was lifted from,
+    // and surviving both the 30-minute expiry and a sign-out. Driven through
+    // raw fetch rather than `api.*` because the client signature now makes the
+    // secret a required argument, which is the point: this asserts the SERVER
+    // refuses, not that the caller remembered to ask.
+    //
+    // No allowance is spent: `assertPassword` throws on a non-string before it
+    // reaches `assertAttempt`, so a body with no proof at all costs nothing.
+    const beforeFlag = flowsRow?.isOperator === true;
+    const noProof = await fetch("/api/admin/operator", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: flowsRow!.id, isOperator: true }),
+    });
+    check(
+      "an admin write is refused on the session alone, with no password",
+      noProof.status === 401,
+      `status ${noProof.status}`,
+    );
+    const afterFlag = (await api.adminAccounts()).accounts.find(
+      (row) => row.handle === flowsHandle,
+    )?.isOperator;
+    check(
+      "the refused admin write changed nothing",
+      afterFlag === beforeFlag && afterFlag !== true,
+      `operator flag is now ${afterFlag}`,
+    );
+
     // Fixtures from previous runs accumulate in local D1, and a stale operator
     // among them would make the last-operator guard below nondeterministic.
     // Deleting them here is the delete route exercised on real targets, and it
@@ -1271,19 +1309,19 @@ async function main(): Promise<void> {
     const stale = accounts.filter(
       (row) => row.handle.startsWith("harness-") && !row.handle.endsWith(RUN),
     );
-    for (const row of stale) await api.adminDeleteAccount(row.id);
+    for (const row of stale) await api.adminDeleteAccount(row.id, adminProof);
     accounts = (await api.adminAccounts()).accounts;
     check(
       `delete-account removed the ${stale.length} stale fixture(s)`,
       accounts.every((row) => !row.handle.startsWith("harness-") || row.handle.endsWith(RUN)),
     );
 
-    const selfDelete = await refusal(() => api.adminDeleteAccount(self!.id));
+    const selfDelete = await refusal(() => api.adminDeleteAccount(self!.id, adminProof));
     check("an operator cannot delete themselves", selfDelete?.status === 400, selfDelete?.message);
 
     const otherOperators = accounts.filter((row) => row.isOperator && row.id !== self!.id);
     if (otherOperators.length === 0) {
-      const lastFlag = await refusal(() => api.adminSetOperator(self!.id, false));
+      const lastFlag = await refusal(() => api.adminSetOperator(self!.id, false, adminProof));
       check(
         "the only operator cannot remove their own flag",
         lastFlag?.status === 400,
@@ -1298,14 +1336,14 @@ async function main(): Promise<void> {
       );
     }
 
-    await api.adminSetOperator(flowsRow!.id, true);
+    await api.adminSetOperator(flowsRow!.id, true, adminProof);
     let listed = (await api.adminAccounts()).accounts.find((row) => row.id === flowsRow!.id);
     check("operator can be granted", listed?.isOperator === true);
-    await api.adminSetOperator(flowsRow!.id, false);
+    await api.adminSetOperator(flowsRow!.id, false, adminProof);
     listed = (await api.adminAccounts()).accounts.find((row) => row.id === flowsRow!.id);
     check("and revoked", listed?.isOperator === false);
 
-    await api.adminResetTotp(flowsRow!.id);
+    await api.adminResetTotp(flowsRow!.id, adminProof);
     listed = (await api.adminAccounts()).accounts.find((row) => row.id === flowsRow!.id);
     check("reset-totp clears the flag in the listing", listed?.totp.confirmed === false);
 
@@ -1353,10 +1391,10 @@ async function main(): Promise<void> {
     // the §5 property that makes reset safe: the grant key never moved, and at
     // no point did the operator hold anything that could open it.
     asBrowser(operatorSession);
-    const selfReset = await refusal(() => api.adminResetPassword(self!.id));
+    const selfReset = await refusal(() => api.adminResetPassword(self!.id, adminProof));
     check("an operator cannot reset their own password", selfReset?.status === 400, selfReset?.message);
 
-    const resetResult = await api.adminResetPassword(flowsRow!.id);
+    const resetResult = await api.adminResetPassword(flowsRow!.id, adminProof);
     check(
       "reset returns status only — no key material, ever",
       resetResult.status === "ok" &&
@@ -1419,7 +1457,7 @@ async function main(): Promise<void> {
     );
     asBrowser(operatorSession);
     const firstFixture = (await api.adminAccounts()).accounts.find((row) => row.handle === handle);
-    const sealed = await refusal(() => api.adminResetPassword(firstFixture!.id));
+    const sealed = await refusal(() => api.adminResetPassword(firstFixture!.id, adminProof));
     check(
       "reset is refused when it would seal the account for good",
       sealed?.status === 400,
@@ -2877,6 +2915,109 @@ async function main(): Promise<void> {
 
     const goneBytes = await fetch(`/api/downloads/file?item=${freeId}`);
     check("and its bytes are refused", goneBytes.status === 403);
+
+    /*
+     * The same question for a FILE-scoped code, which is the half that was live.
+     *
+     * `deletePage` deleted `download_codes WHERE slug = ?`, and a file-scoped
+     * code stores `slug = NULL, item_id = <id>` — so that DELETE never matched
+     * it and the code was left dormant rather than revoked. `opened()`
+     * re-resolves `item_id` against `download_files` at every redemption, so the
+     * moment any row took that id again the old code pointed at it.
+     *
+     * The comment that made it look safe said an id "is not re-usable the way a
+     * slug is, because saveFile would have to be given the same id by hand".
+     * That was false: `suggestFromFilename` derives the id from the filename and
+     * the editor auto-fills it, so re-adding the same program produces the same
+     * id every time without anybody meaning to.
+     *
+     * The gate re-creates the id under a DIFFERENT page, which is the customer-
+     * visible shape of it: A's expired code opening B's build, and reading B's
+     * page — title, private prose, every file's name and price.
+     */
+    const scopedId = `scoped-${RUN}`;
+    const scopedSlug = `scoped-page-${RUN}`;
+    asBrowser(opSession);
+    await api.adminPageSave({
+      slug: scopedSlug,
+      title: "Scoped",
+      layout: "list",
+      visibility: "code",
+      status: "live",
+    });
+    await api.adminFileSave({
+      id: scopedId,
+      slug: scopedSlug,
+      name: "Scoped",
+      filename: "scoped.exe",
+      free: true,
+    });
+    const fileScoped = await api.adminDownloadMint({
+      label: "harness-file-scope",
+      item: scopedId,
+      slug: null,
+      maxUses: 5,
+      days: 0,
+    });
+
+    asBrowser(stranger);
+    const scopedWorks = await api.downloadClaim(fileScoped.code).then(
+      (r) => r,
+      () => null,
+    );
+    check(
+      "a file-scoped code opens its own file while the page is live",
+      scopedWorks?.items?.includes(scopedId) === true,
+      JSON.stringify(scopedWorks?.items ?? null),
+    );
+
+    asBrowser(opSession);
+    await api.adminPageDelete(scopedSlug);
+
+    asBrowser(stranger);
+    const afterDelete = await api.downloadClaim(fileScoped.code).then(
+      () => null,
+      (thrown: unknown) => thrown as { status?: number },
+    );
+    check(
+      "deleting a page revokes the file-scoped codes minted for its files",
+      afterDelete?.status === 403,
+      `status ${afterDelete?.status}`,
+    );
+
+    // And the sharper half: the same id re-created under somebody else's page.
+    asBrowser(opSession);
+    const otherOwner = `scoped-other-${RUN}`;
+    await api.adminPageSave({
+      slug: otherOwner,
+      title: "Another customer",
+      layout: "list",
+      visibility: "code",
+      status: "live",
+    });
+    await api.adminFileSave({
+      id: scopedId,
+      slug: otherOwner,
+      name: "Scoped",
+      filename: "scoped.exe",
+      free: true,
+    });
+
+    asBrowser(stranger);
+    const resurrectedFile = await api.downloadClaim(fileScoped.code).then(
+      (r) => r as { pages?: string[]; items?: string[] },
+      () => null,
+    );
+    check(
+      "a dead file-scoped code cannot re-attach to the same id on another page",
+      resurrectedFile === null ||
+        (!(resurrectedFile.items ?? []).includes(scopedId) &&
+          !(resurrectedFile.pages ?? []).includes(otherOwner)),
+      JSON.stringify(resurrectedFile),
+    );
+
+    asBrowser(opSession);
+    await api.adminPageDelete(otherOwner).catch(() => undefined);
 
     asBrowser(opSession);
     await api.adminPageDelete(otherSlug).catch(() => undefined);

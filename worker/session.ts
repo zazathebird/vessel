@@ -108,8 +108,19 @@ export type TokenPurpose =
   | "set-password"
   // The WebAuthn challenge tokens (worker/passkeys.ts). Same shape as the TOTP
   // ticket — a stateless, five-minute claim whose subject carries the challenge
-  // — so the Worker keeps no challenge table and a replayed registration is
-  // caught by the credential-id uniqueness index rather than by session state.
+  // — so the Worker keeps no challenge table.
+  //
+  // **Binding is not spending, and this comment used to conflate the two.** It
+  // said a replay was caught by the credential-id uniqueness index; that index
+  // only ever refused a *duplicate credential*, so it caught an identical
+  // registration replay and nothing else. It said nothing at all about
+  // assertions, and there a captured request body could be posted again
+  // verbatim to mint a fresh session for as long as the token lived — the token
+  // binds the response to a challenge, and the same signed bytes answer the
+  // same challenge for ever. Both ceremonies now SPEND their challenge in a
+  // conditional UPDATE against `credentials.last_challenge_at`, monotonic in the
+  // token's issue time (migration 0008), which is the `totp.last_step` shape one
+  // credential kind over. Still no challenge table.
   | "webauthn-register"
   | "webauthn-signin"
   // A redeemed download code (worker/downloads.ts). Its subject is the list of

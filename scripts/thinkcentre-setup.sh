@@ -284,11 +284,74 @@ parse_args() {
     if printf '%s' "${STORE_DIR}" | grep -q '[[:space:]"'"'"'\\]'; then
         die "--store must not contain spaces, quotes or backslashes: '${STORE_DIR}'"
     fi
-    case "${STORE_DIR}" in
-        /|/etc|/usr|/var|/home|/root|/boot|/bin|/sbin|/lib|/dev|/proc|/sys|/run)
-            die "Refusing to use '${STORE_DIR}' as the data store. It would chown a system directory."
-            ;;
-    esac
+
+    # CANONICALISE FIRST, AND FAIL CLOSED. This list was an exact match on the raw string, and the
+    # value ends up in `sudo chown ${USER}:${grp}` — so `/etc/`, `/etc/.`, `//etc`, `/etc/systemd`,
+    # `/home/` and `/usr/local` were all accepted, and `--store /etc/` handed /etc to the desktop
+    # user at 0750. It is also remembered in a user-writable file that later runs re-read, so one
+    # bad value is permanent. These are the three rules the share scripts already record and this
+    # one never had: canonicalise before comparing, collapse a leading `//`, and prefix-match
+    # rather than exact-match.
+    local store_canon bad
+    store_canon="$(canon_store "${STORE_DIR}")" \
+        || die "Could not work out where '${STORE_DIR}' really is, so it will not be used as the data store."
+    STORE_DIR="${store_canon}"
+
+    # Refused outright, but their children are fine — /srv/vessel is the default and lives under
+    # one of them.
+    for bad in / /home /root /var /opt /srv /mnt /media /snap /tmp; do
+        if [ "${STORE_DIR}" = "${bad}" ]; then
+            die "Refusing to use '${STORE_DIR}' as the data store. It would chown a system directory.
+       Use a folder inside it instead."
+        fi
+    done
+
+    # Refused along with everything underneath them. /usr is here rather than above because
+    # /usr/local is a plausible thing to type and just as wrong.
+    for bad in /etc /usr /bin /sbin /lib /lib32 /lib64 /libx32 /boot /dev /proc /sys /run; do
+        case "${STORE_DIR}/" in
+            "${bad}"/*)
+                die "Refusing to use '${STORE_DIR}' as the data store. It is inside ${bad}, which this
+       script would then chown to your user."
+                ;;
+        esac
+    done
+}
+
+# Canonicalise a store path for comparison against the list above.
+#
+# `cd -P` alone is not enough here: the store usually does not exist yet, so there is nothing to
+# resolve against. So the lexical work is done by hand and the kernel gets the last word only when
+# the directory is already there — which is the case that matters, since a store that is a symlink
+# would otherwise chown whatever it points at.
+#
+# `..` is REFUSED rather than resolved. A repaired path is a path nobody typed, and this one gets
+# chowned.
+canon_store() {
+    local raw="$1" out="" part
+    case "${raw}" in /*) ;; *) return 1 ;; esac
+
+    local IFS=/
+    set -f                      # a `*` in the path must not glob while it is being split
+    for part in ${raw}; do
+        case "${part}" in
+            ""|".") continue ;;
+            "..")   set +f; return 1 ;;
+            *)      out="${out}/${part}" ;;
+        esac
+    done
+    set +f
+
+    [ -n "${out}" ] || out="/"
+
+    if [ -d "${out}" ]; then
+        out="$(cd -P "${out}" 2>/dev/null && pwd -P)" || return 1
+        # bash's `pwd -P` PRESERVES a leading `//`, which POSIX lets an implementation treat as
+        # special — so `//etc` came back as `//etc` and compared unequal to `/etc`.
+        while [ "${out#//}" != "${out}" ]; do out="${out#/}"; done
+    fi
+
+    printf '%s' "${out}"
 }
 
 # Every managed-policy directory a browser on THIS machine would actually read.
@@ -326,15 +389,41 @@ url_host() {
 # place. A truncated sshd drop-in is a machine you cannot log into.
 # ---------------------------------------------------------------------------------------------
 
+#
+# THREE RETURN VALUES, AND THE CALLER MUST NOT CONFUSE THEM: 0 wrote it, 1 it was already current,
+# 2 IT DID NOT GET WRITTEN. Both used to return 0 for the third case as well. Every one of the 23
+# call sites is `|| true` or an `if` condition, and either form suspends `set -e` for the whole
+# function body — so a failed `cp` fell straight through to `info "wrote ${dest}"` and the summary
+# reported a security control that is not on the disk. `harden_ssh` was immune only because it
+# re-asks `sshd -T` afterwards; VERIFY THE EFFECT, DO NOT TRUST THE WRITE is that pattern, and it
+# is why both of these end by comparing the destination back against the source.
+#
 place_user_file() {
-    local src="$1" dest="$2" mode="$3"
-    mkdir -p "$(dirname "${dest}")"
+    local src="$1" dest="$2" mode="$3" tmp
+    if ! mkdir -p "$(dirname "${dest}")"; then
+        warn "could not create $(dirname "${dest}"), so ${dest} was NOT written"
+        return 2
+    fi
     if [ -f "${dest}" ] && cmp -s "${src}" "${dest}"; then
         skip "${dest} is already current"
         return 1
     fi
-    cat "${src}" > "${dest}"
-    chmod "${mode}" "${dest}"
+    # Temp file, then rename. This was `cat "${src}" > "${dest}"`, which truncates in place, under
+    # the comment above promising it did not — so an interrupted run left a half-written launcher
+    # or unit. pi-setup.sh already did it this way; the two agree now.
+    if ! tmp="$(mktemp "${dest}.XXXXXX" 2>/dev/null)"; then
+        warn "could not create a temporary file beside ${dest}, so it was NOT written"
+        return 2
+    fi
+    if ! cat "${src}" > "${tmp}" || ! chmod "${mode}" "${tmp}" || ! mv -f "${tmp}" "${dest}"; then
+        rm -f "${tmp}"
+        warn "${dest} was NOT written"
+        return 2
+    fi
+    if ! cmp -s "${src}" "${dest}"; then
+        warn "${dest} does not contain what was meant to be written"
+        return 2
+    fi
     info "wrote ${dest}"
     return 0
 }
@@ -345,10 +434,23 @@ place_root_file() {
         skip "${dest} is already current"
         return 1
     fi
-    sudo mkdir -p "$(dirname "${dest}")"
-    sudo cp "${src}" "${dest}"
-    sudo chown root:root "${dest}"
-    sudo chmod "${mode}" "${dest}"
+    # Beside the destination, then renamed, for the same reason: `cp` truncates in place, and a
+    # truncated sshd drop-in is a machine you cannot log into. The `.tmp` suffix is what keeps the
+    # half-second it exists invisible to sshd and apt, both of which ignore it.
+    local tmp="${dest}.vessel-setup.tmp"
+    if ! sudo mkdir -p "$(dirname "${dest}")" \
+    || ! sudo cp "${src}" "${tmp}" \
+    || ! sudo chown root:root "${tmp}" \
+    || ! sudo chmod "${mode}" "${tmp}" \
+    || ! sudo mv -f "${tmp}" "${dest}"; then
+        sudo rm -f "${tmp}" 2>/dev/null || true
+        warn "${dest} was NOT written"
+        return 2
+    fi
+    if ! sudo cmp -s "${src}" "${dest}"; then
+        warn "${dest} does not contain what was meant to be written"
+        return 2
+    fi
     info "wrote ${dest}"
     return 0
 }
@@ -1202,7 +1304,7 @@ done
 # vessel-kiosk-watchdog, which restarts the tab if the site goes away and comes back later.
 if [ "${URL}" != "about:blank" ] && command -v curl >/dev/null 2>&1; then
     for attempt in $(seq 1 60); do
-        if curl -fsS --max-time 5 -o /dev/null "${URL}" 2>/dev/null; then
+        if curl -fsS --max-time 5 -o /dev/null -- "${URL}" 2>/dev/null; then
             log "Site answered after ${attempt} attempt(s)."
             break
         fi
@@ -1284,6 +1386,11 @@ fi
 #                                 --user-data-dir, read this paragraph again first.
 #   --disable-web-security        Never. It would disable the same-origin policy on the browser
 #                                 that is signed in as the operator.
+#
+# The `--` before the URL is what makes the three paragraphs above hold. ${URL} is the first line
+# of a 0644 file, and without a terminator Chromium reads a line beginning with a dash as a FLAG
+# rather than an address — so `--no-sandbox`, `--user-data-dir=/tmp/x` or `--incognito` typed into
+# that file is every never-do listed here, reachable by editing one file nobody guards.
 exec "${CHROMIUM}" \
     --kiosk \
     --no-first-run \
@@ -1297,7 +1404,7 @@ exec "${CHROMIUM}" \
     --disable-background-timer-throttling \
     --disable-backgrounding-occluded-windows \
     --disable-renderer-backgrounding \
-    "${URL}"
+    -- "${URL}"
 LAUNCHER_EOF
 
     place_user_file "${tmp}" "${LAUNCHER}" 0755 || true
@@ -1398,7 +1505,7 @@ command -v curl >/dev/null 2>&1 || exit 0
 
 previous="$(cat "${STATE}" 2>/dev/null || echo unknown)"
 
-if curl -fsS --max-time 10 -o /dev/null "${URL}" 2>/dev/null; then
+if curl -fsS --max-time 10 -o /dev/null -- "${URL}" 2>/dev/null; then
     now="yes"
 else
     now="no"
@@ -1493,7 +1600,6 @@ configure_chromium_policy() {
     local url host scheme
     url="$(cat "${URL_FILE}" 2>/dev/null || printf '%s' "${KIOSK_URL}")"
     host="$(url_host "${url}")"
-    scheme="${url%%://*}"
 
     if [ -z "${host}" ] || [ "${url}" = "about:blank" ]; then
         warn "The kiosk URL has no host (${url}), so the navigation allowlist was not written.
@@ -1507,6 +1613,26 @@ configure_chromium_policy() {
     # be interpolated into a JSON security control, and the failure mode is quiet: a malformed
     # policy file is IGNORED by Chromium, which would leave this host wide open while the summary
     # below said it was locked down. Refuse, never repair.
+    #
+    # THE SCHEME IS INTERPOLATED TOO, and it used to come off the same untrusted line by string
+    # surgery — `scheme="${url%%://*}"` — with no validation at all. A crafted first line in
+    # ${URL_FILE} closed the JSON string and reopened the object, so `"URLAllowlist":["*"]` was
+    # writable from a 0644 file this script deliberately never overwrites, and the result still
+    # passed the `jq empty` gate below while the summary reported the policy as written. Every
+    # other key — DeveloperToolsAvailability, DefaultFileSystemWriteGuardSetting — went the same
+    # way. It is matched against a closed set now, never extracted.
+    case "${url}" in
+        https://*) scheme="https" ;;
+        http://*)  scheme="http" ;;
+        *)
+            POLICY_STATE="NOT WRITTEN — the URL in ${URL_FILE} is not http or https"
+            warn "The URL in ${URL_FILE} does not begin http:// or https://, so this script will not
+             put it into a Chromium policy: '${url}'. The browser lockdown was NOT written. Fix
+             that file — one line, the full URL — and run this again."
+            return
+            ;;
+    esac
+
     if ! printf '%s' "${host}" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]{1,5})?$'; then
         # A warn-and-return rather than a die, deliberately: this step runs after packages,
         # autologin, the launcher, the unit and lingering, and BEFORE the firewall and sshd. Dying
@@ -1570,13 +1696,40 @@ EOF
         jq empty "${tmp}" >/dev/null 2>&1 || die "The generated Chromium policy is not valid JSON. This is a bug in this script."
     fi
 
-    local dir written=""
+    # POLICY_STATE IS BUILT FROM THE WRITE, NOT FROM THE LOOP. It used to append the path on every
+    # iteration regardless of what place_root_file did, so a policy that never reached the disk was
+    # reported by print_summary as installed — a browser with no URLBlocklist, DevTools on and sync
+    # on, described in the CONFIGURED block as locked down. That is the one summary line an
+    # operator reads as the state of the machine.
+    local dir written="" failed="" rc
     while read -r dir; do
         [ -n "${dir}" ] || continue
-        place_root_file "${tmp}" "${dir}/${POLICY_NAME}" 0644 || true
-        written="${written}${written:+, }${dir}/${POLICY_NAME}"
+        rc=0; place_root_file "${tmp}" "${dir}/${POLICY_NAME}" 0644 || rc=$?
+        if [ "${rc}" -le 1 ]; then
+            written="${written}${written:+, }${dir}/${POLICY_NAME}"
+        else
+            failed="${failed}${failed:+, }${dir}/${POLICY_NAME}"
+        fi
     done < <(policy_dirs)
     POLICY_WRITTEN="${written}"
+
+    if [ -n "${failed}" ]; then
+        POLICY_STATE="NOT WRITTEN to ${failed}${written:+ (written to ${written})}"
+        warn "The Chromium managed policy could not be placed at ${failed}. This host autologins
+             into a signed-in browser and that policy is what stops somebody at the keyboard
+             browsing elsewhere in the profile holding your session. Fix the cause and re-run."
+        MANUAL+=("The Chromium managed policy was NOT written to ${failed}. Until it is, the browser
+             on this machine has no navigation allowlist, DevTools are available and sync is not
+             blocked.")
+        return
+    fi
+
+    if [ -z "${written}" ]; then
+        POLICY_STATE="NOT WRITTEN — no managed-policy directory to write to"
+        warn "No Chromium managed-policy directory was found, so the browser lockdown was NOT written."
+        return
+    fi
+
     POLICY_STATE="${written}"
 
     info "navigation is limited to ${scheme}://${host} exactly; DevTools, sync, sign-in, extensions and the password"
@@ -1661,13 +1814,23 @@ configure_chromium_update_timer() {
         return
     fi
 
+    # This file is sourced AS ROOT by ${UPDATER} on a weekly timer, so every value is quoted and
+    # the account name is checked first. An unquoted assignment in an unquoted heredoc puts
+    # whatever ${USER} happens to be straight into a root shell's parse.
+    case "${USER}" in
+        *[!A-Za-z0-9_-]*|"")
+            die "This account's name has characters this script will not write into a file that
+       root sources: '${USER}'. Letters, digits, underscore and hyphen only."
+            ;;
+    esac
+
     local tmp="${WORK_DIR}/vessel-kiosk.default"
     cat > "${tmp}" <<EOF
 # Written by scripts/thinkcentre-setup.sh. Read by ${UPDATER}.
 # The kiosk runs as a systemd *user* service, so the updater needs to know whose.
-VESSEL_KIOSK_USER=${USER}
-VESSEL_KIOSK_UID=$(id -u)
-VESSEL_KIOSK_SERVICE=${SERVICE_NAME}
+VESSEL_KIOSK_USER="${USER}"
+VESSEL_KIOSK_UID="$(id -u)"
+VESSEL_KIOSK_SERVICE="${SERVICE_NAME}"
 EOF
     place_root_file "${tmp}" "${UPDATER_ENV}" 0644 || true
 
@@ -1842,7 +2005,13 @@ sshd_ports() {
     if [ -z "${ports}" ]; then
         ports="$(sudo awk '/^[[:space:]]*Port[[:space:]]+[0-9]+/{print $2}' /etc/ssh/sshd_config 2>/dev/null || true)"
     fi
-    [ -n "${ports}" ] || ports="22"
+
+    # NO `|| ports="22"` FALLBACK. There used to be one, and it made this function incapable of
+    # returning nothing — which made the fail-closed `die` in configure_firewall, the one that says
+    # "Enabling it without an SSH rule would lock you out", dead code that could never fire. On a
+    # host whose real port is elsewhere and whose probes all missed, the guess opened 22, the
+    # policy went to default deny incoming, and the connection the operator was sitting on was the
+    # one that dropped. Returning nothing is the honest answer and the caller refuses on it.
     printf '%s\n' "${ports}"
 }
 

@@ -128,6 +128,77 @@ base64url() {
     base64 | tr -d '\n' | tr '+/' '-_' | tr -d '='
 }
 # ---------------------------------------------------------------------------
+# The folder picker.
+#
+# This function was CALLED and never DEFINED (found 2026-09-03). The call at the
+# bottom of the script is `done < <(choose_folders)`, so on a stock Mac every run
+# without `--folders` printed `choose_folders: command not found`, selected
+# nothing, and exited with "No folders chosen, so there is nothing to do."  The
+# interactive path — the normal one, the one the runbook tells people to use —
+# has never worked on macOS. Linux has had its copy at `choose_folders` all
+# along; only this file was missing it.
+#
+# `osascript` rather than zenity: `choose folder` is AppleScript's own picker,
+# present on every stock Mac, so there is nothing to install. Cancel makes
+# osascript exit non-zero with "User canceled", which is the loop's exit — hence
+# `set +e` around it, exactly as the Linux copy does around zenity.
+#
+# STDOUT IS A DATA CHANNEL AND CARRIES ONLY PATHS. Every prompt, every "Added:"
+# line and every warning goes to stderr through `note`/`good`/`warn`, because
+# the caller reads this function with `while read < <(choose_folders)`. This is
+# the 2026-09-02 lesson recorded at the top of this file: while the chrome went
+# to stdout it was read back as folder paths, and every interactive run told the
+# customer their folders did not exist.
+#
+# `POSIX path of` returns a trailing slash on a directory. It is stripped, but
+# never off `/` itself — emptying that entry is what let the filesystem root
+# reach the blocklist as "" and be reported as a missing folder rather than
+# refused by name.
+#
+# NOT TESTED ON A MAC. There is no macOS here; this mirrors the Linux copy's
+# structure and uses only documented AppleScript. It replaces a path that was
+# certainly broken with one that should work, and it wants a real run before the
+# next bundle is published.
+# ---------------------------------------------------------------------------
+choose_folders() {
+    local chosen=()
+
+    if command -v osascript >/dev/null 2>&1; then
+        note "A folder chooser will open. Pick a folder, then another, and so on."
+        note "Press Cancel when you have chosen them all."
+        while true; do
+            local picked
+            set +e
+            picked="$(osascript -e 'POSIX path of (choose folder with prompt "Choose a folder to share (Cancel when finished)")' 2>/dev/null)"
+            local rc=$?
+            set -e
+            # Cancel is a non-zero exit, not an empty string. Test both: a
+            # future osascript that returns empty on cancel must also end here.
+            [ $rc -ne 0 ] && break
+            [ -z "$picked" ] && break
+            [ "$picked" = "/" ] || picked="${picked%/}"
+            chosen+=("$picked")
+            good "Added: $picked"
+        done
+    else
+        note "No graphical folder chooser found."
+        note "Type one folder path per line. An empty line finishes."
+        while true; do
+            printf '  folder: ' >&2
+            local line
+            read -r line || break
+            [ -z "$line" ] && break
+            [ "$line" = "/" ] || line="${line%/}"
+            if [ ! -d "$line" ]; then warn "Not a folder: $line"; continue; fi
+            chosen+=("$line")
+            good "Added: $line"
+        done
+    fi
+
+    printf '%s\n' ${chosen+"${chosen[@]}"}
+}
+
+# ---------------------------------------------------------------------------
 # THE BLOCKLIST. This is a security control, not a convenience check.
 #
 # It used to say "Refuse what the browser will refuse", and that framing was
@@ -176,48 +247,94 @@ fold_case() {
     fi
 }
 
+# ARRAYS, NOT SPACE-DELIMITED STRINGS. These were one string each, consumed
+# unquoted so that `for bad in $BLOCK_EXACT` would split them — which means a
+# home directory containing a space, a tab or a newline shatters every
+# $HOME-derived entry into fragments that match nothing. Measured with
+# HOME="/Users/bob smith": $HOME, ~/.ssh, ~/.gnupg and ~/.config were ALL
+# allowed, which is the whole hole this list was written to close on
+# 2026-08-27 — and an account name with a space in it is ordinary on macOS, so
+# this is the likelier machine, not the exotic one. The
+# `# shellcheck disable=SC2086` that used to sit here is what suppressed the
+# warning; it is gone with the strings.
+#
 # Refused outright, but their children are fine. A home directory is the case:
 # you may share `~/Documents`, you may not share `~`.
-blocked_exact() { printf '%s\n' $BLOCK_EXACT; }
+BLOCK_EXACT=(
+    /
+    "$HOME"
+    /Users /Volumes /System /Library /Applications /private /usr /bin /sbin /etc /var /tmp /opt
+    /cores /Network /System/Volumes /System/Volumes/Data
+)
 
 # Refused along with everything underneath them.
-blocked_prefix() { printf '%s\n' $BLOCK_PREFIX; }
+#
+# A blocked directory whose ANCESTOR is shareable is not blocked at all: nothing
+# downstream catches the miss, because Chrome blocks these as "do not pick",
+# never "do not read". `$HOME/.local/share/keyrings` was the case — refused,
+# sitting inside a shareable `$HOME/.local`. Block the ancestor.
+BLOCK_PREFIX=(
+    /System /private/var /private/etc
+    "$HOME/Library"         # keychains, browser profiles, application support
+    "$HOME/.ssh" "$HOME/.gnupg" "$HOME/.aws" "$HOME/.config" "$HOME/.mozilla"
+    "$HOME/.local"          # holds share/keyrings
+    "$HOME/.pki"            # NSS databases
+    "$HOME/.docker"         # registry credentials
+    "$HOME/.kube"           # cluster credentials
+    "$HOME/.password-store" # pass(1)
+)
 
-# shellcheck disable=SC2086
-BLOCK_EXACT="/ $HOME /Users /Volumes /System /Library /Applications /private /usr /bin /sbin /etc /var /tmp /opt /cores /Network /System/Volumes /System/Volumes/Data"
-BLOCK_PREFIX="/System /private/var /private/etc $HOME/Library $HOME/.ssh $HOME/.gnupg $HOME/.aws $HOME/.config $HOME/.mozilla $HOME/.local/share/keyrings"
+# Both lists, for anything that wants to print or test them.
+blocked_exact() { printf '%s\n' "${BLOCK_EXACT[@]}"; }
+blocked_prefix() { printf '%s\n' "${BLOCK_PREFIX[@]}"; }
 
-folder_problem() {
-    local path="$1" c f bad bf
+# Prints one line: `OK <path>` with the canonical path it approved, or `NO
+# <message>` (which may run to a second line) with the refusal.
+#
+# THE APPROVED PATH IS RETURNED RATHER THAN DISCARDED, and the caller links that
+# one. This used to canonicalise into a local, check it, throw it away, and let
+# the caller link the path as typed — so `~/mydocs -> ~/Documents` passed, the
+# link recorded `~/mydocs`, and repointing that symlink at `~/.ssh` afterwards
+# put id_rsa under the share root. The identity checked and the identity shared
+# were simply different, permanently; it was never a race.
+check_folder() {
+    local path="$1" c f b bad bf
 
-    [ -d "$path" ] || { echo "That folder does not exist: $path"; return; }
+    [ -d "$path" ] || { echo "NO That folder does not exist: $path"; return; }
 
     if [ ${#path} -gt 400 ]; then
-        echo "That folder's path is too long to share (${#path} characters, limit 400): $path"
+        echo "NO That folder's path is too long to share (${#path} characters, limit 400): $path"
         return
     fi
 
     # Fail closed. An unresolvable path is refused, never compared raw.
     c="$(canon "$path")" || {
-        echo "Could not work out where that folder really is, so it will not be shared: $path"
+        echo "NO Could not work out where that folder really is, so it will not be shared: $path"
         return
     }
     f="$(fold_case "$c")"
 
-    for bad in $BLOCK_EXACT; do
+    for bad in "${BLOCK_EXACT[@]}"; do
         [ -n "$bad" ] || continue
-        if [ "$f" = "$(fold_case "${bad%/}")" ]; then
-            echo "That folder holds far more than you mean to share, so it will not be linked: $c
+        # `${bad%/}` strips a trailing slash, and for the entry `/` that leaves the EMPTY STRING —
+        # so the filesystem root compared `"/" = ""` and was never blocked by the one list that
+        # names it. Nothing downstream caught it either: no prefix entry matches `/`, and the
+        # share-root containment test below builds `"$f"/*`, which for `f=/` is `//*` and needs
+        # two leading slashes. Do not let the strip empty an entry.
+        b="${bad%/}"; [ -n "$b" ] || b="/"
+        if [ "$f" = "$(fold_case "$b")" ]; then
+            echo "NO That folder holds far more than you mean to share, so it will not be linked: $c
       Share the folders inside it instead."
             return
         fi
     done
 
-    for bf in $BLOCK_PREFIX; do
+    for bf in "${BLOCK_PREFIX[@]}"; do
         [ -n "$bf" ] || continue
+        b="${bf%/}"; [ -n "$b" ] || b="/"
         case "$f/" in
-            "$(fold_case "${bf%/}")"/*)
-                echo "That folder is inside somewhere private and will not be shared: $c
+            "$(fold_case "$b")"/*)
+                echo "NO That folder is inside somewhere private and will not be shared: $c
       It holds credentials or system files, not documents."
                 return
                 ;;
@@ -228,12 +345,12 @@ folder_problem() {
     # default share root lives inside the home directory, so this is reachable.
     case "$(fold_case "$SHARE_ROOT")/" in
         "$f"/*)
-            echo "That folder contains the share folder itself, which would nest without end: $c"
+            echo "NO That folder contains the share folder itself, which would nest without end: $c"
             return
             ;;
     esac
 
-    echo ""
+    echo "OK $c"
 }
 
 # ---------------------------------------------------------------------------
@@ -488,7 +605,14 @@ step "Choosing folders"
 SELECTED=()
 if [ -n "$FOLDERS_ARG" ]; then
     OLDIFS="$IFS"; IFS=":"
-    for p in $FOLDERS_ARG; do [ -n "$p" ] && SELECTED+=("${p%/}"); done
+    for p in $FOLDERS_ARG; do
+        [ -n "$p" ] || continue
+        # Do not let the trailing-slash strip empty the entry. `/` became "" here
+        # and was then reported as "That folder does not exist: ", so the one
+        # path the blocklist most needs to refuse by name never reached it.
+        [ "$p" = "/" ] || p="${p%/}"
+        SELECTED+=("$p")
+    done
     IFS="$OLDIFS"
 else
     while IFS= read -r line; do
@@ -504,9 +628,22 @@ fi
 LABELS=()
 PATHS=()
 for path in "${SELECTED[@]}"; do
-    problem="$(folder_problem "$path")"
-    if [ -n "$problem" ]; then fail "$problem"; continue; fi
+    verdict="$(check_folder "$path")"
+    case "$verdict" in
+        "OK "*) path="${verdict#OK }" ;;
+        *)      fail "${verdict#NO }"; continue ;;
+    esac
 
+    # Two aliases of one folder canonicalise to the same place now, and two rows
+    # for one folder is a row somebody ticks twice on the checklist.
+    dup=0
+    for seen in ${PATHS+"${PATHS[@]}"}; do
+        if [ "$seen" = "$path" ]; then dup=1; break; fi
+    done
+    if [ "$dup" -eq 1 ]; then note "Already on the list: $path"; continue; fi
+
+    # The label comes off the canonical path too, so it names the folder that is
+    # actually shared rather than the alias that was typed.
     label="$(basename "$path")"
     [ -z "$label" ] && label="Folder"
     # Bash substring, not `cut -c`: GNU cut counts BYTES and can sever a UTF-8

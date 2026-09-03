@@ -648,6 +648,20 @@ export async function deletePage(request: Request, env: Env): Promise<Response> 
     .bind(slug)
     .all<{ id: string }>();
 
+  /*
+   * **The file-scoped codes go first, because after the next statement there is
+   * nothing left to find them by.** The files cascade with the page, so a
+   * subquery run afterwards matches nothing and every one of those rows
+   * survives its file. It is before the existence check for the same reason it
+   * is a subquery: on a slug that does not exist it matches nothing and costs
+   * one round trip.
+   */
+  await env.DB.prepare(
+    "DELETE FROM download_codes WHERE item_id IN (SELECT id FROM download_files WHERE slug = ?)",
+  )
+    .bind(slug)
+    .run();
+
   const gone = await env.DB.prepare("DELETE FROM download_pages WHERE slug = ?").bind(slug).run();
   if (!gone.meta.changes) throw new BadRequest("No such page.", 404);
   // The blocks and files cascade; grants naming this page do not, because a
@@ -664,10 +678,21 @@ export async function deletePage(request: Request, env: Env): Promise<Response> 
    * `canRead` and `canDownload` both key on the slug. Deleting a page is the
    * only "withdraw" control this feature has, so it has to mean it.
    *
-   * Codes scoped to this page's *files* are left alone deliberately: those rows
-   * name an `item_id` whose file has just cascaded away, and `opened` already
-   * resolves a missing file to "opens nothing" — the id is not re-usable the way
-   * a slug is, because `saveFile` would have to be given the same id by hand.
+   * **This used to be the page-scoped rows alone, on the grounds that a file id
+   * "is not re-usable the way a slug is, because `saveFile` would have to be
+   * given the same id by hand". That reasoning was false and the statement
+   * above is what it cost.** `suggestFromFilename` derives the id from the
+   * filename and the editor auto-fills it, so re-adding the same program
+   * produces the same id every time, by hand and without meaning to. `opened`
+   * does resolve a missing file to "opens nothing", but only until something
+   * takes the id back: it re-reads `download_files` at every redemption, so
+   * such a code was dormant rather than revoked, and it came back on the next
+   * customer's page with the bytes and the whole page behind it.
+   *
+   * A file-scoped row minted from now on carries this page in `slug` as its
+   * pin, so this statement reaches those as well; the subquery above is what
+   * reaches the rows minted before the pin existed, whose `slug` is NULL and
+   * which nothing here could ever have matched.
    */
   await env.DB.prepare("DELETE FROM download_codes WHERE slug = ?").bind(slug).run();
 
@@ -896,6 +921,19 @@ export async function deleteFile(request: Request, env: Env): Promise<Response> 
   const gone = await env.DB.prepare("DELETE FROM download_files WHERE id = ?").bind(id).run();
   if (!gone.meta.changes) throw new BadRequest("No such file.", 404);
   await env.DB.prepare("DELETE FROM download_grants WHERE item_id = ?").bind(id).run();
+  /*
+   * **And the codes minted for it, which this line did not do and the grants
+   * line beside it did — the asymmetry was the tell.**
+   *
+   * A file id is re-usable in practice: `suggestFromFilename` derives it from
+   * the filename and the editor auto-fills it, so re-adding the same program
+   * produces the same id. `opened` re-reads `download_files` at every
+   * redemption, so a code whose file was deleted is dormant and not revoked —
+   * it opens again the moment anything takes that id, including on somebody
+   * else's page. Deleting is the only "withdraw" control this feature has, here
+   * as much as in `deletePage`.
+   */
+  await env.DB.prepare("DELETE FROM download_codes WHERE item_id = ?").bind(id).run();
   await env.DOWNLOADS.delete(id).catch(() => {});
   return noStore(json({ ok: true }));
 }

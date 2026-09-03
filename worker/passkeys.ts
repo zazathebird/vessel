@@ -24,6 +24,24 @@
  *   none." A failed attempt requires forging a P-256 signature, which no
  *   number of attempts helps with; the challenge route mints a stateless token
  *   and discloses nothing.
+ *
+ * That second decision rests entirely on "a failed attempt requires forging a
+ * signature", and until migration 0008 it was not true: **a challenge was
+ * bound but never spent**, so a captured request body replayed verbatim minted
+ * a fresh session every time its five-minute token was still alive, forging
+ * nothing. Both ceremonies now consume their challenge in a conditional UPDATE
+ * whose guard rides in the write's own WHERE clause — zero `meta.changes` is
+ * the refusal. No challenge table: the stateless token is the design and a
+ * table of live challenges is the option this codebase rejected.
+ *
+ * **The guard is monotonic in the token's issue time**, `totp.last_step`'s
+ * shape rather than a near-miss of it. Storing the last challenge and refusing
+ * a repeat of that one closes the naive double-post and leaves the interleaved
+ * replay open: two captured bodies alternated indefinitely, each differing from
+ * the one stored just before it. A challenge minted no later than the last one
+ * spent is refused instead, so every old body is dead for ever. See migration
+ * 0008 for what that costs — an out-of-order ceremony is refused and answered
+ * by starting again.
  */
 
 import {
@@ -56,6 +74,17 @@ const WRAPPED_KEY_BYTES = 40;
 const CREDENTIAL_ID_MIN = 16;
 const CREDENTIAL_ID_MAX = 1023;
 const LABEL_MAX = 40;
+/**
+ * A bound, because `credentials` is a user-writable table (the setups lesson):
+ * generous for a person, hostile to a script. Twenty is a phone, a laptop, a
+ * desktop and a drawer of security keys, several times over.
+ *
+ * It is the only bound there is. `assertPassword` rate-limits a *failing*
+ * caller, and `recordSuccess` resets the account bucket on every success — so
+ * a loop that keeps succeeding is unthrottled by design, and without a cap one
+ * password and one session grow this table until D1 says stop.
+ */
+const MAX_PASSKEYS = 20;
 
 /**
  * `rpId` and `origin` are derived from the request rather than configured, so
@@ -72,6 +101,16 @@ function relyingParty(request: Request): { rpId: string; origin: string } {
 
 function newChallenge(): string {
   return toBase64Url(crypto.getRandomValues(new Uint8Array(CHALLENGE_BYTES)));
+}
+
+/**
+ * What is written when a challenge is spent (migration 0008). The digest rather
+ * than the challenge itself, for the reason `code_hash` is a hash: it is only
+ * ever compared for equality, and a fixed 32 bytes is a smaller thing to leave
+ * in a row than the value a still-live token is carrying.
+ */
+async function challengeDigest(challenge: string): Promise<ArrayBuffer> {
+  return crypto.subtle.digest("SHA-256", new TextEncoder().encode(challenge));
 }
 
 // Registration -----------------------------------------------------------------
@@ -114,6 +153,22 @@ export async function register(request: Request, env: Env): Promise<Response> {
   }
 
   await assertPassword(request, env, account, body.authSecret);
+
+  // Asked after the password, so the row count is not something an unproven
+  // caller can measure. A pre-read rather than a guard inside the INSERT, and
+  // that is the one place this file allows one: losing this race overshoots the
+  // cap by a row, which costs nothing, whereas losing the race `remove` guards
+  // seals an account's grant key for good.
+  const count = await env.DB.prepare(
+    "SELECT count(*) AS n FROM credentials WHERE account_id = ? AND kind = 'passkey'",
+  )
+    .bind(account.id)
+    .first<{ n: number }>();
+  if ((count?.n ?? 0) >= MAX_PASSKEYS) {
+    throw new BadRequest(
+      `That is ${MAX_PASSKEYS} passkeys on this account. Remove one you no longer use first.`,
+    );
+  }
 
   const credential = (body.credential ?? {}) as Record<string, unknown>;
   const presentedId = expectBytesRange(
@@ -159,6 +214,42 @@ export async function register(request: Request, env: Env): Promise<Response> {
   const slotAlg = typeof body.slotAlg === "string" ? body.slotAlg : "";
   if (slot && !slotAlg) throw new BadRequest("Missing key slot algorithm.");
   if (slotAlg.length > 64) throw new BadRequest("That key slot algorithm is not valid.");
+
+  // One token, one authenticator. Spent here rather than at the top of the
+  // route so that a malformed or foreign-origin attempt does not burn the
+  // caller's own challenge, and in the UPDATE's own WHERE clause rather than a
+  // read followed by a write, which would let two requests carrying the same
+  // token both find it unspent and both register. The credential-id uniqueness
+  // index only ever refused an *identical* replay; a second, different
+  // authenticator under the same still-valid token walked straight past it.
+  //
+  // Monotonic in the token's issue time, for the reason the header gives: an
+  // equality test on the challenge alone refuses only the challenge stored
+  // last, so two live tokens alternated would each look unspent to the other's
+  // row. The digest test stays beside it and can only refuse more.
+  //
+  // It is the password credential's row because the passkey's own row does not
+  // exist yet — the challenge is spent on the credential that authorised it,
+  // and `assertPassword` above has just proved that row is there.
+  //
+  // 409, and named plainly, unlike the sign-in route's single sentence: this
+  // caller holds a session and has just re-proved the password, so it is the
+  // account's owner and there is nothing to withhold. It is also the same
+  // refusal an identical replay used to get from the credential-id index one
+  // step further down, which is now unreachable for a replay because this fires
+  // first.
+  const digest = await challengeDigest(challenge);
+  const spent = await env.DB.prepare(
+    `UPDATE credentials SET last_challenge = ?, last_challenge_at = ?
+       WHERE account_id = ? AND kind = 'password'
+         AND (last_challenge_at IS NULL OR last_challenge_at < ?)
+         AND (last_challenge IS NULL OR last_challenge <> ?)`,
+  )
+    .bind(digest, claim.issuedAt, account.id, claim.issuedAt, digest)
+    .run();
+  if ((spent.meta?.changes ?? 0) === 0) {
+    throw new BadRequest("That passkey attempt has already been used. Start again.", 409);
+  }
 
   const now = Date.now();
   const credentialRowId = newId();
@@ -279,7 +370,11 @@ export async function remove(request: Request, env: Env): Promise<Response> {
 
 // Sign-in ----------------------------------------------------------------------
 
-/** Mint the challenge a sign-in assertion must answer. Anonymous, discloses nothing. */
+/**
+ * Mint the challenge a sign-in assertion must answer. Anonymous, discloses
+ * nothing. The token is stateless and lives five minutes, but the challenge
+ * inside it is single-use: `signIn` spends it on the credential that answers it.
+ */
 export async function signInChallenge(request: Request, env: Env): Promise<Response> {
   const challenge = newChallenge();
   const token = await session.mint(env.SESSION_SECRET, "webauthn-signin", challenge);
@@ -352,18 +447,50 @@ export async function signIn(request: Request, env: Env): Promise<Response> {
     .first<AccountRow>();
   if (!account) throw wrong;
 
-  // §4: monotonicity checked but not enforced — synced passkeys commonly
-  // report 0 for ever. The stored value only ever moves forward.
+  // §4 says the sign counter is checked; nothing checks it, here or in
+  // `verifyAssertion`, and that is deliberate — a synced passkey commonly
+  // reports 0 for ever, so refusing a counter that failed to advance would
+  // refuse the commonest authenticator on the market. The stored value is a
+  // high-water mark and **not** a clone detector: nothing in this system will
+  // notice a duplicated authenticator. Do not read it as though it does.
   const nextCount = Math.max(signCount, stored.sign_count ?? 0);
 
-  await env.DB.batch([
-    env.DB.prepare("UPDATE credentials SET last_used_at = ?, sign_count = ? WHERE id = ?").bind(
-      Date.now(),
-      nextCount,
-      stored.id,
-    ),
-    auditStatement(env, account.id, "auth.signin", "passkey"),
-  ]);
+  // The challenge is spent in the same statement that records the use, and the
+  // guard rides in the WHERE clause — the `remove` doctrine above, for a
+  // sharper reason. `verifyAssertion` binds the response to this challenge; it
+  // cannot make it single-use, because the same signed bytes answer the same
+  // challenge for ever. So without this, a captured request body replayed
+  // verbatim minted a session every time for the five minutes the stateless
+  // token stayed valid, and §4's case for no TOTP stage and no rate limiting
+  // here — "a failed attempt requires forging a P-256 signature" — was simply
+  // untrue. Check-then-act would not close it either: two copies of the same
+  // body would both read the challenge unspent, which is the attack itself.
+  //
+  // `last_challenge_at < ?` is the guard that does the work, and it is
+  // `totp.last_step`'s monotonicity rather than an equality test: refusing only
+  // the challenge stored last leaves two captured bodies alternating for ever,
+  // each of them unequal to the one before it, and one captured body live again
+  // the moment any other sign-in on this credential lands in between. The issue
+  // time comes out of the token, under the MAC, so it is not the caller's to
+  // choose. The digest test beside it depends on no clock and can only refuse
+  // more.
+  const digest = await challengeDigest(challenge);
+  const used = await env.DB.prepare(
+    `UPDATE credentials
+        SET last_used_at = ?, sign_count = ?, last_challenge = ?, last_challenge_at = ?
+       WHERE id = ?
+         AND (last_challenge_at IS NULL OR last_challenge_at < ?)
+         AND (last_challenge IS NULL OR last_challenge <> ?)`,
+  )
+    .bind(Date.now(), nextCount, digest, claim.issuedAt, stored.id, claim.issuedAt, digest)
+    .run();
+  // The same one sentence as every other refusal on this route: a replay learns
+  // nothing from being told it is a replay.
+  if ((used.meta?.changes ?? 0) === 0) throw wrong;
+
+  // After, not batched with it: an audit row must not claim a sign-in the
+  // conditional UPDATE refused.
+  await env.DB.batch([auditStatement(env, account.id, "auth.signin", "passkey")]);
 
   const slot = await env.DB.prepare(
     `SELECT s.wrapped_grant_key AS wrapped, s.alg AS alg, a.grant_pubkey AS pubkey
