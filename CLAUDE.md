@@ -1179,14 +1179,20 @@ environment problem. Until they move above the health check, start the Worker.
 - **STUN only; no TURN** until the client approves the spend. A hard-NAT pair fails with an honest
   message, not silently.
 
-**Four things the client has not yet signed off** (in `TODO.md`; none blocking). **1.** `totp.last_step`
-is a field §9's inventory does not list, and §9 says adding one is a spec change — it exists because
-without it a TOTP code is replayable for up to 90 seconds; recommend approving. **2.** §3's operator row
-is stronger than the design supports: the Worker sees the raw `authSecret` on every sign-in and holds
-the salt and iteration count, so an operator who logged one sign-in could grind offline. The
-cryptography is fine; the *unconditional* wording is not. **3.** `⌘K` is claimed twice — the door's
-sixth unlock route in `SPEC.md`, the command palette in §10. **4.** Signup discloses handle availability
+**Three things the client has not yet signed off** (in `TODO.md`; none blocking). **1.** §3's operator
+row is stronger than the design supports: the Worker sees the raw `authSecret` on every sign-in and
+holds the salt and iteration count, so an operator who logged one sign-in could grind offline. The
+cryptography is fine; the *unconditional* wording is not. **2.** `⌘K` is claimed twice — the door's
+sixth unlock route in `SPEC.md`, the command palette in §10. **3.** Signup discloses handle availability
 (409) while `challenge` goes to trouble to hide it.
+
+**The replay-guard fields are settled** (2026-09-04, was item 1 of four): `totp.last_step`,
+`credentials.last_challenge` and `last_challenge_at` are **in §9's inventory** now, with §12's
+*Resolved 2026-09-04* entry carrying the argument. Each stores a clock window or a digest of a value
+the server minted itself, none is derived from the person, and each exists because without it a
+credential is replayable. **Do not re-flag them as pending** — the alternative to storing them is not
+storing less, it is accepting replay, and an inventory that omits a column it holds is wrong rather
+than conservative.
 
 ## The sharing host — the invariants
 

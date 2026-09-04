@@ -64,13 +64,11 @@ intact"* throughout.
 
 ### Next, in order
 
-1. **Two things need the client, neither blocking.**
-   - `credentials.last_challenge` / `last_challenge_at` are fields SPEC-ACCOUNTS §9's inventory
-     does not list, and §9's rule is that adding one is a spec change. Same shape as
-     `totp.last_step`; recommend approving.
-   - Download codes minted before this deploy carry `slug = NULL` and keep the old behaviour.
-     Retiring codes already in customers' hands is a business decision; a three-line backfill
-     closes the legacy case if he wants it closed.
+1. ~~**Two things need the client.**~~ **Both closed 2026-09-04.** The replay-guard fields are
+   approved and **in §9's inventory**, with §12's *Resolved 2026-09-04* entry carrying the argument
+   — and `totp.last_step`, pending since 2026-08-13, went in with them rather than leaving the
+   section half-corrected. The legacy download-code question was **withdrawn**: `download_codes`
+   holds zero rows, so there was never anything to retire.
 2. **Deploy.** Migration 0008 must be applied remotely (`npm run db:migrate:remote`) *before* the
    Worker ships, or every passkey ceremony writes to columns that do not exist.
 3. **`scripts/macos-share-setup.sh` has never been run on a Mac.** Its `choose_folders` was called
@@ -1774,8 +1772,13 @@ it needs either the dashboard or a scoped API token.
 
 Found while building; none blocking. Reasoning in `CLAUDE.md` unless noted.
 
-1. **`totp.last_step`** — a field §9's inventory does not list. Without it a
-   TOTP code replays for up to 90s. **Recommend approving.**
+1. ~~**`totp.last_step`**~~ — **closed 2026-09-04.** It is in §9's inventory now,
+   together with `credentials.last_challenge` and `last_challenge_at`, which
+   are the same field in a different credential kind. §12's *Resolved
+   2026-09-04* entry is the argument; the short version is that all three store
+   a clock window or a digest of a value the server minted itself, none is
+   derived from the person, and the alternative to storing them is not storing
+   less — it is accepting replay.
 2. **§3's operator row is stronger than the design supports** — the wording,
    not the cryptography.
 3. **`⌘K` is claimed twice** — door (SPEC.md) vs command palette

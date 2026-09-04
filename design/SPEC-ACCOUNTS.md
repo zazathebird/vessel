@@ -489,6 +489,7 @@ the signalling service, which is exactly the party it must be secure against.
 ```
 accounts      id · handle · created_at · grant_pubkey · is_operator · reset_at
 credentials   id · account_id · kind · label · created_at · last_used_at
+                last_challenge · last_challenge_at        ← replay guard, §4
                 kind = 'password' | 'passkey' | 'recovery'
                 password: auth_hash · kdf_salt · kdf_iterations
                 passkey:  credential_id · public_key · sign_count
@@ -503,12 +504,24 @@ invites       id · grant_id · issued_by · token_hash · claimed_by · expires
 audit         id · actor_id · action · target · at        ← append-only, mirrored by the agent
 ```
 
-⚠ **`totp.last_step` is in the schema (migration `0002`) and is not in the inventory below, which
-this section says is a spec change rather than an implementation detail.** It stores the 30-second
-window of the last successful second factor; without it a TOTP code is replayable for up to ninety
-seconds. It is coarser than `credentials.last_used_at`, which the inventory already covers.
-**Awaiting client sign-off** — recorded in `TODO.md` and `CLAUDE.md`, and listed here rather than
-left to be discovered.
+**Three replay-guard fields are in the inventory, and they were added to it deliberately**
+(approved 2026-09-04; the reasoning is §12's *Resolved 2026-09-04* entry). This section's rule is
+that a stored field is a spec change to be argued rather than slipped in, so each was argued:
+
+- **`totp.last_step`** (migration `0002`) — the 30-second window of the last successful second
+  factor. Without it a TOTP code is replayable for up to ninety seconds.
+- **`credentials.last_challenge` · `last_challenge_at`** (migration `0008`) — the SHA-256 of the
+  last WebAuthn challenge spent on that credential, and the millisecond it was minted. Without them
+  a captured registration or assertion body is replayable for the five minutes its token lives,
+  which voids §4's reason for waiving both the TOTP stage and rate limiting on the passkey path: a
+  replay forges no signature.
+
+**None of the three is personal data**, which is what §9 exists to police. Each stores either a
+clock window or a digest of a random value **the server itself minted minutes earlier**; none is
+derived from anything about the person, none is disclosed to anybody, and all three are coarser
+than `credentials.last_used_at`, which this inventory already covered. Each is also **load-bearing
+for a documented attack** — the alternative to storing them is not storing less, it is accepting
+replay.
 
 Rate-limit counters are deliberately **not** here. They live in a Durable Object, because D1 gives no
 atomic read-modify-write and a counter that loses races is a counter an attacker can outrun.
@@ -778,6 +791,32 @@ retracted focus-ring claim is kept precisely because a plausible-sounding bug is
 than to disprove twice.
 
 Each rejected option carries a **"revisit if"** — the condition that would make it the right answer.
+
+### Resolved 2026-09-04 (the replay-guard fields enter the inventory)
+
+**The three replay-guard fields are approved and §9 lists them.** `totp.last_step` had been
+flagged pending since 2026-08-13 and `credentials.last_challenge` / `last_challenge_at` since they
+shipped on 2026-09-04. §9's rule is that a stored field is a spec change to be argued; the argument
+is that all three store a clock window or a digest of a value the server minted itself, none is
+derived from the person, none is disclosed, and each exists because without it a credential is
+replayable.
+
+**What settled it was the direction of the error.** A data inventory whose purpose is to let the
+no-personal-data claim be *checked* is worse when it omits fields the system stores than when it
+lists them — an inventory that is silent about a column is not conservative, it is wrong, and it
+degrades every other line in it. Two ⚠ markers reading "awaiting sign-off" against fields that were
+deployed and load-bearing had become the least accurate thing in an otherwise authoritative
+document.
+
+- *Rejected: dropping the fields to keep the old inventory true* — the honest version of "don't
+  add to §9". It is refused because it does not reduce what is stored, it restores three replay
+  attacks: a TOTP code good for ninety seconds, and a captured passkey ceremony good for five
+  minutes. **Revisit if** a design ever arrives that refuses replay without server-side state; the
+  stateless-token approach was already tried here and is what failed.
+- *Rejected: leaving them flagged as pending indefinitely* — the status quo, and the thing actually
+  chosen against. A permanent "awaiting sign-off" on shipped behaviour teaches a reader that the
+  markers mean nothing. **Revisit if** the client wants the fields removed rather than recorded, in
+  which case the entry above is the argument to answer.
 
 ### Resolved 2026-08-13 (phase 2 designed)
 

@@ -566,13 +566,15 @@ Recorded because a clean answer is only worth something if it says what it check
 
 ## Needs the client's decision — not a fix
 
-1. **`credentials.last_challenge` and `last_challenge_at` are fields SPEC-ACCOUNTS §9's inventory
-   does not list**, and §9's own rule is that adding one is a spec change to be argued rather than
-   slipped in. Flagged exactly as `totp.last_step` was, and the recommendation is the same: they
-   store a SHA-256 of a random 32-byte value the server itself minted minutes earlier, and the
-   millisecond it was minted. The timestamp is coarser than `credentials.last_used_at`, which the
-   inventory already covers under activity metadata. Neither identifies anybody and neither reaches
-   anybody.
+1. ~~**`credentials.last_challenge` and `last_challenge_at` are fields SPEC-ACCOUNTS §9's
+   inventory does not list**~~ — **approved 2026-09-04, and the inventory now lists them.**
+   `totp.last_step`, flagged the same way since 2026-08-13, went in at the same time: leaving one
+   ⚠ marker standing while resolving its twin would have left the section half-corrected. §12's
+   *Resolved 2026-09-04* entry carries the argument and both rejected alternatives. The deciding
+   point was the **direction of the error** — an inventory whose purpose is to let the
+   no-personal-data claim be checked is worse when it omits a column than when it lists one, and
+   two "awaiting sign-off" markers against deployed, load-bearing fields had become the least
+   accurate lines in an otherwise authoritative document.
 2. ~~**Download codes minted before this deploy carry `slug = NULL`**~~ — **withdrawn 2026-09-04,
    because the premise was false.** Production was queried instead of reasoned about:
    `download_codes` holds **zero rows**, and zero of the `item_id IS NOT NULL AND slug IS NULL`
