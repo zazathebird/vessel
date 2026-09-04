@@ -25,9 +25,9 @@ no ETag or Last-Modified, `/api/health` 200. Rollback is version
 - **The legacy download-code question is moot.** `download_codes` holds **zero rows** in
   production, and zero of them are the `item_id IS NOT NULL AND slug IS NULL` shape. So there is
   nothing in any customer's hands to retire, the "business decision" the 2026-09-03 entry routed to
-  the client does not exist, and no backfill is needed. **What is left is dead weight**: the
-  `row.slug !== null` guard in `opened()` now only preserves a hole for rows that cannot exist.
-  Worth dropping so a restored backup cannot reintroduce one — small, and not urgent.
+  the client does not exist, and no backfill is needed. **The dead guard is gone** — `opened()`
+  compares the pin unconditionally, so a restored backup or a hand-written INSERT cannot
+  reintroduce the hole. Gated end to end (`test:auth` 365 → 366) and break-verified.
 - **The Windows script bypass was never served to anybody.** `download_files` holds one row, an
   abandoned draft with `uploaded_at` null, and `download_pages` one page. The setup scripts have
   never been published through the downloads editor, so no customer has ever held a copy of the

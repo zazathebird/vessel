@@ -1430,6 +1430,14 @@ per-person access.
   every time without anybody meaning to. Customer A's dead code opened customer B's build and read
   B's private page in full. `deleteFile` deletes them too, and a code carries the page its file was
   on at mint so that *moving* a file cannot re-point it either. **Refuse, never repair.**
+- **The pin is compared UNCONDITIONALLY, and a row without one is refused** (2026-09-04). The
+  comparison was briefly conditional on `row.slug !== null`, to spare codes minted before the pin
+  existed — a carve-out with **no subject**, since `download_codes` holds zero rows in production
+  and zero of that shape. It retired nothing and kept the move path open for any unpinned row that
+  ever arrives. It cannot strand a real code either: `download_files.slug` is `NOT NULL` and
+  `mintCode` always copies it, so a NULL here means a row this code did not mint — a restored
+  backup, a hand-written INSERT — which is exactly what the pin exists to refuse. **Check the table
+  before deferring a decision about what is in it.**
 - **Deleting a page deletes the codes minted for it**, and `opened` re-reads the page anyway. A slug is
   a re-usable `TEXT PRIMARY KEY` and `download_codes.slug` carries no foreign key, so without this a
   reused address hands an old customer's code to whoever gets the slug next. Deleting is the only

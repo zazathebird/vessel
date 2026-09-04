@@ -517,6 +517,33 @@ normal`, because **a refusal must not depend on a CSS declaration in another fil
 Gate goes 21 → 26 refused codes, plus a positive case asserting an emoji label still round-trips.
 Break-verified against the pre-fix decoder.
 
+### 31. The pin was compared conditionally, and the condition was for rows that do not exist
+
+Item 17 pinned a file-scoped download code to the page its file was on at mint, so that *moving* a
+file could not re-point an outstanding code — a case no delete can close. The comparison was then
+made conditional on `row.slug !== null`, to avoid retiring codes minted before the pin existed.
+
+**The condition had no subject.** `SELECT COUNT(*) FROM download_codes` on production is `0`, and
+the `item_id IS NOT NULL AND slug IS NULL` count is `0`. So the carve-out retired nothing, because
+there was nothing to retire; all it did was leave the move path open for any row that ever arrives
+without a pin.
+
+Closed unconditionally, and it cannot strand a legitimate code: `download_files.slug` is `NOT NULL`
+(migration 0006) and `mintCode` copies it into `pageSlug` on every file-scoped mint, so a pin is
+always written. A NULL reaching `opened()` now means a row this code did not mint — a restored
+backup or a hand-written INSERT — and following a file for one of those is precisely what the pin
+exists to refuse.
+
+**Gated end to end, not asserted about**: `npm run test:auth` mints a file-scoped code through the
+real admin route, nulls its pin in the database exactly as a legacy row would carry it, and redeems
+it for real. 365 → 366. Break-verified — with the tolerance restored the claim returns a ticket
+carrying both the page and the file, which is the hole.
+
+**The general lesson, and it is the third time this pass:** the two earlier findings were controls
+described accurately that did not do what the description implied. This one is a *carve-out*
+described accurately whose justification was never checked against the data. Querying the table
+took one command and removed a standing decision from the client's list.
+
 ## Checked this pass and found sound
 
 Recorded because a clean answer is only worth something if it says what it checked.
@@ -546,10 +573,13 @@ Recorded because a clean answer is only worth something if it says what it check
    millisecond it was minted. The timestamp is coarser than `credentials.last_used_at`, which the
    inventory already covers under activity metadata. Neither identifies anybody and neither reaches
    anybody.
-2. **Download codes minted before this deploy carry `slug = NULL`** and therefore keep the old
-   behaviour rather than being refused wholesale. Retiring codes already in customers' hands is a
-   business decision, not a security one — a three-line backfill closes the legacy case, and the
-   call on whether to break working codes is the client's.
+2. ~~**Download codes minted before this deploy carry `slug = NULL`**~~ — **withdrawn 2026-09-04,
+   because the premise was false.** Production was queried instead of reasoned about:
+   `download_codes` holds **zero rows**, and zero of the `item_id IS NOT NULL AND slug IS NULL`
+   shape. There was never anything in a customer's hands to retire, so there was no business
+   decision to refer and no backfill to write — and the carve-out that tolerated a missing pin was
+   keeping a hole open for rows that cannot exist. `opened()` now compares the pin
+   unconditionally. See item 31.
 
 ---
 

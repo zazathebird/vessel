@@ -172,12 +172,22 @@ async function opened(
     // gets handed out.
     if (!item) return { open: [], visible: [], items: [] };
     /*
-     * A row minted before the pin existed carries no slug at all. It keeps the
-     * old behaviour rather than being refused wholesale: retiring codes already
-     * in the operator's customers' hands is his decision, not a deploy's, and
-     * the two deletes close the door those rows came through.
+     * **Unconditional, and a row with no pin is refused like any other
+     * mismatch** (2026-09-04). This tolerated `row.slug === null` for a while,
+     * to avoid retiring codes minted before the pin existed — his decision to
+     * take, not a deploy's. Production settled it instead: `download_codes`
+     * holds **zero** rows, and zero of the `item_id IS NOT NULL AND slug IS
+     * NULL` shape, so there was never anything in anybody's hands to retire and
+     * the carve-out only preserved the hole for rows that cannot exist.
+     *
+     * It cannot strand a *new* code either: `download_files.slug` is `NOT NULL`
+     * (migration 0006) and `mintCode` copies it into `pageSlug` for every
+     * file-scoped mint, so a pin is always written. A NULL arriving here now
+     * means a row this code did not mint — a restored backup, or a hand-written
+     * INSERT — and following a file for one of those is exactly what the pin
+     * exists to refuse. **Refuse, never repair.**
      */
-    if (row.slug !== null && row.slug !== item.slug) return { open: [], visible: [], items: [] };
+    if (row.slug !== item.slug) return { open: [], visible: [], items: [] };
     /*
      * **The page is named only if a code could ever open it**, for the reason
      * the unscoped branch below spells out at length: the existence of a page

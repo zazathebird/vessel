@@ -3016,7 +3016,61 @@ async function main(): Promise<void> {
       JSON.stringify(resurrectedFile),
     );
 
+    /*
+     * **A file-scoped row carrying NO pin is refused, not followed.**
+     *
+     * `opened()` used to tolerate `slug IS NULL` so that codes minted before the
+     * pin existed kept working. Production settled that on 2026-09-04 —
+     * `download_codes` was empty, so there was nothing to grandfather and the
+     * carve-out only kept the hole open for rows that could not exist. A NULL
+     * can now only arrive from a restored backup or a hand-written INSERT, and
+     * following a file for one of those is what the pin exists to refuse.
+     *
+     * Driven rather than asserted about: the row is minted through the real
+     * route, its pin is then nulled in the database exactly as a legacy row
+     * would carry it, and the code is redeemed for real.
+     */
     asBrowser(opSession);
+    const pinless = `pinless-${RUN}`;
+    const pinlessId = `pinless-file-${RUN}`;
+    await api.adminPageSave({
+      slug: pinless,
+      title: "Pinless",
+      layout: "list",
+      visibility: "code",
+      status: "live",
+    });
+    await api.adminFileSave({
+      id: pinlessId,
+      slug: pinless,
+      name: "Pinless",
+      filename: "pinless.exe",
+      free: true,
+    });
+    const pinlessCode = await api.adminDownloadMint({
+      label: "harness-pinless",
+      item: pinlessId,
+      slug: null,
+      maxUses: 5,
+      days: 0,
+    });
+    await d1(`UPDATE download_codes SET slug = NULL WHERE item_id = '${pinlessId}'`);
+
+    asBrowser(stranger);
+    const pinlessClaim = await api.downloadClaim(pinlessCode.code).then(
+      (r) => r as { pages?: string[]; items?: string[] },
+      (thrown: unknown) => thrown as { status?: number },
+    );
+    check(
+      "a file-scoped code carrying no pin opens nothing",
+      (pinlessClaim as { status?: number })?.status === 403 ||
+        (!((pinlessClaim as { items?: string[] }).items ?? []).includes(pinlessId) &&
+          !((pinlessClaim as { pages?: string[] }).pages ?? []).includes(pinless)),
+      JSON.stringify(pinlessClaim),
+    );
+
+    asBrowser(opSession);
+    await api.adminPageDelete(pinless).catch(() => undefined);
     await api.adminPageDelete(otherOwner).catch(() => undefined);
 
     asBrowser(opSession);
