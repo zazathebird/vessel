@@ -440,6 +440,83 @@ passes this check and always will. The client has nothing to compare against.
 
 ---
 
+### 29. The Windows blocklist resolved the leaf and compared the ancestors as typed
+
+Found by the pre-deploy review of item 19's own fix, 2026-09-04, and it is item 19 again one
+component up. `Test-ShareableFolder` resolved reparse points — for the **final path component
+only**. `[System.IO.Path]::GetFullPath` does not follow a junction, and `Get-Item` reports the
+`ReparsePoint` attribute of the leaf, so the `while` loop never fired when the junction was an
+**ancestor** of the picked folder. `$full` was then compared, as typed, against `$blockExact` /
+`$blockPrefix`, passed, and was junctioned into the share root.
+
+**No attacker file-system setup is required, because Windows ships the junctions**, and their ACLs
+carry a deny-*list-folder* ACE but do not deny `FILE_TRAVERSE` — so `Test-Path` through one
+succeeds:
+
+| Typed | Junction | Reaches |
+|---|---|---|
+| `C:\Documents and Settings\<user>` | → `C:\Users` | the **entire user profile**; matches neither `%USERPROFILE%` nor the parent-of-home entry |
+| `C:\Users\<user>\Local Settings\Google\Chrome\User Data` | → `AppData\Local` | past the `%LOCALAPPDATA%\Google` prefix — Chrome `Cookies` and `Login Data` |
+| `C:\Users\<user>\Application Data\Microsoft\Protect` | → `AppData\Roaming` | past `%APPDATA%\Microsoft` — the **DPAPI master keys that decrypt the above** |
+
+The phone-call scenario the script's own banner describes is the delivery: *"type this in the
+box"*. The runbook then recommends picking the share root as one folder, Chrome reads through the
+junction normally (crbug 40061477), and per `CLAUDE.md` nothing downstream catches a miss.
+
+**The Unix scripts never had this** — `cd -P` plus `pwd -P` resolves every component by
+construction. That is the property the PowerShell copy had to reproduce by hand and did not.
+
+Fixed by resolving **every ancestor**, restarting the walk after each substitution because a target
+may itself sit under another junction, bounded at 32 rounds, and still failing closed: an ancestor
+that cannot be read, or a link that cannot be resolved, is refused rather than compared.
+
+**Gated by execution, not by reading.** `npm run check` slices the resolver out of the real script,
+substitutes only the path separators — every substitution asserted, so a rewrite that changes the
+shape fails the gate instead of silently testing nothing — and drives it under `pwsh` against a
+throwaway tree with an ancestor link, a chain of them, a leaf link and a dangling one. Symlinks
+stand in for junctions because .NET surfaces both through the same `ReparsePoint` attribute and the
+same `.Target`, which is the property under test. Break-verified twice: against the pre-fix block,
+and again with the block's shape left intact and only the loop narrowed to the leaf, which is the
+version a structural gate would have passed.
+
+**Where `pwsh` is absent the gate does not quietly pass** — it names itself under *"Could NOT be run
+on this machine"* in the report, because a gate that skips silently is this document's recurring
+lesson wearing a different hat.
+
+### 30. `decodeSetupCode` refused invisibles by property and still missed the variation selectors
+
+Item 26 replaced an enumeration of deceptive characters with Unicode general categories, on the
+stated reasoning that *"an enumeration cannot be made complete by adding to it"*. The category set
+was `Cf`, `Cs`, `Co`, `Cn`, `Zs` bar U+0020, and a hand-list — and it **omitted U+FE00–FE0F and
+U+E0100–E01EF**, the variation selectors, which are zero width and which **NFKC does not fold**, so
+the duplicate-label test did not catch them either. Verified against the real encoder/decoder:
+`Invoices\uFE00` was accepted alongside `Invoices`, which is item 26's own twin-row attack rebuilt
+character for character after it was fixed. A doubled ordinary space did the same.
+
+Fixed in two halves, deliberately split:
+
+- **The filter** now refuses `\p{Default_Ignorable_Code_Point}` and `\p{Variation_Selector}` — the
+  property rather than the code points, which is the point. It is a **strict superset** of the old
+  hand-list, verified by sweeping all 0x110000 code points: nothing the old expression refused is
+  now allowed, and 260 are newly refused.
+- **U+FE0E and U+FE0F are carved out**, and `foldLabel` pays for the carve-out. They are the emoji
+  presentation selectors, and `Photos ❤️` is a folder name somebody has rather than an attack. The
+  code is **machine-generated from names the person already has**, so refusing them would refuse
+  the *whole code* over one honest folder, on the happy path, with nothing to do but rename it —
+  turning a security fix into an outage. They remain dangerous only in the twin-row shape, and that
+  is closed one level down: `foldLabel` strips every default-ignorable and collapses whitespace runs
+  before the duplicate test, so `Invoices` and `Invoices\uFE0F` collide and the code is refused.
+
+**The division of labour is the decision**: the filter refuses what has no business in a label; the
+fold refuses what merely *reads* like another label. Labels are still **stored as sent** — folding
+the comparison alone is what keeps refuse-never-repair intact.
+
+The whitespace collapse is in `foldLabel` rather than left to `.v-setup-name`'s `white-space:
+normal`, because **a refusal must not depend on a CSS declaration in another file.**
+
+Gate goes 21 → 26 refused codes, plus a positive case asserting an emoji label still round-trips.
+Break-verified against the pre-fix decoder.
+
 ## Checked this pass and found sound
 
 Recorded because a clean answer is only worth something if it says what it checked.

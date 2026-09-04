@@ -287,33 +287,79 @@ function Test-ShareableFolder {
         return "A whole drive cannot be shared: $full`n      Browsers do not issue a handle to a drive root. Share the folders on it."
     }
 
-    # RESOLVE REPARSE POINTS BEFORE COMPARING. `GetFullPath` normalises `.`,
+    # RESOLVE EVERY COMPONENT, NOT JUST THE LEAF. `GetFullPath` normalises `.`,
     # `..`, doubled separators and forward slashes, and `-ieq` covers case — but
-    # it does NOT follow a junction or a symlink. A folder that is itself a
-    # junction to %LOCALAPPDATA%\Google\Chrome\User Data passed every check and
-    # was then re-linked into the share root.
+    # it does NOT follow a junction or a symlink, and `Get-Item` reports the
+    # ReparsePoint attribute of the LEAF ALONE. So the previous version of this
+    # walk only ever resolved the final component: a junction ANYWHERE ABOVE the
+    # picked folder was never resolved, and $full was compared as typed.
+    #
+    # That is not hypothetical, and it needs no attacker file-system setup,
+    # because Windows ships the junctions itself and their ACLs deny LISTING but
+    # not TRAVERSAL — so `Test-Path` through one succeeds:
+    #
+    #   C:\Documents and Settings          -> C:\Users
+    #   ...\Local Settings                 -> ...\AppData\Local
+    #   ...\Application Data               -> ...\AppData\Roaming
+    #   ...\AppData\Local\Application Data -> itself, recursively
+    #
+    # `C:\Documents and Settings\me` therefore matched neither $env:USERPROFILE
+    # nor the parent-of-home entry and handed over the entire profile;
+    # `...\Local Settings\Google\Chrome\User Data` walked past the
+    # %LOCALAPPDATA%\Google prefix to Chrome's Cookies and Login Data, and
+    # `...\Application Data\Microsoft\Protect` past %APPDATA%\Microsoft to the
+    # DPAPI master keys that decrypt them. The Unix scripts never had this:
+    # `cd -P` plus `pwd -P` resolves every component by construction, which is
+    # exactly the property this had to reproduce by hand.
     #
     # `ResolveLinkTarget` is .NET 6+ and absent from Windows PowerShell 5.1, so
-    # walk `.Target` instead. Bounded, and it FAILS CLOSED: a link that cannot
-    # be resolved is refused rather than compared as itself.
+    # walk `.Target` — now over every ancestor, restarting the walk after each
+    # substitution because a target may itself sit under another junction.
+    # Bounded, and it FAILS CLOSED: an ancestor that cannot be read or a link
+    # that cannot be resolved is refused, never compared as itself.
     try {
-        $walk = Get-Item -LiteralPath $full -Force -ErrorAction Stop
-        $hops = 0
-        while ($walk.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
-            $target = $walk.Target
-            if (-not $target) {
-                return "That folder is a link this script cannot follow, so it will not be shared: $full"
-            }
-            if ($target -is [array]) { $target = $target[0] }
-            if (-not [System.IO.Path]::IsPathRooted($target)) {
-                $target = Join-Path (Split-Path -Parent $walk.FullName) $target
-            }
-            $full = [System.IO.Path]::GetFullPath($target).TrimEnd('\')
-            $hops++
-            if ($hops -gt 8) {
+        $rounds = 0
+        while ($true) {
+            $rounds++
+            if ($rounds -gt 32) {
                 return "That folder is a chain of links this script will not follow: $Path"
             }
-            $walk = Get-Item -LiteralPath $full -Force -ErrorAction Stop
+
+            $parts = $full -split '\\'
+            $acc = $parts[0] + '\'
+            $substituted = $false
+
+            for ($i = 1; $i -lt $parts.Count; $i++) {
+                $acc = [System.IO.Path]::Combine($acc, $parts[$i])
+                $node = Get-Item -LiteralPath $acc -Force -ErrorAction Stop
+                if (-not ($node.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) { continue }
+
+                $target = $node.Target
+                if (-not $target) {
+                    return "That folder is a link this script cannot follow, so it will not be shared: $Path"
+                }
+                if ($target -is [array]) { $target = $target[0] }
+                if (-not [System.IO.Path]::IsPathRooted($target)) {
+                    $target = Join-Path (Split-Path -Parent $node.FullName) $target
+                }
+
+                # Everything below the junction is carried across unchanged. The
+                # rebuilt path goes back through GetFullPath so a relative or
+                # dotted target cannot survive as one.
+                $rest = ''
+                if ($i -lt ($parts.Count - 1)) {
+                    $rest = '\' + (($parts[($i + 1)..($parts.Count - 1)]) -join '\')
+                }
+                if ($rest -eq '') {
+                    $full = [System.IO.Path]::GetFullPath($target).TrimEnd('\')
+                } else {
+                    $full = [System.IO.Path]::GetFullPath($target.TrimEnd('\') + $rest).TrimEnd('\')
+                }
+                $substituted = $true
+                break
+            }
+
+            if (-not $substituted) { break }
         }
     } catch {
         return "Could not work out where that folder really is, so it will not be shared: $Path"

@@ -21,7 +21,16 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -115,6 +124,13 @@ const FAST = process.argv.includes("--fast");
 
 type Result = { name: string; ok: boolean; detail: string };
 const results: Result[] = [];
+
+/*
+ * Gates that need a tool this machine may not have. A gate that quietly passes
+ * when it could not run is the 2026-09-03 lesson wearing a different hat, so
+ * anything landing here is NAMED in the report instead of disappearing.
+ */
+const SKIPPED: string[] = [];
 const check = (name: string, fn: () => string) => {
   try {
     results.push({ name, ok: true, detail: fn() });
@@ -4844,11 +4860,47 @@ check("setup codes round-trip, and refuse everything malformed", () => {
     // Two folders under one label collide in the checklist and one is silently
     // never added, while the list reads complete.
     [b64('{"n":"a","f":[{"l":"Photos","p":"C:\\\\a"},{"l":"Photos","p":"C:\\\\b"}]}'), "duplicate labels"],
+    // VARIATION SELECTORS. The refusal used to be an enumeration; it was
+    // replaced by Unicode general categories precisely because an enumeration
+    // cannot be made complete — and the replacement still missed U+FE00-FE0F
+    // and U+E0100-E01EF, which are zero width and which NFKC does not fold. So
+    // `Invoices\uFE00` rebuilt the twin-row attack character for character
+    // after it had been "fixed". Refused by property now.
+    [b64('{"n":"a","f":[{"l":"Invoices\\ufe00","p":"C:\\\\y"}]}'), "a variation selector in a label"],
+    [b64('{"n":"a","f":[{"l":"Invoices\\udb40\\udd00","p":"C:\\\\y"}]}'), "an ideographic variation selector in a label"],
+    [b64('{"n":"a","f":[{"l":"Invoices\\u180b","p":"C:\\\\y"}]}'), "a Mongolian free variation selector in a label"],
+    // The TWIN ROW itself, which is the thing the character classes exist to
+    // stop. U+FE0F is deliberately NOT refused outright — it is the emoji
+    // presentation selector and `Photos \u2764\uFE0F` is a folder somebody
+    // has — so this pair has to be caught by the duplicate FOLD instead. If
+    // the fold stops stripping default-ignorables, this is what goes red.
+    [
+      b64('{"n":"a","f":[{"l":"Invoices","p":"C:\\\\a"},{"l":"Invoices\\ufe0f","p":"C:\\\\Users\\\\me"}]}'),
+      "two labels differing only by an emoji presentation selector",
+    ],
+    // Same shape with an ordinary space: `.v-setup-name` is `white-space:
+    // normal`, so these are one picture. The refusal must not depend on a CSS
+    // declaration in another file, so the fold collapses runs itself.
+    [
+      b64('{"n":"a","f":[{"l":"My Photos","p":"C:\\\\a"},{"l":"My  Photos","p":"C:\\\\Users\\\\me"}]}'),
+      "two labels differing only by a doubled space",
+    ],
   ];
 
   for (const [code, why] of rejected) {
     must(decodeSetupCode(code) === null, `accepted ${why}`);
   }
+
+  // And the carve-out has to be real, or the fix is a different outage: the
+  // code is machine-generated from folder names the person already has, so
+  // refusing U+FE0F would refuse the WHOLE code over one honestly-named
+  // folder, on the happy path, with nothing to do but rename it.
+  const emoji = { machine: "m", folders: [{ label: "Photos \u2764\ufe0f", path: "D:\\Photos" }] };
+  const emojiRound = decodeSetupCode(encodeSetupCode(emoji));
+  must(
+    emojiRound !== null && emojiRound.folders[0].label === "Photos \u2764\ufe0f",
+    "refused an ordinary folder name carrying an emoji — the label is stored as sent",
+  );
 
   // Too many folders is refused rather than truncated: a truncated list renders
   // as a complete checklist, and the folders past the cut are silently absent.
@@ -5133,6 +5185,130 @@ done
   return `${driven} verdicts from the real check_folder, over 2 scripts x 2 home directories (one with a space)`;
 });
 
+/*
+ * The Windows half of the same question, EXECUTED.
+ *
+ * The blocklist is only a barrier if the path it compares is the path the
+ * browser will actually read, and on Windows that means resolving reparse
+ * points. The script did resolve them — for the FINAL COMPONENT ONLY.
+ * `GetFullPath` does not follow a junction, and `Get-Item` reports the
+ * ReparsePoint attribute of the leaf, so a junction anywhere ABOVE the picked
+ * folder was never resolved and the path was compared as typed.
+ *
+ * Windows ships the junctions that exploit this, and their ACLs deny listing
+ * but not traversal, so `Test-Path` through one succeeds:
+ *
+ *   C:\Documents and Settings\me            -> the whole user profile
+ *   ...\Local Settings\Google\Chrome\...    -> past the %LOCALAPPDATA%\Google entry
+ *   ...\Application Data\Microsoft\Protect  -> past %APPDATA%\Microsoft, to the DPAPI keys
+ *
+ * The Unix scripts never had it, because `cd -P` plus `pwd -P` resolves every
+ * component by construction. This gate exists to hold the PowerShell copy to
+ * the same standard, by driving it rather than reading it — the text gate above
+ * would have reported this one intact too, exactly as it did on 2026-09-03.
+ *
+ * The resolver block is sliced out of the real script and only its SEPARATORS
+ * are substituted, so the walk, the restart, the bound and the fail-closed
+ * catch are the shipped ones. Symlinks stand in for junctions: .NET reports
+ * both through the same ReparsePoint attribute and the same `.Target`, which is
+ * the property under test. Break-verified — the pre-fix block returns the alias
+ * unresolved and fails every case below.
+ */
+check("the Windows script resolves EVERY path component, not just the leaf", () => {
+  let hasPwsh = true;
+  try {
+    execFileSync("pwsh", ["-NoProfile", "-Command", "exit 0"], { stdio: "pipe" });
+  } catch {
+    hasPwsh = false;
+  }
+  if (!hasPwsh) {
+    SKIPPED.push(
+      "the Windows path resolver in windows-share-setup.ps1 — no `pwsh` here (snap install powershell --classic)",
+    );
+    return "NOT RUN — pwsh absent, named under 'could not be run' below";
+  }
+
+  const src = readFileSync("scripts/windows-share-setup.ps1", "utf8").replace(/^\uFEFF/, "");
+  const from = src.indexOf("    try {\n        $rounds = 0");
+  must(from >= 0, "the ancestor-resolving walk is gone from windows-share-setup.ps1");
+  const marker = src.indexOf('        return "Could not work out where that folder really is', from);
+  must(marker >= 0, "the fail-closed catch is gone from the resolver");
+  const to = src.indexOf("}\n", marker) + 2;
+  let block = src.slice(from, to);
+
+  // Separator substitution ONLY, and every one asserted, so a rewrite that
+  // changes the shape fails here rather than silently testing nothing.
+  const subs: [string, string][] = [
+    ["-split '\\\\'", "-split ([regex]::Escape($SEP))"],
+    ["$parts[0] + '\\'", "$SEP"],
+    ["$rest = '\\' +", "$rest = $SEP +"],
+    ["-join '\\'", "-join $SEP"],
+    ["TrimEnd('\\')", "TrimEnd([char]$SEP)"],
+  ];
+  for (const [a, b] of subs) {
+    must(block.includes(a), `the resolver no longer contains ${a} — this gate is testing nothing`);
+    block = block.split(a).join(b);
+  }
+
+  const root = mkdtempSync(join(tmpdir(), "vessel-pwsh-"));
+  try {
+    const harness = join(root, "resolve.ps1");
+    writeFileSync(
+      harness,
+      "param([string] $Path)\n" +
+        "$SEP = [string][System.IO.Path]::DirectorySeparatorChar\n" +
+        "$full = [System.IO.Path]::GetFullPath($Path).TrimEnd([char]$SEP)\n" +
+        "function Test-It {\n" +
+        block +
+        "\n  return $full\n}\nTest-It\n",
+      "utf8",
+    );
+
+    const real = realpathSync(root);
+    mkdirSync(join(root, "home", "me", "Documents"), { recursive: true });
+    mkdirSync(join(root, "home", "me", ".ssh"), { recursive: true });
+    // The shipped Windows aliases, reproduced in shape: an ancestor link, a
+    // chain of them, and a leaf link (which the pre-fix code did handle).
+    symlinkSync(join(root, "home"), join(root, "Documents and Settings"));
+    symlinkSync(join(root, "Documents and Settings"), join(root, "chain"));
+    symlinkSync(join(root, "home", "me", "Documents"), join(root, "home", "me", "leaflink"));
+    symlinkSync(join(root, "nowhere-at-all"), join(root, "dangling"));
+
+    const run = (p: string) =>
+      execFileSync("pwsh", ["-NoProfile", "-File", harness, p], { encoding: "utf8" }).trim();
+
+    const cases: [string, string, string][] = [
+      ["an ancestor link", join(root, "Documents and Settings", "me", "Documents"), join(real, "home/me/Documents")],
+      ["a chain of ancestor links", join(root, "chain", "me", "Documents"), join(real, "home/me/Documents")],
+      ["a leaf link", join(root, "home", "me", "leaflink"), join(real, "home/me/Documents")],
+      ["an ancestor link onto a blocked child", join(root, "Documents and Settings", "me", ".ssh"), join(real, "home/me/.ssh")],
+      ["no link at all", join(root, "home", "me", "Documents"), join(real, "home/me/Documents")],
+    ];
+    let driven = 0;
+    for (const [what, input, want] of cases) {
+      const got = run(input);
+      must(
+        got === want,
+        `${what}: the resolver returned "${got}" where the real folder is "${want}" — ` +
+          "a path that resolves to somewhere else is compared against the blocklist as typed",
+      );
+      driven += 1;
+    }
+
+    // And it must FAIL CLOSED rather than pass a path it could not resolve.
+    const dangling = run(join(root, "dangling"));
+    must(
+      dangling.startsWith("Could not work out") || dangling.startsWith("That folder is a link"),
+      `a link that cannot be resolved was not refused — it returned "${dangling}"`,
+    );
+    driven += 1;
+
+    return `${driven} verdicts from the real resolver: ancestor, chained, leaf and unresolvable links`;
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 // ---- 6. Things only a person can judge -------------------------------------
 
 const UNCHECKABLE = [
@@ -5157,6 +5333,10 @@ if (failed.length === 0) {
   console.log(`${results.length} checks passed${FAST ? " (fast — duel simulation skipped)" : ""}.`);
   console.log("Still needs a person:");
   for (const u of UNCHECKABLE) console.log(`  · ${u}`);
+  if (SKIPPED.length > 0) {
+    console.log("Could NOT be run on this machine:");
+    for (const sk of SKIPPED) console.log(`  · ${sk}`);
+  }
 } else {
   console.log(`${failed.length} of ${results.length} checks FAILED.`);
   process.exitCode = 1;

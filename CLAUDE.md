@@ -1253,6 +1253,21 @@ wrong machine is worse than not running. `docs/pi-sharing-host.md` and
   stores is the whole attack - as are two rows that render identically, one of which ticks off and
   one of which does not. **Duplicate labels are refused too**, since they collide in the checklist's
   done-set.
+- **The filter refuses what cannot belong in a label; the FOLD refuses what merely reads like another
+  label — and the split is the decision** (2026-09-04). Refusing by Unicode property rather than by
+  enumeration was right and still missed `\p{Variation_Selector}`: U+FE00–FE0F and U+E0100–E01EF are
+  zero width, **NFKC does not fold them**, so `Invoices\uFE00` rebuilt the twin-row attack character
+  for character after it was fixed. The filter now refuses
+  `\p{Default_Ignorable_Code_Point}`/`\p{Variation_Selector}` — a **strict superset** of the old
+  hand-list, swept over all 0x110000 code points to prove it. **U+FE0E and U+FE0F are carved out on
+  purpose**: they are the emoji presentation selectors, `Photos ❤️` is a folder somebody has, and the
+  code is *machine-generated from names that already exist* — so refusing them would refuse the whole
+  code over one honest folder, on the happy path, which is a security fix turned into an outage.
+  `foldLabel` pays for the carve-out by stripping every default-ignorable and collapsing whitespace
+  runs before the duplicate test, so the twins collide and the code is refused anyway. **Labels are
+  still stored as sent**; folding only the comparison is what keeps refuse-never-repair intact. The
+  whitespace collapse lives in `foldLabel` and not in `.v-setup-name`'s `white-space: normal`, because
+  **a refusal must not depend on a CSS declaration in another file.**
 - **The PowerShell JSON escaper branches on the integer code point, never on `switch`.** PowerShell's
   `switch` compares linguistically, so every zero-collation-weight character - emoji variation
   selectors, ZWJ, zero-width space, soft hyphen - compared equal to the first zero-weight clause and
@@ -1303,6 +1318,20 @@ wrong machine is worse than not running. `docs/pi-sharing-host.md` and
     Unix (`readlink -f` is absent on BSD, and failing silently there re-opens the hole); `GetFullPath`
     plus a bounded `.Target` walk on Windows (`ResolveLinkTarget` is .NET 6+ and absent from
     PowerShell 5.1). **A path that cannot be resolved is refused, never compared raw.**
+  - **EVERY component, not just the leaf** (2026-09-04). `GetFullPath` does not follow a junction and
+    `Get-Item` reports the `ReparsePoint` attribute of the **leaf**, so the Windows walk resolved the
+    last component and compared every ancestor as typed — and **Windows ships the junctions that
+    exploit that**, with ACLs that deny listing but not traversal, so `Test-Path` through one
+    succeeds. `C:\Documents and Settings\<user>` handed over the whole profile while matching neither
+    `%USERPROFILE%` nor the parent-of-home entry; `…\Local Settings\Google\Chrome\User Data` walked
+    past `%LOCALAPPDATA%\Google` to Chrome's cookies, and `…\Application Data\Microsoft\Protect` past
+    `%APPDATA%\Microsoft` to the DPAPI keys that decrypt them. **The Unix scripts never had this**,
+    because `cd -P`/`pwd -P` resolves every component by construction — which is exactly why the
+    PowerShell copy has to do it by hand, restarting the walk after each substitution since a target
+    may itself sit under another junction. **Gated by execution under `pwsh`**, separators
+    substituted and every substitution asserted; break-verified twice, once against the pre-fix block
+    and once with the block's shape intact and only the loop narrowed to the leaf — the version a
+    structural gate passes.
   - **Collapse a leading `//`.** Bash's `pwd -P` preserves it, so `//home/user` canonicalised to
     itself and compared unequal to `/home/user`. Measured, not theorised.
   - **Block the parent of home** - `/home`, `/Users`, `C:\Users`. The cheapest exploit of the lot:

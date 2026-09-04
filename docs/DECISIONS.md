@@ -13,6 +13,67 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-09-04 — reviewing the fix found the fix was half of one
+
+The pre-deploy review of yesterday's remediation, before anything shipped. Two findings, and the
+first is **item 19 again, one path component up**. `npm run check` goes **70 → 71**; both fixes
+break-verified. The account is in `docs/SECURITY-AUDIT.md` items 29 and 30.
+
+### The lesson is the one this file already had, applied to a fix rather than to code
+
+Yesterday's entry named the shape: *binding is not spending, and a gate that reads a control as
+text confirms the text.* What today adds is that **a remediation is code too, and inherits the same
+doubt.** The Windows canonicalisation was written, reviewed, documented and gated on 2026-09-03 —
+and it resolved the **leaf only**, so every ancestor was still compared as typed. The audit entry
+for item 19 was accurate about what it did; nobody asked how far *"resolve reparse points"*
+reached. Windows ships the junctions that exploit the gap, so it cost an attacker nothing.
+
+The general form, worth keeping: **the Unix scripts got this right for free** because `cd -P` plus
+`pwd -P` resolves every component by construction, and the PowerShell copy had to reproduce that
+property by hand. Where one platform gets a guarantee structurally and another has to build it,
+the built one is where to look first — and it is the one a text gate cannot tell apart from the
+real thing.
+
+### Refusing an emoji would have been a security fix that caused an outage
+
+`decodeSetupCode`'s character filter missed the variation selectors, which rebuilt the twin-row
+attack. The obvious fix — refuse them all — is wrong here, and the reason is worth writing down
+because it will look like a weakening later.
+
+U+FE0F is the emoji presentation selector. **The setup code is machine-generated from folder names
+that already exist on the person's disk**, so a blanket refusal would refuse the *entire code*
+because one folder is called `Photos ❤️`, on the happy path, with no remedy but renaming a folder
+the person has had for years. That is not a trade the security argument wins: it converts a
+narrow, conditional attack into a certain, common failure.
+
+So the refusal is split in two, and the split is the decision: **the filter refuses what has no
+business in a label; the fold refuses what merely READS like another label.** The twin-row shape —
+the only shape in which a presentation selector is dangerous — is closed by `foldLabel` stripping
+default-ignorables before the duplicate test, so `Invoices` and `Invoices\uFE0F` collide and the
+code is refused. The dangerous case is still refused; the honest one still works.
+
+Two supporting choices. The filter is asserted a **strict superset** of the hand-list it replaced,
+swept over all 0x110000 code points, because "refuse by property instead of by list" is exactly the
+kind of change that quietly stops refusing something. And the whitespace collapse lives in
+`foldLabel` rather than being left to `.v-setup-name`'s `white-space: normal` — **a refusal must
+not depend on a CSS declaration in another file.**
+
+### A gate that needs a tool the machine lacks is named, never skipped
+
+The Windows gate executes the resolver under `pwsh`, which is not a thing this repo previously
+needed. Making it pass when `pwsh` is absent would be this document's recurring failure in a new
+costume, and making it *fail* would break `npm run check` on any machine without PowerShell —
+including a future deploy from somewhere else.
+
+So it does neither: it reports `NOT RUN` and names itself under **"Could NOT be run on this
+machine"** in the report, beside the existing "still needs a person" list. The suite already
+refuses to imply that green means correct; this extends the same honesty to green meaning *run*.
+
+Symlinks stand in for junctions in that gate, deliberately: .NET surfaces both through the same
+`ReparsePoint` attribute and the same `.Target`, which is the property under test. Only the path
+separators are substituted out of the real script, and **every substitution is asserted**, so a
+rewrite that changes the resolver's shape fails the gate rather than silently testing nothing.
+
 ## 2026-09-03 — the security pass, and the decisions inside it
 
 A commissioned audit of the Worker, the auth stack, the download catalogue and all six scripts,

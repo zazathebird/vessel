@@ -96,21 +96,58 @@ const CONTROL = /[\p{Cc}\u2028\u2029]/u;
  *             refuse a brand-new emoji. Tofu cannot be told from other tofu,
  *             which is the twin-row failure again, and renaming the folder is
  *             a cheaper outcome than handing over the wrong one.
- *   the named set  blanks that are none of the above: U+034F is `Mn`, U+2800 is
- *             `So`, U+115F/U+1160/U+3164/U+FFA0 are `Lo`, U+17B4/U+17B5 are
- *             `Mn`, U+180E is `Cf` and is listed anyway so the measured set
- *             reads as one list. All render at zero or blank width.
- *             (U+17B5 was not measured; it is U+17B4's twin, same block, same
- *             category, equally invisible.)
+ *   `\p{Default_Ignorable_Code_Point}` and `\p{Variation_Selector}`
+ *             the property, not a list of the code points it contains — which
+ *             is the whole point, since the hand-list this replaced named
+ *             U+034F, U+115F, U+1160, U+17B4, U+17B5, U+180E, U+3164 and
+ *             U+FFA0 and *omitted the variation selectors*, U+FE00-FE0F and
+ *             U+E0100-E01EF. Those are zero width, NFKC does not fold them,
+ *             and `Invoices\uFE00` therefore rebuilt the twin-row attack this
+ *             comment is about, character for character, after it was fixed.
+ *             The property is a superset of the old list: nothing it refused
+ *             is now allowed.
  *   `\p{Zs}` bar U+0020  a space that is not the space. U+00A0 is
  *             indistinguishable from U+0020 at any size, and U+3000 is a blank
  *             of a different width — either makes two labels that read the same.
  *
  * `\p{Cc}` is the one `\p{C}` class not here; it is in `CONTROL` above, so
  * between the two every control-ish code point in Unicode is refused.
+ *
+ * **U+FE0E and U+FE0F are the one carve-out, and `foldLabel` is what pays for
+ * it.** They are the emoji presentation selectors and they are ordinary in a
+ * real folder name — `Photos \u2764\uFE0F` is a name somebody has, not an
+ * attack. Refusing them would refuse the WHOLE code over one honest folder,
+ * and the code is machine-generated from names the person already has, so the
+ * failure would land on the happy path with nothing to fix but a rename. They
+ * stay dangerous only in the twin-row shape, and that shape is closed one
+ * level down: `foldLabel` strips every default-ignorable before the duplicate
+ * test, so `Invoices` and `Invoices\uFE0F` collide and the code is refused as
+ * a duplicate. The filter refuses what has no business in a label; the fold
+ * refuses what merely READS like another label.
  */
 const DECEPTIVE =
-  /[\p{Cf}\p{Cs}\p{Co}\p{Cn}\u034f\u115f\u1160\u17b4\u17b5\u180e\u2800\u3164\uffa0]|(?!\u0020)\p{Zs}/u;
+  /(?![\ufe0e\ufe0f])[\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Default_Ignorable_Code_Point}\p{Variation_Selector}\u2800]|(?!\u0020)\p{Zs}/u;
+
+/**
+ * The fold used for the duplicate-label test, and only for it. Three steps, each
+ * answering a measured way two labels render alike while comparing unequal:
+ * strip the default-ignorables and variation selectors (invisible by
+ * definition), NFKC (composed vs decomposed, fullwidth, ligatures), then
+ * collapse runs of whitespace — `My Photos` and `My  Photos` are one picture in
+ * `.v-setup-name`, which is `white-space: normal`. **The refusal must not depend
+ * on a CSS declaration in another file**, so the collapse is here rather than
+ * relying on that.
+ *
+ * Folding the COMPARISON only. The label is stored exactly as sent, because a
+ * normalised label is a label the person's script did not write.
+ */
+function foldLabel(label: string): string {
+  return label
+    .replace(/[\p{Default_Ignorable_Code_Point}\p{Variation_Selector}]/gu, "")
+    .normalize("NFKC")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
 
 export const SETUP_CODE_PREFIX = "VS1.";
 
@@ -218,17 +255,19 @@ export function decodeSetupCode(input: string): SetupPlan | null {
     // complete — the exact failure this decoder's refuse-never-repair rule
     // exists to prevent.
     //
-    // **Compared after NFKC, stored as sent.** Two labels can be different
-    // strings and the same picture: `Réparations` composed and decomposed are
-    // byte-different and pixel-identical in every font, and the compatibility
-    // mappings do the same for a fullwidth `Ｉnvoices` or the `ﬁ` ligature.
+    // **Compared through `foldLabel`, stored as sent.** Two labels can be
+    // different strings and the same picture: `Réparations` composed and
+    // decomposed are byte-different and pixel-identical in every font, and the
+    // compatibility mappings do the same for a fullwidth `Ｉnvoices` or the `ﬁ`
+    // ligature. `Invoices` against `Invoices\uFE0F` is the same trick with an
+    // invisible, and `My Photos` against `My  Photos` with an ordinary space.
     // Each is the twin-row attack with a different character, and each collides
     // in the done-set exactly as an exact duplicate does. Folding only the
     // *comparison* keeps refuse-never-repair intact — a normalised label would
     // be a label the person's script did not write.
     const cleanLabel = label.trim();
-    const folded = cleanLabel.normalize("NFKC");
-    if (folders.some((f) => f.label.normalize("NFKC") === folded)) return null;
+    const folded = foldLabel(cleanLabel);
+    if (folders.some((f) => foldLabel(f.label) === folded)) return null;
 
     folders.push({ label: cleanLabel, path: path.trim() });
   }
