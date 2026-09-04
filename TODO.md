@@ -6,6 +6,47 @@ what is left to do.
 
 ---
 
+## 2026-09-04 — the review of the remediation, and the deploy
+
+`npm run check` is **71 green**. Two findings from reviewing yesterday's own fixes before shipping
+— the Windows walk resolved the leaf and took every ancestor on trust, and `decodeSetupCode`'s
+property-based refusal still missed the variation selectors. Both fixed, both break-verified, the
+Windows one twice. `docs/DECISIONS.md` and `docs/SECURITY-AUDIT.md` (items 29–30) carry the
+account.
+
+**Deployed 2026-09-04** — migration `0008` applied to remote D1 first, then Worker version
+`ad36fcb6-7084-4e3b-82fd-4bb5d8979b51`. Verified in production, not the repo: eight routes 200, the
+shipped bundle `index-DR-cYEJF.js` carries the `Default_Ignorable_Code_Point` refusal, HTML carries
+no ETag or Last-Modified, `/api/health` 200. Rollback is version
+`5e7515a1-b008-47e2-ba19-92717462e01c`.
+
+### Two open items closed by looking at production rather than reasoning about it
+
+- **The legacy download-code question is moot.** `download_codes` holds **zero rows** in
+  production, and zero of them are the `item_id IS NOT NULL AND slug IS NULL` shape. So there is
+  nothing in any customer's hands to retire, the "business decision" the 2026-09-03 entry routed to
+  the client does not exist, and no backfill is needed. **What is left is dead weight**: the
+  `row.slug !== null` guard in `opened()` now only preserves a hole for rows that cannot exist.
+  Worth dropping so a restored backup cannot reintroduce one — small, and not urgent.
+- **The Windows script bypass was never served to anybody.** `download_files` holds one row, an
+  abandoned draft with `uploaded_at` null, and `download_pages` one page. The setup scripts have
+  never been published through the downloads editor, so no customer has ever held a copy of the
+  vulnerable `.ps1`.
+
+### Next, in order
+
+1. **The repo is PUBLIC and is 8 commits behind.** `docs/SECURITY-AUDIT.md` carries working exploit
+   detail; everything it describes is now fixed and nothing vulnerable was ever distributed, so
+   publishing it is defensible — but it is a disclosure decision and it is the client's, not one to
+   take by pushing. Pages also auto-deploys from `main` and is the rollback, so the rollback is
+   stale until this happens.
+2. **Phase 2 has still never been driven by eye** — pairing, drive picking, the agent tab's states,
+   a real two-tab WebRTC browse and download. `linux2go` now has Chromium 152 with refreshes held,
+   sleep masked and a share root, which is what that walkthrough needs.
+3. The 2026-09-03 items below still stand.
+
+---
+
 ## 2026-09-03 — the security pass
 
 A commissioned audit of the Worker, the auth stack, the download catalogue and all six scripts,
