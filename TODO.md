@@ -7,7 +7,9 @@ what is left to do.
 ---
 
 ## 2026-09-06 — the second follow-up security pass
-`npm run check` is **75 green** (64 fast), `npm run test:auth` **398**. A third full reading of
+`npm run check` is **75 green** (64 fast), `npm run test:auth` **398**. **Deployed** as Worker
+`014152a8-be8f-4258-ab0e-cf8cd3f7cfe7` (commit `23bff4a`, pushed); rollback `4542397b`, no
+migration. A third full reading of
 the Worker, the auth client, the sharing agent, the share scripts and every front-end sink, asking
 one question of each route: *what does this change for somebody who is not the caller?* Two
 findings fixed and gated, one hardening, recorded as `docs/SECURITY-AUDIT.md` items 34–36:

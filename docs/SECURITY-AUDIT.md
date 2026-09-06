@@ -21,7 +21,9 @@ this change for somebody who is not the caller?* Read in full: every file under 
 `src/auth/`, `src/share/`, the migrations, the three share scripts and `launch.bat`, the
 front-end sinks (`grep` over `src/` for every HTML and URL sink — there are none that take
 data), the head injection and its escaper. `npm run check` is **75** (64 fast),
-`npm run test:auth` **398** (379 → 398).
+`npm run test:auth` **398** (379 → 398). **Deployed 2026-09-06** as Worker
+`014152a8-be8f-4258-ab0e-cf8cd3f7cfe7` (rollback `4542397b`, no migration); verified live —
+bundle `index-BGngf5mi.js`, a cross-site POST answered 403.
 
 ### 34. A save that widens was a session-only write
 
