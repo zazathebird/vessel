@@ -35,7 +35,7 @@
  *    that 404s at the customer.
  */
 
-import { json, noStore, readJsonLenient, requireAccount } from "./accounts";
+import { assertPassword, json, noStore, readJsonLenient, requireAccount } from "./accounts";
 import { BadRequest } from "./encoding";
 import type { Env } from "./env";
 import { verify } from "./session";
@@ -109,6 +109,31 @@ async function operator(request: Request, env: Env) {
   const account = await requireAccount(request, env);
   if (account.is_operator !== 1) throw new BadRequest("Only the operator can do that.", 403);
   return account;
+}
+
+/**
+ * The operator and their body, for a route that *releases* something — the
+ * `admin.ts` shape, adopted here on 2026-09-06 at the client's decision.
+ *
+ * A session says who you are, never how you proved it. Every write in this
+ * file was session-gated, and one of them is the most damaging write on the
+ * site: a stolen operator cookie could `finishUpload` replacement bytes for a
+ * program customers download and run, and the bytes outlive the cookie by
+ * years. The same cookie could grant a stranger a private page or delete a
+ * customer's. So the four writes here that release, destroy or admit —
+ * `finishUpload`, `deletePage`, `deleteFile`, `addGrant` — take the password;
+ * `mintCode` in `downloads.ts` and `publishSiteConfig` in `site-config.ts` are
+ * the other two. **Saves and edits deliberately do not**: the editor saves
+ * often, and a password on every save is a password typed carelessly. The
+ * line is "does this change what somebody *else* can get", not "does this
+ * write". `assertPassword` carries its own rate limit, so this is a bucket and
+ * not an oracle.
+ */
+async function proven(request: Request, env: Env, wording: string) {
+  const account = await operator(request, env);
+  const b = await body(request);
+  await assertPassword(request, env, account, b.authSecret, wording);
+  return { account, b };
 }
 
 export interface PageRow {
@@ -646,8 +671,7 @@ export async function savePage(request: Request, env: Env): Promise<Response> {
  * to win, it is the database.
  */
 export async function deletePage(request: Request, env: Env): Promise<Response> {
-  await operator(request, env);
-  const b = await body(request);
+  const { b } = await proven(request, env, "Enter your password to delete a page.");
   const slug = str(b.slug, 64);
 
   const { results } = await env.DB.prepare("SELECT id FROM download_files WHERE slug = ?")
@@ -920,8 +944,7 @@ export async function saveFile(request: Request, env: Env): Promise<Response> {
 }
 
 export async function deleteFile(request: Request, env: Env): Promise<Response> {
-  await operator(request, env);
-  const b = await body(request);
+  const { b } = await proven(request, env, "Enter your password to delete a file.");
   const id = fileId(b.id);
 
   const gone = await env.DB.prepare("DELETE FROM download_files WHERE id = ?").bind(id).run();
@@ -998,8 +1021,11 @@ export async function uploadPart(request: Request, env: Env, url: URL): Promise<
 }
 
 export async function finishUpload(request: Request, env: Env): Promise<Response> {
-  await operator(request, env);
-  const b = await body(request);
+  // The password is asked at the *finish*, not the begin: this is the call that
+  // makes the bytes live, and it is the one a replacement upload cannot
+  // complete without. A begin or a part without it leaves an invisible draft,
+  // which is the state a closed tab leaves anyway.
+  const { b } = await proven(request, env, "Enter your password to publish the file.");
   const id = fileId(b.id);
   const uploadId = str(b.uploadId, 200);
   const parts = Array.isArray(b.parts) ? b.parts : [];
@@ -1066,8 +1092,7 @@ export async function listGrants(request: Request, env: Env): Promise<Response> 
 }
 
 export async function addGrant(request: Request, env: Env): Promise<Response> {
-  await operator(request, env);
-  const b = await body(request);
+  const { b } = await proven(request, env, "Enter your password to give somebody access.");
 
   /*
    * **Looked up by `handle_lower`, which is the column that exists for this.**

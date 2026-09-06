@@ -21,7 +21,9 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../auth/api";
 import type { DownloadCodeRow, DownloadPageSummary } from "../auth/api";
+import { useSession } from "../auth/SessionContext";
 import { useConfig } from "../config/ConfigContext";
+import { derivePassword } from "../share/unlock";
 
 function day(ms: number | null): string {
   if (!ms) return "—";
@@ -63,6 +65,7 @@ function state(row: DownloadCodeRow): { label: string; tone: string } {
 
 export function DownloadCodes() {
   const { say } = useConfig();
+  const { me } = useSession();
   const [codes, setCodes] = useState<DownloadCodeRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -77,6 +80,13 @@ export function DownloadCodes() {
   const [pages, setPages] = useState<DownloadPageSummary[]>([]);
   const [maxUses, setMaxUses] = useState(5);
   const [days, setDays] = useState(0);
+  /**
+   * Minting is a release, and a release demands the password (2026-09-06, the
+   * client's call): the Worker refuses a mint on a session alone. Typed here,
+   * derived to an auth secret in the browser, never sent as plaintext (§4).
+   * Kept across mints so a run of three codes is three clicks and one password.
+   */
+  const [password, setPassword] = useState("");
 
   /** The plaintext of the code just minted. Held in state and nowhere else. */
   const [fresh, setFresh] = useState<string | null>(null);
@@ -108,12 +118,14 @@ export function DownloadCodes() {
     if (busy) return;
     setBusy(true);
     try {
+      const { authSecret } = await derivePassword(me?.account?.handle ?? "", password);
       const result = await api.adminDownloadMint({
         label: label.trim(),
         item: null,
         slug: item || null,
         maxUses,
         days,
+        authSecret,
       });
       setFresh(result.code);
       setLabel("");
@@ -254,7 +266,24 @@ export function DownloadCodes() {
           </div>
         </div>
 
-        <button type="submit" className="v-btn" disabled={busy}>
+        <div className="v-field">
+          <label className="v-field-label" htmlFor="v-dlc-pass">
+            Your password
+          </label>
+          <input
+            id="v-dlc-pass"
+            className="v-input"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
+          />
+          <p className="v-field-hint">
+            A code is a key to paid files, so minting one asks for your password every time.
+          </p>
+        </div>
+
+        <button type="submit" className="v-btn" disabled={busy || !password}>
           {busy ? "Working…" : "Mint a code"}
         </button>
       </form>

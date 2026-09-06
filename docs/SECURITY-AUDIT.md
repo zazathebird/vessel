@@ -19,8 +19,11 @@ cited by number elsewhere. Findings are grouped as before: **fixed**, **checked 
 A second reading of the whole Worker, the browser auth layer and the phase-2 sharing agent, after
 the 2026-09-05 session was cut short by a crash. Read in full: every file under `worker/`,
 `src/auth/`, `src/share/`, the migrations, `wrangler.toml`, `public/_headers`, and the live DNS
-and response headers. **Nothing here is deployed.** `npm run check` is **73** (62 fast),
-`npm run test:auth` **372** (366 → 372; the 2026-09-05 sections landed).
+and response headers. **Deployed 2026-09-06** as Worker version
+`4542397b-b531-41f2-b368-81a9ec47d386` (rollback `ad36fcb6-7084-4e3b-82fd-4bb5d8979b51`, no
+migration); verified live — eight routes 200, bundle `index-Diu_WTOh.js`, a 70KB claim body 413,
+no validators on HTML. `npm run check` is **74** (63 fast),
+`npm run test:auth` **379** (366 → 372 for the 2026-09-05 sections, → 379 for item 33).
 
 ### 32. The crash left the body-bound fix half-applied, and the half that landed was a regression
 
@@ -42,6 +45,17 @@ oversized body (and every harness body) is refused without a cancel, and the can
 for the chunked or lying body it exists for. Under `wrangler dev` that path still kills the
 server; that is a wrangler bug, noted in `docs/HANDOFF.md`, and it cannot be reached by a browser
 on the real site.
+
+### 33. The release-shaped operator writes took a session alone
+
+Found in the same reading, routed to the client as decision item 3 below, **decided and fixed the
+same day**: "yes, on releases only." Six routes now demand the operator's password through a
+`proven()` helper per file — `mintCode`, `addGrant`, `finishUpload`, `deletePage`, `deleteFile`
+and `publishSiteConfig` — and the seven edit routes deliberately do not; `npm run check` asserts
+both halves and `npm run test:auth` drives all six with a wrong proof or a missing one and reads
+the 401, before any lookup. `docs/DECISIONS.md` 2026-09-06 has the line and why it is drawn where
+it is. The screens gained one shared `ProofDialog` and four inline password fields; the upload
+proves the password before its first part.
 
 ### Checked this pass and found sound
 
@@ -73,8 +87,8 @@ on the real site.
 
 ### Needs the client's decision — not a fix
 
-3. **The downloads editor's writes and the site-config publish are session-gated, not
-   password-proven.** Item 16 put `proven()` in front of every write in `admin.ts` on the argument
+3. ~~**The downloads editor's writes and the site-config publish are session-gated, not
+   password-proven.**~~ — **decided 2026-09-06: releases only; fixed as item 33.** Item 16 put `proven()` in front of every write in `admin.ts` on the argument
    that a session says who you are and never how you proved it. The same argument covers
    `POST /api/site-config` and the sixteen operator routes in `downloadPages.ts` /
    `downloads.ts`, and one of them is the most damaging write on the site: a stolen operator cookie

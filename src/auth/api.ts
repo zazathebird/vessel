@@ -176,8 +176,10 @@ export const api = {
   totp: (ticket: string, code: string) => post<SignInResult>("/api/auth/totp", { ticket, code }),
   signout: () => post<{ status: string }>("/api/auth/signout", {}),
   /** Publish the site's appearance to every visitor. Operator only — 403 otherwise. */
-  publishSiteConfig: (config: unknown) =>
-    post<{ status: string; config: unknown }>("/api/site-config", { config }),
+  // **Carries the operator's password proof** (2026-09-06): publishing reaches
+  // every visitor's page at once, and the Worker refuses it on a session alone.
+  publishSiteConfig: (config: unknown, authSecret: string) =>
+    post<{ status: string; config: unknown }>("/api/site-config", { config, authSecret }),
 
   // Operator administration. Each refuses a caller who is not an operator, so a
   // non-operator reaching these gets the Worker's 403 wording rather than a
@@ -294,33 +296,52 @@ export const api = {
     ),
 
   adminDownloadsList: () => call<{ codes: DownloadCodeRow[] }>("/api/admin/downloads"),
+  /*
+   * The six release-shaped writes carry `authSecret` (2026-09-06, the client's
+   * decision): mint, grant, finish-upload, delete page, delete file, and
+   * `publishSiteConfig` above. Required arguments rather than optional ones, for
+   * the reason the admin calls give — a caller cannot omit it and meet the 401
+   * in production. Saves, edits, ordering and upload parts stay session-only.
+   */
   adminDownloadMint: (body: {
     label: string;
     item: string | null;
     slug: string | null;
     maxUses: number;
     days: number;
+    authSecret: string;
   }) => post<{ code: string }>("/api/admin/downloads/mint", body),
   adminDownloadRevoke: (ref: string) =>
     post<{ ok: true }>("/api/admin/downloads/revoke", { ref }),
 
   adminPageSave: (body: Record<string, unknown>) =>
     post<{ ok: true; slug: string }>("/api/admin/downloads/page", body),
-  adminPageDelete: (slug: string) =>
-    post<{ ok: true }>("/api/admin/downloads/page/delete", { slug }),
+  adminPageDelete: (slug: string, authSecret: string) =>
+    post<{ ok: true }>("/api/admin/downloads/page/delete", { slug, authSecret }),
   adminPageOrder: (slugs: string[]) =>
     post<{ ok: true }>("/api/admin/downloads/page/order", { slugs }),
   adminBlocksSave: (slug: string, blocks: DownloadBlock[]) =>
     post<{ ok: true }>("/api/admin/downloads/blocks", { slug, blocks }),
   adminFileSave: (body: Record<string, unknown>) =>
     post<{ ok: true; id: string }>("/api/admin/downloads/file", body),
-  adminFileDelete: (id: string) => post<{ ok: true }>("/api/admin/downloads/file/delete", { id }),
+  adminFileDelete: (id: string, authSecret: string) =>
+    post<{ ok: true }>("/api/admin/downloads/file/delete", { id, authSecret }),
   adminFileOrder: (slug: string, ids: string[]) =>
     post<{ ok: true }>("/api/admin/downloads/file/order", { slug, ids }),
   adminUploadBegin: (id: string, contentType: string) =>
     post<{ uploadId: string }>("/api/admin/downloads/upload/begin", { id, contentType }),
-  adminUploadFinish: (id: string, uploadId: string, parts: { part: number; etag: string }[]) =>
-    post<{ ok: true; size: number }>("/api/admin/downloads/upload/finish", { id, uploadId, parts }),
+  adminUploadFinish: (
+    id: string,
+    uploadId: string,
+    parts: { part: number; etag: string }[],
+    authSecret: string,
+  ) =>
+    post<{ ok: true; size: number }>("/api/admin/downloads/upload/finish", {
+      id,
+      uploadId,
+      parts,
+      authSecret,
+    }),
   adminUploadAbort: (id: string, uploadId: string) =>
     post<{ ok: true }>("/api/admin/downloads/upload/abort", { id, uploadId }),
   adminGrants: () => call<{ grants: DownloadGrantRow[] }>("/api/admin/downloads/grants"),
@@ -330,6 +351,7 @@ export const api = {
     item: string | null;
     label: string;
     days: number;
+    authSecret: string;
   }) => post<{ ok: true }>("/api/admin/downloads/grant", body),
   adminGrantRemove: (id: number) =>
     post<{ ok: true }>("/api/admin/downloads/grant/delete", { id }),

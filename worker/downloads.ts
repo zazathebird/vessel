@@ -34,6 +34,7 @@
 
 import {
   assertAttempt,
+  assertPassword,
   buckets,
   json,
   noStore,
@@ -663,9 +664,20 @@ function grantedRefusal(subject: string): BadRequest {
  * again — two clicks, and it keeps the database worthless to anyone who steals it.
  */
 export async function mintCode(request: Request, env: Env): Promise<Response> {
-  await operator(request, env);
+  const account = await operator(request, env);
 
   const body = await readBody(request);
+  /*
+   * **Minting is a release, and a release demands the password** (2026-09-06,
+   * the client's call). A session says who you are, never how you proved it —
+   * the `admin.ts` doctrine — and a stolen operator cookie that could mint an
+   * unscoped code holds every paid file on the site for as long as the code
+   * lives, which is longer than the cookie. Edits stay session-gated; the six
+   * writes that *release* something (`mintCode`, `addGrant`, `finishUpload`,
+   * `deletePage`, `deleteFile`, `publishSiteConfig`) ask. `assertPassword`
+   * carries its own rate limit.
+   */
+  await assertPassword(request, env, account, body.authSecret, "Enter your password to mint a code.");
   const label = typeof body.label === "string" ? body.label.slice(0, 120) : "";
   const itemId = typeof body.item === "string" && body.item ? body.item : null;
   /*

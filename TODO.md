@@ -7,23 +7,33 @@ what is left to do.
 ---
 
 ## 2026-09-06 — the follow-up security pass
+`npm run check` is **74 green**, `npm run test:auth` **379**. **Deployed** as Worker version
+`4542397b-b531-41f2-b368-81a9ec47d386`; rollback `ad36fcb6-7084-4e3b-82fd-4bb5d8979b51`, no migration.
+The 2026-09-05 session died mid-edit (wrangler exiting on a cancelled body — `docs/HANDOFF.md`)
+and left the body-bound fix half-applied with item 23 regressed in the working tree; finished, gated,
+recorded as `docs/SECURITY-AUDIT.md` item 32. A full re-read of the Worker, the auth client and the
+sharing agent found one more thing worth a decision — item 33, decided and fixed the same day — and
+nothing else exploitable. DNSSEC is live and validating (item 7 closed).
 
-`npm run check` is **73 green**, `npm run test:auth` **372**. **Not deployed.** The 2026-09-05
+`npm run check` is **74 green**, `npm run test:auth` **379**. **Deployed.** The 2026-09-05
 session died mid-edit (wrangler exiting on a cancelled body — `docs/HANDOFF.md`) and left the
 body-bound fix half-applied with item 23 regressed in the working tree; finished, gated, recorded as
 `docs/SECURITY-AUDIT.md` item 32. A full re-read of the Worker, the auth client and the sharing
 agent found nothing else exploitable; the sound list is in the same section. DNSSEC is live and
 validating (item 7 closed).
 
-### Needs his decision
+### Decided and done the same day
 
-1. **Password-proof the release-shaped operator writes?** `mintCode`, `addGrant`, `finishUpload`,
-   `deletePage`, `deleteFile` and `publishSiteConfig` are session-only; a stolen operator cookie
-   can replace a program's bytes. Audit item 3 (2026-09-06) has the argument and the narrow shape.
-   Changes how the editor feels, so it is his call, not a fix.
-2. **Deploy the 2026-09-05/06 work** — three worker files changed since `ad36fcb6`; nothing
-   customer-facing, all bounds and a route that was refusing the operator's own setups panel.
-3. `mcclevarty.com` has no DS record. Symmetry only; it just redirects.
+- **Password on the release-shaped writes — "yes, on releases only."** Six routes ask, seven
+  edits do not, both gated (`docs/DECISIONS.md` 2026-09-06, audit item 33). Deployed.
+- **Deployed** — see the verification block in `docs/HANDOFF.md`.
+
+### Still open
+
+1. `mcclevarty.com` has no DS record. Symmetry only; it just redirects.
+2. **The operator surfaces have not been driven by eye since the password fields landed** — the
+   mint form, the grant form, the file form with bytes, the publish row, and the three dialogs.
+   Harness-proven, not seen.
 
 ---
 

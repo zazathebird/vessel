@@ -5455,6 +5455,61 @@ checkAsync("every JSON body the Worker reads is bounded on the stream", async ()
   return `endless body cancelled after ${pulled} chunks; UTF-16 and ASCII overflows 413; lenient reader still 413s; ${readdirSync("worker").filter((f) => f.endsWith(".ts")).length} Worker files read no body bare`;
 });
 
+
+/*
+ * **The six release-shaped operator writes demand the password; the edits do
+ * not** (2026-09-06, the client's decision — `docs/SECURITY-AUDIT.md` item 33).
+ * `npm run test:auth` drives all six with a wrong proof and a missing one; this
+ * is the cheaper shape gate that fails at edit time when a seventh release
+ * route is added without the proof, or when one of the six loses it. The line
+ * it holds is "does this change what somebody *else* can get": a save is not
+ * on it, and the gate says so by asserting the saves do NOT ask, so nobody
+ * "fixes" the editor into a password prompt on every keystroke.
+ */
+check("the release-shaped operator writes demand the password, and the edits do not", () => {
+  const files = {
+    "worker/downloadPages.ts": readFileSync("worker/downloadPages.ts", "utf8"),
+    "worker/downloads.ts": readFileSync("worker/downloads.ts", "utf8"),
+    "worker/site-config.ts": readFileSync("worker/site-config.ts", "utf8"),
+  };
+  const bodyOf = (src: string, name: string): string => {
+    const start = src.indexOf(`export async function ${name}(`);
+    must(start >= 0, `${name} not found`);
+    const rest = src.slice(start + 1);
+    const next = rest.search(/\nexport (async )?function /);
+    return next >= 0 ? rest.slice(0, next) : rest;
+  };
+  const asks = (src: string) => /\bproven\(|\bassertPassword\(/.test(src);
+
+  const releases: [keyof typeof files, string][] = [
+    ["worker/downloadPages.ts", "deletePage"],
+    ["worker/downloadPages.ts", "deleteFile"],
+    ["worker/downloadPages.ts", "finishUpload"],
+    ["worker/downloadPages.ts", "addGrant"],
+    ["worker/downloads.ts", "mintCode"],
+    ["worker/site-config.ts", "publishSiteConfig"],
+  ];
+  for (const [file, name] of releases) {
+    must(asks(bodyOf(files[file], name)), `${file}: ${name} no longer demands the password`);
+  }
+  const edits: [keyof typeof files, string][] = [
+    ["worker/downloadPages.ts", "savePage"],
+    ["worker/downloadPages.ts", "saveFile"],
+    ["worker/downloadPages.ts", "saveBlocks"],
+    ["worker/downloadPages.ts", "beginUpload"],
+    ["worker/downloadPages.ts", "uploadPart"],
+    ["worker/downloadPages.ts", "reorderPages"],
+    ["worker/downloadPages.ts", "reorderFiles"],
+  ];
+  for (const [file, name] of edits) {
+    must(!asks(bodyOf(files[file], name)), `${file}: ${name} asks for the password — a save is an edit, not a release`);
+  }
+  // And the helper itself has to reach assertPassword, or `proven` is a name.
+  must(/async function proven\([\s\S]*?assertPassword\(/.test(files["worker/downloadPages.ts"]), "proven() does not call assertPassword");
+
+  return `${releases.length} releases ask, ${edits.length} edits do not`;
+});
+
 await Promise.all(pending);
 
 // ---- 6. Things only a person can judge -------------------------------------

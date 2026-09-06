@@ -21,7 +21,7 @@
 
 import { BadRequest } from "./encoding";
 import type { Env } from "./env";
-import { json, readJson, requireAccount } from "./accounts";
+import { assertPassword, json, readJson, requireAccount } from "./accounts";
 
 /** Fields the operator publishes. `page` and `unlocked` are per-visit and per-browser. */
 const PUBLISHED_KEYS = [
@@ -160,6 +160,14 @@ export async function publishSiteConfig(request: Request, env: Env): Promise<Res
   }
 
   const body = await readJson(request);
+  /*
+   * **Publishing demands the password** (2026-09-06, the client's call — the
+   * same rule `admin.ts` adopted on 2026-09-03 and `downloadPages.ts` adopted
+   * today). This is the one write that reaches every visitor's `<head>` at
+   * once, and it was reachable with a stolen cookie alone. `assertPassword`
+   * rate-limits, so a wrong guess here costs the same as one at sign-in.
+   */
+  await assertPassword(request, env, account, body.authSecret, "Enter your password to publish.");
   const incoming = body.config;
   if (typeof incoming !== "object" || incoming === null || Array.isArray(incoming)) {
     throw new BadRequest("Send a config object.");

@@ -1080,6 +1080,15 @@ environment problem. Until they move above the health check, start the Worker.
   does not ask** — it is a read, and a password prompt in front of a list is a password typed often
   enough to be typed carelessly. One helper rather than four inline calls, so the fifth admin write
   inherits the proof.
+  **The downloads editor and the site publish follow the same rule, drawn at RELEASES, not
+  writes** (2026-09-06, the client's decision). Six routes ask: `mintCode`, `addGrant`,
+  `finishUpload`, `deletePage`, `deleteFile`, `publishSiteConfig` — each changes what somebody
+  *else* can get, and `finishUpload` is the worst write on the site, since a stolen cookie could
+  put replacement bytes under a program's existing link. Every save, block edit, reorder, upload
+  begin and part stays session-only, because the editor saves often and a password on every save
+  is typed carelessly. **Gated in both directions** — the six must ask and the seven edits must
+  not — so do not "harden" `saveFile` into a prompt, and do not "simplify" `finishUpload` out of
+  one. The upload proves the password against the slot route *before* the first part goes up.
 - **The rate-limit bucket is keyed on a NORMALISED address, IPv6 cut to the /64** (`crypto.ts`).
   Keyed on the whole string, rotating inside one /64 — which every residential and VPS allocation
   hands you for free — produced **zero** 429s over 72 attempts, defeating the signup allowance and

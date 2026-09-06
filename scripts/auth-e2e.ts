@@ -1277,7 +1277,7 @@ async function main(): Promise<void> {
 
     const denied = await refusal(() => api.adminAccounts());
     check("a non-operator is refused the admin surface", denied?.status === 403, denied?.message);
-    const deniedPublish = await refusal(() => api.publishSiteConfig({ pal: 3 }));
+    const deniedPublish = await refusal(() => api.publishSiteConfig({ pal: 3 }, "unproven"));
     check("a non-operator cannot publish site config", deniedPublish?.status === 403, deniedPublish?.message);
 
     // The one thing no API can do, by design. BREAK-GLASS step 1, locally.
@@ -1503,10 +1503,10 @@ async function main(): Promise<void> {
     const reader = new Client();
     const original = (await reader.call("/api/site-config")).config ?? null;
 
-    const junkOnly = await refusal(() => api.publishSiteConfig({ nonsense: true }));
+    const junkOnly = await refusal(() => api.publishSiteConfig({ nonsense: true }, adminProof));
     check("a config with no known keys is refused", junkOnly?.status === 400, junkOnly?.message);
 
-    const published = await api.publishSiteConfig({ pal: 7, layout: 2, junk: "stripped" });
+    const published = await api.publishSiteConfig({ pal: 7, layout: 2, junk: "stripped" }, adminProof);
     check("the operator can publish", published.status === "published");
     check(
       "unknown keys are stripped before storage",
@@ -1540,7 +1540,7 @@ async function main(): Promise<void> {
 
     // Leave the local database's published look the way this run found it.
     if (original) {
-      await api.publishSiteConfig(original);
+      await api.publishSiteConfig(original, adminProof);
     } else {
       await d1("DELETE FROM site_config WHERE id = 1");
     }
@@ -2438,6 +2438,48 @@ async function main(): Promise<void> {
     await signUpFlow(opHandle, password);
     await d1(`UPDATE accounts SET is_operator = 1 WHERE handle = '${opHandle}'`);
 
+    // Every release-shaped write demands the operator's password as well as the
+    // session (2026-09-06, the client's decision; `proven` in
+    // worker/downloadPages.ts). Derived once, like `adminProof` above.
+    const opProof = await slotProof(opHandle, password);
+
+    /*
+     * The six release-shaped writes refuse a wrong password and a missing one,
+     * and they refuse it **before looking anything up** — every target below is
+     * nonsense, and the answer is 401 rather than 404. Two wrong proofs only:
+     * the account bucket allows five and the real releases below need the
+     * rest, and a success resets it. The other four are driven with no
+     * `authSecret` at all through the raw session, which costs no allowance —
+     * `assertPassword` refuses a non-string before it reserves.
+     */
+    const wrongProof = await slotProof(opHandle, "definitely not the password");
+    const wrongMint = await refusal(() =>
+      api.adminDownloadMint({ label: "x", item: null, slug: null, maxUses: 1, days: 0, authSecret: wrongProof }),
+    );
+    check("minting with the wrong password is 401", wrongMint?.status === 401, wrongMint?.message);
+    const wrongPublish = await refusal(() => api.publishSiteConfig({ pal: 3 }, wrongProof));
+    check("publishing with the wrong password is 401", wrongPublish?.status === 401, wrongPublish?.message);
+    for (const [what, path, body] of [
+      ["giving access", "/api/admin/downloads/grant", { handle: opHandle, slug: null, item: null, label: "", days: 0 }],
+      ["finishing an upload", "/api/admin/downloads/upload/finish", { id: "nope", uploadId: "nope", parts: [{ part: 1, etag: "x" }] }],
+      ["deleting a page", "/api/admin/downloads/page/delete", { slug: "nope" }],
+      ["deleting a file", "/api/admin/downloads/file/delete", { id: "nope" }],
+    ] as const) {
+      // Through the fetch shim, which carries the selected browser session's
+      // cookie, so this is the operator's own session minus the proof.
+      const status = await fetch(path, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }).then((r) => r.status);
+      check(`${what} with no password is 401, before anything is looked up`, status === 401, String(status));
+    }
+    // And an edit is still a session-only save — the line the client drew.
+    const editSlug = `harness-edit-${RUN}`;
+    const saved = await api.adminPageSave({ slug: editSlug, title: "Edit, not release" });
+    check("saving a page asks for no password", saved.ok === true && saved.slug === editSlug);
+    await api.adminPageDelete(editSlug, opProof);
+
     const slug = `harness-page-${RUN}`;
     const freeId = `harness-free-${RUN}`;
     const paidId = `harness-paid-${RUN}`;
@@ -2494,7 +2536,7 @@ async function main(): Promise<void> {
       // One part, which is legal for the final part at any size — see the
       // note on CHUNK in the editor. A second part would have to be 5MiB.
       const part = await uploadPart(id, begun.uploadId, 1, bytes.buffer as ArrayBuffer);
-      await api.adminUploadFinish(id, begun.uploadId, [part]);
+      await api.adminUploadFinish(id, begun.uploadId, [part], opProof);
     }
 
     await upload(freeId, freeBytes, true, "Free thing");
@@ -2544,7 +2586,7 @@ async function main(): Promise<void> {
         !shoutedLanded.some((f) => f.id === shoutedId),
       shoutedLanded.map((f) => f.id).join(", "),
     );
-    await api.adminFileDelete(shoutedId);
+    await api.adminFileDelete(shoutedId, opProof);
     check(
       "and deleting it by the shouted spelling removes it",
       ((await api.downloadPage(slug)).files ?? []).length === 2,
@@ -2587,7 +2629,7 @@ async function main(): Promise<void> {
 
     // ---- a code --------------------------------------------------------
     asBrowser(opSession);
-    const minted = await api.adminDownloadMint({
+    const minted = await api.adminDownloadMint({ authSecret: opProof,
       label: "harness",
       item: null,
       slug,
@@ -2620,7 +2662,7 @@ async function main(): Promise<void> {
      * and the sibling file must not come out.
      */
     asBrowser(opSession);
-    const oneFile = await api.adminDownloadMint({
+    const oneFile = await api.adminDownloadMint({ authSecret: opProof,
       label: "harness-onefile",
       item: paidId,
       slug: null,
@@ -2673,7 +2715,7 @@ async function main(): Promise<void> {
 
     // Exhaustion: one use, spent, then tried again.
     asBrowser(opSession);
-    const once = await api.adminDownloadMint({ label: "harness-once", item: null, slug, maxUses: 1, days: 0 });
+    const once = await api.adminDownloadMint({ authSecret: opProof, label: "harness-once", item: null, slug, maxUses: 1, days: 0 });
     asBrowser(stranger);
     const spent = await api.downloadClaim(once.code);
     check("a one-use code reports nothing left after its only use", spent.usesLeft === 0, `usesLeft ${spent.usesLeft}`);
@@ -2690,7 +2732,7 @@ async function main(): Promise<void> {
 
     // Revocation: minted, revoked, then tried.
     asBrowser(opSession);
-    const doomed = await api.adminDownloadMint({ label: "harness-revoked", item: null, slug, maxUses: 5, days: 0 });
+    const doomed = await api.adminDownloadMint({ authSecret: opProof, label: "harness-revoked", item: null, slug, maxUses: 5, days: 0 });
     const listed = await api.adminDownloadsList();
     const doomedRow = listed.codes.find((c) => c.label === "harness-revoked");
     check("a minted code appears in the list with a handle", Boolean(doomedRow?.ref));
@@ -2802,7 +2844,7 @@ async function main(): Promise<void> {
     check("a signed-in stranger is refused a granted page", beforeGrant?.status === 404);
 
     asBrowser(opSession);
-    await api.adminGrantAdd({ handle: guestHandle, slug, item: null, label: "harness", days: 0 });
+    await api.adminGrantAdd({ authSecret: opProof, handle: guestHandle, slug, item: null, label: "harness", days: 0 });
 
     asBrowser(guestSession);
     const afterGrant = await api.downloadPage(slug);
@@ -2858,10 +2900,10 @@ async function main(): Promise<void> {
       });
       const b = await api.adminUploadBegin(fid, "application/octet-stream");
       const part = await uploadPart(fid, b.uploadId, 1, new Uint8Array(64).fill(1).buffer as ArrayBuffer);
-      await api.adminUploadFinish(fid, b.uploadId, [part]);
+      await api.adminUploadFinish(fid, b.uploadId, [part], opProof);
     }
     // The guest already holds a whole-page grant on `savedSlug` from above.
-    await api.adminGrantAdd({ handle: guestHandle, slug: narrowSlug, item: wantedId, label: "one file", days: 0 });
+    await api.adminGrantAdd({ authSecret: opProof, handle: guestHandle, slug: narrowSlug, item: wantedId, label: "one file", days: 0 });
 
     asBrowser(guestSession);
     const wanted = await fetch(`/api/downloads/file?item=${wantedId}`);
@@ -2875,7 +2917,7 @@ async function main(): Promise<void> {
     );
 
     asBrowser(opSession);
-    await api.adminPageDelete(narrowSlug).catch(() => undefined);
+    await api.adminPageDelete(narrowSlug, opProof).catch(() => undefined);
     void savedSlug;
 
     // ---- the operator's own guards ---------------------------------------
@@ -2918,7 +2960,7 @@ async function main(): Promise<void> {
       visibility: "code",
       status: "live",
     });
-    const orphan = await api.adminDownloadMint({
+    const orphan = await api.adminDownloadMint({ authSecret: opProof,
       label: "harness-orphan",
       item: null,
       slug,
@@ -2926,7 +2968,7 @@ async function main(): Promise<void> {
       days: 0,
     });
 
-    await api.adminPageDelete(slug);
+    await api.adminPageDelete(slug, opProof);
     asBrowser(stranger);
     const gone = await refusal(() => api.downloadPage(slug));
     check("a deleted page is gone", gone?.status === 404);
@@ -3009,7 +3051,7 @@ async function main(): Promise<void> {
       filename: "scoped.exe",
       free: true,
     });
-    const fileScoped = await api.adminDownloadMint({
+    const fileScoped = await api.adminDownloadMint({ authSecret: opProof,
       label: "harness-file-scope",
       item: scopedId,
       slug: null,
@@ -3029,7 +3071,7 @@ async function main(): Promise<void> {
     );
 
     asBrowser(opSession);
-    await api.adminPageDelete(scopedSlug);
+    await api.adminPageDelete(scopedSlug, opProof);
 
     asBrowser(stranger);
     const afterDelete = await api.downloadClaim(fileScoped.code).then(
@@ -3104,7 +3146,7 @@ async function main(): Promise<void> {
       filename: "pinless.exe",
       free: true,
     });
-    const pinlessCode = await api.adminDownloadMint({
+    const pinlessCode = await api.adminDownloadMint({ authSecret: opProof,
       label: "harness-pinless",
       item: pinlessId,
       slug: null,
@@ -3127,11 +3169,11 @@ async function main(): Promise<void> {
     );
 
     asBrowser(opSession);
-    await api.adminPageDelete(pinless).catch(() => undefined);
-    await api.adminPageDelete(otherOwner).catch(() => undefined);
+    await api.adminPageDelete(pinless, opProof).catch(() => undefined);
+    await api.adminPageDelete(otherOwner, opProof).catch(() => undefined);
 
     asBrowser(opSession);
-    await api.adminPageDelete(otherSlug).catch(() => undefined);
+    await api.adminPageDelete(otherSlug, opProof).catch(() => undefined);
     await api.adminDownloadRevoke(
       (await api.adminDownloadsList()).codes.find((c) => c.label === "harness")?.ref ?? "",
     ).catch(() => undefined);

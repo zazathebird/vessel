@@ -541,8 +541,12 @@ export async function assertPassword(
   env: Env,
   account: AccountRow,
   supplied: unknown,
+  // The refusal's wording, because this check now guards more than credential
+  // changes (2026-09-06): the downloads editor's releases and the site publish
+  // say what *they* need the password for. Always 401, always one sentence.
+  wording = "Enter your password to change how you sign in.",
 ): Promise<void> {
-  const refused = new BadRequest("Enter your password to change how you sign in.", 401);
+  const refused = new BadRequest(wording, 401);
   if (typeof supplied !== "string") throw refused;
 
   const names = await buckets(request, env, account.handle.toLowerCase());

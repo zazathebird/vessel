@@ -45,6 +45,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError, uploadPart } from "../auth/api";
+import { useSession } from "../auth/SessionContext";
+import { derivePassword } from "../share/unlock";
+import { ProofDialog } from "./ProofDialog";
 import type {
   DownloadFileInfo,
   DownloadGrantRow,
@@ -105,6 +108,14 @@ interface BlockDraft {
 
 export function DownloadEditor() {
   const { say } = useConfig();
+  const { me } = useSession();
+  const handle = me?.account?.handle ?? "";
+  /**
+   * Deleting a page is a release in reverse — every code minted for it dies
+   * with it — so it takes the operator's password in the same gesture
+   * (2026-09-06, the client's call; `proven` in `worker/downloadPages.ts`).
+   */
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [pages, setPages] = useState<DownloadPageSummary[]>([]);
   const [slug, setSlug] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft>(EMPTY);
@@ -181,7 +192,7 @@ export function DownloadEditor() {
     }
   }
 
-  async function removePage() {
+  async function removePage(password: string) {
     if (!slug || busy) return;
     setBusy(true);
     // Cleared on entry like every other action: an error left over from an
@@ -189,7 +200,9 @@ export function DownloadEditor() {
     // reporting a problem with something that is no longer there.
     setError(null);
     try {
-      await api.adminPageDelete(slug);
+      const { authSecret } = await derivePassword(handle, password);
+      await api.adminPageDelete(slug, authSecret);
+      setConfirmDelete(false);
       setSlug(null);
       setDraft(EMPTY);
       setBlocks([]);
@@ -535,12 +548,38 @@ export function DownloadEditor() {
             </button>
           ) : null}
           {slug ? (
-            <button type="button" className="v-btn v-btn-danger" disabled={busy} onClick={removePage}>
+            <button
+              type="button"
+              className="v-btn v-btn-danger"
+              disabled={busy}
+              onClick={() => {
+                setError(null);
+                setConfirmDelete(true);
+              }}
+            >
               Delete page
             </button>
           ) : null}
         </div>
       </form>
+
+      {confirmDelete && slug ? (
+        <ProofDialog
+          title={`Delete ${draft.title || slug}?`}
+          consequence={
+            <p>
+              The page, every file on it and every access code minted for them go, and the codes
+              cannot be brought back. Files already downloaded are unaffected.
+            </p>
+          }
+          confirmLabel="Delete page"
+          busyLabel="Deleting…"
+          busy={busy}
+          error={error}
+          onConfirm={(password) => void removePage(password)}
+          onClose={() => setConfirmDelete(false)}
+        />
+      ) : null}
 
       {slug ? <ShareLink slug={slug} live={draft.status === "live"} /> : null}
 
@@ -844,10 +883,24 @@ function FileManager({
   onChanged: () => void;
 }) {
   const { say } = useConfig();
+  const { me } = useSession();
+  const handle = me?.account?.handle ?? "";
   const [form, setForm] = useState<FileDraft>(BLANK_FILE);
   /** The id being edited, or null when the form is adding something new. */
   const [editing, setEditing] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
+  /**
+   * The operator's password, asked only when there are bytes to publish
+   * (2026-09-06): `finishUpload` is the call that makes a program live for
+   * customers, and the Worker refuses it on a session alone. A details-only
+   * edit never asks. Proved *before* the upload starts, against the slot route,
+   * so a typo is a 401 now and not after 300MB.
+   */
+  const [password, setPassword] = useState("");
+  /** A per-file release awaiting the password: a code, or a deletion. */
+  const [proof, setProof] = useState<{ kind: "mint" | "delete"; file: DownloadFileInfo } | null>(
+    null,
+  );
   const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -950,6 +1003,8 @@ function FileManager({
     setError(null);
     setBusy(true);
     let uploadId = "";
+    /** The password proof, derived once and only when bytes are going up. */
+    let authSecret = "";
 
     /** Everything except the bytes. `filename` only when there are new bytes. */
     const details = (filename?: string) =>
@@ -992,11 +1047,25 @@ function FileManager({
         parts.push(await uploadPart(form.id, uploadId, i + 1, chunk));
         setProgress(Math.round(((i + 1) / total) * 100));
       }
-      await api.adminUploadFinish(form.id, uploadId, parts);
+      await api.adminUploadFinish(form.id, uploadId, parts, authSecret);
       uploadId = "";
     };
 
     try {
+      if (file) {
+        // The same check `addPasskey` makes before its ceremony: the slot route
+        // is the server's password check, rate-limited, and it answers in a
+        // round trip rather than at the end of the upload.
+        ({ authSecret } = await derivePassword(handle, password));
+        try {
+          await api.keySlot(authSecret);
+        } catch (thrown) {
+          if (thrown instanceof ApiError && thrown.status === 401) {
+            throw new ApiError(401, "That is not your password.");
+          }
+          throw thrown;
+        }
+      }
       /*
        * **THE ORDER DIFFERS BETWEEN THE TWO PATHS, AND THAT IS THE POINT.**
        *
@@ -1093,20 +1162,42 @@ function FileManager({
    * control anywhere, so the one documented route to a file-scoped code did not
    * exist. The Worker and the API had supported it the whole time.
    */
-  async function mintFor(f: DownloadFileInfo) {
+  async function mintFor(f: DownloadFileInfo, password: string) {
     if (busy) return;
     setBusy(true);
+    setError(null);
     try {
+      const { authSecret } = await derivePassword(handle, password);
       const result = await api.adminDownloadMint({
         label: `${f.name} — minted from the file`,
         item: f.id,
         slug: null,
         maxUses: 5,
         days: 0,
+        authSecret,
       });
       setFresh({ id: f.id, code: result.code });
+      setProof(null);
     } catch (thrown) {
       setError(thrown instanceof ApiError ? thrown.message : "Couldn't mint a code.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Delete a file and its bytes — a release in reverse, so it takes the password too. */
+  async function remove(f: DownloadFileInfo, password: string) {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const { authSecret } = await derivePassword(handle, password);
+      await api.adminFileDelete(f.id, authSecret);
+      setProof(null);
+      if (editing === f.id) reset();
+      onChanged();
+    } catch (thrown) {
+      setError(thrown instanceof ApiError ? thrown.message : "That didn't delete.");
     } finally {
       setBusy(false);
     }
@@ -1115,6 +1206,27 @@ function FileManager({
   return (
     <div className="v-dledit-files">
       <h3 className="v-panel-label">Files on this page</h3>
+
+      {proof ? (
+        <ProofDialog
+          title={proof.kind === "mint" ? `Mint a code for ${proof.file.name}?` : `Delete ${proof.file.name}?`}
+          consequence={
+            proof.kind === "mint" ? (
+              <p>Opens this one file and nothing else. Five uses, no expiry, shown once.</p>
+            ) : (
+              <p>The file, its bytes and every code minted for it go. This cannot be undone.</p>
+            )
+          }
+          confirmLabel={proof.kind === "mint" ? "Mint the code" : "Delete file"}
+          busyLabel="Working…"
+          busy={busy}
+          error={error}
+          onConfirm={(password) =>
+            void (proof.kind === "mint" ? mintFor(proof.file, password) : remove(proof.file, password))
+          }
+          onClose={() => setProof(null)}
+        />
+      ) : null}
 
       {fresh ? (
         <div className="v-dlcodes-fresh" role="status">
@@ -1199,7 +1311,10 @@ function FileManager({
                   type="button"
                   className="v-btn v-btn-quiet"
                   disabled={busy}
-                  onClick={() => void mintFor(f)}
+                  onClick={() => {
+                    setError(null);
+                    setProof({ kind: "mint", file: f });
+                  }}
                 >
                   Code
                 </button>
@@ -1208,10 +1323,9 @@ function FileManager({
                 type="button"
                 className="v-btn v-btn-danger"
                 disabled={busy}
-                onClick={async () => {
-                  await api.adminFileDelete(f.id).catch(() => undefined);
-                  if (editing === f.id) reset();
-                  onChanged();
+                onClick={() => {
+                  setError(null);
+                  setProof({ kind: "delete", file: f });
                 }}
               >
                 Delete
@@ -1441,6 +1555,26 @@ function FileManager({
           ) : null}
         </div>
 
+        {file ? (
+          <div className="v-field">
+            <label className="v-field-label" htmlFor="v-dlf-pass">
+              Your password
+            </label>
+            <input
+              id="v-dlf-pass"
+              className="v-input"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+            />
+            <p className="v-field-hint">
+              Putting a file up for customers asks for your password. Changing the details alone
+              does not.
+            </p>
+          </div>
+        ) : null}
+
         {progress !== null ? (
           <p className="v-dledit-progress" aria-live="polite">
             Uploading… {progress}%
@@ -1455,7 +1589,7 @@ function FileManager({
         <button
           type="submit"
           className="v-btn"
-          disabled={busy || !form.id || progress !== null || (!editing && !file)}
+          disabled={busy || !form.id || progress !== null || (!editing && !file) || (!!file && !password)}
         >
           {busy ? "Working…" : editing ? "Save changes" : "Add file"}
         </button>
@@ -1476,11 +1610,15 @@ function GrantManager({
   grants: DownloadGrantRow[];
   onChanged: () => void;
 }) {
-  const [handle, setHandle] = useState("");
+  const [grantee, setGrantee] = useState("");
   const [scope, setScope] = useState("");
   const [days, setDays] = useState(0);
   const [label, setLabel] = useState("");
   const [error, setError] = useState<string | null>(null);
+  /** Admitting somebody to a page is a release, so it asks (2026-09-06). */
+  const [password, setPassword] = useState("");
+  const { me } = useSession();
+  const handle = me?.account?.handle ?? "";
 
   /*
    * The milder half of the same problem as `FileManager`'s: `scope` held a file
@@ -1498,8 +1636,9 @@ function GrantManager({
     event.preventDefault();
     setError(null);
     try {
+      const { authSecret } = await derivePassword(handle, password);
       await api.adminGrantAdd({
-        handle,
+        handle: grantee,
         // An empty scope is this page; a value is one file on it. Granting
         // *everything* is deliberately not offered from a page's own screen —
         // it is a different decision and it should not be one dropdown away
@@ -1508,8 +1647,9 @@ function GrantManager({
         item: scope || null,
         label,
         days,
+        authSecret,
       });
-      setHandle("");
+      setGrantee("");
       setLabel("");
       onChanged();
     } catch (thrown) {
@@ -1563,8 +1703,8 @@ function GrantManager({
             <input
               id="v-dlg-handle"
               className="v-input"
-              value={handle}
-              onChange={(e) => setHandle(e.target.value)}
+              value={grantee}
+              onChange={(e) => setGrantee(e.target.value)}
             />
           </div>
           <div className="v-field">
@@ -1619,7 +1759,21 @@ function GrantManager({
           </p>
         ) : null}
 
-        <button type="submit" className="v-btn" disabled={!handle.trim()}>
+        <div className="v-field">
+          <label className="v-field-label" htmlFor="v-dlg-pass">
+            Your password
+          </label>
+          <input
+            id="v-dlg-pass"
+            className="v-input"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
+          />
+        </div>
+
+        <button type="submit" className="v-btn" disabled={!grantee.trim() || !password}>
           Give access
         </button>
       </form>

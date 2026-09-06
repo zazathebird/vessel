@@ -4,6 +4,7 @@ import type { FormEvent } from "react";
 import { api } from "../auth/api";
 import { useSession } from "../auth/SessionContext";
 import { publishable } from "../config/siteConfig";
+import { derivePassword } from "../share/unlock";
 import { useConfig } from "../config/ConfigContext";
 import { saveCalmPreference, saveSoundPreference } from "../config/persistence";
 import { decodeShareCode, encodeShareCode } from "../config/shareCode";
@@ -27,7 +28,14 @@ import { useFocusTrap } from "../hooks/useFocusTrap";
  */
 export function SiteConfigPanel() {
   const { config, update, say, chime, panelOpen, closePanel, shuffle, setMode } = useConfig();
-  const { refresh } = useSession();
+  const { me, refresh } = useSession();
+  /**
+   * Publishing asks for the password (2026-09-06, the client's call): it is the
+   * one control that reaches every visitor, and the Worker refuses it on a
+   * session alone. Cleared on success so the panel never holds it longer than
+   * one publish.
+   */
+  const [publishPassword, setPublishPassword] = useState("");
   const panelRef = useRef<HTMLElement | null>(null);
   const [pasted, setPasted] = useState("");
   /**
@@ -74,7 +82,9 @@ export function SiteConfigPanel() {
   const publish = async () => {
     setPublishState("publishing");
     try {
-      await api.publishSiteConfig(publishable(config));
+      const { authSecret } = await derivePassword(me?.account?.handle ?? "", publishPassword);
+      await api.publishSiteConfig(publishable(config), authSecret);
+      setPublishPassword("");
       setPublishState("published");
       say("published to everyone");
     } catch (cause) {
@@ -672,14 +682,32 @@ export function SiteConfigPanel() {
             ? "Published. Every visitor gets this look from now on."
             : "This changes the site for every visitor, not just you. Unpublished changes are lost when you reload."}
         </p>
-        <button
-          type="button"
-          className="chip"
-          onClick={publish}
-          disabled={publishState === "publishing"}
+        <form
+          className="v-panel-publish"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (publishPassword && publishState !== "publishing") void publish();
+          }}
         >
-          {publishState === "publishing" ? "publishing…" : "publish"}
-        </button>
+          <label className="v-panel-label" htmlFor="v-panel-pass">
+            your password
+          </label>
+          <input
+            id="v-panel-pass"
+            className="v-input"
+            type="password"
+            value={publishPassword}
+            onChange={(event) => setPublishPassword(event.target.value)}
+            autoComplete="current-password"
+          />
+          <button
+            type="submit"
+            className="chip"
+            disabled={publishState === "publishing" || !publishPassword}
+          >
+            {publishState === "publishing" ? "publishing…" : "publish"}
+          </button>
+        </form>
       </section>
 
       {/*

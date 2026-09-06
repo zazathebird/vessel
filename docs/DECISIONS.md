@@ -13,6 +13,37 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-09-06 — a release asks for the password; an edit does not
+
+The client's call, asked and answered the same day (`docs/SECURITY-AUDIT.md` item 33). Item 16
+(2026-09-03) put the operator's password in front of every write in `worker/admin.ts` on the
+argument that a session says who you are and never how you proved it. The downloads editor and
+the site publish were left out, for a reason that was half right: the editor saves often, and a
+password on every save is a password typed carelessly. The half that was wrong is that one of
+those routes is the most damaging write on the site — `finishUpload` makes replacement bytes
+live under a program's existing link, and a customer runs what they download.
+
+**The line drawn is "does this change what somebody *else* can get."** Six routes are on it and
+now take the password through `proven()` (the `admin.ts` helper's shape, one per file):
+`mintCode`, `addGrant`, `finishUpload`, `deletePage`, `deleteFile`, `publishSiteConfig`. Every
+save, block edit, reorder, upload begin and upload part stays session-only, and `npm run check`
+asserts both halves — that the six ask and that the seven edits do not — so the editor cannot
+drift into a prompt on every keystroke. `assertPassword` gained an optional wording, because
+"Enter your password to change how you sign in" was the wrong sentence on a mint. The upload
+proves the password against `/api/account/slot` **before** the first part goes up, the
+`addPasskey` shape, so a typo is a 401 in one round trip and not after 300MB.
+
+On the screens: one `ProofDialog` (extracted from `Admin.tsx`) for the three button-driven
+releases — delete page, delete file, mint from a file — and an inline password field on the four
+forms (mint, grant, upload, publish). The password never persists: form state, cleared on
+success, derived to an auth secret in the browser. `npm run check` **73 → 74**, `test:auth`
+**372 → 379**, deployed the same day.
+
+The other decision recorded today is a non-decision, on purpose: the browsing tab's trust in
+`machines.agent_pubkey` (audit item 4, 2026-09-06) is a phase-3 pin, not a phase-2 fix.
+
+---
+
 ## 2026-09-04 — reviewing the fix found the fix was half of one
 
 The pre-deploy review of yesterday's remediation, before anything shipped. Two findings, and the
