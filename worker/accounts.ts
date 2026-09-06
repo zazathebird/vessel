@@ -26,6 +26,7 @@ import {
   expectBytes,
   fromBase64Url,
   fromBlob,
+  readBounded,
   toBase64Url,
   toBlob,
 } from "./encoding";
@@ -181,18 +182,33 @@ export function noStore(response: Response): Response {
 }
 
 export async function readJson(request: Request): Promise<Record<string, unknown>> {
-  // Measured after reading rather than trusted from `content-length`, which is
-  // absent on a chunked request and arbitrary on a hostile one — either way the
-  // header check passes and the whole body is read regardless. Reading the text
-  // first costs one buffer and makes the limit real.
-  const text = await request.text();
-  // `text.length` counts UTF-16 code units, not bytes — a body of three-byte
-  // UTF-8 characters would pass a "64KB" check at ~192KB of wire bytes. The
-  // cheap check first short-circuits the encode for the common oversized case;
-  // the encode makes the limit true.
-  if (text.length > MAX_BODY_BYTES || new TextEncoder().encode(text).byteLength > MAX_BODY_BYTES) {
+  // Measured as it arrives rather than trusted from `content-length`, which is
+  // absent on a chunked request and arbitrary on a hostile one. **And measured
+  // in bytes, on the stream, before anything is decoded** (2026-09-05 audit):
+  // this used to be `await request.text()` followed by a length check, which
+  // refused an oversized body correctly and only after buffering the whole of
+  // it — the same shape item 24 fixed for `/api/csp-report` two days earlier
+  // while describing this function as fine. `readBounded` cancels the stream
+  // the moment it passes the cap, so a hostile 20MB POST to `signup` or
+  // `challenge` costs 64KB of memory and one refusal rather than 20MB of it.
+  // Bytes on the wire are what is counted, so the UTF-16 trap `readBounded`'s
+  // predecessor here documented cannot recur: there is no string to mis-measure.
+  //
+  // **The declared `content-length` is refused first, and that is not a
+  // redundant check** (2026-09-06). A body that announces itself as over the
+  // cap is refused without the stream ever being opened, exactly as
+  // `cspReport` does. Cancelling a request body mid-upload is fine in
+  // production workerd, but `wrangler dev`'s proxy reports it as "Network
+  // connection lost" and **exits** — which took the local server down under
+  // `npm run test:auth` and is what interrupted the session that wrote this.
+  // Every honest client and every harness sends a length, so the cancel path
+  // is left for the chunked or lying body it exists for.
+  const declared = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
     throw new BadRequest("That request was too large.", 413);
   }
+  const text = await readBounded(request, MAX_BODY_BYTES);
+  if (text === null) throw new BadRequest("That request was too large.", 413);
 
   let body: unknown;
   try {
@@ -204,6 +220,28 @@ export async function readJson(request: Request): Promise<Record<string, unknown
     throw new BadRequest("That request was not valid JSON.");
   }
   return body as Record<string, unknown>;
+}
+
+/**
+ * `readJson` for routes that treat a malformed body as an empty one — the
+ * downloads routes, whose refusals are deliberately a single sentence so that a
+ * malformed request cannot be told apart from a wrong code.
+ *
+ * **The size refusal still throws.** Those routes read their bodies with a bare
+ * `request.json().catch(() => ({}))` until 2026-09-05, which has no cap at all
+ * — and `/api/downloads/claim` is unauthenticated and sits in front of its own
+ * rate limit, so it was the one route on the site that would buffer an
+ * arbitrarily large body for anybody, the same shape as item 24. Lenient about
+ * *shape*, never about *size*: an oversized body is refused at 413 before it is
+ * read, exactly as everywhere else.
+ */
+export async function readJsonLenient(request: Request): Promise<Record<string, unknown>> {
+  try {
+    return await readJson(request);
+  } catch (error) {
+    if (error instanceof BadRequest && error.status === 413) throw error;
+    return {};
+  }
 }
 
 function expectHandle(value: unknown): string {

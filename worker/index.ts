@@ -22,7 +22,7 @@ import * as pages from "./downloadPages";
 import * as passkeys from "./passkeys";
 import * as setups from "./setups";
 import { clientKey } from "./crypto";
-import { BadRequest } from "./encoding";
+import { BadRequest, readBounded } from "./encoding";
 import type { Env } from "./env";
 import { RateLimiter } from "./rate-limit";
 import { MachineSignal } from "./signal";
@@ -193,55 +193,6 @@ function cspNonce(): string {
  * JSON naming a document URL, a directive and a blocked URI.
  */
 const MAX_REPORT_BYTES = 8 * 1024;
-
-/**
- * Read at most `limit` bytes of a request body. `null` means the body was over
- * the cap and the rest was never read; `""` means there was nothing readable.
- *
- * `await request.text()` reads whatever arrives, however much that is. That is
- * fine behind `readJson`, which is only reachable on routes that have already
- * been through `crossOrigin` — and it was not fine on `/api/csp-report`, which
- * sits deliberately in front of that check with no session, no rate limit and
- * no body cap: the cheapest route on the site (2026-09-03 audit). Measured: a
- * 20,000,000-byte POST returned 204 in 1.1s, materialised as a UTF-16 JS string
- * and then thrown away, where the same body to `/api/auth/challenge` was
- * refused at 413. A few concurrent posts of that shape is an isolate OOM, and an
- * isolate is shared with in-flight requests that have nothing to do with it.
- */
-async function readBounded(request: Request, limit: number): Promise<string | null> {
-  const body = request.body;
-  if (!body) return "";
-
-  const reader = body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > limit) {
-        // Stop pulling. Cancelling is what makes this a cap rather than a
-        // slower way of reading the whole thing.
-        await reader.cancel();
-        return null;
-      }
-      chunks.push(value);
-    }
-  } catch {
-    // A body that fails mid-read is not a body; the caller decides what that
-    // is worth.
-    return "";
-  }
-
-  const joined = new Uint8Array(total);
-  let at = 0;
-  for (const chunk of chunks) {
-    joined.set(chunk, at);
-    at += chunk.byteLength;
-  }
-  return new TextDecoder().decode(joined);
-}
 
 /**
  * Receive a CSP violation report: log it, store nothing, say 204.

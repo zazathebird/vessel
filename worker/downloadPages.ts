@@ -35,7 +35,7 @@
  *    that 404s at the customer.
  */
 
-import { json, noStore, requireAccount } from "./accounts";
+import { json, noStore, readJsonLenient, requireAccount } from "./accounts";
 import { BadRequest } from "./encoding";
 import type { Env } from "./env";
 import { verify } from "./session";
@@ -94,9 +94,15 @@ function str(v: unknown, max: number): string {
   return typeof v === "string" ? v.slice(0, max).trim() : "";
 }
 
-async function body(request: Request): Promise<Record<string, unknown>> {
-  return request.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
-}
+/**
+ * The operator's JSON body, or an empty one — bounded at 64KB like every other
+ * body on the site (`readJsonLenient`, 2026-09-05). These routes are
+ * operator-gated so the exposure was one session's, but `LIMITS` below bounds
+ * every field precisely so that nothing here is a store, and a route that will
+ * read a 50MB body to then keep 4,000 characters of it is a bound with a hole
+ * in front of it.
+ */
+const body = readJsonLenient;
 
 /** The caller, if they are a signed-in operator. Throws otherwise. */
 async function operator(request: Request, env: Env) {
@@ -1063,8 +1069,17 @@ export async function addGrant(request: Request, env: Env): Promise<Response> {
   await operator(request, env);
   const b = await body(request);
 
+  /*
+   * **Looked up by `handle_lower`, which is the column that exists for this.**
+   * Until 2026-09-05 this lowercased the typed handle and compared it against
+   * `handle`, which is case-*preserving* — so an account that signed up as
+   * `Alice` could never be granted anything: `alice` matched no row, the
+   * operator was told "No account with that name", and the only accounts a
+   * grant could ever reach were the ones typed entirely in lower case. Every
+   * handle in the harness was lower case, which is how it stayed green.
+   */
   const handle = str(b.handle, 64).toLowerCase();
-  const account = await env.DB.prepare("SELECT id FROM accounts WHERE handle = ?")
+  const account = await env.DB.prepare("SELECT id FROM accounts WHERE handle_lower = ?")
     .bind(handle)
     .first<{ id: string }>();
   if (!account) throw new BadRequest("No account with that name.", 404);

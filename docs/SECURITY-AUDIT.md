@@ -14,6 +14,88 @@ cited by number elsewhere. Findings are grouped as before: **fixed**, **checked 
 
 ---
 
+## 2026-09-06 — the follow-up pass
+
+A second reading of the whole Worker, the browser auth layer and the phase-2 sharing agent, after
+the 2026-09-05 session was cut short by a crash. Read in full: every file under `worker/`,
+`src/auth/`, `src/share/`, the migrations, `wrangler.toml`, `public/_headers`, and the live DNS
+and response headers. **Nothing here is deployed.** `npm run check` is **73** (62 fast),
+`npm run test:auth` **372** (366 → 372; the 2026-09-05 sections landed).
+
+### 32. The crash left the body-bound fix half-applied, and the half that landed was a regression
+
+The 2026-09-05 session wrote `readBounded`, the gate for it, the harness section and the comments —
+and never switched `readJson` over. The working tree had a comment saying the body was measured on
+the stream above a line that still said `await request.text()`, and the byte-accurate
+`TextEncoder` check from item 23 had been *removed* in the same edit, leaving `text.length` alone:
+30,000 three-byte characters would have passed a 64KB limit at 90KB again. The check suite caught
+it (the new stream gate timed out, then failed), which is the point of the gate. `readJson` now
+reads through `readBounded`. The same crash left `worker/setups.ts`'s `CODE_PATTERN` at `{4,5}`
+under a comment saying seven fields; the gate for that failed too, and it is `{4,6}`.
+
+**What the crash was.** `reader.cancel()` on a request body that is still uploading is fine in
+production workerd, but `wrangler dev`'s proxy surfaces it as `Network connection lost.` and
+**exits the dev server** — reproduced: the harness's 70KB `claim` POST 413'd correctly and the
+next request was `ECONNREFUSED`. `cspReport` never hit this because it refuses on the declared
+`content-length` before opening the stream. `readJson` now does the same first, so every honest
+oversized body (and every harness body) is refused without a cancel, and the cancel path is kept
+for the chunked or lying body it exists for. Under `wrangler dev` that path still kills the
+server; that is a wrangler bug, noted in `docs/HANDOFF.md`, and it cannot be reached by a browser
+on the real site.
+
+### Checked this pass and found sound
+
+- **Sessions and tickets** (`session.ts`): purpose under the MAC, constant-time compare before the
+  expiry check, twelve-hour ceiling carried across refreshes, `__Host-` cookie.
+- **Sign-in** (`accounts.ts`): the decoy branch of `challenge`, equal database work on the
+  unknown-handle path, no short-circuit over the recovery candidates, reserve-then-check on every
+  credential path, the recovery code spent only when the sign-in completes, `setPassword` spent by
+  the slot's existence.
+- **Passkeys and WebAuthn** (`passkeys.ts`, `webauthn.ts`): the narrow CBOR subset with bounds on
+  every read, DER → P-1363 with length checks, `UV` required both ways, origin and RP-hash checked,
+  the challenge spent monotonically in the write's own `WHERE`, the attested credential id compared
+  against the presented one.
+- **Admin** (`admin.ts`): every write behind `proven()`, every last-way-in guard in the write.
+- **Downloads** (`downloads.ts`, `downloadPages.ts`): `resolveAccess` the single authority,
+  `canDownload` never reading `ticketVisible`, grants evaluated as rows, one refusal on the byte
+  route with equal work either side, the pin compared unconditionally, `filename` stripped of quotes
+  and backslashes again on the way out, `content-type` forced to `octet-stream`.
+- **The sharing agent** (`src/share/*`): the offer verified against the pair-time trust root before
+  an answer exists, `fingerprintFromSdp` refusing two distinct fingerprints, paths as component
+  arrays with every spelling of traversal refused, reads only, the drive id resolved only through
+  the `handle:` key prefix.
+- **Headers and edge**: HSTS two years with subdomains, `X-Frame-Options: DENY` (the enforced
+  clickjacking defence while the CSP stays report-only), `nosniff` on assets through `_headers`,
+  `http://` and `www.` and `.com` all 301 to the apex, `/api/health` disclosing nothing an
+  attacker can use.
+- **DNS and mail**: DNSSEC validating (item 7, now closed), SPF `-all`, DMARC `p=reject` with
+  strict alignment, CAA present.
+
+### Needs the client's decision — not a fix
+
+3. **The downloads editor's writes and the site-config publish are session-gated, not
+   password-proven.** Item 16 put `proven()` in front of every write in `admin.ts` on the argument
+   that a session says who you are and never how you proved it. The same argument covers
+   `POST /api/site-config` and the sixteen operator routes in `downloadPages.ts` /
+   `downloads.ts`, and one of them is the most damaging write on the site: a stolen operator cookie
+   can `beginUpload` / `uploadPart` / `finishUpload` **replacement bytes for a program customers
+   download and run**, or mint an unscoped "everything paid" code, or add a grant. Thirty minutes
+   of cookie becomes malware served under the operator's name indefinitely. It was left out of
+   item 16 because the editor saves often and a password on every save is a password typed
+   carelessly. The narrow version — `mintCode`, `addGrant`, `finishUpload`, `deletePage`,
+   `deleteFile`, `publishSiteConfig`, each of which is a *release* rather than an edit — is one
+   prompt per release and a `proven()` call apiece, plus the editor collecting the password once
+   per session the way `Admin.tsx` does. His call, because it changes how the editor feels to use.
+4. **The browsing tab pins nothing.** The agent stores the owner's grant public key at pair time
+   and never re-fetches it; the owner's browser fetches `machines.agent_pubkey` from the server on
+   every browse. So a database write — not a request, a write — could point the owner at an
+   impostor agent that *serves* files the owner did not put there. §3's "the operator cannot read
+   any user's files" still holds; what does not is "the files you see are yours". Closing it is a
+   per-browser pin of the agent key at first connect with a warning on change, the SSH shape. A
+   phase-3 question rather than a phase-2 fix.
+
+---
+
 ## Fixed in this pass
 
 ### 15. WebAuthn challenges were bound but never spent
@@ -741,7 +823,17 @@ relationship; the site opens no popups and loses nothing.
 
 Verified live on 2026-08-13. In rough priority order:
 
-### 7. DNSSEC — **half done 2026-08-14: signed at Cloudflare, DS not yet published**
+### 7. ~~DNSSEC~~ — **DONE, verified live 2026-09-06**
+
+`dig +short DS mcclevarty.ca` now returns `2371 13 2 3FAAEC04…6F640E` — the exact record below — and
+`dig @1.1.1.1 +dnssec mcclevarty.ca A` comes back with the `ad` flag set, so the chain validates end to
+end from the root through CIRA to Cloudflare's signed zone. The Namespro ticket was evidently
+actioned. **`mcclevarty.com` has no DS** and is not signed; it only ever 301s to the `.ca`, so the
+exposure is a forged redirect target for a resolver that would have trusted an unsigned answer
+anyway. Worth doing for symmetry when next in the Namespro panel, not urgent. The account below is
+kept as history.
+
+#### 7 (history). DNSSEC — half done 2026-08-14: signed at Cloudflare, DS not yet published
 
 Cloudflare's half is done — DNSSEC is enabled and the zone is signed, so `mcclevarty.ca` now
 publishes DNSKEY records. **It is deliberately inert**: DNSSEC does nothing until the DS record is

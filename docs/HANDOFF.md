@@ -31,6 +31,14 @@ Paste this to begin:
 > block below. Commit and push at the end. Batch everything needing my eye or sign-off into
 > one list at the end.
 
+**`wrangler dev` exits on a cancelled request body** (2026-09-06). `readBounded` cancels the
+stream once a body passes its cap; production workerd is fine with that, but wrangler's dev proxy
+reports `Network connection lost.` and the whole dev server exits — the next harness request is
+`ECONNREFUSED` and the run looks like an environment failure. `readJson` refuses on the declared
+`content-length` first, so nothing the harness sends reaches the cancel path any more. If the dev
+server ever dies under `test:auth` again, look for a request that lied about its length before
+looking anywhere else, and note that it took the 2026-09-05 session down mid-edit.
+
 **The two-tab phase-2 test** (needs the client, two Chromium windows, one signed-in account):
 on the machine with files, open `/share` → pair (password) → pick a folder. In another window
 open `/machines` → the machine shows online → Open the drive → password unlock → browse, click

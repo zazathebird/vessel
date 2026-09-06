@@ -97,6 +97,8 @@ import {
 import type { SortableFile } from "../src/data/downloads";
 import { DRAWN_CATEGORIES } from "../src/components/CategoryIcon";
 import { rangePlan } from "../worker/downloads";
+import { readJson, readJsonLenient } from "../worker/accounts";
+import type { BadRequest } from "../worker/encoding";
 import { PATHS, pageFromPath, pathFor, subFromPath } from "../src/data/pageIds";
 import { metaForPath, robotsTxt, sitemapXml } from "../worker/page-meta";
 import { NEVER_ROTATES, SNIPPETS, snippetFor } from "../src/data/snippets";
@@ -140,6 +142,34 @@ const check = (name: string, fn: () => string) => {
 };
 const must = (cond: boolean, message: string) => {
   if (!cond) throw new Error(message);
+};
+
+/*
+ * An asynchronous gate (2026-09-05). The Worker's body reader is a stream, so
+ * driving it is unavoidably async; this reserves the result's slot in order and
+ * fills it when the promise settles, and the report `await`s the lot. Nothing
+ * else in this file is async, deliberately — a gate that can hang is a gate
+ * that can stall the suite — so every async gate here races a timeout.
+ */
+const pending: Promise<void>[] = [];
+const checkAsync = (name: string, fn: () => Promise<string>, timeoutMs = 5_000) => {
+  const slot: Result = { name, ok: false, detail: "did not settle" };
+  results.push(slot);
+  const timeout = new Promise<string>((_, reject) =>
+    setTimeout(() => reject(new Error(`did not settle within ${timeoutMs}ms — a body reader that cannot be cancelled hangs exactly like this`)), timeoutMs),
+  );
+  pending.push(
+    Promise.race([fn(), timeout]).then(
+      (detail) => {
+        slot.ok = true;
+        slot.detail = detail;
+      },
+      (error: Error) => {
+        slot.ok = false;
+        slot.detail = error.message;
+      },
+    ),
+  );
 };
 
 // ---- 1. Types and build ----------------------------------------------------
@@ -5308,6 +5338,124 @@ check("the Windows script resolves EVERY path component, not just the leaf", () 
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// ---- 5b. The Worker's own wire shapes, driven (2026-09-05 audit) ------------
+
+/*
+ * `worker/setups.ts` validates a share code by shape alone, and its shape had
+ * fallen behind the encoder: the pattern accepted five or six fields and
+ * `encodeShareCode` has emitted seven since the station landed, so every save
+ * from the Setups panel — which sends the encoder's output verbatim — was
+ * refused as "not a setup code". The harness saved hand-typed six-field codes
+ * and stayed green. This drives the Worker's actual pattern with the encoder's
+ * actual output, so the next field added to one and not the other fails here.
+ */
+check("the setups route accepts what encodeShareCode emits", () => {
+  const src = readFileSync("worker/setups.ts", "utf8");
+  const literal = /const CODE_PATTERN = \/(.+)\/;/.exec(src);
+  must(!!literal, "CODE_PATTERN not found in worker/setups.ts");
+  const pattern = new RegExp(literal![1]);
+
+  const current = encodeShareCode(DEFAULT_CONFIG);
+  must(pattern.test(current), `worker/setups.ts refuses the encoder's own output: ${current}`);
+  for (const preset of PRESETS) {
+    must(pattern.test(preset.shareCode), `worker/setups.ts refuses preset ${preset.id}: ${preset.shareCode}`);
+  }
+  // Codes saved before a field existed must keep saving.
+  for (const legacy of ["2-0-0-0-7", "A-3-1-0-7-1"]) {
+    must(pattern.test(legacy), `worker/setups.ts refuses a legacy code: ${legacy}`);
+  }
+  const malformed = ["2-0-0-0", "2-0-0-0-7-3-0-0", "not a code", "2-0-0-0-7-3-", "-2-0-0-0-7-3", "2--0-0-7-3-0", "2-0-0-0-7-3-0-0-0"];
+  for (const bad of malformed) must(!pattern.test(bad), `worker/setups.ts accepts a malformed code: ${bad}`);
+
+  return `${current.split("-").length}-field codes accepted, ${PRESETS.length} presets, 2 legacy shapes, ${malformed.length} malformed refused`;
+});
+
+/*
+ * **Every JSON body the Worker reads is bounded on the stream, not after it.**
+ *
+ * `readJson` measured its body after `request.text()` had buffered the whole of
+ * it — the 2026-09-03 audit fixed exactly that on `/api/csp-report` (item 24)
+ * and called this function fine because it refused at 413. Refusing is not
+ * declining to read. And the downloads routes read theirs with a bare
+ * `request.json().catch(() => ({}))`, which has no bound at all; `claim` is
+ * unauthenticated and reads its body before its own rate limit.
+ *
+ * Driven, not read: an unbounded pull source is handed to the real `readJson`
+ * and the gate counts how many chunks were pulled. A reader that drains before
+ * measuring pulls until the source ends — which this one never does, so a
+ * regression fails by timeout rather than by a false green. The UTF-16 case is
+ * in here too, as bytes: 30,000 three-byte characters is 30,000 code units and
+ * 90,000 bytes, and the old `text.length` check would have passed it.
+ */
+checkAsync("every JSON body the Worker reads is bounded on the stream", async () => {
+  const CAP = 64 * 1024;
+  const CHUNK = 16 * 1024;
+  let pulled = 0;
+  let cancelled = false;
+  const endless = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      pulled += 1;
+      controller.enqueue(new Uint8Array(CHUNK).fill(0x20));
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  const post = (body: BodyInit) =>
+    new Request("https://mcclevarty.ca/api/x", {
+      method: "POST",
+      body,
+      // Node's fetch needs this to accept a stream body; the DOM types lack it.
+      duplex: "half",
+    } as RequestInit);
+
+  const status = async (run: () => Promise<unknown>): Promise<number | "ok"> => {
+    try {
+      await run();
+      return "ok";
+    } catch (error) {
+      return (error as BadRequest).status ?? -1;
+    }
+  };
+
+  must((await status(() => readJson(post(endless)))) === 413, "an endless body was not refused at 413");
+  must(cancelled, "the endless body was refused without cancelling the stream — the rest is still being read");
+  must(
+    pulled <= Math.ceil(CAP / CHUNK) + 1,
+    `${pulled} chunks were pulled before refusing — the cap is ${CAP / CHUNK} chunks, so the body was drained before it was measured`,
+  );
+
+  const cjk = `"${"日".repeat(30_000)}"`;
+  must((await status(() => readJson(post(cjk)))) === 413, "30,000 three-byte characters passed a 64KB byte limit — length is being measured in UTF-16 units");
+  must((await status(() => readJson(post(`"${"a".repeat(CAP + 1)}"`)))) === 413, "65,537 ASCII bytes passed a 64KB limit");
+  must((await status(() => readJson(post(`{"ok":${"1".repeat(1000)}}`)))) === "ok", "a small valid body was refused");
+  must((await status(() => readJson(post("{not json")))) === 400, "malformed JSON did not 400");
+
+  must((await status(() => readJsonLenient(post("{not json")))) === "ok", "readJsonLenient did not swallow a malformed body");
+  must(
+    (await status(() => readJsonLenient(post(`"${"a".repeat(CAP + 1)}"`)))) === 413,
+    "readJsonLenient swallowed an oversized body — lenient about shape, never about size",
+  );
+
+  // And nothing in the Worker reads a body some other way. `arrayBuffer` on the
+  // upload-part route is the one exception: raw bytes, operator-only, and the
+  // platform's own request cap is the bound there.
+  const raw: string[] = [];
+  for (const file of readdirSync("worker").filter((f) => f.endsWith(".ts"))) {
+    // Comments stripped first: three files *describe* the bare readers they
+    // replaced, and a gate that fails on the account of a fix is not a gate.
+    const src = readFileSync(join("worker", file), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/[^\n]*/g, "");
+    if (/request\.json\(|request\.text\(/.test(src)) raw.push(file);
+  }
+  must(raw.length === 0, `these read a request body without a bound: ${raw.join(", ")}`);
+
+  return `endless body cancelled after ${pulled} chunks; UTF-16 and ASCII overflows 413; lenient reader still 413s; ${readdirSync("worker").filter((f) => f.endsWith(".ts")).length} Worker files read no body bare`;
+});
+
+await Promise.all(pending);
 
 // ---- 6. Things only a person can judge -------------------------------------
 

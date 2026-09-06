@@ -23,8 +23,21 @@ import { BadRequest } from "./encoding";
 import type { Env } from "./env";
 
 const NAME_MAX = 40;
-/** Five or six base-36 fields, hyphen-joined — `shareCode.ts`'s shape, nothing more. */
-const CODE_PATTERN = /^[0-9A-Za-z]{1,3}(-[0-9A-Za-z]{1,3}){4,5}$/;
+/**
+ * Five to **seven** base-36 fields, hyphen-joined — `shareCode.ts`'s shape,
+ * nothing more.
+ *
+ * It said five or six until 2026-09-05, and `encodeShareCode` has emitted seven
+ * since the station field landed — so every save from the account page's
+ * Setups panel, which sends `encodeShareCode(config)` verbatim, was refused
+ * with "That is not a setup code." The harness stayed green because it saved
+ * hand-typed five- and six-field codes rather than the encoder's output. The
+ * lower bound stays at five: legacy codes still decode, and refusing one here
+ * would refuse a setup somebody saved before a field existed. **When
+ * `encodeShareCode` gains a field, this gains one too** — `npm run check` now
+ * drives the pattern with the encoder's actual output, so forgetting fails.
+ */
+const CODE_PATTERN = /^[0-9A-Za-z]{1,3}(-[0-9A-Za-z]{1,3}){4,6}$/;
 /**
  * Enough for anyone naming looks by hand; a bound because an unbounded
  * user-writable table is an invitation to fill it by script.

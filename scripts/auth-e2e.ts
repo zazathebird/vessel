@@ -421,6 +421,37 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  section("Body bounds (2026-09-05) — every JSON route refuses an oversized body before reading it");
+  {
+    /*
+     * Over the wire, on the routes that are reachable with no account. The
+     * download claim used to read its body with a bare `request.json()` — no
+     * cap at all, in front of its own rate limit — and `readJson` buffered a
+     * body in full before measuring it. `npm run check` drives the reader
+     * directly and proves the stream is cancelled; this proves the routes are
+     * actually behind it.
+     */
+    const big = `{"code":"${"A".repeat(70_000)}"}`;
+    const cjk = `{"handle":"${"日".repeat(30_000)}"}`;
+    const post = (path: string, body: string) =>
+      fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body }).then(
+        (r) => r.status,
+      );
+    check("a 70KB claim body is 413", (await post("/api/downloads/claim", big)) === 413);
+    check("a 70KB challenge body is 413", (await post("/api/auth/challenge", big)) === 413);
+    check(
+      "30,000 three-byte characters are measured as 90KB, not 30K",
+      (await post("/api/auth/challenge", cjk)) === 413,
+    );
+    check("a small malformed claim body is still the one refusal", (await post("/api/downloads/claim", "{nope")) === 403);
+    // An operator route asks who you are first, so a stranger's body is never
+    // read at all — 401, not 413. Its bound is exercised signed-in below.
+    check(
+      "an operator route asks who you are before touching the body",
+      (await post("/api/admin/downloads/page", big)) === 401,
+    );
+  }
+
   // Slot round trip, offline ---------------------------------------------------
   //
   // Before involving the network at all: does the §5 arrangement work? One grant
@@ -1758,6 +1789,23 @@ async function main(): Promise<void> {
     const legacy = await api.setupSave("legacy", "2-0-0-0-7");
     check("a five-field legacy code is accepted", legacy.status === "saved");
 
+    /*
+     * **The encoder's actual output, not a hand-typed code** (2026-09-05). The
+     * Setups panel sends `encodeShareCode(config)` verbatim, and the Worker's
+     * pattern had fallen a field behind it: seven fields since the station
+     * landed, five or six accepted. Every save from the real panel was refused
+     * as "not a setup code" while this section, saving six-field codes it had
+     * typed itself, passed. A harness that types its own wire values cannot
+     * fail when the two ends drift.
+     */
+    const current = encodeShareCode(DEFAULT_CONFIG);
+    const live = await api.setupSave("current look", current);
+    check(
+      `the encoder's own ${current.split("-").length}-field code saves`,
+      live.status === "saved" && live.setup.shareCode === current.toUpperCase(),
+      JSON.stringify(live).slice(0, 120),
+    );
+
     const junk = await refusal(() => api.setupSave("bad", "not a code!!"));
     check("a malformed code is refused", junk?.status === 400, junk?.message);
     const blank = await refusal(() => api.setupSave("   ", "2-0-0-0-7-3"));
@@ -1985,7 +2033,16 @@ async function main(): Promise<void> {
   }
 
   section("Machines and drives (§13) — pairing is a password ceremony");
-  const ownerHandle = `harness-m-${RUN}`;
+  /*
+   * **Mixed case on purpose** (2026-09-05). This account is reused as the
+   * downloads section's grantee, and `addGrant` used to look it up by the
+   * case-preserving `handle` column after lowercasing the input — so an account
+   * that signed up as `Alice` could never be granted anything, and every handle
+   * in this harness was lower case, which is how that stayed green. Handles are
+   * case-insensitive everywhere else (`handle_lower`); one fixture with a
+   * capital in it is what makes any route that forgets fail here.
+   */
+  const ownerHandle = `Harness-M-${RUN}`;
   const ownerSession = asBrowser(new BrowserSession());
   let machine1Id = "";
   let machine1Pubkey = ""; // base64url, as the machine list reports it

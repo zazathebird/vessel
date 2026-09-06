@@ -6,6 +6,27 @@ what is left to do.
 
 ---
 
+## 2026-09-06 — the follow-up security pass
+
+`npm run check` is **73 green**, `npm run test:auth` **372**. **Not deployed.** The 2026-09-05
+session died mid-edit (wrangler exiting on a cancelled body — `docs/HANDOFF.md`) and left the
+body-bound fix half-applied with item 23 regressed in the working tree; finished, gated, recorded as
+`docs/SECURITY-AUDIT.md` item 32. A full re-read of the Worker, the auth client and the sharing
+agent found nothing else exploitable; the sound list is in the same section. DNSSEC is live and
+validating (item 7 closed).
+
+### Needs his decision
+
+1. **Password-proof the release-shaped operator writes?** `mintCode`, `addGrant`, `finishUpload`,
+   `deletePage`, `deleteFile` and `publishSiteConfig` are session-only; a stolen operator cookie
+   can replace a program's bytes. Audit item 3 (2026-09-06) has the argument and the narrow shape.
+   Changes how the editor feels, so it is his call, not a fix.
+2. **Deploy the 2026-09-05/06 work** — three worker files changed since `ad36fcb6`; nothing
+   customer-facing, all bounds and a route that was refusing the operator's own setups panel.
+3. `mcclevarty.com` has no DS record. Symmetry only; it just redirects.
+
+---
+
 ## 2026-09-04 — the review of the remediation, and the deploy
 
 `npm run check` is **71 green**. Two findings from reviewing yesterday's own fixes before shipping

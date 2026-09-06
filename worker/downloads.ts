@@ -32,7 +32,15 @@
  *    failed download resumes and a browser's own download manager owns it.
  */
 
-import { assertAttempt, buckets, json, noStore, recordSuccess, requireAccount } from "./accounts";
+import {
+  assertAttempt,
+  buckets,
+  json,
+  noStore,
+  readJsonLenient,
+  recordSuccess,
+  requireAccount,
+} from "./accounts";
 import { hmac, timingSafeEqual } from "./crypto";
 import { BadRequest, fromBlob, toBlob } from "./encoding";
 import type { Env } from "./env";
@@ -92,10 +100,15 @@ export function formatCode(code: string): string {
   return code.replace(/(.{4})(?=.)/g, "$1-");
 }
 
-/** A JSON body, or an empty one. Malformed input is a refusal downstream, never a 500. */
-async function readBody(request: Request): Promise<Record<string, unknown>> {
-  return request.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
-}
+/**
+ * A JSON body, or an empty one. Malformed input is a refusal downstream, never
+ * a 500 — and an oversized one is a 413 before it is read, which the bare
+ * `request.json().catch(…)` this used to be did not do (2026-09-05 audit; see
+ * `readJsonLenient`). `claim` is unauthenticated and reads its body before its
+ * own rate limit, so it was the one route left that would buffer any size of
+ * POST for anybody.
+ */
+const readBody = readJsonLenient;
 
 async function codeHash(env: Env, code: string): Promise<Uint8Array> {
   return new Uint8Array(await hmac(env.AUTH_PEPPER, `download-code:${normalise(code)}`));

@@ -82,6 +82,50 @@ function decodeOrRefuse(text: string, field: string): Uint8Array {
 }
 
 /**
+ * Read at most `limit` bytes of a request body. `null` means the body was over
+ * the cap and the rest was never read; `""` means there was nothing readable.
+ *
+ * `await request.text()` reads whatever arrives, however much that is, and
+ * materialises it as a UTF-16 string before anything can measure it. That was
+ * fixed for `/api/csp-report` on 2026-09-03 and left in place behind `readJson`
+ * (2026-09-05 audit), so every unauthenticated JSON route — signup, challenge,
+ * sign-in, the passkey routes, the download claim — still buffered a
+ * 20,000,000-byte POST in full and *then* refused it at 413. The refusal was
+ * right and the cost had already been paid. Cancelling the stream at the limit
+ * is what makes the limit a bound on memory rather than a bound on the answer.
+ */
+export async function readBounded(request: Request, limit: number): Promise<string | null> {
+  const body = request.body;
+  if (!body) return "";
+
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > limit) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return "";
+  }
+
+  const joined = new Uint8Array(total);
+  let at = 0;
+  for (const chunk of chunks) {
+    joined.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  return new TextDecoder().decode(joined);
+}
+
+/**
  * A client error carrying wording the client can show as-is.
  *
  * §10 requires that every failure says what to do next, so these messages are
