@@ -6,6 +6,36 @@ what is left to do.
 
 ---
 
+## 2026-09-06 — the second follow-up security pass
+`npm run check` is **75 green** (64 fast), `npm run test:auth` **398**. A third full reading of
+the Worker, the auth client, the sharing agent, the share scripts and every front-end sink, asking
+one question of each route: *what does this change for somebody who is not the caller?* Two
+findings fixed and gated, one hardening, recorded as `docs/SECURITY-AUDIT.md` items 34–36:
+
+- **Item 34 — a save that widens is a release.** `savePage` taking a page live or opening its
+  visibility, and `saveFile` flipping an existing file free or moving it, were session-only; a
+  stolen cookie could publish every draft and make every paid program free. Both ask now, only
+  on the transition; ordinary saves stay silent. Editor gained the matching dialogs, reactive on
+  the Worker's 401. Break-verified both ways.
+- **Item 35 — `-BrowserProfile` was interpolated into the Windows logon task unvalidated**,
+  which is item 20's kiosk-URL finding one script over. Charset-guarded, gated.
+- **Item 36 — `Sec-Fetch-Site: cross-site` refused** on every state-changing request, beside
+  the Origin check.
+
+### Needs the client (audit items 5 and 6 in the same section)
+
+- **Sessions survive a password change and an operator reset** — closing it is one column on
+  `accounts` and a check in `requireAccount`, which is a §9 inventory change and his call.
+- **`beginUpload` hides a live file before the password is asked** — an availability write on
+  the edit side of the line; keeping the old bytes live until `finishUpload` is the fix.
+
+### Still open
+
+- The two new dialogs (publish/open-up on the page form, free/move on the file form) are
+  harness-proven and typechecked, not driven by eye — item 2 of the section below, extended.
+
+---
+
 ## 2026-09-06 — the follow-up security pass
 `npm run check` is **74 green**, `npm run test:auth` **379**. **Deployed** as Worker version
 `4542397b-b531-41f2-b368-81a9ec47d386`; rollback `ad36fcb6-7084-4e3b-82fd-4bb5d8979b51`, no migration.

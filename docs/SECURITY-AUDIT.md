@@ -14,6 +14,124 @@ cited by number elsewhere. Findings are grouped as before: **fixed**, **checked 
 
 ---
 
+## 2026-09-06 — the second follow-up pass
+
+A third reading, the same day as item 33 shipped, asked one question of every route: *what does
+this change for somebody who is not the caller?* Read in full: every file under `worker/`,
+`src/auth/`, `src/share/`, the migrations, the three share scripts and `launch.bat`, the
+front-end sinks (`grep` over `src/` for every HTML and URL sink — there are none that take
+data), the head injection and its escaper. `npm run check` is **75** (64 fast),
+`npm run test:auth` **398** (379 → 398).
+
+### 34. A save that widens was a session-only write
+
+`worker/downloadPages.ts`. Item 33 drew the line at *"does this change what somebody else can
+get"* and listed six routes on it. Two more were on it some of the time. `savePage` takes a
+page from `draft` to `live` and from `granted` to `public`; `saveFile` flips a paid, uploaded
+file to `free` and moves a file to another page — and every one of those was a session-only
+write, so the thirty-minute stolen cookie that item 33 closed out of `finishUpload` could still
+publish every draft, make a customer's private page public, and hand every paid program to
+anyone, with no password anywhere. Reproduced through the harness with the cookie alone.
+
+"A save is an edit" was not wrong; it was that these two saves are sometimes releases. So the
+question is now asked of the **transition**, not the route: `savePage` reads the row it is
+about to overwrite and demands the password when `status` becomes `live` on a page that was
+not, or when a live page's visibility widens (`granted` < `code` < `unlisted` < `public`);
+`saveFile` demands it when an existing row flips `free` on or changes `slug`. A title edit, a
+price change, a narrowing, an unpublish, a new draft and a new file row all stay session-only —
+a new row has no bytes until `finishUpload`, which asks. **`proven()` is deliberately not used
+in either**: it asks unconditionally, which is the prompt-on-every-keystroke the client refused.
+
+Both halves read one constant (`RELEASE_WORDING` in `src/data/downloads.ts`): the Worker
+refuses with it and the editor opens its password dialog when a 401 starts with it, which is
+what tells the refusal apart from a lapsed session's 401. The editor is **reactive** — it sends
+the save, and a refusal opens the dialog and retries with the proof — because its copy of the
+page's state can be stale and the Worker's cannot. One round trip before the dialog on a
+publish, the same round trip a delete pays.
+
+Gated in `npm run check` as shape (the guard and the call, and the absence of `proven()`) and
+driven in `npm run test:auth` as the transitions: live without the password 401, with the wrong
+one 401, with the right one saves; widen without 401; narrow, retitle, unpublish and open a
+*draft's* visibility all save bare; the same six on a file, plus a new free row saving bare.
+**Break-verified**: with the guard disabled the fast gate fails and the harness fails seven
+checks.
+
+### 35. `-BrowserProfile` reached the logon task's argument string unvalidated
+
+`scripts/windows-share-setup.ps1`. `Register-LoginTask` builds
+`--profile-directory="$BrowserProfile" --new-window <url>` and registers it as a task that runs
+the browser at every logon. A value carrying a quote closed the argument and everything after
+it was a browser flag — `--no-sandbox`, `--load-extension=`, `--user-data-dir=` — which is item
+20's kiosk-URL finding one script over, and the same delivery: *"type this in the box"*. The
+value is matched against a closed charset in `Main` before anything consumes it (a profile
+directory is `Default` or `Profile N`), and a miss is a sentence and `exit 1`. Shape-gated.
+
+### 36. Smaller, recorded so it is not re-found
+
+- **`Sec-Fetch-Site: cross-site` is refused on every state-changing request** (`crossOrigin`,
+  `worker/index.ts`), beside the Origin check rather than instead of it. Every current browser
+  stamps it and a page cannot alter it, so it covers the Lax+POST grace window even when a
+  browser omits `Origin`. A missing header is still allowed — non-browser clients and the
+  harness — and `same-site` is deliberately not refused here, because a sibling subdomain is the
+  Origin check's job.
+
+### Checked this pass and found sound
+
+- **Routing**: exact `METHOD /path` matching, nothing served from `/api/` by the assets binding,
+  `PUT` on the upload part covered by the origin check, `HEAD` only on the byte route.
+- **Sessions and tickets**: the six-field token, purpose under the MAC, constant-time compare
+  before expiry, the 12-hour ceiling inside `verify`, `__Host-` cookie with `SameSite=Lax`, a
+  ticket subject that cannot be confused (`@`/`~`/bare over ids that `KEY` restricts to
+  `[a-z0-9-]`).
+- **Sign-in**: equal database work on the unknown-handle path, the recovery code spent only when
+  the sign-in completes, the TOTP ticket for a recovery sign-in carrying the credential, the
+  second-factor bucket, `set-password` bound to the session's account and the redeemed slot's
+  existence.
+- **Passkeys**: the CBOR subset with bounded reads, DER → P-1363 with length checks, `UV` both
+  ways, origin and RP hash from the routed request, the challenge spent monotonically. A
+  registration after an operator reset is refused by `assertPassword` (no password row), which
+  is the intended shape: recovery first, then a password, then more credentials.
+- **Downloads**: `resolveAccess` first on every read, both lookups unconditional on the byte
+  route, `canDownload` through `canRead`, grants as rows, the pin compared unconditionally, a
+  `code` page's locked answer carrying no `intro`/`notice`, `listPages` hiding `granted` from
+  strangers, the upload keyed only on a `KEY`-validated id with `complete` behind the password.
+- **The head injection**: `<` escaped in the JSON, attribute escaping on the meta, the canonical
+  built from a constant host and never the request.
+- **The sharing agent**: offers verified against the pair-time root before any answer, the
+  signed fingerprint bound to role and machine, the DTLS certificate the only thing a replayed
+  signature could not supply, paths as validated component arrays walked handle by handle, reads
+  only, drives resolved only through the `handle:` key prefix.
+- **The front end**: no `dangerouslySetInnerHTML`, `innerHTML`, `eval`, `srcdoc` or
+  `postMessage` listener anywhere; every `href`/`src` from a constant or a `KEY`-restricted
+  slug; `theme.ts` interpolates only catalogue ids into class names.
+- **The share scripts**: `json_string` escapes quotes and backslashes and strips controls, the
+  Linux call site does the base64url translation the helper's name promises, `make_link` refuses
+  an existing non-link, `--undo` removes links and never targets, `launch.bat` runs only the
+  sibling script by `%~dp0`.
+
+### Needs the client's decision — not a fix
+
+5. **A session survives a password change and an operator reset.** There is no session table
+   by design (§9), so a cookie minted before either keeps working until its 30-minute expiry
+   (12 hours across refreshes). Closing it needs one column — a `credentials_changed_at` on
+   `accounts`, set by change-password, set-password and the operator reset, with
+   `requireAccount` refusing a session issued before it. No personal data, but §9's inventory
+   gains a field, which is a spec change and his call.
+6. **`beginUpload` hides a live file before the password is asked.** It sets `uploaded_at` to
+   null so the row's size cannot lie mid-upload, which means a stolen cookie can take every
+   download offline without the proof `finishUpload` demands. Nothing leaks and nothing is
+   replaced; it is an availability write on the edit side of the line. Keeping the old bytes
+   live until `finishUpload` swaps them is the fix, and it changes what a half-finished
+   replacement looks like to a customer, which is why it is a question.
+
+### What this pass could not verify
+
+- **The two new dialogs have not been driven by eye** — the page form's publish/open-up prompt
+  and the file form's free/move prompt. Harness-proven at the Worker; the React path is
+  typechecked and follows `ProofDialog`'s existing shape.
+
+---
+
 ## 2026-09-06 — the follow-up pass
 
 A second reading of the whole Worker, the browser auth layer and the phase-2 sharing agent, after

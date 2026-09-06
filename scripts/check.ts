@@ -5492,9 +5492,27 @@ check("the release-shaped operator writes demand the password, and the edits do 
   for (const [file, name] of releases) {
     must(asks(bodyOf(files[file], name)), `${file}: ${name} no longer demands the password`);
   }
+  /*
+   * The two saves that can BE a release ask only when they widen (2026-09-06,
+   * second pass — audit item 34): `assertPassword` under an `if (widens)`
+   * guard, never `proven()`, which asks unconditionally and is the
+   * prompt-on-every-keystroke the client refused. `npm run test:auth` drives the
+   * transition both ways; this is the shape that fails at edit time when the
+   * guard is dropped or the call is.
+   */
+  for (const name of ["savePage", "saveFile"]) {
+    const src = bodyOf(files["worker/downloadPages.ts"], name);
+    must(!/\bproven\(/.test(src), `${name} uses proven() — that asks on every save`);
+    must(
+      /if \(widens\) await assertPassword\(/.test(src),
+      `${name} no longer asks for the password when a save widens what somebody else can get`,
+    );
+    must(
+      (src.match(/\bassertPassword\(/g) ?? []).length === 1,
+      `${name} calls assertPassword outside the widening guard`,
+    );
+  }
   const edits: [keyof typeof files, string][] = [
-    ["worker/downloadPages.ts", "savePage"],
-    ["worker/downloadPages.ts", "saveFile"],
     ["worker/downloadPages.ts", "saveBlocks"],
     ["worker/downloadPages.ts", "beginUpload"],
     ["worker/downloadPages.ts", "uploadPart"],
@@ -5507,7 +5525,26 @@ check("the release-shaped operator writes demand the password, and the edits do 
   // And the helper itself has to reach assertPassword, or `proven` is a name.
   must(/async function proven\([\s\S]*?assertPassword\(/.test(files["worker/downloadPages.ts"]), "proven() does not call assertPassword");
 
-  return `${releases.length} releases ask, ${edits.length} edits do not`;
+  return `${releases.length} releases ask, 2 saves ask only when they widen, ${edits.length} edits do not`;
+});
+
+/*
+ * **`-BrowserProfile` is matched against a closed charset before it reaches
+ * the logon task's argument string** (2026-09-06, second pass — audit item
+ * 35). The task runs the browser at every logon with that string, so a quote
+ * in the value turned into browser flags: the kiosk-URL finding (item 20) one
+ * script over. Shape gate, on the parameter and the line that consumes it.
+ */
+check("the Windows script refuses a -BrowserProfile that is not a profile folder name", () => {
+  const src = readFileSync("scripts/windows-share-setup.ps1", "utf8");
+  const guard = src.indexOf("$BrowserProfile -notmatch '^[A-Za-z0-9][A-Za-z0-9 _.-]{0,63}$'");
+  const use = src.indexOf('--profile-directory=`"$BrowserProfile`"');
+  must(guard >= 0, "the -BrowserProfile charset guard is gone");
+  must(use >= 0, "the logon task no longer builds --profile-directory from -BrowserProfile (update this gate)");
+  const main = src.indexOf("function Main {");
+  must(main >= 0 && guard > main, "the guard is not in Main, where the parameter is first consumed");
+  must(/if \(\$BrowserProfile -and \$BrowserProfile -notmatch[^\n]*\n[^\n]*Write-Fail[^\n]*\n\s*exit 1/.test(src), "the guard does not exit");
+  return "quotes and flags in -BrowserProfile are refused before the task is written";
 });
 
 await Promise.all(pending);

@@ -793,6 +793,18 @@ function Invoke-Undo {
 function Main {
     Assert-Windows
 
+    # -BrowserProfile is interpolated into the logon task's ARGUMENT STRING
+    # (Register-LoginTask), and the task runs at every logon. A value carrying
+    # a quote closes the --profile-directory argument and everything after it
+    # is a browser flag: `--no-sandbox`, `--load-extension=`, `--user-data-dir=`
+    # — the same shape as the kiosk URL finding in the host scripts
+    # (docs/SECURITY-AUDIT.md item 20), delivered by "type this in the box".
+    # A profile directory is "Default" or "Profile N"; that is the closed set.
+    if ($BrowserProfile -and $BrowserProfile -notmatch '^[A-Za-z0-9][A-Za-z0-9 _.-]{0,63}$') {
+        Write-Fail "-BrowserProfile can only be a profile folder name such as Default or ""Profile 1""."
+        exit 1
+    }
+
     if (-not $ShareRoot) { $ShareRoot = Join-Path $env:USERPROFILE 'Shared' }
 
     Write-Host ""

@@ -13,6 +13,38 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-09-06 — a save that widens is a release, and asks
+
+The same day as the entry below, and a correction to its list rather than its line. The line —
+*"does this change what somebody else can get"* — was right; the six routes named on it were
+not all of them. `savePage` is on it whenever it takes a page live or opens a live page's
+visibility, and `saveFile` whenever it flips an existing file free or moves it to another page.
+Each of those was a session-only write, so the stolen cookie the entry below closed out of
+`finishUpload` could still publish every draft, make a `granted` page public and hand every paid
+program to anyone (`docs/SECURITY-AUDIT.md` item 34).
+
+**Decided: the question is asked of the transition, never the route.** The two saves read the
+row they are about to overwrite and demand the password only when the save widens; a title edit,
+a price change, a narrowing, an unpublish, a new draft and a new file row all stay session-only.
+`proven()` is deliberately not used in either — it asks unconditionally, which is exactly the
+prompt-on-every-keystroke the client refused — and `npm run check` asserts that as well as the
+guard. This is not a reversal of the entry below; the client's refusal was of a password on every
+save, and every save that is not a release still has none. The alternative — routing publish
+through a seventh route so the saves could stay unconditional — was rejected because it moves the
+release out of the form the operator is standing in, and the editor's "Publish" button *is* the
+save with `status: "live"`.
+
+On the screen the editor is reactive: it sends the save, and a 401 whose message starts with the
+shared prefix (`RELEASE_WORDING`, `src/data/downloads.ts`) opens a `ProofDialog` and retries with
+the proof. Reactive because the editor's copy of a page's state can be stale and the Worker's
+cannot; the cost is the one round trip a delete already pays. `npm run check` **74 → 75**,
+`test:auth` **379 → 398**, break-verified with the guard disabled (fast gate red, seven harness
+checks red).
+
+Two smaller things in the same pass: `-BrowserProfile` in the Windows share script is
+charset-guarded before it reaches the logon task's argument string (item 35, the item-20 shape),
+and `crossOrigin` refuses `Sec-Fetch-Site: cross-site` beside the Origin check (item 36).
+
 ## 2026-09-06 — a release asks for the password; an edit does not
 
 The client's call, asked and answered the same day (`docs/SECURITY-AUDIT.md` item 33). Item 16

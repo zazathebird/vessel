@@ -1089,6 +1089,15 @@ environment problem. Until they move above the health check, start the Worker.
   is typed carelessly. **Gated in both directions** — the six must ask and the seven edits must
   not — so do not "harden" `saveFile` into a prompt, and do not "simplify" `finishUpload` out of
   one. The upload proves the password against the slot route *before* the first part goes up.
+  **And two of the saves ask when — and only when — they WIDEN** (2026-09-06, second pass,
+  audit item 34): `savePage` when a page goes `live` or a live page's visibility opens
+  (`granted` < `code` < `unlisted` < `public`), `saveFile` when an existing row flips `free` on
+  or changes page. Those transitions are releases by the rule's own test, and each was a
+  session-only write. The question is asked of the *transition*, never the route — `proven()`
+  asks unconditionally and must not be used there — so a title edit, a narrowing, an unpublish
+  and a new row stay silent. `RELEASE_WORDING` in `src/data/downloads.ts` is read by both the
+  Worker and the editor, which recognises the prompt by its prefix and retries with the proof.
+  Gated as shape and driven as transitions; break-verified.
 - **The rate-limit bucket is keyed on a NORMALISED address, IPv6 cut to the /64** (`crypto.ts`).
   Keyed on the whole string, rotating inside one /64 — which every residential and VPS allocation
   hands you for free — produced **zero** 429s over 72 attempts, defeating the signup allowance and
@@ -1288,6 +1297,11 @@ wrong machine is worse than not running. `docs/pi-sharing-host.md` and
   selectors, ZWJ, zero-width space, soft hyphen - compared equal to the first zero-weight clause and
   was written out as `\b`. A folder called "Photos [emoji]" produced a code the site then refused,
   after the links had already been made. `-CaseSensitive` does not fix it; `-eq` does not have it.
+- **`-BrowserProfile` is matched against a closed charset before anything consumes it**
+  (2026-09-06, audit item 35). It is interpolated into the logon task's argument string, which
+  runs the browser at every logon, so a quote in the value became browser flags — `--no-sandbox`,
+  `--load-extension=` — by "type this in the box". A profile directory is `Default` or
+  `Profile N`; anything else is a sentence and `exit 1`. Gated.
 - **`@()` around the folder collection is load-bearing.** A one-element array unrolls on return and
   `Set-StrictMode -Version 2.0` suppresses the scalar `.Count` shim, so choosing exactly one folder
   crashed the script. It worked with two, which is why it would have survived every test but the
@@ -1610,7 +1624,10 @@ is built by concatenation **and** compared against the request before being sent
 defence in depth behind `SameSite=Lax`, covering the two places Lax does not reach: Chromium's two-minute
 grace on a freshly set cookie, and same-site subdomains. **A missing `Origin` is allowed deliberately**:
 same-origin GETs and non-browser clients omit it, and the harness is one of those. Do not tighten to
-"require an Origin" without fixing the harness first.
+"require an Origin" without fixing the harness first. **`Sec-Fetch-Site: cross-site` is refused
+beside it** (2026-09-06): browsers stamp it and pages cannot alter it, so it covers the grace
+window even without an `Origin`; a missing header is allowed for the same reason, and `same-site`
+is deliberately not refused here because a sibling subdomain is the Origin check's job.
 
 **The CSP is report-only, deliberately.** The nonce is minted per request, stamped on the inlined
 site-config script by `withSiteConfig`, and named by `cspPolicy`; violations arrive at `/api/csp-report`

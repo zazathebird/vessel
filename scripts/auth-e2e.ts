@@ -2476,8 +2476,86 @@ async function main(): Promise<void> {
     }
     // And an edit is still a session-only save — the line the client drew.
     const editSlug = `harness-edit-${RUN}`;
-    const saved = await api.adminPageSave({ slug: editSlug, title: "Edit, not release" });
+    const saved = await api.adminPageSave({ slug: editSlug, title: "Edit, not release", visibility: "code" });
     check("saving a page asks for no password", saved.ok === true && saved.slug === editSlug);
+
+    /*
+     * **A save that WIDENS is a release** (2026-09-06, second pass — audit
+     * item 34). Taking a page live, or opening a live page's visibility, was a
+     * session-only write, so a stolen cookie could publish every draft and make
+     * a `granted` page public. Both transitions ask now; a title edit, a
+     * narrowing and an unpublish do not. Driven here as the transitions, since
+     * the shape gate in `npm run check` can only see that the call exists.
+     * The wrong-proof case is a third failure on the account bucket; the
+     * successes on either side of it reset the count.
+     */
+    const publishBare = await refusal(() =>
+      api.adminPageSave({ slug: editSlug, title: "Edit, not release", visibility: "code", status: "live" }),
+    );
+    check("taking a page live with no password is 401", publishBare?.status === 401, publishBare?.message);
+    check(
+      "and the refusal is the password prompt, not a lapsed session",
+      (publishBare?.message ?? "").startsWith("Enter your password"),
+      publishBare?.message,
+    );
+    const published = await api.adminPageSave({
+      slug: editSlug, title: "Edit, not release", visibility: "code", status: "live", authSecret: opProof,
+    });
+    check("taking a page live with the password saves", published.ok === true);
+    const retitled = await api.adminPageSave({ slug: editSlug, title: "Retitled", visibility: "code", status: "live" });
+    check("editing a live page's title asks for no password", retitled.ok === true);
+    const widenBare = await refusal(() =>
+      api.adminPageSave({ slug: editSlug, title: "Retitled", visibility: "public", status: "live" }),
+    );
+    check("opening a live page from code to public with no password is 401", widenBare?.status === 401);
+    const widenWrong = await refusal(() =>
+      api.adminPageSave({ slug: editSlug, title: "Retitled", visibility: "public", status: "live", authSecret: wrongProof }),
+    );
+    check("and with the wrong password is 401", widenWrong?.status === 401);
+    const widened = await api.adminPageSave({
+      slug: editSlug, title: "Retitled", visibility: "public", status: "live", authSecret: opProof,
+    });
+    check("and with the right one saves", widened.ok === true);
+    const narrowed = await api.adminPageSave({ slug: editSlug, title: "Retitled", visibility: "granted", status: "live" });
+    check("narrowing a live page to granted asks for no password", narrowed.ok === true);
+    const unpublished = await api.adminPageSave({ slug: editSlug, title: "Retitled", visibility: "granted", status: "draft" });
+    check("unpublishing asks for no password", unpublished.ok === true);
+    const stillDraft = await api.adminPageSave({ slug: editSlug, title: "Retitled", visibility: "public", status: "draft" });
+    check("opening a DRAFT's visibility asks for no password — nothing is live", stillDraft.ok === true);
+
+    // The same rule on a file: flipping an existing row free, or moving it,
+    // asks; a new row and a details edit do not. No bytes are involved, which
+    // is the point — the row's existence is what makes the flip a release.
+    const flipId = `harness-flip-${RUN}`;
+    const created = await api.adminFileSave({ id: flipId, slug: editSlug, name: "Flip", filename: "flip.bin", free: false });
+    check("creating a paid file row asks for no password", created.ok === true);
+    const renamed = await api.adminFileSave({ id: flipId, slug: editSlug, name: "Flip, renamed", free: false, priceCents: 1250 });
+    check("editing a file's name and price asks for no password", renamed.ok === true);
+    const freeBare = await refusal(() =>
+      api.adminFileSave({ id: flipId, slug: editSlug, name: "Flip, renamed", free: true }),
+    );
+    check("flipping an existing file free with no password is 401", freeBare?.status === 401, freeBare?.message);
+    check(
+      "and that refusal is the password prompt too",
+      (freeBare?.message ?? "").startsWith("Enter your password"),
+      freeBare?.message,
+    );
+    const freed = await api.adminFileSave({ id: flipId, slug: editSlug, name: "Flip, renamed", free: true, authSecret: opProof });
+    check("flipping it free with the password saves", freed.ok === true);
+    const unfreed = await api.adminFileSave({ id: flipId, slug: editSlug, name: "Flip, renamed", free: false });
+    check("flipping it back to paid asks for no password", unfreed.ok === true);
+    const moveSlug = `harness-move-${RUN}`;
+    await api.adminPageSave({ slug: moveSlug, title: "Elsewhere" });
+    const moveBare = await refusal(() =>
+      api.adminFileSave({ id: flipId, slug: moveSlug, name: "Flip, renamed", free: false }),
+    );
+    check("moving an existing file to another page with no password is 401", moveBare?.status === 401, moveBare?.message);
+    const moved = await api.adminFileSave({ id: flipId, slug: moveSlug, name: "Flip, renamed", free: false, authSecret: opProof });
+    check("moving it with the password saves", moved.ok === true);
+    const freeNew = await api.adminFileSave({ id: `harness-freenew-${RUN}`, slug: moveSlug, name: "New and free", filename: "new.bin", free: true });
+    check("a NEW free row asks for no password — it has no bytes until finishUpload, which asks", freeNew.ok === true);
+
+    await api.adminPageDelete(moveSlug, opProof);
     await api.adminPageDelete(editSlug, opProof);
 
     const slug = `harness-page-${RUN}`;
@@ -2601,7 +2679,7 @@ async function main(): Promise<void> {
     );
 
     // ---- public --------------------------------------------------------
-    await api.adminPageSave({ slug, title: "Harness page", layout: "list", visibility: "public", status: "live" });
+    await api.adminPageSave({ slug, title: "Harness page", layout: "list", visibility: "public", status: "live", authSecret: opProof });
 
     asBrowser(stranger);
     const live = await api.downloadPage(slug);
@@ -2802,7 +2880,7 @@ async function main(): Promise<void> {
     // whole security of a code, so it is asserted rather than assumed.
     const otherSlug = `harness-other-${RUN}`;
     asBrowser(opSession);
-    await api.adminPageSave({ slug: otherSlug, title: "Other", layout: "list", visibility: "code", status: "live" });
+    await api.adminPageSave({ slug: otherSlug, title: "Other", layout: "list", visibility: "code", status: "live", authSecret: opProof });
     asBrowser(stranger);
     const wrongPage = await api.downloadPage(otherSlug, claimed.ticket);
     check("a ticket does not open a page it was not minted for", wrongPage.locked === true);
@@ -2875,6 +2953,7 @@ async function main(): Promise<void> {
       layout: "list",
       visibility: "granted",
       status: "live",
+      authSecret: opProof,
     });
     const wantedId = `harness-want-${RUN}`;
     const offLimitsId = `harness-off-${RUN}`;
@@ -2959,6 +3038,7 @@ async function main(): Promise<void> {
       layout: "list",
       visibility: "code",
       status: "live",
+      authSecret: opProof,
     });
     const orphan = await api.adminDownloadMint({ authSecret: opProof,
       label: "harness-orphan",
@@ -2992,6 +3072,7 @@ async function main(): Promise<void> {
       layout: "list",
       visibility: "code",
       status: "live",
+      authSecret: opProof,
     });
     const rebuilt = await api.downloadPage(slug);
     check(
@@ -3043,6 +3124,7 @@ async function main(): Promise<void> {
       layout: "list",
       visibility: "code",
       status: "live",
+      authSecret: opProof,
     });
     await api.adminFileSave({
       id: scopedId,
@@ -3093,6 +3175,7 @@ async function main(): Promise<void> {
       layout: "list",
       visibility: "code",
       status: "live",
+      authSecret: opProof,
     });
     await api.adminFileSave({
       id: scopedId,
@@ -3138,6 +3221,7 @@ async function main(): Promise<void> {
       layout: "list",
       visibility: "code",
       status: "live",
+      authSecret: opProof,
     });
     await api.adminFileSave({
       id: pinlessId,

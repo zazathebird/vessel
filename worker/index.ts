@@ -119,6 +119,16 @@ const HSTS = "max-age=63072000; includeSubDomains";
 function crossOrigin(request: Request, url: URL): boolean {
   if (request.method === "GET" || request.method === "HEAD") return false;
 
+  // Fetch metadata, beside the Origin check rather than instead of it
+  // (2026-09-06, second pass). Every current browser stamps `Sec-Fetch-Site` on
+  // every request and a page cannot alter it, so `cross-site` on a
+  // state-changing request is a refusal whatever the Origin header says —
+  // including the case where there is none. A missing header is allowed for
+  // the same reason a missing Origin is: non-browser clients, and the harness.
+  // `same-site` is deliberately NOT refused here; a sibling subdomain is the
+  // Origin check's job, which compares the host exactly.
+  if (request.headers.get("sec-fetch-site") === "cross-site") return true;
+
   const origin = request.headers.get("origin");
   if (!origin) return false;
 

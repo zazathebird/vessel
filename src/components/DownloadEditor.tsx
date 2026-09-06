@@ -63,6 +63,7 @@ import {
   PICKABLE_CATEGORIES,
   PLATFORMS,
   PLATFORM_LABEL,
+  PROOF_PREFIX,
   SORT_LABEL,
   categoryOf,
   formatPrice,
@@ -82,6 +83,19 @@ import { QrCode } from "./QrCode";
  * longer thing to lose.
  */
 const CHUNK = 8 * 1024 * 1024;
+
+/**
+ * A 401 that is the Worker asking for the password on a save that WIDENS what
+ * somebody else can get — not a session that lapsed, which is also a 401 and
+ * says "Sign in to do that." The prefix is shared with the Worker
+ * (`RELEASE_WORDING` in `src/data/downloads.ts`), so the two cannot drift.
+ * Reactive rather than predicted on purpose: the editor's copy of a page's
+ * state can be stale, and the Worker's answer never is. The cost is one round
+ * trip before the dialog on a publish, the same round trip a delete pays.
+ */
+function needsProof(thrown: unknown): boolean {
+  return thrown instanceof ApiError && thrown.status === 401 && thrown.message.startsWith(PROOF_PREFIX);
+}
 
 /** Blank page, so "new" has somewhere to start. Every default is today's page. */
 const EMPTY = {
@@ -116,6 +130,8 @@ export function DownloadEditor() {
    * (2026-09-06, the client's call; `proven` in `worker/downloadPages.ts`).
    */
   const [confirmDelete, setConfirmDelete] = useState(false);
+  /** The save the Worker asked a password for, held while the dialog is up. */
+  const [publishProof, setPublishProof] = useState<Draft | null>(null);
   const [pages, setPages] = useState<DownloadPageSummary[]>([]);
   const [slug, setSlug] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft>(EMPTY);
@@ -174,18 +190,30 @@ export function DownloadEditor() {
       .catch(() => undefined);
   }, [refreshPages]);
 
-  async function savePage(status?: "draft" | "live") {
+  /**
+   * `password` is present only on the retry from the proof dialog. A save that
+   * takes the page live or opens its visibility is refused without it
+   * (`needsProof`), and that refusal opens the dialog rather than the error
+   * line; an ordinary save never sees either.
+   */
+  async function savePage(status?: "draft" | "live", password?: string) {
     if (busy) return;
     setBusy(true);
     setError(null);
+    const next = { ...draft, status: status ?? draft.status };
     try {
-      const next = { ...draft, status: status ?? draft.status };
-      const saved = await api.adminPageSave(next);
+      const authSecret = password ? (await derivePassword(handle, password)).authSecret : null;
+      const saved = await api.adminPageSave(authSecret ? { ...next, authSecret } : next);
       if (draft.layout === "blocks") await api.adminBlocksSave(saved.slug, blocks);
+      setPublishProof(null);
       await refreshPages();
       await openPage(saved.slug);
-      say(status === "live" ? "Published. It's live now." : "Saved.");
+      say(next.status === "live" && draft.status !== "live" ? "Published. It's live now." : "Saved.");
     } catch (thrown) {
+      if (!password && needsProof(thrown)) {
+        setPublishProof(next);
+        return;
+      }
       setError(thrown instanceof ApiError ? thrown.message : "That didn't save.");
     } finally {
       setBusy(false);
@@ -581,6 +609,31 @@ export function DownloadEditor() {
         />
       ) : null}
 
+      {publishProof ? (
+        <ProofDialog
+          title={
+            draft.status === "live"
+              ? `Open up ${publishProof.title || publishProof.slug}?`
+              : `Publish ${publishProof.title || publishProof.slug}?`
+          }
+          consequence={
+            <p>
+              This changes who can see the page, so it asks for your password. Saving the words on
+              it does not.
+            </p>
+          }
+          confirmLabel={draft.status === "live" ? "Save and open it up" : "Publish"}
+          busyLabel="Publishing…"
+          busy={busy}
+          error={error}
+          onConfirm={(password) => void savePage(publishProof.status as "draft" | "live", password)}
+          onClose={() => {
+            setPublishProof(null);
+            setError(null);
+          }}
+        />
+      ) : null}
+
       {slug ? <ShareLink slug={slug} live={draft.status === "live"} /> : null}
 
       {slug ? (
@@ -915,6 +968,13 @@ function FileManager({
    * Remounting it is the only way to clear it.
    */
   const [pickerKey, setPickerKey] = useState(0);
+  /**
+   * A details-only save the Worker refused for want of the password — flipping
+   * an existing file free, or moving it to another page. Held while the dialog
+   * is up; a save carrying bytes never lands here, because that form already
+   * has the password typed and sends it.
+   */
+  const [saveProof, setSaveProof] = useState(false);
 
   const patch = (p: Partial<FileDraft>) => setForm((f) => ({ ...f, ...p }));
 
@@ -1006,9 +1066,16 @@ function FileManager({
     /** The password proof, derived once and only when bytes are going up. */
     let authSecret = "";
 
-    /** Everything except the bytes. `filename` only when there are new bytes. */
-    const details = (filename?: string) =>
+    /**
+     * Everything except the bytes. `filename` only when there are new bytes;
+     * `proof` when the password is in hand, because a save that makes an
+     * existing file free or moves it is a release and the Worker asks
+     * (`RELEASE_WORDING.file`). Sent whenever it is known — the Worker ignores
+     * it on a save that does not widen.
+     */
+    const details = (filename?: string, proof?: string) =>
       api.adminFileSave({
+        ...(proof ? { authSecret: proof } : {}),
         id: form.id,
         slug,
         name: form.name,
@@ -1083,9 +1150,9 @@ function FileManager({
        */
       if (editing && file) {
         await bytes(file);
-        await details(file.name);
+        await details(file.name, authSecret);
       } else {
-        await details(file ? file.name : undefined);
+        await details(file ? file.name : undefined, authSecret || undefined);
         if (file) await bytes(file);
       }
 
@@ -1097,6 +1164,12 @@ function FileManager({
       // is told to stop rather than left. Best effort: the failure that got us
       // here may be the same one that stops this working.
       if (uploadId) await api.adminUploadAbort(form.id, uploadId).catch(() => undefined);
+      // No bytes and no password typed, and the Worker wants one: this save
+      // widens who can get the file. Ask, then retry through `saveWithProof`.
+      if (!file && needsProof(thrown)) {
+        setSaveProof(true);
+        return;
+      }
       setError(thrown instanceof ApiError ? thrown.message : "That didn't save.");
     } finally {
       setProgress(null);
@@ -1185,6 +1258,39 @@ function FileManager({
     }
   }
 
+  /** The retry from the proof dialog: the same details-only save, with the password. */
+  async function saveWithProof(password: string) {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const { authSecret } = await derivePassword(handle, password);
+      await api.adminFileSave({
+        authSecret,
+        id: form.id,
+        slug,
+        name: form.name,
+        blurb: form.blurb,
+        platform: form.platform,
+        version: form.version,
+        free: form.free,
+        author: form.author,
+        caveat: form.caveat,
+        group: form.group,
+        category: form.category,
+        priceCents: toCents(form.price) ?? 0,
+      });
+      setSaveProof(false);
+      say(`${form.name || form.id} updated.`);
+      reset();
+      onChanged();
+    } catch (thrown) {
+      setError(thrown instanceof ApiError ? thrown.message : "That didn't save.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   /** Delete a file and its bytes — a release in reverse, so it takes the password too. */
   async function remove(f: DownloadFileInfo, password: string) {
     if (busy) return;
@@ -1225,6 +1331,27 @@ function FileManager({
             void (proof.kind === "mint" ? mintFor(proof.file, password) : remove(proof.file, password))
           }
           onClose={() => setProof(null)}
+        />
+      ) : null}
+
+      {saveProof ? (
+        <ProofDialog
+          title={`Change who can get ${form.name || form.id}?`}
+          consequence={
+            <p>
+              Making a file free, or moving it to another page, changes who can download it — so
+              it asks for your password. Editing its details does not.
+            </p>
+          }
+          confirmLabel="Save"
+          busyLabel="Saving…"
+          busy={busy}
+          error={error}
+          onConfirm={(password) => void saveWithProof(password)}
+          onClose={() => {
+            setSaveProof(false);
+            setError(null);
+          }}
         />
       ) : null}
 

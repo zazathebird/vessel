@@ -494,6 +494,29 @@ export function sortFiles<T extends SortableFile>(files: readonly T[], sort: Fil
  * Zero is **not** "$0" — it is no price at all, and the caller renders nothing.
  * Free is a different statement and belongs to `free`, which is about the gate.
  */
+/**
+ * The password prompt a WIDENING save answers with, and the prefix the editor
+ * recognises it by (2026-09-06, second pass — `docs/SECURITY-AUDIT.md` item 34).
+ *
+ * A save is an edit and asks nothing. But four saves change what somebody
+ * *else* can get, which is the line the release rule draws: taking a page live,
+ * opening a page's visibility, flipping an existing file free, and moving an
+ * existing file to another page. Each of those was a session-only write, so a
+ * stolen operator cookie could publish every draft and make every paid file
+ * free without the password the six release routes demand. Those four ask;
+ * every other save stays silent.
+ *
+ * One constant for both halves: the Worker refuses with these sentences and the
+ * editor opens its password dialog when a 401 starts with the prefix, so the
+ * two cannot drift apart. A lapsed session is also a 401 and does not start
+ * this way, which is what tells the two apart.
+ */
+export const PROOF_PREFIX = "Enter your password";
+export const RELEASE_WORDING = {
+  page: `${PROOF_PREFIX} to publish this page.`,
+  file: `${PROOF_PREFIX} to change who can get this file.`,
+} as const;
+
 export function formatPrice(cents: number): string | null {
   if (!Number.isFinite(cents) || cents <= 0) return null;
   const dollars = cents / 100;

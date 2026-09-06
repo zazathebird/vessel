@@ -47,6 +47,7 @@ import {
   PAGE_LAYOUTS,
   PAGE_VISIBILITY,
   PLATFORMS,
+  RELEASE_WORDING,
 } from "../src/data/downloads";
 
 /*
@@ -129,6 +130,15 @@ async function operator(request: Request, env: Env) {
  * write". `assertPassword` carries its own rate limit, so this is a bucket and
  * not an oracle.
  */
+/**
+ * How far a page's visibility reaches, so a save can tell widening from
+ * narrowing. An unknown value ranks below everything: `canRead` refuses it, so
+ * moving *to* it opens nothing and moving *from* it opens whatever the new
+ * value does.
+ */
+const REACH: Record<string, number> = { granted: 0, code: 1, unlisted: 2, public: 3 };
+const reach = (visibility: string | undefined): number => REACH[visibility ?? ""] ?? -1;
+
 async function proven(request: Request, env: Env, wording: string) {
   const account = await operator(request, env);
   const b = await body(request);
@@ -588,7 +598,7 @@ export async function readPage(request: Request, env: Env, url: URL): Promise<Re
 /* -------------------------------------------------------------------------- */
 
 export async function savePage(request: Request, env: Env): Promise<Response> {
-  await operator(request, env);
+  const account = await operator(request, env);
   const b = await body(request);
 
   const slug = str(b.slug, 64).toLowerCase();
@@ -603,6 +613,27 @@ export async function savePage(request: Request, env: Env): Promise<Response> {
     ? (b.visibility as string)
     : "public";
   const status = b.status === "live" ? "live" : "draft";
+
+  /*
+   * **A save that WIDENS is a release, and asks** (2026-09-06, second pass —
+   * `docs/SECURITY-AUDIT.md` item 34). The release rule drew its line at "does
+   * this change what somebody *else* can get", and then listed six routes — but
+   * this one is on that line whenever it takes a page live or opens a live
+   * page's visibility. Reproduced with the session cookie alone: every draft
+   * published and a `granted` page made `public`, no password anywhere. Nothing
+   * about "a save is an edit" was wrong; it was that this save is sometimes not
+   * one. So the question is asked of the *transition*, not the route: a title
+   * edit, a narrowing, an unpublish and a new draft all stay session-only, and
+   * `npm run test:auth` drives both halves. The `proven` helper is deliberately not used
+   * here — it asks unconditionally, and that is the prompt-on-every-save the
+   * client refused.
+   */
+  const before = await env.DB.prepare("SELECT visibility, status FROM download_pages WHERE slug = ?")
+    .bind(slug)
+    .first<{ visibility: string; status: string }>();
+  const widens =
+    status === "live" && (before?.status !== "live" || reach(visibility) > reach(before.visibility));
+  if (widens) await assertPassword(request, env, account, b.authSecret, RELEASE_WORDING.page);
 
   /*
    * The presentation switches (0007). Each one falls back to the behaviour the
@@ -812,7 +843,7 @@ export async function saveBlocks(request: Request, env: Env): Promise<Response> 
  * `uploaded_at`: that field belongs to the upload alone.
  */
 export async function saveFile(request: Request, env: Env): Promise<Response> {
-  await operator(request, env);
+  const account = await operator(request, env);
   const b = await body(request);
 
   const id = fileId(b.id);
@@ -836,9 +867,9 @@ export async function saveFile(request: Request, env: Env): Promise<Response> {
    *
    * A row that does not exist yet has nothing to keep, so there it is required.
    */
-  const existing = await env.DB.prepare("SELECT filename FROM download_files WHERE id = ?")
+  const existing = await env.DB.prepare("SELECT filename, slug, free FROM download_files WHERE id = ?")
     .bind(id)
-    .first<{ filename: string }>();
+    .first<{ filename: string; slug: string; free: number }>();
   const supplied = str(b.filename, 160);
   const filename = supplied || existing?.filename || "";
   if (!filename) throw new BadRequest("A new file needs the file itself.");
@@ -904,6 +935,20 @@ export async function saveFile(request: Request, env: Env): Promise<Response> {
   const priceCents = Number.isInteger(rawPrice) ? (rawPrice as number) : 0;
   if (priceCents < 0 || priceCents > 100_000_000) throw new BadRequest("That price is out of range.");
 
+  /*
+   * **The two edits to an EXISTING row that are releases ask** (2026-09-06,
+   * second pass — the `savePage` note above has the argument). Flipping a paid
+   * file free hands its bytes to everyone; moving a file to another page hands
+   * it to whoever that page is open to — a grant on page B now covers a file
+   * that was on page A, and the pinned codes for it die, which is the pin
+   * working. A new row asks nothing: it has no bytes until `finishUpload`, which
+   * asks. Everything else on this form — name, blurb, price, category — is an
+   * edit and stays silent.
+   */
+  const free = b.free === true ? 1 : 0;
+  const widens = existing !== null && ((free === 1 && existing.free !== 1) || existing.slug !== slug);
+  if (widens) await assertPassword(request, env, account, b.authSecret, RELEASE_WORDING.file);
+
   const now = Date.now();
 
   await env.DB.prepare(
@@ -928,7 +973,7 @@ export async function saveFile(request: Request, env: Env): Promise<Response> {
       platform,
       str(b.version, 40),
       filename,
-      b.free === true ? 1 : 0,
+      free,
       str(b.author, LIMITS.title),
       str(b.caveat, LIMITS.summary),
       str(b.group, 64),
