@@ -1,12 +1,13 @@
-# Security audit — 2026-09-03
+# Security audit — 2026-09-03 onward
 
 A full pass over the Worker, the auth stack, the download catalogue, the four setup scripts and
 both host scripts, commissioned by the client, with remediation. Everything below was **found by
 reading the code against its own comments** and then reproduced — either against the local Worker
 or, for the shell, by executing the real functions out of the real scripts.
 
-**Nothing here is deployed.** `npm run check` is 70 green (69 → 70; one gate added) and
-`npm run test:auth` 365, both against local D1.
+**Everything through item 49 is deployed** (the last as Worker `38ceae8d`, 2026-09-07). Each
+pass's section records its own deploy, gate count and rollback; the sentence that used to sit
+here — *nothing here is deployed*, 70 checks, 365 harness — was true of the first pass only.
 
 **Numbering continues the sequence this document already uses** (1–14), because items in it are
 cited by number elsewhere. Findings are grouped as before: **fixed**, **checked and sound**,
