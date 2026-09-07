@@ -1,0 +1,15 @@
+# SHA-256 checksums for the mcclevarty.ca setup scripts
+#
+# Check a download against this list before running it:
+#
+#   Windows (PowerShell):  Get-FileHash .\FILENAME -Algorithm SHA256
+#   macOS:                 shasum -a 256 FILENAME
+#   Linux:                 sha256sum FILENAME
+#
+# The .txt copy of each script is the same bytes as the script, so it has
+# the same checksum. That is the point of it: what you read is what runs.
+#
+623c6608761f1a7f4b289ece59e2c80451ec4419d0ebafb0918ed4b3b81c4ab0  windows-share-setup.ps1
+b9eed399629aaddb0effd21d721e7947826650aa89bc9bd64b3dd898059ec1d9  launch.bat
+84f073cbd5c5decec1ac835e4e5bb2d5fba3db18e9a5c8d2ca3a6e8958028c4e  macos-share-setup.sh
+1eb52686dc8b871bb0ac6efa88138990f8cff93483cf933de422b353973d4761  linux-share-setup.sh

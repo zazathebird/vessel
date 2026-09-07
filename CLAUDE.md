@@ -8,7 +8,8 @@ each was found; that is history, and history lives in `docs/DECISIONS.md`.
 
 | Where the rest lives | |
 |---|---|
-| `TODO.md` | The ordered backlog. **If this file and `TODO.md` disagree, `TODO.md` is newer.** |
+| `TODO.md` | The backlog — only what is left. **If this file and `TODO.md` disagree, `TODO.md` is newer.** |
+| `docs/TODO-ARCHIVE.md` | The dated session logs moved out of `TODO.md` on 2026-09-07 — history, not current |
 | `docs/HANDOFF.md` | Starting a session, verifying a deploy, what cannot be verified from here |
 | `docs/DECISIONS.md` | Dated history: what was decided, when, why, with the measurements |
 | `design/SPEC.md` | Authoritative on copy, tokens, layouts, motion, product decisions |

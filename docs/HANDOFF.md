@@ -23,7 +23,7 @@ Paste this to begin:
 >
 > Then pick up `TODO.md` from the top. Phase 2 is built but **unverified by eye** — if I am
 > present, walk me through the two-tab test below first. Phase 3 (grants to others) must not
-> start until I have signed off the list at the bottom of `TODO.md` (the slot endpoint's
+> start until I have signed off the *Needs the client* list in `TODO.md` (the slot endpoint's
 > password-proof gate landed 2026-08-14; phase 3's grant-submission endpoint owes the TOTP
 > check — `docs/DECISIONS.md`).
 >
@@ -70,7 +70,7 @@ the other models") — best run as its own dedicated session with fresh context.
   no read cap (phase 3). `/api/account/slot` gained its password-proof gate 2026-08-14
   (TODO 15 — done); the fresh-TOTP check belongs to the phase-3 grant-submission endpoint
   (`docs/DECISIONS.md` 2026-08-14).
-- **Sign-off list** at the bottom of `TODO.md`: `totp.last_step`, §3's operator wording, `⌘K`'s
+- **Sign-off list** — *Needs the client* in `TODO.md`: `totp.last_step`, §3's operator wording, `⌘K`'s
   double claim, signup's 409, TURN, the Contact mailbox (`outlook.com` vs `hotmail.ca`),
   subdomains yes/no, Pages retirement, the free-diagnostic copy.
 - **Unproven in a browser** (accumulated): the `/admin` dialogs, TOTP enrolment screen, Passkeys + Saved setups sections, command

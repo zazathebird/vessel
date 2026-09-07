@@ -57,13 +57,13 @@ build. See *Deployment* below.
 
 | File | What it is for |
 |---|---|
-| `TODO.md` | **The ordered backlog.** The one place that says what to do next |
+| `TODO.md` | **The backlog.** Only what is left to do, grouped by who can do it |
+| `docs/TODO-ARCHIVE.md` | The dated session logs `TODO.md` used to carry — history, never current |
 | `docs/HANDOFF.md` | Starting a session, verifying a deploy, and what cannot be verified from here |
 | `CLAUDE.md` | Working notes — binding decisions, deliberate deviations, implementation traps. Invariants only |
 | `docs/DECISIONS.md` | Dated history: what was decided, when, and why. Where superseded notes stay true |
 | `docs/BREAK-GLASS.md` | The operator's recovery path when password, recovery codes and phone are all gone |
 | `docs/DUEL.md` | The lightsword duel — built, re-listed 2026-08-14, and audited twice |
-| `docs/AUDIT-BRIEF.md` | A cold-start brief for auditing the site |
 | `docs/SECURITY-AUDIT.md` | Standing security review notes |
 | `docs/FONTS.md` | The webfont ledger — subset ranges and byte counts |
 | `docs/PHOTOS.md` | The placeholder-photo ledger and its sources |
