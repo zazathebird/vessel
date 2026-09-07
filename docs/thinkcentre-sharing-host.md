@@ -151,6 +151,10 @@ anywhere that can route to this box, default-deny notwithstanding.
   asset; vPro's out-of-band management runs below whatever OS you install, so if a previous owner
   provisioned it and never reset it, it's worth confirming it's inert before this box holds anything
   you care about. "AMT: Disabled" or "Unconfigured" is what you want to see.
+- **If the OS will live on a USB SSD** (as the current host's does), plan on one kernel parameter
+  after the install: `usbcore.autosuspend=-1` in `GRUB_CMDLINE_LINUX_DEFAULT`, then `update-grub`.
+  A USB root that autosuspends is a hung box. The script warns when it sees a USB root and lists
+  the step under *still manual*; it never edits the boot line itself.
 - **Note the boot mode** (UEFI vs Legacy) and whether Secure Boot is on — Debian installs cleanly
   either way, this is just so you're not surprised by the installer's partitioning defaults.
 

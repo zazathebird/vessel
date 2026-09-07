@@ -558,6 +558,27 @@ preflight() {
     root_src="$(findmnt -no SOURCE / 2>/dev/null || true)"
     info "Root filesystem: ${root_src:-unknown}"
 
+    # A root on a USB-attached disk (2026-09-07). It is how the real host is built — the OS lives
+    # on a USB SSD — and it works, but the kernel's USB autosuspend can drop the bus under a
+    # quiet disk, and a root that goes away is a hung box, not a logged error. The fix is one
+    # kernel parameter; this script names it and does not write it, because a mistake in the
+    # boot line is a machine that does not boot, and the guide is explicit that nothing here
+    # touches the bootloader.
+    local root_disk="" root_tran=""
+    if [ -n "${root_src}" ] && [ -b "${root_src}" ]; then
+        root_disk="$(lsblk -no PKNAME "${root_src}" 2>/dev/null | head -1 || true)"
+        [ -n "${root_disk}" ] && root_tran="$(lsblk -dno TRAN "/dev/${root_disk}" 2>/dev/null || true)"
+    fi
+    if [ "${root_tran}" = "usb" ]; then
+        warn "The root filesystem is on a USB-attached disk (${root_src}). That works, but USB
+             autosuspend can drop the bus under an idle disk, and a root that vanishes is a hung
+             box. Add usbcore.autosuspend=-1 to GRUB_CMDLINE_LINUX_DEFAULT in /etc/default/grub
+             and run 'sudo update-grub'. Not done here: this script never edits the boot line."
+        MANUAL+=("Root is on a USB disk (${root_src}). Add usbcore.autosuspend=-1 to
+             GRUB_CMDLINE_LINUX_DEFAULT in /etc/default/grub, run 'sudo update-grub', reboot, and
+             keep that disk on its own port — never a hub something else gets unplugged from.")
+    fi
+
     # An autologin box whose user can sudo without a password turns "somebody sat down at it" into
     # "somebody is root". Worth knowing before autologin is switched on, not after.
     if sudo grep -rqs 'NOPASSWD' /etc/sudoers /etc/sudoers.d 2>/dev/null; then
