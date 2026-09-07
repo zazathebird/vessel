@@ -247,8 +247,10 @@ export const api = {
 
   // Machines and drives (§13). Pairing carries the password proof (`authSecret`)
   // because registering an agent public key adds a trust anchor (§12 L); the
-  // rest are session-gated labels. The pair response's `grantPubkey` is the
-  // agent tab's trust root, stored at pair time and never re-fetched.
+  // rest are session-gated labels. The pair response's `grantPubkey` is NOT
+  // the trust root — `pairMachine` in `src/share/unlock.ts` proves the root
+  // from the password by opening the key slot locally, and refuses a pair
+  // response that disagrees with it (2026-09-07).
   machinePair: (body: unknown) =>
     post<{ status: string; machine: MachineInfo; grantPubkey: string }>(
       "/api/machines/pair",

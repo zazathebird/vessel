@@ -118,7 +118,18 @@ const HSTS = "max-age=63072000; includeSubDomains";
  */
 function crossOrigin(request: Request, url: URL): boolean {
   if (request.method === "GET" || request.method === "HEAD") return false;
+  return foreignOrigin(request, url);
+}
 
+/**
+ * Did this request come from somewhere that is not us? The method-blind half
+ * of `crossOrigin`, shared with `signalUpgrade` (2026-09-07): the WebSocket
+ * handshake is a GET, so it could not reuse `crossOrigin`, and its own copy
+ * compared the host alone — no scheme, no `Sec-Fetch-Site` — so the one
+ * long-lived authenticated channel had a weaker origin test than a POST that
+ * renames a machine. One function, so the two cannot drift again.
+ */
+function foreignOrigin(request: Request, url: URL): boolean {
   // Fetch metadata, beside the Origin check rather than instead of it
   // (2026-09-06, second pass). Every current browser stamps `Sec-Fetch-Site` on
   // every request and a page cannot alter it, so `cross-site` on a
@@ -401,6 +412,13 @@ function unvalidatable(response: Response): Response {
   const out = new Response(response.body, response);
   out.headers.delete("etag");
   out.headers.delete("last-modified");
+  // A document's cache policy is set HERE, whatever path it arrived by
+  // (2026-09-07). `public/_headers` gives `/assets/*` a year-long `immutable`,
+  // and the asset server applies that to its SPA fallback too — so the shell
+  // served for `/assets/<anything that does not exist>` told every cache to
+  // keep it for a year, nonce, published look and all. A rewritten document
+  // is per-request by construction; nothing may hold it.
+  out.headers.set("cache-control", "public, max-age=0, must-revalidate");
   return out;
 }
 
@@ -718,17 +736,13 @@ async function signalUpgrade(request: Request, env: Env, url: URL): Promise<Resp
    *
    * **A missing `Origin` is still allowed**, the same deliberate carve-out
    * `crossOrigin` documents: non-browser clients omit it and `scripts/auth-e2e.ts`
-   * is one of those. This refuses a *present and foreign* origin only.
+   * is one of those. This refuses a *present and foreign* origin only — and,
+   * since 2026-09-07, through the same `foreignOrigin` the POST routes use,
+   * so the scheme and `Sec-Fetch-Site: cross-site` count here too. The copy
+   * this replaced compared the host and nothing else.
    */
-  const origin = request.headers.get("origin");
-  if (origin) {
-    let foreign = true;
-    try {
-      foreign = new URL(origin).host !== url.host;
-    } catch {
-      foreign = true;
-    }
-    if (foreign) throw new BadRequest("That request came from somewhere else.", 403);
+  if (foreignOrigin(request, url)) {
+    throw new BadRequest("That request came from somewhere else.", 403);
   }
 
   const account = await accounts.requireAccount(request, env);

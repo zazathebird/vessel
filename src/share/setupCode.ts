@@ -129,11 +129,12 @@ const DECEPTIVE =
   /(?![\ufe0e\ufe0f])[\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Default_Ignorable_Code_Point}\p{Variation_Selector}\u2800]|(?!\u0020)\p{Zs}/u;
 
 /**
- * The fold used for the duplicate-label test, and only for it. Three steps, each
- * answering a measured way two labels render alike while comparing unequal:
+ * The fold used for the duplicate-label test, and only for it. Each step
+ * answers a measured way two labels render alike while comparing unequal:
  * strip the default-ignorables and variation selectors (invisible by
- * definition), NFKC (composed vs decomposed, fullwidth, ligatures), then
- * collapse runs of whitespace — `My Photos` and `My  Photos` are one picture in
+ * definition), NFKC (composed vs decomposed, fullwidth, ligatures), fold the
+ * visible look-alikes (`CONFUSABLES` below — Cyrillic and Greek twins, case,
+ * `l/I/1`, `O/0`), then collapse runs of whitespace — `My Photos` and `My  Photos` are one picture in
  * `.v-setup-name`, which is `white-space: normal`. **The refusal must not depend
  * on a CSS declaration in another file**, so the collapse is here rather than
  * relying on that.
@@ -145,9 +146,68 @@ function foldLabel(label: string): string {
   return label
     .replace(/[\p{Default_Ignorable_Code_Point}\p{Variation_Selector}]/gu, "")
     .normalize("NFKC")
+    .replace(CONFUSABLE, (ch) => CONFUSABLES[ch] ?? ch)
+    .toLowerCase()
+    .replace(/[il|]/g, "1")
+    .replace(/o/g, "0")
     .replace(/\s+/gu, " ")
     .trim();
 }
+
+/**
+ * Visible look-alikes, folded to Latin for the duplicate test only
+ * (2026-09-07, fourth security pass). The three steps above answer INVISIBLE
+ * differences; a twin row is just as easily built from two labels that differ
+ * by a glyph no reader can tell apart at any size — `Invoices` and
+ * `Invoiсes` with a Cyrillic es, `Bank` and `Bаnk` with a Cyrillic a,
+ * `Files` and `FiIes` with a capital i for the ell, `Photos` and `PHOTOS`.
+ * NFKC folds none of these, since none is a compatibility form of the other.
+ *
+ * **This lives in the FOLD, deliberately not in the filter.** A Russian folder
+ * name is honest, and the code is machine-generated from names that already
+ * exist — refusing Cyrillic by property would refuse the whole code over
+ * `Документы`, on the happy path, with nothing to fix but a rename. Two labels
+ * that fold alike are refused as a duplicate; one label on its own is never
+ * refused for its script.
+ *
+ * The table is the pairs that render identically in the fonts this site ships
+ * and their platform fallbacks — the Cyrillic and Greek letters whose glyph IS
+ * the Latin one, both cases. It is not Unicode's confusables.txt (6,000 rows,
+ * most of them "similar at a squint"), and a fold that wide would refuse honest
+ * pairs. The case fold and the `l/I/1/|` and `O/0` collapses come after the
+ * table: the table maps to Latin, then Latin collapses to its own twins.
+ */
+const CONFUSABLES: Record<string, string> = {
+  // Cyrillic, lower
+  "\u0430": "a", "\u0435": "e", "\u043e": "o", "\u0440": "p", "\u0441": "c",
+  "\u0443": "y", "\u0445": "x", "\u0456": "i", "\u0458": "j", "\u0455": "s",
+  "\u04bb": "h", "\u0501": "d", "\u051b": "q", "\u051d": "w", "\u0475": "v",
+  // Cyrillic, upper
+  "\u0410": "A", "\u0412": "B", "\u0415": "E", "\u041a": "K", "\u041c": "M",
+  "\u041d": "H", "\u041e": "O", "\u0420": "P", "\u0421": "C", "\u0422": "T",
+  "\u0425": "X", "\u0405": "S", "\u0406": "I", "\u0408": "J", "\u04ae": "Y",
+  "\u0474": "V",
+  // Greek, lower
+  "\u03bf": "o", "\u03b9": "i", "\u03bd": "v", "\u03c1": "p", "\u03c5": "u",
+  // Greek, upper
+  "\u0391": "A", "\u0392": "B", "\u0395": "E", "\u0396": "Z", "\u0397": "H",
+  "\u0399": "I", "\u039a": "K", "\u039c": "M", "\u039d": "N", "\u039f": "O",
+  "\u03a1": "P", "\u03a4": "T", "\u03a5": "Y", "\u03a7": "X",
+  // Latin look-alikes NFKC leaves alone
+  "\u0131": "i", // dotless i
+  "\u0237": "j", // dotless j
+  "\u0261": "g", // script g
+  "\u0251": "a", // Latin alpha
+  "\u1d00": "a", // small capital a
+  "\u0274": "n", // small capital n
+  "\u026a": "i", // small capital i
+  "\u0299": "b", // small capital b
+  "\u1d04": "c", "\u1d05": "d", "\u1d07": "e", "\u029c": "h", "\u1d0a": "j",
+  "\u1d0b": "k", "\u029f": "l", "\u1d0d": "m", "\u1d0f": "o", "\u1d18": "p",
+  "\u0280": "r", "\u1d1b": "t", "\u1d1c": "u", "\u1d20": "v", "\u1d21": "w",
+  "\u028f": "y", "\u1d22": "z",
+};
+const CONFUSABLE = new RegExp(`[${Object.keys(CONFUSABLES).join("")}]`, "gu");
 
 export const SETUP_CODE_PREFIX = "VS1.";
 

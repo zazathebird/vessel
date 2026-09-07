@@ -13,6 +13,30 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-09-07 — the trust root comes from the password, and four smaller ones
+
+The fourth security pass (`docs/SECURITY-AUDIT.md` items 37–41). The one that matters: the agent
+tab's trust root — stored at pair time and never re-fetched so that a later server compromise
+cannot re-root it — was taken from the pair *response*, which is the server saying "trust
+this". The password already proves the root for a browsing connection by opening the key slot
+locally, and pairing now does the same first (`pairMachine`, `src/share/unlock.ts`); the pair
+response is checked against it and never used as it. The harness drives the real function
+through a shim that lies on that one response.
+
+The others: the setup-code duplicate fold now folds visible look-alikes (Cyrillic, Greek, small
+capitals, case, `l/I/1`, `O/0`) — in the fold and deliberately not the filter, so a Russian
+folder name stays honest; `run_worker_first` is `true` with no negation, because a *miss* under
+`/assets/` was the SPA shell with no security headers and a year-long cache policy, live on
+production — and a negation matches the path, not what exists at it, so a narrower glob only
+moved the name; `validDuelPages` tests own keys, since `key in`
+walked to `constructor` and threw inside `loadConfig`; and the WebSocket upgrade shares
+`foreignOrigin` with the POST routes instead of its own host-only copy. Gates for each, three
+break-verified against the pre-fix code. Deployed the same day as Worker `df6dba2a` (rollback
+`014152a8`, no migration) and verified live, HANDOFF step 6 included. **The setup and host
+scripts slice was not read this pass** and is carried in `TODO.md`.
+
+---
+
 ## 2026-09-06 — a save that widens is a release, and asks
 
 The same day as the entry below, and a correction to its list rather than its line. The line —

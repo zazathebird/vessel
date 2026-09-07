@@ -29,6 +29,11 @@
  *   values also live in the same database. What the dependency *does* mean is
  *   that a corrupted `grant_pubkey` renders an intact slot permanently
  *   unopenable — see the check in `unwrapSlot`.
+ *   **One caveat since 2026-09-07**: the public key IS security-bearing in one
+ *   place — it is the agent tab's trust root, stored at pair time — and there
+ *   it is never trusted from the server. `pairMachine` binds it to the password
+ *   by unwrapping the slot and then `provePublicKey`ing the result, so a
+ *   substituted point fails locally before it is stored.
  */
 
 /**
@@ -207,6 +212,39 @@ export async function signWithGrantKey(key: CryptoKey, payload: Uint8Array): Pro
     payload as BufferSource,
   );
   return new Uint8Array(signature);
+}
+
+/**
+ * Does this public key belong to this private key? Sign a fixed message and
+ * verify it against the raw point (2026-09-07, audit item 37).
+ *
+ * `unwrapSlot` already fails on a mismatched point in Chromium, because
+ * BoringSSL checks `Q = d·G` on import — but WebCrypto does not *promise* that,
+ * and `pairMachine` stores the public key as the agent's trust root on the
+ * strength of it. A signature round trip is the same question asked of the
+ * arithmetic rather than of the browser: two WebCrypto calls, nothing leaves
+ * the tab, and it holds wherever ECDSA does.
+ */
+export async function provePublicKey(key: CryptoKey, publicKeyRaw: Uint8Array): Promise<boolean> {
+  try {
+    const point = await crypto.subtle.importKey(
+      "raw",
+      publicKeyRaw as BufferSource,
+      { name: "ECDSA", namedCurve: "P-256" },
+      false,
+      ["verify"],
+    );
+    const message = new TextEncoder().encode("vessel/prove-public-key/v1");
+    const signature = await signWithGrantKey(key, message);
+    return await crypto.subtle.verify(
+      { name: "ECDSA", hash: "SHA-256" },
+      point,
+      signature as BufferSource,
+      message as BufferSource,
+    );
+  } catch {
+    return false;
+  }
 }
 
 /**

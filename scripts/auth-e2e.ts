@@ -36,10 +36,12 @@ import {
   SLOT_ALG,
   generateGrantKey,
   rewrapSlot,
+  provePublicKey,
   unwrapSlot,
   wrapSlot,
   signWithGrantKey,
 } from "../src/auth/grantKey";
+import { pairMachine } from "../src/share/unlock";
 import {
   addPasskey,
   prfWrappingKey,
@@ -368,9 +370,14 @@ class SignalSocket {
 }
 
 /** Open a signalling socket, or reject with the refusal's HTTP status. */
-function wsOpen(machineId: string, role: string, cookie: string | null): Promise<SignalSocket> {
+function wsOpen(
+  machineId: string,
+  role: string,
+  cookie: string | null,
+  extra: Record<string, string> = {},
+): Promise<SignalSocket> {
   return new Promise((resolve, reject) => {
-    const headers: Record<string, string> = { "cf-connecting-ip": CLIENT_IP };
+    const headers: Record<string, string> = { "cf-connecting-ip": CLIENT_IP, ...extra };
     if (cookie) headers.cookie = cookie;
     const ws = new WebSocket(`${WS_BASE}/api/signal/${machineId}?role=${role}`, { headers });
     ws.on("open", () => resolve(new SignalSocket(ws)));
@@ -384,9 +391,10 @@ async function wsRefusedStatus(
   machineId: string,
   role: string,
   cookie: string | null,
+  extra: Record<string, string> = {},
 ): Promise<number> {
   try {
-    const socket = await wsOpen(machineId, role, cookie);
+    const socket = await wsOpen(machineId, role, cookie, extra);
     socket.close();
     return -1;
   } catch (error) {
@@ -2198,6 +2206,97 @@ async function main(): Promise<void> {
     check("a machine removes", m2gone.status === "removed");
     const m2goneTwice = await refusal(() => api.machineRemove(machine2Id));
     check("removing it twice is a 404", m2goneTwice?.status === 404, m2goneTwice?.message);
+
+    /*
+     * The trust root comes from the PASSWORD, never from the pair response
+     * (2026-09-07, fourth security pass). `pairMachine` is the real ceremony
+     * the share page runs; until it existed the page stored whatever
+     * `grantPubkey` the pair response carried, so a lying Worker or database
+     * could re-root an agent at the one moment it was listening. These drive
+     * the real function through a shim that lies exactly there.
+     */
+    const before = (await api.machinesList()).machines.length;
+    const wrongPair = await refusal(() =>
+      pairMachine(ownerHandle, "wrong password entirely", { name: "unproven" }),
+    );
+    check(
+      "pairMachine refuses a wrong password before anything is registered",
+      wrongPair?.status === -1 &&
+        wrongPair.message === "That is not your password." &&
+        (await api.machinesList()).machines.length === before,
+      wrongPair?.message,
+    );
+
+    const proven = await pairMachine(ownerHandle, password, { name: "proven" });
+    check(
+      "pairMachine stores the trust root the password opened",
+      toBase64Url(proven.trustRoot) === ownerGrantPubkey && proven.machineId.length > 0,
+    );
+
+    // A server that answers the pair call with its own key. The Worker here is
+    // honest, so the lie is told by the shim on the way back — which is the
+    // same thing to the tab.
+    const liar = await generateMachineKeypair();
+    const honestFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const response = await honestFetch(input, init);
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (!url.endsWith("/api/machines/pair") || !response.ok) return response;
+      const body = (await response.json()) as Record<string, unknown>;
+      body.grantPubkey = toBase64Url(liar.publicKeyBytes);
+      return new Response(JSON.stringify(body), { status: 200, headers: response.headers });
+    }) as typeof fetch;
+    let lied: { status: number; message: string } | null;
+    try {
+      lied = await refusal(() => pairMachine(ownerHandle, password, { name: "lying" }));
+    } finally {
+      globalThis.fetch = honestFetch;
+    }
+    check(
+      "pairMachine refuses a pair response whose trust root the password does not open",
+      lied?.status === -1 && /trust root/.test(lied.message),
+      lied?.message,
+    );
+
+    // And the OTHER place a server could lie: the slot itself. A substituted
+    // `grantPubkey` beside an intact wrapped key must fail in the tab, by
+    // signature, before the pair call is ever made.
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const response = await honestFetch(input, init);
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (!url.endsWith("/api/account/slot") || !response.ok) return response;
+      const body = (await response.json()) as Record<string, unknown>;
+      body.grantPubkey = toBase64Url(liar.publicKeyBytes);
+      return new Response(JSON.stringify(body), { status: 200, headers: response.headers });
+    }) as typeof fetch;
+    let slotLied: { status: number; message: string } | null;
+    const machinesBeforeSlotLie = (await api.machinesList()).machines.length;
+    try {
+      slotLied = await refusal(() => pairMachine(ownerHandle, password, { name: "slot-lie" }));
+    } finally {
+      globalThis.fetch = honestFetch;
+    }
+    check(
+      "pairMachine refuses a slot whose public key is not the unwrapped key's, before pairing",
+      slotLied?.status === -1 &&
+        /public key/.test(slotLied.message) &&
+        (await api.machinesList()).machines.length === machinesBeforeSlotLie,
+      slotLied?.message,
+    );
+
+    // The signature proof itself, since Node's import check fires first above
+    // and a browser without one relies on this alone.
+    check(
+      "provePublicKey answers the arithmetic: the account's point yes, a stranger's no",
+      (await provePublicKey(ownerGrantKey, fromBase64Url(ownerGrantPubkey))) === true &&
+        (await provePublicKey(ownerGrantKey, liar.publicKeyBytes)) === false,
+    );
+
+    // Tidy: the honest and the lied-to pairing both registered a row.
+    for (const m of (await api.machinesList()).machines) {
+      if (m.name === "proven" || m.name === "lying") await api.machineRemove(m.id);
+    }
+    check("the proving pairs are cleaned up", (await api.machinesList()).machines.length === before);
   }
 
   section("Signalling (§13) — the Durable Object introduces and cannot listen");
@@ -2220,6 +2319,22 @@ async function main(): Promise<void> {
       "an unknown role is refused with 400",
       (await wsRefusedStatus(machine1Id, "operator", cookie)) === 400,
     );
+    // The upgrade's origin test is `foreignOrigin`, the same one the POST
+    // routes use (2026-09-07). Its own copy compared the host alone, so the
+    // long-lived authenticated channel had a weaker test than a rename.
+    check(
+      "an upgrade from a foreign origin is refused with 403",
+      (await wsRefusedStatus(machine1Id, "agent", cookie, { origin: "https://evil.example" })) === 403,
+    );
+    check(
+      "an upgrade stamped cross-site is refused with 403, Origin or no Origin",
+      (await wsRefusedStatus(machine1Id, "agent", cookie, { "sec-fetch-site": "cross-site" })) === 403,
+    );
+    // The scheme half of `foreignOrigin` is exempt on loopback (the same
+    // carve-out as the https redirect), and `wrangler dev` IS loopback — so a
+    // wrong-scheme upgrade cannot be refused here, and a check that can only
+    // pass is not a check. The scheme test is the POST routes' and shared by
+    // construction; see `foreignOrigin` in worker/index.ts.
 
     // The agent tab arrives.
     const agent = await wsOpen(machine1Id, "agent", cookie);

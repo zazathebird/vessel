@@ -14,6 +14,93 @@ cited by number elsewhere. Findings are grouped as before: **fixed**, **checked 
 
 ---
 
+## 2026-09-07 — the fourth pass
+
+Six of seven reviewers read their slice; the **setup and host scripts slice was never read** (its
+reviewer died on a rate limit) and is still owed a pass. Everything below was verified against
+the code, and item 39 against production, before it was fixed. `npm run check` is **75** (64
+fast), `npm run test:auth` **406** (398 → 406). Break-verified: the two new `check` gates and
+the WebSocket origin gate each go red against the pre-fix code. **Deployed 2026-09-07** as Worker `df6dba2a-9748-4ba7-9e95-d34390c319c9` (rollback `014152a8`, no migration); verified live — bundle `index-DZlb5G6p.js`, six headers, `/assets/does-not-exist-zz` and `/assets/does-not-exist.js` both hardened with `max-age=0`, the real bundle still `immutable`, a cross-site POST 403, a cross-site WebSocket upgrade 403 (over HTTP/1.1; curl on HTTP/2 drops the Upgrade header and gets the 426, which is not the origin check).
+
+### 37. The agent's trust root was taken on faith from the pair response
+
+`src/components/SharePage.tsx`, both `PairForm` and `TakeOverForm`. The agent tab's trust root
+— the public key it will accept browse signatures from, stored at pair time and never re-fetched
+precisely so a later server compromise cannot re-root it — was `grantPubkey` from
+`POST /api/machines/pair`, stored as received. A lying Worker or database substituted its own
+key at the one moment the tab was listening, and the agent then served that key's holder every
+file it held a handle to. The password already proves the root for a *browsing* connection
+(`unlockForConnect` opens the slot locally: AES-KW fails closed on the ciphertext and the P-256
+import checks `Q = d·G`, so a public key that survives is bound to the password); pairing did
+not use it. **Fix**: `pairMachine` in `src/share/unlock.ts` proves the slot *before* the pair
+call, stores the proven key, and refuses a pair response that disagrees. Both forms go through
+it. The security review added a caveat worth its own line: the `Q = d·G` import check is
+Chromium's, not WebCrypto's promise, so `provePublicKey` (`src/auth/grantKey.ts`) also signs a
+fixed message with the unwrapped key and verifies it against the server's point — the same
+question asked of the arithmetic rather than the browser. **Harness**: driven through a fetch
+shim that lies on the pair response and one that lies on the slot — each refused with nothing
+stored; a wrong password is refused with nothing registered; the signature proof is driven
+directly with the account's point and a stranger's.
+
+### 38. Setup-code twin rows could be built from visible look-alikes
+
+`src/share/setupCode.ts`. Item 30 closed the *invisible* twin row — `Invoices` and
+`Invoices\uFE0F` — through `foldLabel`. A twin built from a glyph no reader can tell apart was
+still open: `Invoiсes` with a Cyrillic es, `Bаnk` with a Cyrillic a, `FiIes` with a capital i
+for the ell, `0ct 2O2O`, `PHOTOS`. NFKC folds none of them. **Fix, in the fold only**: a table
+of Cyrillic, Greek and small-capital letters whose glyph *is* the Latin one, then a case fold,
+`l/I/1/|` → `1` and `O/0` → `0`, before the duplicate test. **Deliberately not in the filter** —
+a Russian folder name is honest and the code is machine-generated from names that already
+exist, so refusing a script would refuse the whole code on the happy path. Gated: seven
+look-alike pairs refused, and two different Cyrillic labels accepted so the fold cannot become a
+script filter.
+
+### 39. `/assets/<miss>` served the app shell with no security headers, cached for a year
+
+Verified live on `mcclevarty.ca` before the fix. `run_worker_first = ["/*", "!/assets/*"]`
+excluded every path under `/assets/` from the Worker, including the ones that do not exist —
+and a miss is answered by the asset server's SPA fallback: the shell, never passing through
+`harden()` (no CSP, no `X-Frame-Options`, no HSTS) and carrying `public/_headers`' year-long
+`immutable` cache policy. A frameable, nonce-less copy of the site at any name somebody chose,
+told every cache to keep it for a year. **Fix**: `run_worker_first = true`, no negation. The
+first draft narrowed the glob to `!/assets/*.js` and `!/assets/*.css`; the code review pointed
+out that a negation is matched against the *path*, so `/assets/anything.js` was still the
+fallback shell — a miss can be named anything, and nothing name-shaped closes it. Every path
+goes through the Worker now; the bundles' bytes and `_headers` still come from the asset
+binding, so a hit keeps `immutable`, and `unvalidatable()` sets `cache-control: public,
+max-age=0, must-revalidate` on any document it rewrites, whatever path it arrived by. Verified
+under `wrangler dev`: a miss by any name gets the headers and `max-age=0`, the real bundle keeps
+`immutable`. `docs/HANDOFF.md`'s verify block gained both curls.
+
+### 40. `validDuelPages` threw on a prototype key
+
+`src/data/duelSettings.ts`. Both override walks used `key in full`, which is true of
+`constructor`; a published `{ tuning: { constructor: 1 } }` indexed `DUEL_BANDS.constructor`
+and destructured a function as a `[lo, hi]` pair — a `TypeError` inside `loadConfig`, on every
+visitor's first render, from one field of one page override. The site config is validated field
+by field precisely so one bad value cannot take the page down. **Fix**: an own-property test.
+Gated with `constructor` and `__proto__` at both levels, parsed from JSON so they are own keys
+as they are off the wire.
+
+### 41. The WebSocket upgrade's origin test was weaker than a POST's
+
+`worker/index.ts`. `signalUpgrade` carried its own origin check because `crossOrigin` returns
+false on GET and a handshake is a GET — and the copy compared the host alone: no scheme, no
+`Sec-Fetch-Site`. The one long-lived authenticated channel had a weaker test than a rename.
+**Fix**: `foreignOrigin()`, the method-blind half of `crossOrigin`, shared by both. Harness: an
+upgrade from a foreign origin and one stamped `cross-site` are each refused 403; the scheme half
+is loopback-exempt and so cannot be driven under `wrangler dev` (said so in the harness rather
+than asserted).
+
+### Recorded, not fixed
+
+- `signout` answers 500 on a deleted account's still-valid cookie (the audit row's foreign key).
+- A passkey sign-in never opens the key slot it is handed back — `prfOutput` is discarded.
+- The browsing tab pins nothing (item 4, unchanged).
+- **The setup and host scripts slice is still owed its reading.**
+
+---
+
 ## 2026-09-06 — the second follow-up pass
 
 A third reading, the same day as item 33 shipped, asked one question of every route: *what does

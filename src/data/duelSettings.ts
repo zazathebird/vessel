@@ -271,6 +271,19 @@ function sameSetting(
   return given === validated;
 }
 
+/**
+ * An OWN key of a validated object, never an inherited one. `key in full` walks
+ * the prototype, so a published `{ tuning: { constructor: 1 } }` passed the
+ * membership test, indexed `DUEL_BANDS.constructor`, and destructured a
+ * function as a pair — a `TypeError` inside `loadConfig`, on every visitor's
+ * first render, from one field of one page override (2026-09-07). The site
+ * config is validated field by field precisely so that one bad value cannot
+ * take the page down; a walk that trusts the prototype chain was the gap.
+ */
+function own(target: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(target, key);
+}
+
 /** Validate the sparse per-page map. An unknown page id is dropped, not kept. */
 export function validDuelPages(raw: unknown): DuelPageSettings {
   const out: DuelPageSettings = {};
@@ -304,7 +317,7 @@ export function validDuelPages(raw: unknown): DuelPageSettings {
     const given = v as Record<string, unknown>;
     const partial: DuelOverride = {};
     for (const key of Object.keys(given)) {
-      if (!(key in full)) continue;
+      if (!own(full, key)) continue;
       if (key === "tuning") continue;
       const k2 = key as Exclude<keyof DuelSettings, "tuning">;
       // Refused ⇒ the validator handed back the default. Keep the key only when
@@ -321,7 +334,7 @@ export function validDuelPages(raw: unknown): DuelPageSettings {
     if (tGiven && typeof tGiven === "object") {
       const tuning: Partial<DuelTuning> = {};
       for (const key of Object.keys(tGiven as object)) {
-        if (!(key in full.tuning)) continue;
+        if (!own(full.tuning, key)) continue;
         const k2 = key as keyof DuelTuning;
         const [lo, hi] = DUEL_BANDS[k2];
         if (num((tGiven as Record<string, unknown>)[key], lo, hi) === null) continue;

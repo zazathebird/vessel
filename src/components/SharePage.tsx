@@ -1,14 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { ApiError, api, type DriveInfo, type MachineInfo } from "../auth/api";
-import { fromBase64Url, toBase64Url } from "../auth/encoding";
+import { toBase64Url } from "../auth/encoding";
 import { useSession } from "../auth/SessionContext";
 import { useConfig } from "../config/ConfigContext";
 import { VesselAgent, type AgentSnapshot } from "../share/agent";
-import { generateMachineKeypair } from "../share/handshake";
 import { decodeSetupCode, looksLikeSetupCode, type SetupPlan } from "../share/setupCode";
 import { shareStore, type StoredMachine } from "../share/store";
-import { derivePassword } from "../share/unlock";
+import { pairMachine } from "../share/unlock";
 
 /**
  * The sharing tab — the agent itself (SPEC-ACCOUNTS.md §13).
@@ -161,21 +160,11 @@ function PairForm({
     setBusy(true);
     setError(null);
     try {
-      const keys = await generateMachineKeypair();
-      const agentPubkey = toBase64Url(keys.publicKeyBytes);
-      const derived = await derivePassword(handle, password);
-      const result = await api.machinePair(
-        rekeyId
-          ? { machineId: rekeyId, agentPubkey, authSecret: derived.authSecret }
-          : { name: name.trim(), agentPubkey, authSecret: derived.authSecret },
+      // The trust root comes from the password, never from the pair response
+      // — see `pairMachine`.
+      await shareStore.saveMachine(
+        await pairMachine(handle, password, rekeyId ? { machineId: rekeyId } : { name: name.trim() }),
       );
-      await shareStore.saveMachine({
-        machineId: result.machine.id,
-        name: result.machine.name,
-        keyPair: keys.keyPair,
-        trustRoot: fromBase64Url(result.grantPubkey),
-        publicKeyBytes: keys.publicKeyBytes,
-      });
       setPassword("");
       say(rekeyId ? "Machine re-keyed." : "Machine paired.");
       await onDone();
@@ -750,20 +739,7 @@ function TakeOverForm({
     setBusy(true);
     setError(null);
     try {
-      const keys = await generateMachineKeypair();
-      const derived = await derivePassword(handle, password);
-      const result = await api.machinePair({
-        machineId,
-        agentPubkey: toBase64Url(keys.publicKeyBytes),
-        authSecret: derived.authSecret,
-      });
-      await shareStore.saveMachine({
-        machineId: result.machine.id,
-        name: result.machine.name,
-        keyPair: keys.keyPair,
-        trustRoot: fromBase64Url(result.grantPubkey),
-        publicKeyBytes: keys.publicKeyBytes,
-      });
+      await shareStore.saveMachine(await pairMachine(handle, password, { machineId }));
       setPassword("");
       say("Sharing taken over on this tab.");
       await onDone();

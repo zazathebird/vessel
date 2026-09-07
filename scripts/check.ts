@@ -3717,6 +3717,15 @@ check("a page override is partial to the knob, and a refused field is dropped", 
     ["a half-valid allow-list", { work: { good: ["ronin", "nonsense"] } }],
     ["an out-of-band knob", { work: { tuning: { rest: -1 } } }],
     ["a non-numeric knob", { work: { tuning: { impact: "fast" } } }],
+    // A key the validated object INHERITS rather than owns (2026-09-07). The
+    // walk used `key in full`, which is true of `constructor`, so a published
+    // `{ tuning: { constructor: 1 } }` indexed `DUEL_BANDS.constructor` and
+    // destructured a function as a pair: a TypeError inside `loadConfig`, on
+    // every visitor's first render, from one field. Parsed from JSON so the
+    // `__proto__` case is an own property, as it is off the wire.
+    ["a prototype key in tuning", JSON.parse('{"work":{"tuning":{"constructor":1}}}')],
+    ["a prototype key in the override", JSON.parse('{"work":{"constructor":1,"__proto__":{"zoom":2}}}')],
+    ["a dunder key in tuning", JSON.parse('{"work":{"tuning":{"__proto__":{"rest":2}}}}')],
   ] as const) {
     const pages = validDuelPages(raw);
     must(
@@ -3735,7 +3744,7 @@ check("a page override is partial to the knob, and a refused field is dropped", 
     JSON.stringify(mixed.work) === JSON.stringify({ zoom: 1.2 }),
     `a mixed override came back as ${JSON.stringify(mixed.work)}`,
   );
-  return "one knob stays one knob, 6 refused fields dropped, the good half of a mixed override kept";
+  return "one knob stays one knob, 9 refused fields dropped, the good half of a mixed override kept";
 });
 
 /*
@@ -4915,6 +4924,40 @@ check("setup codes round-trip, and refuse everything malformed", () => {
       b64('{"n":"a","f":[{"l":"My Photos","p":"C:\\\\a"},{"l":"My  Photos","p":"C:\\\\Users\\\\me"}]}'),
       "two labels differing only by a doubled space",
     ],
+    // VISIBLE look-alikes (2026-09-07, fourth security pass). The three
+    // steps above answer invisible differences; a twin row built from a
+    // Cyrillic es, a capital i for an ell, or a zero for an o is the same
+    // attack with a glyph no reader can tell apart. Caught by the FOLD, not
+    // the filter — a Russian folder name on its own is honest, and the
+    // acceptance below is what keeps that true.
+    [
+      b64('{"n":"a","f":[{"l":"Invoices","p":"C:\\\\a"},{"l":"Invoi\u0441es","p":"C:\\\\Users\\\\me"}]}'),
+      "two labels differing only by a Cyrillic es",
+    ],
+    [
+      b64('{"n":"a","f":[{"l":"Bank","p":"C:\\\\a"},{"l":"\u0412\u0430nk","p":"C:\\\\Users\\\\me"}]}'),
+      "two labels differing only by a Cyrillic capital ve and small a",
+    ],
+    [
+      b64('{"n":"a","f":[{"l":"Files","p":"C:\\\\a"},{"l":"FiIes","p":"C:\\\\Users\\\\me"}]}'),
+      "two labels differing only by a capital i for an ell",
+    ],
+    [
+      b64('{"n":"a","f":[{"l":"Oct 2020","p":"C:\\\\a"},{"l":"0ct 2O2O","p":"C:\\\\Users\\\\me"}]}'),
+      "two labels differing only by zeros for ohs",
+    ],
+    [
+      b64('{"n":"a","f":[{"l":"Photos","p":"C:\\\\a"},{"l":"PHOTOS","p":"C:\\\\Users\\\\me"}]}'),
+      "two labels differing only by case",
+    ],
+    [
+      b64('{"n":"a","f":[{"l":"Work","p":"C:\\\\a"},{"l":"\u1d21\u1d0f\u0280\u1d0b","p":"C:\\\\Users\\\\me"}]}'),
+      "two labels differing only by small capitals",
+    ],
+    [
+      b64('{"n":"a","f":[{"l":"Movies","p":"C:\\\\a"},{"l":"M\u03bf\u03bdies","p":"C:\\\\Users\\\\me"}]}'),
+      "two labels differing only by Greek omicron and nu",
+    ],
   ];
 
   for (const [code, why] of rejected) {
@@ -4930,6 +4973,21 @@ check("setup codes round-trip, and refuse everything malformed", () => {
   must(
     emojiRound !== null && emojiRound.folders[0].label === "Photos \u2764\ufe0f",
     "refused an ordinary folder name carrying an emoji — the label is stored as sent",
+  );
+
+  // And the look-alike fold must not have become a script filter: one
+  // Cyrillic label is honest, and two DIFFERENT Cyrillic labels are two rows.
+  const cyrillic = {
+    machine: "\u041d\u043e\u0443\u0442",
+    folders: [
+      { label: "\u0414\u043e\u043a\u0443\u043c\u0435\u043d\u0442\u044b", path: "C:\\Docs" },
+      { label: "\u0424\u043e\u0442\u043e", path: "C:\\Photo" },
+    ],
+  };
+  const cyrillicRound = decodeSetupCode(encodeSetupCode(cyrillic));
+  must(
+    cyrillicRound !== null && cyrillicRound.folders.length === 2,
+    "refused an honest Cyrillic folder name — the look-alike fold has become a script filter",
   );
 
   // Too many folders is refused rather than truncated: a truncated list renders

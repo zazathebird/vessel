@@ -59,9 +59,22 @@ not_found_handling = "single-page-application"
 # so it was served straight from disk and silently did not. The site looked
 # right on every URL except the front page, which is the one everybody lands on.
 #
-# The negation keeps the hashed bundles on the fast path: they are immutable,
-# they are never HTML, and there is nothing to inject into them.
-run_worker_first = ["/*", "!/assets/*"]
+# EVERYTHING, with no negation (2026-09-07, audit item 39). This used to be
+# `["/*", "!/assets/*"]` to keep the hashed bundles on the asset server's fast
+# path — but a negation is matched against the PATH, not against what exists
+# at it, so it also excluded every miss under `/assets/`, and a miss is the
+# asset server's SPA fallback: the app shell, served with no security headers
+# (it never reached `harden()`) and `public/_headers`' year-long `immutable`
+# cache policy. A frameable, nonce-less copy of the site at any name somebody
+# chose, cached for a year — verified live. Narrowing to `!/assets/*.js` only
+# moves the name to `/assets/<anything>.js`, since a miss can be called
+# anything. Nothing name-shaped closes it; only routing every path through
+# the Worker does, where a miss comes back as HTML and is hardened and given
+# a document's cache policy like every other document. The cost is one Worker
+# invocation for the two bundle requests of a cold visit, which `/fonts/*` has
+# been paying since the day they shipped. The bundles' bytes and `_headers`
+# still come from the asset binding.
+run_worker_first = true
 
 # D1, not KV. Grants need relational queries and revocation needs
 # read-after-write consistency, which KV's eventual consistency would quietly

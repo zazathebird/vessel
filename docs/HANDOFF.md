@@ -115,12 +115,19 @@ curl -s https://mcclevarty.ca/api/health          # {"ok":true,"tables":8,...}
 curl -s -o /dev/null -w "%{http_code}\n" https://mcclevarty.ca/signin
 curl -s -o /dev/null -w "%{http_code}\n" https://mcclevarty.ca/machines
 curl -s -o /dev/null -w "%{http_code}\n" https://mcclevarty.ca/share
+
+# 6. A MISS under /assets/ reaches the Worker (audit item 39), whatever it is called.
+#    Expect x-frame-options present and NO "immutable" on both — a header-less shell
+#    cached for a year is the bug, and a name glob only moved it.
+curl -s -i https://mcclevarty.ca/assets/does-not-exist-zz | grep -iE 'x-frame-options|cache-control'
+curl -s -i https://mcclevarty.ca/assets/does-not-exist.js | grep -iE 'x-frame-options|cache-control'
 ```
 
 **`/api/health` is the decisive one** for "is the Worker serving this domain".
 
-**Step 3 proves the headers on page routes only.** `/assets/*` never passes through `harden()`
-(`run_worker_first` negation); the bundles get `nosniff` from `public/_headers`, checked with:
+**Step 3 proves the headers on page routes; the bundles pass through `harden()` too since
+2026-09-07** (`run_worker_first = true`, no negation — a miss under `/assets/` is step 6). A real
+bundle hit must still carry `immutable` from `public/_headers`, checked with:
 
 ```sh
 curl -s -i https://mcclevarty.ca/assets/$(curl -s https://mcclevarty.ca/ \

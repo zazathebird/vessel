@@ -1,11 +1,17 @@
 # Headers for the paths the Worker never sees.
 #
-# `run_worker_first = ["/*", "!/assets/*"]` in wrangler.toml keeps the hashed
-# bundles on the asset server's fast path — they are immutable, they are never
-# HTML, and there is nothing to inject into them. The cost is that they also skip
-# `harden()` in worker/index.ts, so the site's security headers were on every
-# response *except* the JavaScript and CSS, which is exactly where `nosniff`
-# earns its keep.
+# Until 2026-09-07 `run_worker_first = ["/*", "!/assets/*"]` in wrangler.toml
+# kept the hashed bundles on the asset server's fast path, and they skipped
+# `harden()` in worker/index.ts — so this file was the bundles' ONLY `nosniff`.
+# It is `run_worker_first = true` now (audit item 39): the negation was matched
+# against the path, not against what existed at it, so a MISS under `/assets/`
+# was the SPA fallback shell with no security headers and this file's year-long
+# `immutable`. Every response now passes through `harden()`; the Worker still
+# reads the bundles through the asset binding, which still applies this file,
+# so the cache policy below is what a real bundle hit carries and `nosniff` is
+# set twice. Both stay: Pages is the rollback and has no Worker.
+#
+# Do not reintroduce a negation, however narrow. A miss can be named anything.
 #
 # This is read as configuration by Workers static assets, the same way
 # `_redirects` is — which is why `_redirects` cannot simply be deleted and has to

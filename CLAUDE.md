@@ -845,6 +845,11 @@ covers how to *see* any of this — rAF parks in an automated browser, so use `s
   Circling 1.00 → 2.50, and `/work` stayed at 1.00 while the editor said *"work sets 1 of its own:
   tuning"*. Gated with a knob-level override, which the old gate could not do because it only ever
   exercised `{ bars: false }`.
+- **`validDuelPages` walks OWN keys, never `key in`** (2026-09-07, audit item 40). `"constructor" in
+  full` is true, so a published `{ tuning: { constructor: 1 } }` indexed `DUEL_BANDS.constructor`
+  and threw inside `loadConfig` on every visitor's first render. Field-by-field validation exists so
+  one bad value cannot take the page down; a prototype walk was the hole. Gated with `constructor`
+  and `__proto__` at both levels.
 - **`validDuelPages` drops a refused key; it does not keep it at the default.** `validDuelSettings`
   answers a refusal by leaving the field at the global default, which is right for the site object
   and precisely wrong for an override — the refusal becomes a *working* override pinned to the
@@ -1182,7 +1187,12 @@ environment problem. Until they move above the health check, start the Worker.
   fingerprint per m-section); disagreement is refused.
 - **The agent verifies peers itself; it never trusts the signalling introduction.** The trust root is
   **stored at pair time in IndexedDB and never re-fetched** — re-fetching would let a later server
-  compromise quietly re-root a paired agent. `worker/signal.ts` is **an introducer, not a pipe**: it
+  compromise quietly re-root a paired agent. **And it comes from the password, never from the pair
+  response** (2026-09-07, audit item 37): `pairMachine` in `src/share/unlock.ts` opens the key slot
+  locally first — AES-KW plus the `Q = d·G` import check bind the public key to the password — stores
+  *that*, and refuses a pair response that disagrees. Storing the response's `grantPubkey` is the
+  server saying "trust this", which is the exact thing never re-fetching exists to prevent. Both
+  forms on the share page go through it; the harness drives it through a lying fetch shim. `worker/signal.ts` is **an introducer, not a pipe**: it
   relays SDP/ICE without reading payloads, persists nothing, and all authentication happens in
   `signalUpgrade` *before* the object is reached. **The upgrade path bypasses `harden()` deliberately**
   — copying a 101 response drops its `webSocket` and hangs every connection.
@@ -1292,6 +1302,13 @@ wrong machine is worse than not running. `docs/pi-sharing-host.md` and
   still stored as sent**; folding only the comparison is what keeps refuse-never-repair intact. The
   whitespace collapse lives in `foldLabel` and not in `.v-setup-name`'s `white-space: normal`, because
   **a refusal must not depend on a CSS declaration in another file.**
+- **The fold also folds VISIBLE look-alikes, and still only in the fold** (2026-09-07, audit item
+  38). `Invoiсes` with a Cyrillic es, `FiIes` with a capital i, `0ct 2O2O`, `PHOTOS` are twin rows
+  by the same test as the invisible ones, and NFKC folds none of them. `CONFUSABLES` maps the
+  Cyrillic, Greek and small-capital letters whose glyph *is* the Latin one, then case, `l/I/1/|`
+  and `O/0` collapse. **Refusing those scripts in the filter is the outage again** — `Документы`
+  is an honest folder — so the gate accepts two different Cyrillic labels beside the pairs it
+  refuses.
 - **The PowerShell JSON escaper branches on the integer code point, never on `switch`.** PowerShell's
   `switch` compares linguistically, so every zero-collation-weight character - emoji variation
   selectors, ZWJ, zero-width space, soft hyphen - compared equal to the first zero-weight clause and
@@ -1602,14 +1619,21 @@ redeploying.**
 - **`public/_redirects` stays** until the Pages project is deliberately retired — Pages still
   auto-deploys from `main` and is the rollback. `.assetsignore` does not help; validation happens before
   the upload list is filtered.
-- **`public/_headers` stays and is *not* stripped** — unlike `_redirects` it is valid for both hosts, and
-  it is the only thing giving `/assets/*` its `nosniff`. **Do not generalise "strip the config files at
-  deploy" to this one.**
+- **`public/_headers` stays and is *not* stripped** — unlike `_redirects` it is valid for both hosts, it
+  is what gives `/assets/*` its `immutable`, and it is the bundles' `nosniff` on the Pages rollback.
+  **Do not generalise "strip the config files at deploy" to this one.**
 - **The Worker's SPA fallback is `not_found_handling`**, not `_redirects`.
-- **`run_worker_first = ["/*", "!/assets/*"]`** is what lets the Worker inline published site config into
-  HTML — by default a request matching a real file never invokes the Worker, so `/` got no injection
-  while `/contact` did. The negation keeps hashed bundles on the fast path, and means `/assets/*` never
-  passes through `harden()`, which is why their headers come from `public/_headers`.
+- **`run_worker_first = true`, with no negation** (2026-09-07, audit item 39). It is what lets the
+  Worker inline published site config into HTML — by default a request matching a real file never
+  invokes the Worker, so `/` got no injection while `/contact` did. It used to be
+  `["/*", "!/assets/*"]` to keep the bundles on the asset server's fast path, and **a negation is
+  matched against the path, not against what exists at it**: every *miss* under `/assets/` was the
+  asset server's SPA fallback — the shell with no security headers and `_headers`' year-long
+  `immutable` — live on production, frameable at any name somebody chose. Narrowing the glob to
+  `*.js` only moves the name; nothing name-shaped closes it. The bundles' bytes and `_headers` still
+  come from the asset binding, so a hit keeps `immutable`, and `unvalidatable()` pins `max-age=0,
+  must-revalidate` on every document it rewrites, so a miss is a document whatever path it came by.
+  `public/_headers` is no longer the bundles' *only* `nosniff`, and stays for the Pages rollback.
 - **`workers.dev` is disabled**, since `workers_dev` defaults to false once a route exists. Wanted — it
   closes the signup endpoint that was publicly reachable before cutover. Setting it true reopens it.
 - **`[dev] upstream_protocol = "https"`** is load-bearing for local development, not cosmetic.
@@ -1620,6 +1644,10 @@ is built by concatenation **and** compared against the request before being sent
 "no redirect" rather than an infinite loop. **Keep that guard.** Loopback is exempt or `wrangler dev` and
 `npm run test:auth` break.
 
+**The origin test is one function, `foreignOrigin`, and both callers use it** (2026-09-07):
+`crossOrigin` for state-changing methods and `signalUpgrade` for the WebSocket handshake, which is a
+GET and so could not reuse `crossOrigin` — its own copy compared the host alone, so the one
+long-lived authenticated channel had a weaker test than a rename. Do not give either a second copy.
 **A state-changing request whose `Origin` is present and is not ours is refused** (`crossOrigin`) —
 defence in depth behind `SameSite=Lax`, covering the two places Lax does not reach: Chromium's two-minute
 grace on a freshly set cookie, and same-site subdomains. **A missing `Origin` is allowed deliberately**:
