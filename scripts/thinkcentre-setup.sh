@@ -307,8 +307,11 @@ parse_args() {
     done
 
     # Refused along with everything underneath them. /usr is here rather than above because
-    # /usr/local is a plausible thing to type and just as wrong.
-    for bad in /etc /usr /bin /sbin /lib /lib32 /lib64 /libx32 /boot /dev /proc /sys /run; do
+    # /usr/local is a plausible thing to type and just as wrong. /var and /root joined
+    # 2026-09-07 (audit item 49): `--store /var/lib` was accepted and chowned the dpkg
+    # database to the autologin desktop user, which is the physical-access-becomes-root
+    # path the preflight warns about, remembered permanently in the store file.
+    for bad in /etc /usr /bin /sbin /lib /lib32 /lib64 /libx32 /boot /dev /proc /sys /run /var /root; do
         case "${STORE_DIR}/" in
             "${bad}"/*)
                 die "Refusing to use '${STORE_DIR}' as the data store. It is inside ${bad}, which this
@@ -1282,10 +1285,16 @@ for prefs in "${HOME}/.config/chromium/Default/Preferences" \
              "${HOME}/.config/chromium/Profile "*"/Preferences"; do
     [ -f "${prefs}" ] || continue
     command -v jq >/dev/null 2>&1 || break
-    tmp="$(mktemp)"
+    # Beside the file and renamed into place, never truncated in place
+    # (2026-09-07, audit item 48): this runs at every service start, and a
+    # power cut mid-write left a truncated Preferences that Chromium discards —
+    # taking the persistent folder grant with it, which is the trip to the
+    # machine the profile-is-the-pairing rule exists to avoid.
+    tmp="$(mktemp "${prefs}.XXXXXX")"
     if jq '.profile.exit_type = "Normal" | .profile.exited_cleanly = true' "${prefs}" > "${tmp}" 2>/dev/null \
        && [ -s "${tmp}" ]; then
-        cat "${tmp}" > "${prefs}"
+        chmod --reference="${prefs}" "${tmp}" 2>/dev/null || true
+        mv -f "${tmp}" "${prefs}"
         log "Reset the exit state in ${prefs}."
     else
         log "Could not rewrite ${prefs}; relying on the command-line flags alone."

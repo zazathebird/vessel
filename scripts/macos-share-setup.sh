@@ -282,6 +282,9 @@ BLOCK_PREFIX=(
     "$HOME/.docker"         # registry credentials
     "$HOME/.kube"           # cluster credentials
     "$HOME/.password-store" # pass(1)
+    "$HOME/.cache"          # Chrome blocks it whole; browser caches and tokens live here
+    "$HOME/.dbus"           # session bus credentials
+    "$HOME/.thunderbird"    # mail, saved passwords (logins.json + key4.db)
 )
 
 # Both lists, for anything that wants to print or test them.

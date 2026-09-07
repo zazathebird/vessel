@@ -32,8 +32,16 @@ moved the name; `validDuelPages` tests own keys, since `key in`
 walked to `constructor` and threw inside `loadConfig`; and the WebSocket upgrade shares
 `foreignOrigin` with the POST routes instead of its own host-only copy. Gates for each, three
 break-verified against the pre-fix code. Deployed the same day as Worker `df6dba2a` (rollback
-`014152a8`, no migration) and verified live, HANDOFF step 6 included. **The setup and host
-scripts slice was not read this pass** and is carried in `TODO.md`.
+`014152a8`, no migration) and verified live, HANDOFF step 6 included.
+
+**Second sitting, the same day.** The scripts slice was read in full and the three recorded
+items closed (audit items 42–49). Two decisions worth their own line: **the browsing tab now
+pins the agent key**, SSH-style — first verified connect pins, a change is refused before any
+socket opens and the owner is asked whether they re-keyed it themselves; the audit had called
+this a phase-3 question, and it is answered now because the fix is forty lines and the exposure
+was a database write pointing the owner at an impostor's files. And **the Pi host gets the same
+Chromium managed policy as the ThinkCentre**, because CLAUDE.md had claimed it for both hosts
+while only one wrote it. The passkey `prfOutput` note was struck as a documented decision. Deployed as Worker `38ceae8d` (rollback `df6dba2a`).
 
 ---
 

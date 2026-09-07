@@ -1174,6 +1174,10 @@ environment problem. Until they move above the health check, start the Worker.
   deployed.
 - **Passwords are NFKC-normalised before PBKDF2** (NIST 800-63B) — composed and decomposed non-ASCII
   must derive identically across platforms, and there is no email reset behind a mismatch.
+- **`signout` resolves its audit actor through the table** (2026-09-07, audit item 42): a cookie
+  outlives a deleted account, `audit.actor_id` is a foreign key, and the plain insert made the one
+  request whose job is to clear that cookie answer 500. The subselect yields NULL, as the cascade
+  would. Gated in the harness.
 - **The last-way-in guards live in the writes' own `WHERE` clauses**, not in a check before them
   (`passkeys.remove`, `admin.resetPassword`, `admin.setOperator`'s demotion, `totpEnrol`'s upsert) —
   check-then-act lets two concurrent requests each count the other as "another way in". Zero
@@ -1185,6 +1189,13 @@ environment problem. Until they move above the health check, start the Worker.
   and read every byte without forging a signature. **Do not simplify it back to a single match, and do
   not make it pick a winner** — identical repeats are allowed (a bundled SDP restates the same
   fingerprint per m-section); disagreement is refused.
+- **The browsing tab pins the agent key, SSH-style** (2026-09-07, audit item 43). `shareStore.pin`
+  per machine, taken at the first *verified* connect and consulted in `DriveConnection.open` before
+  the signalling socket is dialled. A changed key throws `AgentKeyChanged` and the machines page
+  asks the owner whether they re-keyed it themselves; pairing from the same browser pins the key
+  it just made. **Pin after verification, never before** — a pin on an unverified key pins the
+  impostor. Without this a database write could point the owner at an agent serving files that are
+  not theirs. Gated on the verdict and the wiring order.
 - **The agent verifies peers itself; it never trusts the signalling introduction.** The trust root is
   **stored at pair time in IndexedDB and never re-fetched** — re-fetching would let a later server
   compromise quietly re-root a paired agent. **And it comes from the password, never from the pair
@@ -1245,7 +1256,9 @@ wrong machine is worse than not running. `docs/pi-sharing-host.md` and
   somebody's files, which is worse. The timer is `Persistent=false` deliberately — a missed week
   waits for the next one rather than firing at an arbitrary moment after a boot.
 - **The Chromium managed policy is the answer to autologin**, which is not optional: a host that
-  stops sharing when the power flickers is not a host. `DefaultFileSystemReadGuardSetting` stays at
+  stops sharing when the power flickers is not a host. **Both scripts write it** (2026-09-07,
+  audit item 46 — the Pi script wrote none for as long as this sentence claimed it did; gated for
+  both, including that each still parses). `DefaultFileSystemReadGuardSetting` stays at
   "ask" (3) because that prompt *is* the folder picker the machine exists to answer; write is
   blocked, since §8 shares read-only.
 - **`sudo docker`, never the `docker` group** — group membership is root-equivalent and this box
@@ -1383,6 +1396,14 @@ wrong machine is worse than not running. `docs/pi-sharing-host.md` and
   - **Block the parent of home** - `/home`, `/Users`, `C:\Users`. The cheapest exploit of the lot:
     "type `C:\Users` in the box" hands over every account on the machine, and the share root lives
     inside it, so the junction was recursive as well.
+  - **The app-data roots are prefixes on Windows** (2026-09-07, audit item 44): `%APPDATA%`,
+    `%LOCALAPPDATA%` and `%ProgramData%` are block-all-children in Chrome, and as exact entries
+    with three vendors named beneath them they left Thunderbird's saved passwords, Telegram's
+    session keys and every Store app's state shareable. Unix gained `~/.cache`, `~/.dbus`,
+    `~/.thunderbird`. **The gate strips comments before slicing the array** — a `pass(1)` comment
+    had been closing it early, so entries after that line were never checked.
+  - **`launch.bat` names `powershell.exe` by full path** (audit item 45): `cmd.exe` searches the
+    current directory first, and from Explorer that is Downloads.
   - **Prefix-match, not exact-match.** `$HOME` was blocked and none of its children were, so
     `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.config` and `~/Library` were all shareable - precisely the
     paths Chrome blocks with block-all-children semantics. The script was opening what Chrome

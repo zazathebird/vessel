@@ -82,8 +82,12 @@ same reason, and to avoid making a non-technical person install `jq` over the te
   label with French accents in it. Round trips through UTF-8 and base64url intact.
 - **`--undo` removes links and never their targets.** A file inside a linked folder survived; this is
   the test that matters, because deleting through a symlink is how you delete somebody's photographs.
-- **`--undo` refuses a share folder it did not create**, by checking for its marker file, so pointing
-  it at a real `~/Shared` full of somebody's work does nothing.
+- **`--undo` refuses a share folder without its marker file**, so pointing it at a real `~/Shared`
+  full of somebody's work does nothing. Corrected 2026-09-07 (audit item 47): the scripts also
+  *adopt* an existing folder as the share root and write the marker into it, and undo then removes
+  every link in a marked folder — including links the person made themselves. Links only, never
+  what they point at, so the damage is bounded to re-making a link; but "did not create" was the
+  wrong claim.
 
 **Not verified, and honestly listed rather than assumed:**
 

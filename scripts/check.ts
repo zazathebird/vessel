@@ -40,6 +40,7 @@ import {
   decodeSetupCode,
   encodeSetupCode,
 } from "../src/share/setupCode";
+import { AgentKeyChanged, pinVerdict } from "../src/share/browse";
 import {
   createDuel,
   createDuelFrom,
@@ -5086,23 +5087,30 @@ check("the setup scripts refuse the folders that matter", () => {
   // right there — which is exactly what it did, taking every assertion below it
   // out of service at the same time.
   const tokens = (text: string, name: string): string[] => {
-    const arr = new RegExp(`${name}=\\(([^)]*)\\)`).exec(text);
-    const src = arr ? arr[1] : (new RegExp(`${name}="([^"]*)"`).exec(text) ?? [])[1];
+    // Comments go FIRST, line by line (2026-09-07). The array regex ends at the
+    // first `)`, and `"$HOME/.password-store" # pass(1)` closed it from inside
+    // a comment — so every entry after that line was outside the slice and
+    // never checked. Three entries added below it were reported missing while
+    // sitting in the file; a required entry placed there would have been
+    // reported missing too, and one removed from there would not have been.
+    const bare = text.replace(/#[^\n]*/g, "");
+    const arr = new RegExp(`${name}=\\(([^)]*)\\)`).exec(bare);
+    const src = arr ? arr[1] : (new RegExp(`${name}="([^"]*)"`).exec(bare) ?? [])[1];
     if (!src) return [];
     return src
       .split(/\s+/)
-      .map((t) => t.replace(/#.*$/, "").replace(/^["']|["']$/g, ""))
+      .map((t) => t.replace(/^["']|["']$/g, ""))
       .filter(Boolean);
   };
 
   const requiredUnix: Record<string, { exact: string[]; prefix: string[] }> = {
     "scripts/linux-share-setup.sh": {
       exact: ["$HOME", "/home", "/etc", "/root", "/"],
-      prefix: ["$HOME/.ssh", "$HOME/.gnupg", "$HOME/.config"],
+      prefix: ["$HOME/.ssh", "$HOME/.gnupg", "$HOME/.config", "$HOME/.cache", "$HOME/.dbus", "$HOME/.thunderbird"],
     },
     "scripts/macos-share-setup.sh": {
       exact: ["$HOME", "/Users", "/System", "/Library", "/private", "/"],
-      prefix: ["$HOME/Library", "$HOME/.ssh", "$HOME/.gnupg"],
+      prefix: ["$HOME/Library", "$HOME/.ssh", "$HOME/.gnupg", "$HOME/.cache", "$HOME/.dbus", "$HOME/.thunderbird"],
     },
   };
 
@@ -5132,6 +5140,24 @@ check("the setup scripts refuse the folders that matter", () => {
     const text = readFileSync("scripts/windows-share-setup.ps1", "utf8");
     for (const entry of ["$env:USERPROFILE", "$env:SystemRoot", "$env:ProgramFiles"]) {
       must(text.includes(entry), `windows-share-setup.ps1 no longer blocks ${entry}`);
+      checked += 1;
+    }
+    // The three app-data roots must be PREFIX entries (2026-09-07, audit item
+    // 44): Chrome blocks them with block-all-children, and as exact entries
+    // they left %APPDATA%\Thunderbird and %LOCALAPPDATA%\Packages shareable.
+    // The list is a literal array, so its definition is read between its
+    // opening and closing parentheses; the resolver gate below executes the
+    // prefix comparison itself under pwsh.
+    const prefixStart = text.indexOf("$blockPrefix = @(");
+    // The array's own closing line, not the first `)` — `${env:ProgramFiles(x86)}` has one.
+    const prefixEnd = text.indexOf("    ) | Where-Object", prefixStart);
+    must(prefixStart > 0 && prefixEnd > prefixStart, "windows-share-setup.ps1 has no $blockPrefix array");
+    const prefixBlock = text.slice(prefixStart, prefixEnd);
+    for (const root of ["$env:APPDATA,", "$env:LOCALAPPDATA,", "$env:ProgramData,"]) {
+      must(
+        prefixBlock.includes(`\n        ${root}`),
+        `windows-share-setup.ps1 no longer blocks ${root.slice(0, -1)} and everything under it`,
+      );
       checked += 1;
     }
   }
@@ -5608,6 +5634,70 @@ check("the Windows script refuses a -BrowserProfile that is not a profile folder
 await Promise.all(pending);
 
 // ---- 6. Things only a person can judge -------------------------------------
+
+/*
+ * The browsing tab pins the agent key (2026-09-07, audit item 43). The pure
+ * verdict is driven; the wiring — consulted BEFORE the socket, saved only
+ * AFTER the signature check — is read from the source, and the report says so:
+ * `DriveConnection.open` needs a WebSocket and an RTCPeerConnection, which
+ * this process does not have.
+ */
+check("the browsing tab pins the agent key: first use pins, a change is refused before signalling", () => {
+  must(pinVerdict(null, "k1") === "first", "no pin was not 'first'");
+  must(pinVerdict("k1", "k1") === "same", "the same key was not 'same'");
+  must(pinVerdict("k1", "k2") === "changed", "a different key was not 'changed'");
+  const changed = new AgentKeyChanged(
+    { id: "m", name: "Workshop", agentPubkey: "k2", pairedAt: 0, online: true, lastSeen: null, drives: [] },
+    "k2",
+  );
+  must(/re-paired|re-keyed/.test(changed.message) && changed.offered === "k2", "the refusal does not tell the owner what to do");
+
+  const src = readFileSync("src/share/browse.ts", "utf8");
+  const open = src.indexOf("static async open(");
+  const dial = src.indexOf("DriveConnection.dial(");
+  const pinRead = src.indexOf("shareStore.pin(");
+  const pinSave = src.indexOf("shareStore.savePin(");
+  must(open > 0 && dial > open && pinRead > open && pinRead < dial, "the pin is not consulted before the socket is dialled");
+  must(pinSave > dial, "the pin is saved before the agent has proven its key");
+  must(/if \(verdict === "changed"\) throw new AgentKeyChanged/.test(src), "a changed key is not refused");
+  must(
+    readFileSync("src/components/MachinesPage.tsx", "utf8").includes("cause instanceof AgentKeyChanged"),
+    "the machines page does not catch AgentKeyChanged, so the owner is never asked",
+  );
+  return "3 verdicts, refusal wording, pin read before dial and saved after verification, page asks";
+});
+
+/*
+ * Both host scripts write the Chromium managed policy (2026-09-07, audit item
+ * 46). CLAUDE.md had recorded it as "the answer to autologin" for both hosts
+ * while the Pi script wrote none — a Pi booted into the operator's signed-in
+ * profile with every URL, DevTools and sync available. The keys that carry the
+ * design are asserted by name, the function must be on the main path, and
+ * `bash -n` proves each script still parses, since a heredoc that swallows the
+ * rest of the file is the failure a port like this invites.
+ */
+check("both host scripts write the Chromium managed policy, and parse", () => {
+  let seen = 0;
+  for (const file of ["scripts/pi-setup.sh", "scripts/thinkcentre-setup.sh"]) {
+    const text = readFileSync(file, "utf8");
+    must(text.includes("configure_chromium_policy() {"), `${file} has no configure_chromium_policy`);
+    must(/^\s+configure_chromium_policy\s*$/m.test(text), `${file}'s main does not call configure_chromium_policy`);
+    for (const key of [
+      '"URLBlocklist": ["*"]',
+      '"URLAllowlist": ["${scheme}://.${host}"]',
+      '"DeveloperToolsAvailability": 2',
+      '"SyncDisabled": true',
+      '"PasswordManagerEnabled": false',
+      '"DefaultFileSystemReadGuardSetting": 3',
+      '"DefaultFileSystemWriteGuardSetting": 2',
+    ]) {
+      must(text.includes(key), `${file}'s policy no longer carries ${key}`);
+      seen += 1;
+    }
+    execFileSync("bash", ["-n", file], { stdio: "pipe" });
+  }
+  return `2 host scripts, ${seen} policy keys, both parse`;
+});
 
 const UNCHECKABLE = [
   "whether the fight reads well — it cannot be watched here (rAF parks)",

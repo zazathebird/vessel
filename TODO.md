@@ -13,14 +13,22 @@ from the password before pairing (`pairMachine`), the setup-code fold catches vi
 `/assets/<miss>` reaches the Worker by any name and is hardened, `validDuelPages` tests own keys, and the
 WebSocket upgrade shares `foreignOrigin` with the POST routes.
 
+**Second sitting, same day** — the scripts slice was read and the recorded items closed: audit
+items 42–49 (`signout` on a deleted account, the browsing tab's agent-key pin, the Windows
+app-data roots, `launch.bat`'s bare `powershell.exe`, the Pi's missing Chromium policy, the
+`--undo` wording, the ThinkCentre `Preferences` rewrite, `--store` under `/var`). The passkey
+note was a documented decision and is struck. `npm run check` **77**, `npm run test:auth` **407**. **Deployed** as Worker `38ceae8d-be25-49f1-8b63-605e2cabe101` (rollback `df6dba2a`, no migration), verified live per HANDOFF.
+
 ### Still open
 
-- **The setup and host scripts slice was never read this pass** — its reviewer died on a rate
-  limit. The four share scripts and the two host scripts are owed the same question the rest
-  got: *what does this change for somebody who is not the caller?*
-- Recorded in the audit and not fixed: `signout` 500s on a deleted account's valid cookie; a
-  passkey sign-in discards the `prfOutput` and never opens its slot; the browsing tab pins
-  nothing (item 4).
+- **Rebuild and re-upload the setup bundle** — `launch.bat` changed (item 45), so the published
+  `CHECKSUMS.txt` no longer matches. `scripts/setup-bundle.sh`, then the downloads editor.
+- **Unverified on the Pi**: whether Raspberry Pi OS adds `origin=Raspbian` / `Raspberry Pi
+  Foundation` to unattended-upgrades' allowed origins. If so, Chromium is upgraded under the
+  running kiosk, which `pi-setup.sh`'s comment says cannot happen. Check
+  `/etc/apt/apt.conf.d/50unattended-upgrades` on a real Pi.
+- The agent-key pin (item 43) is gated on its pure verdict and wiring; the accept/refuse panel on
+  `/machines` has not been driven by eye — it joins the phase-2 by-eye item below.
 
 ---
 

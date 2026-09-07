@@ -1171,7 +1171,20 @@ export async function signout(request: Request, env: Env): Promise<Response> {
     "session",
     session.readCookie(request, session.SESSION_COOKIE),
   );
-  if (token) await env.DB.batch([auditStatement(env, token.subject, "auth.signout", null)]);
+  // The actor is resolved through the table, not written as given (2026-09-07,
+  // audit item 42). `audit.actor_id` references `accounts` with ON DELETE SET
+  // NULL, and a cookie outlives the account it names: after an operator
+  // delete-account the cookie is still valid for up to thirty minutes, and
+  // the plain insert violated the foreign key — a 500 on the one request whose
+  // whole job is to clear that cookie. The subselect yields NULL for a gone
+  // account, which is the same row the cascade would have produced.
+  if (token) {
+    await env.DB.prepare(
+      "INSERT INTO audit (id, actor_id, action, target, at) VALUES (?, (SELECT id FROM accounts WHERE id = ?), 'auth.signout', NULL, ?)",
+    )
+      .bind(newId(), token.subject, Date.now())
+      .run();
+  }
 
   // no-store like every other response that changes account state: the body is
   // inert, but the Set-Cookie clearing the session should never sit in a cache.

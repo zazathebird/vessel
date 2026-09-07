@@ -410,10 +410,23 @@ function Test-ShareableFolder {
     # Login Data, was allowed; and %APPDATA%\Microsoft\Crypto was refused while
     # %APPDATA%\Microsoft, which holds the DPAPI master keys that decrypt them,
     # was allowed. The vendor directories are named instead of their leaves.
+    #
+    # AND THE APP-DATA ROOTS THEMSELVES (2026-09-07, audit item 44). Chrome
+    # blocks DIR_ROAMING_APP_DATA, DIR_LOCAL_APP_DATA and DIR_COMMON_APP_DATA
+    # with block-all-children; this list had them as EXACT entries and named
+    # three vendors underneath, so %APPDATA%\Thunderbird (saved passwords),
+    # %APPDATA%\Telegram Desktop (session keys), %APPDATA%\discord (the token)
+    # and %LOCALAPPDATA%\Packages (every Store app's state) were all shareable —
+    # the blocked-leaf-shareable-ancestor shape, one level up from where it was
+    # fixed. The roots are prefixes now; the vendor entries stay as documentation
+    # of what was found under them.
     $blockPrefix = @(
         $env:SystemRoot,
         $env:ProgramFiles,
         ${env:ProgramFiles(x86)},
+        $env:ProgramData,
+        $env:LOCALAPPDATA,
+        $env:APPDATA,
         (Join-Path $env:USERPROFILE '.ssh'),
         (Join-Path $env:USERPROFILE '.aws'),
         (Join-Path $env:USERPROFILE '.gnupg'),

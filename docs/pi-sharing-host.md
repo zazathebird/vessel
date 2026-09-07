@@ -351,6 +351,15 @@ chmod +x scripts/pi-setup.sh
 ./scripts/pi-setup.sh
 ```
 
+Since 2026-09-07 the script also writes a **Chromium managed policy** (`vessel-kiosk.json` under
+`/etc/chromium/policies/managed` or `/etc/chromium-browser/policies/managed`, whichever browser is
+installed). This machine autologins into the operator's signed-in browser, so the policy is what
+stops anyone at the keyboard from browsing elsewhere in that profile: navigation is allowlisted to
+the kiosk host exactly, DevTools, sync, sign-in, extensions and the password manager are off, the
+folder-picker prompt stays allowed and writes are blocked. The summary's *Browser policy* line says
+where it was written. **To undo it, delete the file.** If you later point the kiosk at a different
+host, re-run the script, because the allowlist names the old one.
+
 It refuses to run as root and calls `sudo` itself where it needs to, so run it as your normal user
 and expect a password prompt early. It takes a few minutes, mostly Chromium.
 

@@ -96,6 +96,8 @@ const CLIENT_IP = `203.0.113.${1 + Math.floor(Math.random() * 254)}`;
 // browser and Worker drift apart.
 class BrowserSession {
   cookie: string | null = null;
+  /** The address this jar's requests carry — its own when a fixture must not share the run's signup bucket. */
+  constructor(readonly ip: string = CLIENT_IP) {}
 }
 
 let browser = new BrowserSession();
@@ -114,7 +116,7 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
 
   const headers = new Headers(init?.headers ?? {});
   // Same per-run rate-limit bucket as `Client.call` — see the note there.
-  headers.set("cf-connecting-ip", CLIENT_IP);
+  headers.set("cf-connecting-ip", browser.ip);
   if (browser.cookie) headers.set("cookie", browser.cookie);
 
   const response = await nodeFetch(`${BASE}${url}`, { ...init, headers });
@@ -1354,6 +1356,25 @@ async function main(): Promise<void> {
       `delete-account removed the ${stale.length} stale fixture(s)`,
       accounts.every((row) => !row.handle.startsWith("harness-") || row.handle.endsWith(RUN)),
     );
+
+    // A cookie outlives the account it names (2026-09-07, audit item 42). The
+    // sign-out that clears it used to 500 on the audit row's foreign key.
+    // Its own address: the signup bucket is sized just above the run's eight
+    // signups, and a ninth on the shared one locks the rate-limit fixture out.
+    const doomedSession = asBrowser(new BrowserSession("198.51.100.42"));
+    const doomedHandle = `harness-doomed-${RUN}`;
+    await signUpFlow(doomedHandle, password);
+    asBrowser(operatorSession);
+    const doomedRow = (await api.adminAccounts()).accounts.find((row) => row.handle === doomedHandle);
+    await api.adminDeleteAccount(doomedRow!.id, adminProof);
+    asBrowser(doomedSession);
+    const ghostSignout = await refusal(() => api.signout());
+    check(
+      "signing out with a deleted account's still-valid cookie clears it rather than 500ing",
+      ghostSignout === null,
+      ghostSignout?.message,
+    );
+    asBrowser(operatorSession);
 
     const selfDelete = await refusal(() => api.adminDeleteAccount(self!.id, adminProof));
     check("an operator cannot delete themselves", selfDelete?.status === 400, selfDelete?.message);

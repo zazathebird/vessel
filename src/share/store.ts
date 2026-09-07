@@ -87,6 +87,20 @@ export const shareStore = {
   deleteHandle: (driveId: string) => del(`handle:${driveId}`),
 
   /**
+   * The agent key this browser last connected to, per machine (2026-09-07,
+   * audit item 43 — the "browsing tab pins nothing" item, the SSH shape). The
+   * owner's browser fetches `machines.agent_pubkey` from the server on every
+   * browse, so a database WRITE could point the owner at an impostor agent
+   * that serves files the owner never put there. A pin taken at first
+   * verified connect, and a warning on change, is what turns that into a
+   * question the owner is asked rather than a swap nobody sees. Base64url,
+   * exactly as the machine list reports it.
+   */
+  pin: (machineId: string) => get<string>(`pin:${machineId}`),
+  savePin: (machineId: string, agentPubkey: string) => put(`pin:${machineId}`, agentPubkey),
+  deletePin: (machineId: string) => del(`pin:${machineId}`),
+
+  /**
    * The folder list a setup script produced, pasted in as a code
    * (SPEC-SHARING.md §4).
    *

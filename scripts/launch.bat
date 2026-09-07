@@ -41,7 +41,12 @@ if not exist "%~dp0windows-share-setup.ps1" (
     exit /b 1
 )
 
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0windows-share-setup.ps1" %*
+rem The full path, never a bare "powershell.exe" (2026-09-07, audit item 45):
+rem cmd.exe searches the CURRENT directory before PATH, and double-clicking this
+rem file from Explorer makes Downloads the current directory - so any
+rem "powershell.exe" a drive-by download had dropped there would run with your
+rem rights the moment you ran the launcher you had just checksummed.
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%~dp0windows-share-setup.ps1" %*
 set EXITCODE=%ERRORLEVEL%
 
 echo.

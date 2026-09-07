@@ -92,12 +92,104 @@ upgrade from a foreign origin and one stamped `cross-site` are each refused 403;
 is loopback-exempt and so cannot be driven under `wrangler dev` (said so in the harness rather
 than asserted).
 
-### Recorded, not fixed
+### The same day, second sitting — the three recorded items and the scripts slice
 
-- `signout` answers 500 on a deleted account's still-valid cookie (the audit row's foreign key).
-- A passkey sign-in never opens the key slot it is handed back — `prfOutput` is discarded.
-- The browsing tab pins nothing (item 4, unchanged).
-- **The setup and host scripts slice is still owed its reading.**
+`npm run check` **77** (65 fast), `npm run test:auth` **407**. **Deployed** as Worker `38ceae8d-be25-49f1-8b63-605e2cabe101` (rollback `df6dba2a`, no migration), verified live per HANDOFF. The scripts slice was read in full
+this time (every file under `scripts/` that ships to a customer or a host); its "checked and
+sound" list is at the end of this section.
+
+### 42. `signout` answered 500 on a deleted account's still-valid cookie
+
+`worker/accounts.ts`. `audit.actor_id` references `accounts` with `ON DELETE SET NULL`, and a
+cookie outlives the account it names by up to thirty minutes after an operator delete-account —
+so the plain insert violated the foreign key on the one request whose job is to clear that
+cookie. **Fix**: the actor is resolved through a subselect, which yields NULL for a gone account,
+the row the cascade would have produced. Harness: an account is signed up, deleted by the
+operator, and its cookie signs out with 200.
+
+### 43. The browsing tab pinned nothing — closed, the SSH shape (was item 4)
+
+`src/share/browse.ts`, `src/share/store.ts`, `src/components/MachinesPage.tsx`. The owner's
+browser fetched `machines.agent_pubkey` from the server on every browse, so a database write
+could point the owner at an impostor agent that serves files the owner never put there. **Fix**:
+a per-browser pin per machine, taken at first *verified* connect (after the agent has proven the
+key by signature — pinning earlier would pin the impostor) and consulted *before* the signalling
+socket opens, so a changed key learns nothing. On change the page asks: *"If you re-paired or
+re-keyed it yourself, accept the new key; if not, refuse."* Pairing or re-keying from the same
+browser pins the key it just made, so an honest re-key never trips the question. Gated on the
+pure verdict and the wiring order; the socket path cannot run here.
+
+### The passkey note was a documented decision, not a finding
+
+`src/auth/api.ts` says it in the type: the sign-in assertion's `prf` output is deliberately not
+retained, because unlike a spent recovery code it is re-derivable at will, and the harness already
+opens the slot with a fresh evaluation. The 2026-09-07 morning note re-observed a decision. Struck.
+
+### 44. The Windows blocklist opened most of `%APPDATA%`, `%LOCALAPPDATA%` and `%ProgramData%`
+
+`scripts/windows-share-setup.ps1`. Chrome blocks all three with block-all-children; the script
+had them as *exact* entries and named three vendors underneath, so `%APPDATA%\Thunderbird`
+(saved passwords), `%APPDATA%\Telegram Desktop` (session keys), `%APPDATA%\discord` (the token)
+and `%LOCALAPPDATA%\Packages` (every Store app's state) were shareable — the blocked-leaf,
+shareable-ancestor shape one level above where 2026-09-03 fixed it. **Fix**: the three roots are
+prefix entries. Same family on Unix: `~/.cache`, `~/.dbus` and `~/.thunderbird` added to both
+shell scripts. Gated — and the gate's own parser was found closing the array at the first `)`,
+which a `pass(1)` comment supplied, so every entry after that line had been outside the slice;
+comments are stripped first now.
+
+### 45. `launch.bat` resolved `powershell.exe` from the current directory
+
+`scripts/launch.bat`. `cmd.exe` searches the current directory before `PATH`, and double-clicking
+the launcher from Explorer makes Downloads the current directory — so a `powershell.exe` dropped
+there by any drive-by download ran with the person's rights the moment they ran the launcher they
+had just checksummed (CWE-427). **Fix**: the full `%SystemRoot%` path. **The published bundle must
+be rebuilt and re-uploaded** (`scripts/setup-bundle.sh`, then the downloads editor), since its
+checksum changed.
+
+### 46. The Pi host wrote no Chromium managed policy
+
+`scripts/pi-setup.sh`. CLAUDE.md recorded the policy as "the answer to autologin" under a heading
+covering both hosts; the Pi script had none, so a Pi booted into the operator's signed-in profile
+with every URL, DevTools, sync and the password manager available to whoever was at the keyboard.
+**Fix**: ported from the ThinkCentre script — same keys, scheme and host matched against a closed
+set, written beside-and-renamed to whichever `chromium*` policy directory the installed browser
+reads, state reported from the disk. Gated for both hosts, including `bash -n`.
+
+### 47. The runbook's `--undo` claim was wrong
+
+`docs/SHARING-SETUP.md` said undo "refuses a share folder it did not create"; all three scripts
+adopt an existing folder and write the marker into it, and undo then removes every link in a
+marked folder. Links only, never targets, so the damage is bounded. The runbook now says what
+happens.
+
+### 48. The ThinkCentre launcher truncated Chromium's `Preferences` in place
+
+`scripts/thinkcentre-setup.sh`, at every service start. A power cut mid-write left a truncated file
+Chromium discards, and the persistent folder grant lives in it — the trip to the machine the
+profile-is-the-pairing rule exists to avoid. **Fix**: written beside the file and renamed, as the
+Pi script already did.
+
+### 49. `--store /var/lib` was accepted and chowned the dpkg database to the desktop user
+
+`scripts/thinkcentre-setup.sh`. `/var` and `/root` were exact-only refusals, so anything beneath
+them was accepted, chowned to the autologin user and remembered in the store file — the
+physical-access-becomes-root path the script's own preflight warns about. **Fix**: both are prefix
+refusals.
+
+### Scripts slice — checked and sound
+
+Setup-code encoders (byte-wise JSON escaping in awk and by integer code point in PowerShell,
+surrogate pairs intact, base64url matching the decoder, labels from the canonical basename);
+blocklist evaluation (canonicalise-then-compare, `//` collapse, every-component reparse walk on
+Windows, bash arrays, `/` surviving the strip); no `eval`, `Invoke-Expression`, `cmd /c` or
+unquoted user values anywhere; `.desktop`, LaunchAgent and scheduled-task strings built from
+constants plus the charset-gated `-BrowserProfile`; `sudo` only for `pmset` on Unix and nothing
+for junctions on Windows; host scripts refuse root, write root files temp-and-rename with a
+read-back, validate the kiosk URL before and after, take the SSH port from `sshd -T`, bind Docker
+ports to an address, install from apt; `setup-bundle.sh` allowlists before `rm -rf`, asserts BOM
+and CRLF, checksums the copied bytes. **Unverified**: whether Raspberry Pi OS adds its own archive
+to unattended-upgrades' origins — if it does, Chromium is replaced under the running Pi kiosk,
+the case the ThinkCentre script blacklists. Carried in `TODO.md`.
 
 ---
 

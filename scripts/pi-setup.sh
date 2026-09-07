@@ -40,6 +40,8 @@ set -euo pipefail
 readonly SERVICE_NAME="vessel-kiosk"
 readonly CONFIG_DIR="${HOME}/.config/vessel-kiosk"
 readonly URL_FILE="${CONFIG_DIR}/url"
+readonly POLICY_NAME="vessel-kiosk.json"
+POLICY_STATE="not attempted"
 readonly LAUNCHER="${HOME}/.local/bin/vessel-kiosk"
 readonly UNIT_FILE="${HOME}/.config/systemd/user/${SERVICE_NAME}.service"
 readonly DEFAULT_URL="https://mcclevarty.ca/share"
@@ -882,6 +884,151 @@ EOF
 }
 
 # ---------------------------------------------------------------------------------------------
+# The Chromium managed policy (2026-09-07, audit item 46 — ported from thinkcentre-setup.sh).
+#
+# Autologin into a signed-in browser is the whole design, and it means the operator's session
+# and the profile holding the folder handle are one keyboard away from anyone in the room. This
+# was the ThinkCentre script's answer since it was written, and CLAUDE.md recorded it as the
+# answer for both hosts — while this script wrote no policy at all, so a Pi booted into the
+# operator's session with every URL, DevTools, sync and the password manager available.
+#
+# System-wide, under /etc/chromium*/policies/managed, read at startup, not overridable from
+# inside the browser. Delete the file to undo it. Navigation is limited to the kiosk host
+# exactly and on the pinned scheme; file-system READ prompts stay allowed (3 = ask) because
+# that prompt is the folder picker this machine exists to answer, and WRITE is blocked (2)
+# because §8 shares read-only.
+# ---------------------------------------------------------------------------------------------
+
+configure_chromium_policy() {
+    log "Locking Chromium down with a managed policy"
+
+    local url scheme host
+    url="$(cat "${URL_FILE}" 2>/dev/null || printf '%s' "${KIOSK_URL}")"
+
+    # The URL was validated when parsed, but this one may have been read back from a file this
+    # script never overwrites, so it may have been edited by hand since — and its host and scheme
+    # are about to be interpolated into a JSON security control that Chromium IGNORES if malformed.
+    # Matched against a closed set, never extracted by surgery.
+    case "${url}" in
+        https://*) scheme="https" ;;
+        http://*)  scheme="http" ;;
+        *)
+            POLICY_STATE="NOT WRITTEN — the URL in ${URL_FILE} is not http or https"
+            warn "The URL in ${URL_FILE} does not begin http:// or https://, so it will not go into a
+             Chromium policy: '${url}'. The browser lockdown was NOT written. Fix that file — one
+             line, the full URL — and run this again."
+            return
+            ;;
+    esac
+    host="${url#*://}"
+    host="${host%%/*}"
+    if [ -z "${host}" ] || ! printf '%s' "${host}" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]{1,5})?$'; then
+        POLICY_STATE="NOT WRITTEN — the host in ${URL_FILE} is not usable in a policy"
+        warn "The URL in ${URL_FILE} has a host this script will not put into a Chromium policy:
+             '${host}'. The browser lockdown was NOT written. Fix that file and run this again."
+        return
+    fi
+
+    local tmp
+    tmp="$(mktemp)"
+    cat > "${tmp}" <<EOF
+{
+  "_comment": "Written by scripts/pi-setup.sh for the Vessel sharing host. Delete this file to undo it.",
+  "_comment_allowlist": "The leading dot means this host EXACTLY, not its subdomains, and the scheme is pinned. Chromium's filter format matches subdomains and every scheme unless you say otherwise.",
+
+  "URLBlocklist": ["*"],
+  "URLAllowlist": ["${scheme}://.${host}"],
+
+  "IncognitoModeAvailability": 1,
+  "BrowserSignin": 0,
+  "SyncDisabled": true,
+  "PasswordManagerEnabled": false,
+  "PasswordLeakDetectionEnabled": false,
+  "AutofillAddressEnabled": false,
+  "AutofillCreditCardEnabled": false,
+  "DeveloperToolsAvailability": 2,
+  "BackgroundModeEnabled": false,
+  "MetricsReportingEnabled": false,
+  "SafeBrowsingExtendedReportingEnabled": false,
+  "SearchSuggestEnabled": false,
+  "SpellCheckServiceEnabled": false,
+  "TranslateEnabled": false,
+  "PrintingEnabled": false,
+  "ShowHomeButton": false,
+  "BookmarkBarEnabled": false,
+  "DefaultBrowserSettingEnabled": false,
+  "PromptForDownloadLocation": false,
+  "ExtensionInstallBlocklist": ["*"],
+
+  "SafeBrowsingProtectionLevel": 1,
+  "DefaultPopupsSetting": 2,
+  "DefaultNotificationsSetting": 2,
+  "DefaultGeolocationSetting": 2,
+  "AudioCaptureAllowed": false,
+  "VideoCaptureAllowed": false,
+  "ScreenCaptureAllowed": false,
+  "DefaultSensorsSetting": 2,
+  "DefaultSerialGuardSetting": 2,
+  "DefaultWebUsbGuardSetting": 2,
+  "DefaultWebBluetoothGuardSetting": 2,
+  "DefaultFileSystemReadGuardSetting": 3,
+  "DefaultFileSystemWriteGuardSetting": 2
+}
+EOF
+    # A malformed policy file is ignored silently by Chromium, which would leave this host
+    # unlocked while the summary claimed otherwise.
+    if command -v jq >/dev/null 2>&1; then
+        jq empty "${tmp}" >/dev/null 2>&1 || die "The generated Chromium policy is not valid JSON. This is a bug in this script."
+    fi
+
+    # Raspberry Pi OS ships `chromium-browser` and reads /etc/chromium-browser/...; Debian's
+    # `chromium` reads /etc/chromium/... Whichever is on PATH decides; both when neither is yet.
+    local dirs=() dir dest written="" failed=""
+    command -v chromium >/dev/null 2>&1 && dirs+=(/etc/chromium/policies/managed)
+    command -v chromium-browser >/dev/null 2>&1 && dirs+=(/etc/chromium-browser/policies/managed)
+    [ "${#dirs[@]}" -gt 0 ] || dirs=(/etc/chromium/policies/managed /etc/chromium-browser/policies/managed)
+
+    for dir in "${dirs[@]}"; do
+        dest="${dir}/${POLICY_NAME}"
+        if [ -f "${dest}" ] && sudo cmp -s "${tmp}" "${dest}"; then
+            skip "${dest} is already current"
+            written="${written}${written:+, }${dest}"
+            continue
+        fi
+        # Beside the destination, then renamed, verified by reading it back. The state line is
+        # built from what is ON THE DISK, never from the attempt.
+        if sudo mkdir -p "${dir}" \
+        && sudo cp "${tmp}" "${dest}.tmp" \
+        && sudo chown root:root "${dest}.tmp" \
+        && sudo chmod 0644 "${dest}.tmp" \
+        && sudo mv -f "${dest}.tmp" "${dest}" \
+        && sudo cmp -s "${tmp}" "${dest}"; then
+            info "wrote ${dest}"
+            written="${written}${written:+, }${dest}"
+        else
+            sudo rm -f "${dest}.tmp" 2>/dev/null || true
+            failed="${failed}${failed:+, }${dest}"
+        fi
+    done
+    rm -f "${tmp}"
+
+    if [ -n "${failed}" ]; then
+        POLICY_STATE="NOT WRITTEN to ${failed}${written:+ (written to ${written})}"
+        warn "The Chromium managed policy could not be placed at ${failed}. This host autologins into
+             a signed-in browser and that policy is what stops somebody at the keyboard browsing
+             elsewhere in the profile holding your session. Fix the cause and re-run."
+        MANUAL+=("The Chromium managed policy was NOT written to ${failed}. Until it is, the browser on
+             this machine has no navigation allowlist, DevTools are available and sync is not blocked.")
+        return
+    fi
+    POLICY_STATE="${written}"
+    info "navigation is limited to ${scheme}://${host} exactly; DevTools, sync, sign-in, extensions and"
+    info "the password manager are off; folder-picker prompts stay allowed and writes are blocked."
+    MANUAL+=("If you later point the kiosk at a different host, re-run this script — the policy's
+             allowlist names the old host and the browser will refuse to load the new one.")
+}
+
+# ---------------------------------------------------------------------------------------------
 # Wi-Fi power saving.
 # ---------------------------------------------------------------------------------------------
 
@@ -938,6 +1085,9 @@ CONFIGURED
   Kiosk service     ${SERVICE_NAME}.service, a systemd USER service, Restart=always
   Kiosk launcher    ${LAUNCHER}
   Kiosk URL         ${url}
+  Browser policy    ${POLICY_STATE}
+                    (navigation allowlisted to the kiosk host, DevTools/sync/sign-in/password
+                    manager off; delete the file to undo)
   Lingering         enabled for ${USER}, so the service starts at boot without a login
   Updates           Debian security updates only, unattended. Chromium is NOT auto-upgraded,
                     on purpose — see the comment in this script.
@@ -1007,6 +1157,7 @@ main() {
     write_launcher
     write_unit
     enable_linger
+    configure_chromium_policy
     configure_unattended_upgrades
     configure_wifi_powersave
     print_summary

@@ -13,6 +13,7 @@
 import type { MachineInfo } from "../auth/api";
 import { fromBase64Url, toBase64Url } from "../auth/encoding";
 import { fingerprintFromSdp, signFingerprint, verifyFingerprint } from "./handshake";
+import { shareStore } from "./store";
 import {
   CHANNEL_LABEL,
   ICE_SERVERS,
@@ -37,6 +38,34 @@ interface PendingCall {
   kind: "call";
   resolve: (value: unknown) => void;
   reject: (reason: Error) => void;
+}
+
+/**
+ * What a pinned agent key says about the key the server is offering now.
+ * Pure, so `npm run check` can drive it; `DriveConnection.open` is the only
+ * caller and acts on it before a socket is opened.
+ */
+export function pinVerdict(pinned: string | null, offered: string): "first" | "same" | "changed" {
+  if (pinned === null) return "first";
+  return pinned === offered ? "same" : "changed";
+}
+
+/**
+ * The server offered a different agent key than the one this browser last
+ * connected to (2026-09-07, audit item 43). Thrown before any socket opens.
+ * The page asks the owner: a re-key they did themselves is the one honest
+ * reason, and anything else is an impostor agent.
+ */
+export class AgentKeyChanged extends Error {
+  constructor(
+    readonly machine: MachineInfo,
+    readonly offered: string,
+  ) {
+    super(
+      `${machine.name}'s key is not the one this browser connected to before. If you re-paired or re-keyed it yourself, accept the new key; if not, refuse — something else is answering as that machine.`,
+    );
+    this.name = "AgentKeyChanged";
+  }
 }
 
 export class DriveConnection {
@@ -64,7 +93,19 @@ export class DriveConnection {
    * wording on every way it can fail: offline, refused, identity mismatch, or
    * a NAT pair that will not traverse (§12 P — no relay is enabled).
    */
-  static open(machine: MachineInfo, grantKey: CryptoKey): Promise<DriveConnection> {
+  static async open(machine: MachineInfo, grantKey: CryptoKey): Promise<DriveConnection> {
+    // The pin is consulted BEFORE the socket, so a changed key never gets as
+    // far as signalling — the agent that is answering learns nothing.
+    const verdict = pinVerdict(await shareStore.pin(machine.id), machine.agentPubkey);
+    if (verdict === "changed") throw new AgentKeyChanged(machine, machine.agentPubkey);
+    const conn = await DriveConnection.dial(machine, grantKey);
+    // Trust on first use, taken only once the agent has proven the key by
+    // signature — a pin on an unverified key would pin the impostor.
+    if (verdict === "first") await shareStore.savePin(machine.id, machine.agentPubkey);
+    return conn;
+  }
+
+  private static dial(machine: MachineInfo, grantKey: CryptoKey): Promise<DriveConnection> {
     return new Promise((resolve, reject) => {
       const proto = location.protocol === "https:" ? "wss" : "ws";
       const ws = new WebSocket(`${proto}://${location.host}/api/signal/${machine.id}?role=browser`);

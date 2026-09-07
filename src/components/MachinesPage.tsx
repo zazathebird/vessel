@@ -3,7 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import { api, type DriveInfo, type MachineInfo } from "../auth/api";
 import { useSession } from "../auth/SessionContext";
 import { useConfig } from "../config/ConfigContext";
-import { DriveConnection } from "../share/browse";
+import { AgentKeyChanged, DriveConnection } from "../share/browse";
+import { shareStore } from "../share/store";
 import type { ListEntry } from "../share/protocol";
 import { unlockForConnect } from "../share/unlock";
 import { categorise, FileIcon } from "./FileIcon";
@@ -476,6 +477,13 @@ export function MachinesPage() {
   const [unlockError, setUnlockError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState<string | null>(null);
   const [cardErrors, setCardErrors] = useState<Record<string, string>>({});
+  /** A machine whose agent key changed since this browser last connected — waiting on the owner. */
+  const [keyChanged, setKeyChanged] = useState<{
+    machine: MachineInfo;
+    drive: DriveInfo;
+    key: CryptoKey;
+    offered: string;
+  } | null>(null);
   const [open, setOpen] = useState<OpenDrive | null>(null);
 
   // One verified connection per machine, kept for the visit. Dropped when its
@@ -557,6 +565,11 @@ export function MachinesPage() {
         }
         setOpen({ machine, drive, conn });
       } catch (cause) {
+        if (cause instanceof AgentKeyChanged) {
+          // Not an error to print and move past: a question, answered below.
+          setKeyChanged({ machine, drive, key, offered: cause.offered });
+          return;
+        }
         setCardErrors((errors) => ({
           ...errors,
           [machine.id]:
@@ -693,6 +706,54 @@ export function MachinesPage() {
                 <p className="v-account-error" role="alert">
                   {cardErrors[machine.id]}
                 </p>
+              ) : null}
+
+              {keyChanged && keyChanged.machine.id === machine.id ? (
+                <div className="v-account-error" role="alertdialog" aria-live="assertive">
+                  <p>
+                    This machine's key is not the one this browser connected to before. If
+                    you re-paired or re-keyed it yourself, accept the new key. If you did
+                    not, refuse — something else is answering as this machine.
+                  </p>
+                  <p>
+                    <button
+                      type="button"
+                      className="v-btn v-btn-quiet"
+                      onClick={() => {
+                        setKeyChanged(null);
+                        setCardErrors((errors) => ({
+                          ...errors,
+                          [machine.id]: "Refused. The old key stays pinned in this browser.",
+                        }));
+                      }}
+                    >
+                      Refuse
+                    </button>
+                    <button
+                      type="button"
+                      className="v-btn v-btn-danger"
+                      onClick={() => {
+                        const asked = keyChanged;
+                        setKeyChanged(null);
+                        void (async () => {
+                          try {
+                            await shareStore.savePin(asked.machine.id, asked.offered);
+                          } catch {
+                            setCardErrors((errors) => ({
+                              ...errors,
+                              [asked.machine.id]:
+                                "This browser could not remember the new key, so nothing was connected.",
+                            }));
+                            return;
+                          }
+                          await connect(asked.machine, asked.drive, asked.key);
+                        })();
+                      }}
+                    >
+                      I re-keyed it — accept the new key
+                    </button>
+                  </p>
+                </div>
               ) : null}
 
               {machine.drives.length === 0 ? (

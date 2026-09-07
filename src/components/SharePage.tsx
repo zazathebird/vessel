@@ -162,9 +162,15 @@ function PairForm({
     try {
       // The trust root comes from the password, never from the pair response
       // — see `pairMachine`.
-      await shareStore.saveMachine(
-        await pairMachine(handle, password, rekeyId ? { machineId: rekeyId } : { name: name.trim() }),
+      const paired = await pairMachine(
+        handle,
+        password,
+        rekeyId ? { machineId: rekeyId } : { name: name.trim() },
       );
+      await shareStore.saveMachine(paired);
+      // This browser made the key, so its browsing side pins it now rather
+      // than asking the owner to vouch for their own re-key (audit item 43).
+      await shareStore.savePin(paired.machineId, toBase64Url(paired.publicKeyBytes));
       setPassword("");
       say(rekeyId ? "Machine re-keyed." : "Machine paired.");
       await onDone();
@@ -739,7 +745,9 @@ function TakeOverForm({
     setBusy(true);
     setError(null);
     try {
-      await shareStore.saveMachine(await pairMachine(handle, password, { machineId }));
+      const paired = await pairMachine(handle, password, { machineId });
+      await shareStore.saveMachine(paired);
+      await shareStore.savePin(paired.machineId, toBase64Url(paired.publicKeyBytes));
       setPassword("");
       say("Sharing taken over on this tab.");
       await onDone();
