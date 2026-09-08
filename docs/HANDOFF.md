@@ -1,12 +1,22 @@
 # Handoff
 
-Updated 2026-08-14: **SPEC-ACCOUNTS phase 2 is built, harness-proven and deployed** — spec
-§13 + §12 K–S, migration `0004`, `worker/machines.ts`, the `MachineSignal` signalling Durable
-Object, `src/share/*`, and the `/share` + `/machines` pages. Harness is at **301**. The docs
-were condensed the same day (`FABLE-FINDINGS.md` deleted, its durable content moved —
-`docs/DECISIONS.md` 2026-08-14 has the map). Read `TODO.md` for what to do and
-`docs/DECISIONS.md` for why things are as they are; this file is how to pick the work up and
-how to prove you have not broken anything.
+**Updated 2026-09-08.** `main` is the branch that ships, `npm run check` is **77** and
+`npm run test:auth` is **407**. Live is Worker `38ceae8d` from commit `186468d`; four security
+passes are recorded in `docs/SECURITY-AUDIT.md` (items 1–49) and none of them is open.
+
+**The work in flight is the sharing host**, a ThinkCentre being built on Debian + Plasma.
+`docs/HOST-BUILD-LOG.md` is the record of that build and is the first thing to read if the
+session is about the host; `TODO.md` has its remaining steps at the top.
+
+Read `TODO.md` for what to do and `docs/DECISIONS.md` for why things are as they are; this file
+is how to pick the work up and how to prove you have not broken anything.
+
+**A correction worth keeping, because it stood here for weeks and was wrong** (2026-09-08):
+this file used to tell every new session that *"`hud-pass` is the branch it serves, not `main`
+— `main` is many commits behind and exists as the Pages rollback."* That branch was merged
+into `main` long ago and every deploy since has come from `main`. A stale branch instruction
+sends a session to work in the wrong place before it has read anything else, so if this
+paragraph ever needs writing again, check with `git merge-base --is-ancestor` first.
 
 ---
 
@@ -15,9 +25,10 @@ how to prove you have not broken anything.
 Paste this to begin:
 
 > Read `CLAUDE.md`, `TODO.md` and `docs/HANDOFF.md` before doing anything. The site is live at
-> `mcclevarty.ca` and **`hud-pass` is the branch it serves, not `main`** — `main` is many
-> commits behind and exists as the Pages rollback. First prove the ground: run `npm run check`
-> (the gate, and `predeploy`), then kill stray `wrangler dev` processes, run
+> `mcclevarty.ca`, served from **`main`**, which is also what deploys. If the work is about the
+> sharing host, read `docs/HOST-BUILD-LOG.md` too — it is newer than the host guide. First
+> prove the ground: run `npm run check` (the gate, and `predeploy`), then kill stray
+> `wrangler dev` processes with `pkill -f "wrangler dev"` as its own command, run
 > `npm run test:auth` against `npm run dev:worker`, and confirm the harness prints its own
 > check count with no failures.
 >
