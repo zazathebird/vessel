@@ -21,6 +21,7 @@ each was found; that is history, and history lives in `docs/DECISIONS.md`.
 | `design/SPEC-SHARING.md` | Sharing, hosted storage and setup. **DRAFT, awaiting sign-off**; §2 is its decision log |
 | `docs/SHARING-SETUP.md` | The setup-script runbook — publish them, and what is known not to work |
 | `docs/pi-sharing-host.md`, `docs/thinkcentre-sharing-host.md` | Phase 2's always-on host |
+| `docs/HOST-BUILD-LOG.md` | The ThinkCentre as actually built (2026-09-08). **Newer than the guide** |
 | `design/GUIDE-SUBDOMAINS.md` | How to add a page; what per-account subdomains would break |
 
 **Load every skill that applies before starting, and say which ones** — a skill used silently is
@@ -1241,6 +1242,16 @@ anything that is not a Raspberry Pi, `scripts/thinkcentre-setup.sh` on a Pi. Hal
 wrong machine is worse than not running. `docs/pi-sharing-host.md` and
 `docs/thinkcentre-sharing-host.md` are the guides.
 
+- **The desktop half of the host is X11, and that is load-bearing rather than taste**
+  (2026-09-08). The kiosk launcher blanks the screen with `xset` and hides the cursor with
+  `unclutter`; both are X11-only and **fail silently under Wayland**, so a Wayland session gives
+  you a kiosk that blanks itself — the one thing an always-on host must not do. Remote viewing
+  is the second reason: `krfb` shares the *running* session on X11, while Wayland routes it
+  through a portal prompt that has to be clicked on the machine nobody is standing at. The real
+  host runs Plasma, so `scripts/plasma-dark-setup.sh` pins the X11 session and writes the SDDM
+  autologin `thinkcentre-setup.sh` cannot — that script only knows LightDM, and **its warning
+  about autologin is expected on this box, not a failure**. Rewriting the launcher for Wayland
+  is what would reopen the question.
 - **The Chromium profile IS the pairing** — the persisted directory handle from
   `showDirectoryPicker()` lives in its IndexedDB. That is why the kiosk is a systemd *user* service
   and never a system one, and why the launcher must never gain `--user-data-dir` or `--incognito`:

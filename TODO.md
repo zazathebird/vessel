@@ -48,6 +48,24 @@ State on 2026-09-07: `npm run check` **77** green, `npm run test:auth` **407**. 
     (`design/GUIDE-SUBDOMAINS.md`); if no, close the guide.
 15. **When to retire the Pages project** — it is the rollback; retiring it ends the `_redirects` trap.
 
+## The ThinkCentre host — built 2026-09-08, being set up now
+
+`docs/HOST-BUILD-LOG.md` is the record of the build and the four walls it hit (sudo not
+configured, `/usr/sbin` off PATH, `./` on the script name, the USB root disk). Four scripts, in
+order: `debian-basics.sh`, `plasma-dark-setup.sh`, `claude-code-setup.sh`,
+`thinkcentre-setup.sh`. They are also in a Google Drive folder at the root of My Drive, still
+named "Untitled folderwebsite".
+
+1. **Run `thinkcentre-setup.sh --verify` after a reboot.** It has never run on real hardware;
+   whatever it flags is the first thing to fix.
+2. **Add `usbcore.autosuspend=-1` to the GRUB command line** and reboot. The root filesystem is
+   on a USB SSD, and autosuspend under an idle disk hangs the box. The preflight names it and
+   deliberately does not edit the boot line.
+3. **Pair the machine** at `/share`, and never launch the kiosk with `--user-data-dir` or
+   `--incognito` afterwards — the Chromium profile *is* the pairing.
+4. **`thinkcentre-setup.sh` should learn SDDM.** `plasma-dark-setup.sh` writes the autologin
+   today, which means the knowledge lives in two scripts. Fold it back in once the host is up.
+
 ## Needs hardware or a human eye — cannot be done from here
 
 1. **Re-upload the setup bundle.** `launch.bat` changed (audit item 45); `dist-setup/` is rebuilt
