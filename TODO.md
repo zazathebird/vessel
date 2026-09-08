@@ -29,8 +29,10 @@ State on 2026-09-07: `npm run check` **77** green, `npm run test:auth` **407**. 
    fabricated case study is evidence of capability that has to go.
 5. **Was the first machine he took apart a 486?** It is `/about`'s origin story.
 6. **`design/SPEC-SHARING.md` is a DRAFT awaiting sign-off.**
-7. **Unattended remote access** — if ever wanted, self-hosted RustDesk or MeshCentral, never
-   Tailscale again (reversed 2026-08-26). Ask whether he ever needs into a machine nobody is at.
+7. **Unattended remote access** — for CUSTOMER machines, self-hosted RustDesk or MeshCentral, never
+   Tailscale (reversed 2026-08-26). **This does not cover the operator's own ThinkCentre host**,
+   where Tailscale was reinstated on 2026-09-08 at his request; see `docs/DECISIONS.md`. Ask
+   whether he ever needs into a customer machine nobody is at.
 8. **Edit mode** (operator-editable copy): architecture designed 2026-08-14 (sparse D1 overlay,
    `pages.ts` as the floor, five account pages excluded). Three decisions first: may a block be
    blanked; is there a draft/preview state; and that it makes the 404's joke counts overridable.
@@ -56,15 +58,98 @@ order: `debian-basics.sh`, `plasma-dark-setup.sh`, `claude-code-setup.sh`,
 `thinkcentre-setup.sh`. They are also in a Google Drive folder at the root of My Drive, still
 named "Untitled folderwebsite".
 
-1. **Run `thinkcentre-setup.sh --verify` after a reboot.** It has never run on real hardware;
-   whatever it flags is the first thing to fix.
-2. **Add `usbcore.autosuspend=-1` to the GRUB command line** and reboot. The root filesystem is
-   on a USB SSD, and autosuspend under an idle disk hangs the box. The preflight names it and
-   deliberately does not edit the boot line.
-3. **Pair the machine** at `/share`, and never launch the kiosk with `--user-data-dir` or
+All four scripts have run. `--verify` has run on real hardware, and walls 5, 6 and 7 in the build
+log came out of it. Items 1, 2 and 6 below are **now done** (2026-09-08, second session) — the box
+boots SDDM into Plasma **on X11**, `usbcore.autosuspend=-1` is live in `/proc/cmdline`, and
+`--verify` reports every check `ok` except the two that want sudo. What is left:
+
+1. ~~Re-run `plasma-dark-setup.sh --no-install`, then reboot.~~ **Done.** `/etc/sddm.conf.d/10-vessel.conf`
+   carries `DisplayServer=x11` and `Session=plasmax11`, `/etc/X11/default-display-manager` reads
+   `/usr/bin/sddm`, and the running session is `Type=x11`. `--verify` now checks all three.
+2. ~~Add `usbcore.autosuspend=-1` to the GRUB command line.~~ **Done** and rebooted into — it is in
+   `/proc/cmdline`.
+3. **Run `--verify` with a cached sudo credential.** Everything else is `ok`. The two checks that
+   want root — `firewall active` and `sshd refuses root login` — still report `????`, and `sshd -T`
+   has never actually been consulted on this box. `sudo -v`, then `./scripts/thinkcentre-setup.sh
+   --verify`. ufw *is* active (`systemctl is-active ufw`).
+4. **Pair the machine** at `/share`, and never launch the kiosk with `--user-data-dir` or
    `--incognito` afterwards — the Chromium profile *is* the pairing.
-4. **`thinkcentre-setup.sh` should learn SDDM.** `plasma-dark-setup.sh` writes the autologin
-   today, which means the knowledge lives in two scripts. Fold it back in once the host is up.
+5. **`thinkcentre-setup.sh` should learn SDDM.** `plasma-dark-setup.sh` writes the autologin
+   today, which means the knowledge lives in two scripts — and that split is exactly how the box
+   ended up with an lightdm autologin into xfce sitting under a Plasma install. Fold it back in
+   once the host is up.
+6. ~~Tailscale contradicts *Needs the client* item 7.~~ **Answered by the client, 2026-09-08:**
+   it stays — *"i need it for remoting into this box from multiple different machines."* Recorded
+   in `docs/DECISIONS.md`; *Needs the client* item 7 is amended.
+7. **The host is on Wi-Fi**; `eno1` is down. **Client, 2026-09-08:** the box is at his work at
+   the moment and *"it will be hardwired eventually... theres a chance tho that it will stay
+   wifi."* So Wi-Fi is the state to keep working, not a fault to fix — **do not write anything
+   that assumes a wired link**, and do not disable the wireless when the cable eventually goes
+   in. Re-run `--verify` after any move; the kiosk reports the machine offline within seconds of
+   losing the link, so a move shows up as "offline" on the site rather than as an error here.
+
+## Open, raised by the client 2026-09-08
+
+0. **THE SHARE TAB IS COMMITTED BUT UNVERIFIED — DO NOT ASSUME IT WORKS.** `npm run check` has
+   never run against it, it has never been built, and it has never been seen in a browser.
+   Three files changed: `src/data/pageIds.ts` (adds `{ id: "share", label: "Share" }` to
+   `OPERATOR_NAV`), `src/components/Footer.tsx` (a `me`-gated `share` link beside
+   `account`/`admin`), and `scripts/check.ts` (a new three-nav reachability gate). **Run
+   `npm run check` and look at the page before deploying any of it.**
+
+   **Node is installed on the host now (v20.19.2, npm 9.2.0) but the dependency install is
+   BROKEN**: `npm ci` and `npm install` both exit 0 while extracting every package directory
+   EMPTY — `node_modules/esbuild/` has no `bin/`, `node_modules/.bin/` has zero entries, and
+   `@esbuild/linux-x64` contains no binary. So `npm run check` dies at `esbuild: not found` and
+   nothing on this box can typecheck, build or deploy. Debian trixie's npm 9.2.0 is the suspect
+   (it is old for this lockfile, and the run emitted `TAR_ENTRY_ERROR ENOENT` on
+   `@cloudflare/workerd-linux-64`). Fix before trusting anything built here: try a current npm
+   (`npm i -g npm@latest`) or nodesource's Node 22, then `rm -rf node_modules && npm ci` and
+   confirm `node_modules/.bin` is non-empty.
+
+   Still to do on the share work itself, agreed with the client 2026-09-08:
+   - **The command palette should offer the account and phase-2 pages when signed in.** It
+     enumerates `[...NAV, ...FOOTER_NAV]` today, so `/share`, `/machines`, `/signin` and
+     `/admin` are absent from the one route `CLAUDE.md` calls the only way to a third of the
+     site off the desk. This is the "something cool I can tell them about" the client asked
+     for — it is tellable, it works on touch via the `menu` chip, and it needs no new gesture.
+     **The existing gate at `scripts/check.ts` asserts the palette enumerates
+     `NAV + FOOTER_NAV`; keep that true and add the third list conditionally on the session.**
+   - A drag mirror was considered and is NOT available: left is already sign-in and right is
+     already the door, and the logo's 3-tap and 5-tap counters are both taken too.
+   - Typing `share` anywhere (hardware keyboard, not in a form) already works and is unchanged.
+
+
+
+1. **`/share` is reachable only by typing the URL, and that is the bug the client hit** — *"once
+   i log in i cant get back to the share page to set up a shared folder."* Confirmed:
+   `src/data/pageIds.ts` gives `share` and `machines` real entries in `PATHS` (`/share`,
+   `/machines`) and puts them in **no nav array at all** — not `NAV`, not `FOOTER_NAV`, not
+   `OPERATOR_NAV`. The command palette enumerates `[...NAV, ...FOOTER_NAV]`, so they are not in
+   the palette either. There is no route to phase 2 from the interface.
+
+   **This wants a decision before a patch**, because `NAV` is the wrong answer and `CLAUDE.md`
+   says why: `useOperatorRoutes` cycles `NAV` and Radial's orbit renders it, so an eighth pill
+   changes arrow-key paging and the dial for every visitor, to add a page no visitor may see.
+   The candidates:
+   - **`OPERATOR_NAV`** — where 404 / Account / Admin already live, deliberately outside `NAV`
+     for exactly this reason. Most likely correct.
+   - **The command palette** — it is already the documented way to a third of the site off the
+     desk, and it is gated. Needs the palette to read a third list, not just `[...NAV,
+     ...FOOTER_NAV]`.
+   - **A link from `/admin`**, which is where the operator already goes to manage the machine.
+
+   Whichever is chosen, both `share` and `machines` should get it together — they are one
+   feature — and both are operator-only, so the gate is the same one the duels use.
+
+2. **The desktop's KWallet prompt should be settled on the host.** `ksshaskpass` pulls in
+   KWallet, whose first-run dialog offers Blowfish or GPG; **the GPG option errors because there
+   are no GPG secret keys on this box**, which is what that backend encrypts the wallet to.
+   Nothing on the host needs the wallet — the kiosk launcher already runs Chromium with
+   `--password-store=basic` precisely to avoid it. **On an autologin host a wallet with a
+   password is a liability**: it prompts at every boot with nobody there. Either disable KWallet
+   outright or give it a blank-password Blowfish wallet. Not done; the sudo prompt was routed
+   around it with a `kdialog --password` askpass instead.
 
 ## Needs hardware or a human eye — cannot be done from here
 

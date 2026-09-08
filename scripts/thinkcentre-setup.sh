@@ -1404,6 +1404,20 @@ fi
 #                                 headless box with no monitor may report — trips the backgrounding
 #                                 path.
 #
+#   --class=vessel-kiosk          The X11 WM_CLASS this window reports. It is what lets a window
+#                                 manager rule address this window and nothing else:
+#                                 plasma-dark-setup.sh forces it onto the second virtual desktop,
+#                                 so the machine stays usable without closing the tab that IS the
+#                                 sharing agent. The name is a CONTRACT between the two scripts —
+#                                 change it here and the rule there stops matching, silently, and
+#                                 the kiosk goes back to sitting on top of everything. A rule
+#                                 matching a bare "chromium" was the alternative and is worse: it
+#                                 would drag every Chromium window opened by hand onto that desktop
+#                                 too. WM_CLASS is an X11 property, so this is one more thing that
+#                                 depends on the X11 pin plasma-dark-setup.sh applies; under
+#                                 Wayland Chromium takes its app_id from the .desktop file instead
+#                                 and the flag is ignored.
+#
 # NOT here, deliberately:
 #   --no-sandbox                  Half the kiosk guides on the internet include it to make an
 #                                 error go away. It turns off the renderer sandbox, on the one
@@ -1434,6 +1448,7 @@ exec "${CHROMIUM}" \
     --disable-background-timer-throttling \
     --disable-backgrounding-occluded-windows \
     --disable-renderer-backgrounding \
+    --class=vessel-kiosk \
     -- "${URL}"
 LAUNCHER_EOF
 
@@ -2452,24 +2467,155 @@ check() {
 }
 note() { printf '    --    %-34s %s\n' "$1" "$2"; }
 
+# Two of the questions below can only be answered by root — is ufw up, and does sshd really refuse
+# root — and on the first real machine this script ever ran on, --verify reported both as FAIL when
+# both were fine. sudo simply had no cached credential, the command produced nothing, and an empty
+# answer is not the expected one. A check that says "the firewall is off" when it means "I could
+# not look" is the cry-wolf this file warns about elsewhere, and it is worse than no check: it was
+# the first thing this machine was told about itself. So sudo is asked for once, up front, and when
+# it cannot be had those checks say which of the two things happened in their own words.
+SUDO_OK=""
+sudo_available() {
+    if [ -z "${SUDO_OK}" ]; then
+        if sudo -n true >/dev/null 2>&1; then
+            SUDO_OK=yes
+        elif [ -t 0 ] && sudo -v >/dev/null 2>&1; then
+            SUDO_OK=yes
+        else
+            SUDO_OK=no
+        fi
+    fi
+    [ "${SUDO_OK}" = "yes" ]
+}
+
+# A question that could not be asked. It still fails the run — an unverified firewall is not a
+# verified one, and --verify exists to exit non-zero — but it does not borrow the word FAIL from
+# the checks that genuinely failed.
+unknown_check() {
+    printf '    \033[33m????\033[0m  %-34s %s\n' "$1" "$2"
+    VERIFY_FAILED=1
+}
+
+# The same trap as sudo, one scope down. Every `systemctl --user` question needs a session bus,
+# and without one systemctl writes "Failed to connect to user scope bus" to STDERR and nothing at
+# all to stdout — so `first_or missing` answers "missing" and the linger, watchdog and kiosk-unit
+# checks all go red describing a machine that is perfectly healthy. It is reachable from `su -
+# user`, from cron, and from `sudo -u user`, which are exactly the ways somebody debugging this
+# box would reach for it. Probe once, and let those checks say which of the two things happened.
+USER_BUS_OK=""
+user_bus_available() {
+    if [ -z "${USER_BUS_OK}" ]; then
+        if systemctl --user show --property=Version >/dev/null 2>&1; then
+            USER_BUS_OK=yes
+        else
+            USER_BUS_OK=no
+        fi
+    fi
+    [ "${USER_BUS_OK}" = "yes" ]
+}
+readonly NO_USER_BUS="could not ask — no systemd user bus (run this from the desktop session)"
+
+# The id of the user's GRAPHICAL session, or empty when there is none.
+#
+# `loginctl list-sessions` lists more than one session for a user who is logged in at the screen:
+# on this box session 1 is the systemd user manager (Class=manager, Type=unspecified) and session
+# 2 is the desktop (Class=user, Type=x11). Taking the FIRST match is why the session-type report
+# read "unspecified" on a machine that was correctly on X11 — and would have read "unspecified" on
+# one that was wrongly on Wayland too, which is the whole failure this question exists to catch.
+# Class is what separates them, so ask for Class rather than trusting the order.
+graphical_session_id() {
+    local sid
+    while read -r sid; do
+        [ -n "${sid}" ] || continue
+        if [ "$(loginctl show-session "${sid}" -p Class --value 2>/dev/null)" = "user" ]; then
+            printf '%s' "${sid}"
+            return 0
+        fi
+    done < <(loginctl list-sessions --no-legend 2>/dev/null | awk -v u="${USER}" '$3 == u {print $1}')
+    return 1
+}
+
+# Read one key out of an INI-ish file, ignoring comments. Enough for the display managers' config
+# and deliberately not a parser: these are files this project writes, not files it must survive.
+ini_value() {
+    local file="$1" key="$2"
+    sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*//p" "${file}" 2>/dev/null \
+        | grep -v '^[[:space:]]*$' | head -n1
+}
+
+# One JSON value out of the Chromium policy, as a flat string. jq when it is there, python3 when
+# it is not, and a refusal when neither — because "the policy is fine" and "nothing looked at the
+# policy" must never print the same thing. Returns non-zero when it could not look.
+json_value() {
+    local file="$1" key="$2"
+    if have jq; then
+        jq -r --arg k "${key}" '
+            if (.[$k] | type) == "array" then (.[$k] | join(","))
+            elif has($k) then (.[$k] | tostring)
+            else "" end' "${file}" 2>/dev/null
+    elif have python3; then
+        python3 -c '
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(1)
+v = d.get(sys.argv[2])
+if v is None:
+    print("")
+elif isinstance(v, list):
+    print(",".join(str(x) for x in v))
+else:
+    print(v)
+' "${file}" "${key}" 2>/dev/null
+    else
+        return 1
+    fi
+}
+
 verify() {
+    # Up front rather than lazily, so a password prompt cannot appear halfway down the report
+    # where it reads as the report having hung.
+    sudo_available || true
     log "Verifying"
 
-    check "linger enabled" "yes" \
-        "$(first_or no loginctl show-user "${USER}" --property=Linger --value)"
+    # Asked once here because four checks below turn on it, and a graphical session is also what
+    # makes "the kiosk is not running" forgivable rather than a fault.
+    local gsid=""
+    gsid="$(graphical_session_id || true)"
 
-    check "watchdog timer enabled" "enabled" \
-        "$(first_or missing systemctl --user is-enabled vessel-kiosk-watchdog.timer)"
+    if user_bus_available; then
+        check "linger enabled" "yes" \
+            "$(first_or no loginctl show-user "${USER}" --property=Linger --value)"
 
-    check "kiosk unit enabled" "enabled" \
-        "$(first_or missing systemctl --user is-enabled "${SERVICE_NAME}.service")"
+        # is-enabled reads a .wants symlink, which a timer whose unit file was deleted, or whose
+        # service fails on every run, still has. So ask whether it is actually LOADED and ticking
+        # as well: an enabled timer that is not active fires nothing and nothing else would say so.
+        check "watchdog timer enabled" "enabled" \
+            "$(first_or missing systemctl --user is-enabled "${SERVICE_NAME}-watchdog.timer")"
+        check "watchdog timer active" "active" \
+            "$(first_or inactive systemctl --user is-active "${SERVICE_NAME}-watchdog.timer")"
 
-    local active
-    active="$(first_or inactive systemctl --user is-active "${SERVICE_NAME}.service")"
-    if [ "${active}" = "active" ]; then
-        check "kiosk running" "active" "${active}"
+        check "kiosk unit enabled" "enabled" \
+            "$(first_or missing systemctl --user is-enabled "${SERVICE_NAME}.service")"
+
+        # `failed` is not `inactive`. A unit with Restart=always that has hit its start rate limit
+        # reports `failed`, and demoting everything-that-is-not-active to a note meant the single
+        # most important process on this machine could be dead while --verify exited 0. Only a
+        # genuinely inactive unit with nobody logged in at the screen is expected.
+        local active
+        active="$(first_or inactive systemctl --user is-active "${SERVICE_NAME}.service")"
+        if [ "${active}" = "inactive" ] && [ -z "${gsid}" ]; then
+            note "kiosk running" "inactive (no graphical session — expected over SSH before a reboot)"
+        else
+            check "kiosk running" "active" "${active}"
+        fi
     else
-        note "kiosk running" "${active} (expected before the first reboot / with no session)"
+        unknown_check "linger enabled" "${NO_USER_BUS}"
+        unknown_check "watchdog timer enabled" "${NO_USER_BUS}"
+        unknown_check "watchdog timer active" "${NO_USER_BUS}"
+        unknown_check "kiosk unit enabled" "${NO_USER_BUS}"
+        unknown_check "kiosk running" "${NO_USER_BUS}"
     fi
 
     if pgrep -u "$(id -u)" -f 'chromium.*--kiosk' >/dev/null 2>&1; then
@@ -2478,33 +2624,113 @@ verify() {
         note "chromium" "not running (expected before the first reboot)"
     fi
 
+    # The launcher starts unclutter to get the pointer off the screen. If it is missing or has
+    # died the arrow sits in the middle of the shared page for ever, and nothing else on this box
+    # reports on it. Only meaningful once there is a session for it to have been started in.
+    if [ -n "${gsid}" ]; then
+        if pgrep -u "$(id -u)" -x unclutter >/dev/null 2>&1; then
+            check "pointer hidden (unclutter)" "yes" "yes"
+        else
+            check "pointer hidden (unclutter)" "yes" "no — unclutter is not running"
+        fi
+    else
+        note "pointer hidden (unclutter)" "no graphical session to check"
+    fi
+
     check "sleep.target masked" "masked" "$(first_or unknown systemctl is-enabled sleep.target)"
     check "suspend.target masked" "masked" "$(first_or unknown systemctl is-enabled suspend.target)"
     check "hibernate.target masked" "masked" "$(first_or unknown systemctl is-enabled hibernate.target)"
 
-    [ -f "${LAUNCHER}" ] && note "launcher" "${LAUNCHER}" || { note "launcher" "MISSING"; VERIFY_FAILED=1; }
-    [ -f "${URL_FILE}" ] && note "kiosk URL" "$(cat "${URL_FILE}")" || { note "kiosk URL" "MISSING"; VERIFY_FAILED=1; }
+    # -x, not -f. A launcher that exists but lost its execute bit is a service systemd answers
+    # with 203/EXEC and a browser that never starts, which is indistinguishable from the file
+    # being gone and just as fatal.
+    if [ -x "${LAUNCHER}" ]; then
+        note "launcher" "${LAUNCHER}"
+    elif [ -f "${LAUNCHER}" ]; then
+        check "launcher executable" "yes" "no — ${LAUNCHER} is not executable"
+    else
+        check "launcher present" "yes" "no — ${LAUNCHER} is missing"
+    fi
+
+    # The watchdog was only ever checked as a timer. A timer that fires a script which is not
+    # there fails every ten minutes for ever and reports `enabled` throughout.
+    if [ -x "${WATCHDOG}" ]; then
+        note "watchdog" "${WATCHDOG}"
+    elif [ -f "${WATCHDOG}" ]; then
+        check "watchdog executable" "yes" "no — ${WATCHDOG} is not executable"
+    else
+        check "watchdog present" "yes" "no — ${WATCHDOG} is missing"
+    fi
+
+    local kiosk_url="" kiosk_host=""
+    if [ -f "${URL_FILE}" ]; then
+        kiosk_url="$(cat "${URL_FILE}")"
+        kiosk_host="$(url_host "${kiosk_url}")"
+        note "kiosk URL" "${kiosk_url}"
+    else
+        check "kiosk URL present" "yes" "no — ${URL_FILE} is missing"
+    fi
 
     # These three are `check`, not `note`, and that is the whole point of --verify: it is meant to
     # be run after a reboot and to EXIT NON-ZERO when this host is not in the state it should live
     # in. As notes they could not fail, so a machine whose firewall had been switched off since
     # setup, or whose browser lockdown had been deleted, verified green.
+    # The policy is the only thing standing between "a browser locked to one site with the file
+    # picker as its one door to the disk" and "a browser". Three things were wrong with checking
+    # it by existence alone:
+    #
+    #   - `{}` is valid JSON and passed. The keys that carry the lockdown were never read, and
+    #     Chromium silently ignores a policy that lost one — so every line printed here said
+    #     "locked down" over a browser that was not.
+    #   - Every directory policy_dirs() names has to have it. Passing on ANY one of them
+    #     reproduces exactly the fault that function's own comment warns about: the policy written
+    #     for the browser you are not running, while the report says the machine is locked down.
+    #   - With no JSON reader installed, a file Chromium would discard whole printed the same as
+    #     a good one. "Valid" and "not checked" are different answers.
     if [ "${DO_CHROMIUM_POLICY}" -eq 1 ]; then
-        local dir found_policy="no"
+        local dir pol
         while read -r dir; do
             [ -n "${dir}" ] || continue
-            if [ -f "${dir}/${POLICY_NAME}" ]; then
-                found_policy="yes"
-                note "chromium policy" "${dir}/${POLICY_NAME}"
-                if have jq && ! jq empty "${dir}/${POLICY_NAME}" >/dev/null 2>&1; then
-                    printf '    \033[31mFAIL\033[0m  %-34s %s\n' "chromium policy" "is not valid JSON"
-                    VERIFY_FAILED=1
-                fi
-            else
-                note "chromium policy" "absent from ${dir}"
+            pol="${dir}/${POLICY_NAME}"
+            if [ ! -f "${pol}" ]; then
+                check "chromium policy in ${dir##*/policies/}" "present" "absent from ${dir}"
+                continue
+            fi
+            note "chromium policy" "${pol}"
+
+            if ! have jq && ! have python3; then
+                unknown_check "chromium policy valid" \
+                    "could not ask — neither jq nor python3 is installed to read it"
+                continue
+            fi
+
+            local read_guard write_guard allowlist
+            read_guard="$(json_value "${pol}" DefaultFileSystemReadGuardSetting || true)"
+            if [ -z "${read_guard}" ] && ! json_value "${pol}" URLBlocklist >/dev/null 2>&1; then
+                check "chromium policy valid JSON" "yes" "no — ${pol} does not parse"
+                continue
+            fi
+            write_guard="$(json_value "${pol}" DefaultFileSystemWriteGuardSetting || true)"
+            allowlist="$(json_value "${pol}" URLAllowlist || true)"
+
+            # 3 is "ask", and that prompt IS the folder picker this machine exists to answer, so
+            # it may not be tightened to 2. Write stays blocked because the design shares
+            # read-only. Either value drifting is a silent change to what the box can do.
+            check "policy file-read guard" "3" "${read_guard:-unset}"
+            check "policy file-write guard" "2" "${write_guard:-unset}"
+
+            # A kiosk pointed at one host and allowlisted for another is a blank screen with no
+            # error anywhere. The two values were printed side by side and never compared.
+            if [ -n "${kiosk_host}" ]; then
+                case ",${allowlist}," in
+                    *",https://.${kiosk_host},"*|*",https://${kiosk_host},"*)
+                        check "policy allows the kiosk URL" "yes" "yes" ;;
+                    *)
+                        check "policy allows the kiosk URL" "yes" \
+                            "no — allowlist is [${allowlist:-empty}], kiosk host is ${kiosk_host}" ;;
+                esac
             fi
         done < <(policy_dirs)
-        check "chromium policy present" "yes" "${found_policy}"
     fi
 
     check "store present" "yes" "$([ -d "${STORE_DIR}" ] && echo yes || echo "no (${STORE_DIR})")"
@@ -2514,23 +2740,60 @@ verify() {
     fi
 
     if [ "${DO_FIREWALL}" -eq 1 ]; then
-        if have ufw; then
-            check "firewall active" "active" "$(first_or unknown sudo ufw status | awk '{print $2}')"
-        else
+        if ! have ufw; then
             check "firewall active" "active" "ufw-not-installed"
+        elif sudo_available; then
+            # Capture, THEN parse. Written as `first_or unknown sudo ufw status | awk '{print $2}'`
+            # the pipeline applies to first_or's output, so its fallback string went through awk
+            # and came out empty — printing `FAIL firewall active   (expected active)` with no
+            # value at all. The 30 lines of sudo machinery above exist to prevent exactly that
+            # report, and a pipe defeated them.
+            local ufw_out
+            ufw_out="$(sudo ufw status 2>/dev/null | head -n1)"
+            if [ -z "${ufw_out}" ]; then
+                unknown_check "firewall active" "could not ask — ufw status returned nothing"
+            else
+                check "firewall active" "active" "$(printf '%s' "${ufw_out}" | awk '{print $2}')"
+            fi
+        else
+            unknown_check "firewall active" "could not ask — sudo wanted a password nobody typed"
         fi
-    elif have ufw; then
+    elif have ufw && sudo_available; then
         note "firewall" "$(first_or unknown sudo ufw status) (not managed — --no-firewall)"
     fi
 
     # sshd was hardened, so confirm it is STILL hardened. The drop-in file existing proves nothing:
-    # a setting above the Include line beats it and the daemon is the only honest witness.
+    # a setting above the Include line beats it, and `sshd -T` is the only thing that resolves the
+    # whole config the way the daemon does.
+    #
+    # Two things this cannot tell you, so do not read more into a green line than is there. First,
+    # `sshd -T` parses the config ON DISK — it is not the running daemon, so a drop-in written and
+    # never reloaded passes here while the live sshd still permits root. Second, without -C it
+    # ignores Match blocks entirely, so a `Match Address` re-enabling root would be invisible;
+    # -C names a connection for it to resolve against.
+    #
+    # And an empty answer is not `no`. grep -q failing looks identical to sshd -T producing
+    # nothing at all — an expired sudo timestamp, a config parse error, a moved binary — so a
+    # question that could not be asked was reported as a security failure that was not real.
     if pkg_installed openssh-server; then
-        check "sshd refuses root login" "yes" \
-            "$(sudo sshd -T 2>/dev/null | grep -qi '^permitrootlogin no$' && echo yes || echo no)"
+        if sudo_available; then
+            local sshd_out
+            sshd_out="$(sudo sshd -T -C user=root,host=localhost,addr=127.0.0.1 2>/dev/null)"
+            if [ -z "${sshd_out}" ]; then
+                unknown_check "sshd refuses root login" "could not ask — sshd -T returned nothing"
+            else
+                check "sshd refuses root login" "yes" \
+                    "$(printf '%s\n' "${sshd_out}" | grep -qi '^permitrootlogin no$' && echo yes || echo no)"
+            fi
+        else
+            unknown_check "sshd refuses root login" "could not ask — sudo wanted a password nobody typed"
+        fi
     fi
 
-    note "clock synchronised" "$(first_or unknown timedatectl show -p NTPSynchronized --value)"
+    # A check, not a note. The kiosk URL is https, so a clock far enough out fails TLS and this
+    # host stops sharing with no other symptom anywhere — the failure looks like the site being
+    # down, from a machine nobody is sitting at.
+    check "clock synchronised" "yes" "$(first_or unknown timedatectl show -p NTPSynchronized --value)"
 
     # unattended-upgrades installs security updates and, deliberately, never reboots — so a new
     # kernel, glibc or OpenSSL sits on disk while the running system keeps the old code. On a box
@@ -2542,17 +2805,90 @@ verify() {
         note "reboot owed" "no"
     fi
 
+    # Chromium is held back from unattended-upgrades so its binary is not replaced under a running
+    # browser at an hour nobody chose, and given its own timer instead. The two halves only make
+    # sense together: the exclusion alone is a browser that is never patched while it holds a
+    # handle to somebody's files, which is strictly worse than the problem it solves. Both were
+    # reported as notes that could not fail, and the exclusion was not looked at at all.
+    #
+    # is-enabled is a symlink; is-active is whether it will actually fire.
     if [ "${DO_AUTO_CHROMIUM}" -eq 1 ]; then
-        note "chromium upgrade timer" \
+        check "chromium upgrade timer enabled" "enabled" \
             "$(first_or missing systemctl is-enabled vessel-chromium-update.timer)"
+        check "chromium upgrade timer active" "active" \
+            "$(first_or inactive systemctl is-active vessel-chromium-update.timer)"
+
+        if have apt-config; then
+            # apt-config dump gives the MERGED answer across every fragment in apt.conf.d, which
+            # is the only one that matters — the entry could live in any of them.
+            if apt-config dump 2>/dev/null \
+                | grep -q '^Unattended-Upgrade::Package-Blacklist:: *"chromium"'; then
+                check "chromium held from upgrades" "yes" "yes"
+            else
+                check "chromium held from upgrades" "yes" \
+                    "no — it may be replaced under the running kiosk"
+            fi
+        else
+            unknown_check "chromium held from upgrades" \
+                "could not ask — apt-config is not on PATH"
+        fi
+
+        check "unattended-upgrades enabled" "enabled" \
+            "$(first_or missing systemctl is-enabled unattended-upgrades)"
     fi
 
-    local sid
-    sid="$(loginctl list-sessions --no-legend 2>/dev/null | awk -v u="${USER}" '$3 == u {print $1; exit}' || true)"
-    if [ -n "${sid}" ]; then
-        note "graphical session" "$(first_or unknown loginctl show-session "${sid}" -p Type --value)"
+    # X11 is load-bearing on this host and not a preference: the launcher blanks the screen with
+    # xset and hides the pointer with unclutter, both of which are silent no-ops under Wayland, so
+    # a Wayland session gives you a kiosk that blanks itself — the one thing an always-on host
+    # must not do. This is asked two ways because they fail differently.
+    #
+    # At rest, in the display manager's config: true even with no session running, which is the
+    # state anybody checking over SSH before a reboot is in.
+    local dm dm_name sddm_conf autologin_user="" session_pin=""
+    dm="$(cat /etc/X11/default-display-manager 2>/dev/null || true)"
+    dm_name="${dm##*/}"
+    case "${dm_name}" in
+        sddm)
+            for sddm_conf in /etc/sddm.conf.d/*.conf /etc/sddm.conf; do
+                [ -f "${sddm_conf}" ] || continue
+                [ -n "${autologin_user}" ] || autologin_user="$(ini_value "${sddm_conf}" User)"
+                [ -n "${session_pin}" ]    || session_pin="$(ini_value "${sddm_conf}" Session)"
+            done
+            check "autologin configured (sddm)" "yes" \
+                "$([ -n "${autologin_user}" ] && echo yes || echo "no — no [Autologin] User= found")"
+            check "display manager session" "plasmax11" "${session_pin:-unset}"
+            ;;
+        lightdm)
+            for sddm_conf in /etc/lightdm/lightdm.conf.d/*.conf /etc/lightdm/lightdm.conf; do
+                [ -f "${sddm_conf}" ] || continue
+                [ -n "${autologin_user}" ] || autologin_user="$(ini_value "${sddm_conf}" autologin-user)"
+            done
+            check "autologin configured (lightdm)" "yes" \
+                "$([ -n "${autologin_user}" ] && echo yes || echo "no — no autologin-user= found")"
+            ;;
+        gdm3|gdm)
+            autologin_user="$(ini_value /etc/gdm3/daemon.conf AutomaticLoginEnable)"
+            check "autologin configured (gdm3)" "yes" \
+                "$(case "${autologin_user}" in [Tt]rue|1) echo yes;; *) echo "no — AutomaticLoginEnable is ${autologin_user:-unset}";; esac)"
+            ;;
+        "")
+            unknown_check "autologin configured" \
+                "could not ask — /etc/X11/default-display-manager is absent"
+            ;;
+        *)
+            note "autologin configured" "display manager is ${dm_name}, which this script does not know"
+            ;;
+    esac
+
+    # And live: what the session actually came up as. Class is what tells the desktop session
+    # apart from the systemd user manager, which is also listed against this user and, being
+    # first, is what a naive lookup returns — Type=unspecified, the same answer on a correct box
+    # and a broken one.
+    if [ -n "${gsid}" ]; then
+        check "graphical session type" "x11" \
+            "$(first_or unknown loginctl show-session "${gsid}" -p Type --value)"
     else
-        note "graphical session" "none for ${USER} (expected over SSH before a reboot)"
+        note "graphical session type" "none for ${USER} (expected over SSH before a reboot)"
     fi
 
     if [ "${VERIFY_FAILED}" -eq 1 ]; then

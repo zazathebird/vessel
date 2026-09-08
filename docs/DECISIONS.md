@@ -13,6 +13,63 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-09-08 — The host's screen was never told not to blank, and `xset` was the wrong lever
+
+**The fault.** `thinkcentre-setup.sh`'s kiosk launcher runs `xset s off`, `xset s noblank` and
+`xset -dpms` once, at service start. `docs/HOST-BUILD-LOG.md` and `CLAUDE.md` both rest the X11
+decision on those calls — *"both are X11-only and fail silently under Wayland, and a kiosk whose
+screen blanks itself is the one thing an always-on host must not do."* That sentence is true and
+it is not sufficient, because on a **Plasma** desktop `xset` is not the last word.
+
+Measured on the real host, after the launcher had run: `xset q` reported `DPMS is Enabled` with
+every timeout at `0`. PowerDevil starts after the kiosk, runs its **own** idle timer, and turns
+the display off by calling DPMS directly rather than by setting the X server's DPMS timeouts.
+Writing `TurnOffDisplayIdleTimeoutSec` as `900`, `-1` and `0` in turn moved nothing in `xset q`
+at all. **So `xset q` cannot answer "will this screen blank" on this box, and the launcher cannot
+prevent it.**
+
+Both `~/.config/powerdevilrc` and `~/.config/kscreenlockerrc` were **absent**, so both daemons ran
+on KDE's defaults, which are written for a laptop: dim, then blank, then **lock**. On a host that
+autologins and is remoted into, the lock is the worse half — `krfb` shares the running session, so
+the thing you connect to see would be a password prompt, on the machine you are not standing at.
+
+**The fix** is `plasma-dark-setup.sh` §7, which writes both files and reloads both daemons live.
+It disables the **actions** with booleans (`turnOffDisplayWhenIdle`, `dimDisplayWhenIdle`,
+`autoSuspendAction=0`) rather than putting a sentinel in a timeout: a timeout whose "never" value
+you have guessed wrong is a screen that blanks *immediately*, which is not a guess worth taking.
+
+**Each key is written in both cases, deliberately.** KConfig keys are case-sensitive; PowerDevil's
+generated accessors are lower-camel (confirmed in `libpowerdevilcore`) while KDE's own settings
+module has historically written the upper-camel form into this file. A key in the wrong case is
+not an error — it is silently ignored, and the symptom arrives weeks later. A boolean is safe to
+write twice; either spelling read yields `false`.
+
+**The lesson is the shape, not the setting.** The X11 pin was chosen *because* `xset` works there.
+That reasoning stopped one layer short of the thing that actually owns the display on this
+desktop, and every report the machine printed about itself said the screen was fine.
+
+---
+
+## 2026-09-08 — Tailscale is back on, by the client, for this host
+
+*Needs the client* item 7 said **"never Tailscale again (reversed 2026-08-26)"**. That decision is
+reversed again, for this machine, in the client's words: *"i need it for remoting into this box
+from multiple different machines."*
+
+It is installed and running on the ThinkCentre (tailnet name `debian`) and stays. This does not
+restore Tailscale as a general answer for customer machines, which is what the 2026-08-26 reversal
+was about — it is the operator's own always-on host, and the requirement it meets is one the
+LAN-only `krfb` route in `docs/thinkcentre-sharing-host.md` cannot: reaching the box from several
+machines that are not on its LAN.
+
+`krfb` stays as documented and is still the way to see the *running kiosk session*; Tailscale is
+transport, not a second way of viewing the session. The trade the build log already records —
+a full Plasma session on autologin means anyone at the keyboard has the desktop and, one terminal
+away, `sudo` — now extends to anyone on the tailnet. Keep the account password set and
+passwordless `sudo` off.
+
+---
+
 ## 2026-09-07 — the trust root comes from the password, and four smaller ones
 
 The fourth security pass (`docs/SECURITY-AUDIT.md` items 37–41). The one that matters: the agent

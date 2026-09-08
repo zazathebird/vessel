@@ -80,7 +80,7 @@ import { FALLBACK_FX, rollableFx, visibleFx } from "../src/data/catalog";
 import { rollableOrnaments, visibleOrnament } from "../src/data/ornaments";
 import { DEFAULT_CONFIG } from "../src/config/types";
 import type { Config } from "../src/config/types";
-import { FOOTER_NAV, NAV, PATHS } from "../src/data/pageIds";
+import { FOOTER_NAV, NAV, OPERATOR_NAV, PATHS } from "../src/data/pageIds";
 import type { PageId } from "../src/data/pageIds";
 import { PAGES } from "../src/data/pages";
 import {
@@ -3314,7 +3314,45 @@ check("every page is reachable off the desk", () => {
     `no nav offers ${unreachable.join(", ")} — unreachable without typing the URL`,
   );
   must(offered.has("downloads"), "downloads is offered by neither nav");
-  return `${offered.size} pages in the two navs, palette chip says "${label}" off the desk`;
+
+  /*
+   * 5. And every page is offered by one of the THREE navs, operator tabs
+   *    included — which is the check the one above could not make.
+   *
+   *    `/share` was in `PATHS` and in no nav at all. It was not unreachable:
+   *    the footer clock navigated to it, typing `share` worked, and the account
+   *    page carried an aside. Every one of those is a route you have to already
+   *    know about — the clock deliberately has no accessible name and no place
+   *    in the tab order — and the client, who is the operator, signed in and
+   *    could not find the page he has to visit to set the machine up. The gate
+   *    above could not see it, because its exclusion list named `share` as a
+   *    deliberate omission, and by the time that stopped being true the list
+   *    was the reason nobody looked.
+   *
+   *    The two exclusions here are each reached from a page that IS in a nav,
+   *    by a labelled control, which is the standard this gate is really about:
+   *      - `signup` is offered by `signin`, which is in both the footer and the
+   *        operator tabs.
+   *      - `machines` is offered by `SharePage` and by the account page, and
+   *        `share` is now a tab. Adding it as a fifth tab is what would push
+   *        the operator header into a scroller on the phone band.
+   */
+  const REACHED_FROM_A_LINKED_PAGE: PageId[] = ["signup", "machines"];
+  const anyNav = new Set([...NAV, ...FOOTER_NAV, ...OPERATOR_NAV].map((n) => n.id));
+  const stranded = (Object.keys(PATHS) as PageId[]).filter(
+    (id) => !anyNav.has(id) && !REACHED_FROM_A_LINKED_PAGE.includes(id),
+  );
+  must(
+    stranded.length === 0,
+    `no nav offers ${stranded.join(", ")} — reachable only by typing the URL or by an ` +
+      `unlabelled gesture, which is how /share was lost`,
+  );
+  must(
+    anyNav.has("share"),
+    "no nav offers share — the operator cannot reach the page that sets this machine up",
+  );
+
+  return `${offered.size} pages in the two public navs, ${anyNav.size} across all three`;
 });
 
 check("no duel can reach a visitor, by any route", () => {

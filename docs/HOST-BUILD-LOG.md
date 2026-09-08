@@ -2,7 +2,9 @@
 
 `docs/thinkcentre-sharing-host.md` is the guide, written before the machine existed.
 **This file is what happened when it was built**, in order, with every wall hit and the
-command that got past it. Where the two disagree, this file is newer.
+command that got past it. Walls 5 and 6 were found on 2026-09-08 after the four scripts had
+all run and the machine looked finished; **wall 7 was found later the same day, after walls 5
+and 6 had been fixed and the machine looked finished again.** Where the two disagree, this file is newer.
 
 The machine: Lenovo ThinkCentre M93p Tiny, Debian netinst, **the OS on a USB SSD**, username
 `user`. Read `docs/thinkcentre-sharing-host.md` for the reasoning; read this for the steps.
@@ -52,7 +54,7 @@ chmod +x *.sh
 
 ---
 
-## The four walls, and how to get past them
+## The seven walls, and how to get past them
 
 ### 1. `sudo` said "user is not in the sudoers file"
 
@@ -105,6 +107,125 @@ sudo reboot
 ```
 
 Keep that disk on its own port, never on a hub something else gets unplugged from.
+
+### 5. The desktop came up on Wayland, and nothing said so
+
+The single most important thing this build got wrong, and it is invisible: **`plasma-dark-setup.sh`
+installed the desktop but its SDDM half did not take.** `/etc/sddm.conf.d/` was absent,
+`/etc/X11/default-display-manager` still read `/usr/sbin/lightdm`, and `thinkcentre-setup.sh`'s own
+autologin drop-in said `autologin-session=xfce`. So the box autologged into XFCE, somebody started
+Plasma by hand, and Plasma started under **Wayland** — where `xset` and `unclutter` are silent
+no-ops and the kiosk's screen blanks itself, which is the one thing an always-on host must not do.
+
+Everything looked right while it was wrong. The kiosk was running, `unclutter` was in the process
+tree, and `--verify` said nothing, because none of that is what those tools report on. **Check it
+with three commands, not by looking at the screen:**
+
+```sh
+echo "${XDG_SESSION_TYPE}"                  # want: x11
+cat /etc/X11/default-display-manager        # want: /usr/bin/sddm
+cat /etc/sddm.conf.d/10-vessel.conf         # want: DisplayServer=x11, Session=plasmax11
+```
+
+Re-running `./plasma-dark-setup.sh --no-install` writes all three. It takes effect at the reboot,
+not before.
+
+### 6. `--verify` cried wolf about the firewall and sshd
+
+The first `--verify` on real hardware reported two FAILs: `firewall active` (blank) and
+`sshd refuses root login` (`no`). **Both were false.** ufw was active and the sshd drop-in was in
+force; the two checks are the only ones that shell out to `sudo`, they were run without a cached
+credential, and an empty answer is not the expected answer. A check that says *the firewall is off*
+when it means *I could not look* is worse than no check — and it was the first thing this machine
+was ever told about itself.
+
+Fixed the same day: `--verify` asks for sudo once, up front, and prints `????` with the reason when
+it cannot have it. That still fails the run, because an unverified firewall is not a verified one —
+it just no longer borrows the word FAIL from the checks that genuinely failed.
+
+### 7. Nothing had ever told this machine's screen not to blank — or not to LOCK
+
+Walls 5 and 6 are both about the X11 pin, and the reason given for that pin, here and in
+`CLAUDE.md`, is that the kiosk launcher blanks the screen with `xset` and hides the cursor with
+`unclutter`, both of which fail silently under Wayland. That is true. **It is also not the whole
+mechanism, and on a Plasma desktop it is not even the deciding one.**
+
+The launcher runs `xset s off`, `xset s noblank` and `xset -dpms` once, at service start. Measured
+on this box afterwards, `xset q` said:
+
+```
+Screen Saver:  timeout: 0
+DPMS:          Standby: 0  Suspend: 0  Off: 0
+               DPMS is Enabled          <- the launcher asked for Disabled
+```
+
+PowerDevil starts after the kiosk, runs its **own** idle timer, and turns the display off by
+calling DPMS directly rather than by setting the X server's timeouts. Setting
+`TurnOffDisplayIdleTimeoutSec` to 900, then -1, then 0 moved **nothing** in `xset q`. So on this
+machine `xset q` cannot answer *"will this screen blank"*, and the launcher cannot stop it.
+
+Worse, `~/.config/powerdevilrc` and `~/.config/kscreenlockerrc` were both **absent**, so both
+daemons ran on KDE's defaults — which are written for a laptop: dim, blank, then **lock**. The
+lock is the half that matters here. `krfb` shares the session that is already running, so a
+locked host is one where the thing you remote in to see is a password prompt, on the machine you
+are not standing at.
+
+Fixed in `plasma-dark-setup.sh` §7, applied live as well as written to disk:
+
+```sh
+kwriteconfig6 --file kscreenlockerrc --group Daemon --key Autolock false
+kwriteconfig6 --file powerdevilrc --group AC --key turnOffDisplayWhenIdle false
+kwriteconfig6 --file powerdevilrc --group AC --key dimDisplayWhenIdle    false
+kwriteconfig6 --file powerdevilrc --group AC --key autoSuspendAction     0
+qdbus6 org.kde.Solid.PowerManagement /org/kde/Solid/PowerManagement \
+       org.kde.Solid.PowerManagement.reparseConfiguration
+```
+
+**It disables the ACTIONS with booleans, not the timeouts with a sentinel**, because a timeout
+whose "never" value you have guessed wrong is a screen that blanks *immediately*. And **each key
+is written in both cases** — KConfig keys are case-sensitive, PowerDevil's generated accessors
+are lower-camel while KDE's own settings module has written the upper-camel form, and a key in
+the wrong case is not an error, it is silently ignored.
+
+**The lesson is the shape of it.** The X11 pin was chosen *because* `xset` works there. That
+reasoning stopped one layer short of the thing that actually owns the display on this desktop,
+and every report the machine printed about itself said the screen was fine.
+
+---
+
+## The kiosk keeps to its own workspace
+
+The Chromium tab **is** the sharing agent, so the way to get it out of the way can never be to close
+it — and a fullscreen kiosk on the only workspace makes closing it the obvious move. So there are
+two virtual desktops and a KWin rule that forces the kiosk onto the second one: you land on an empty
+desktop, it keeps sharing. `plasma-dark-setup.sh` §6 writes both.
+
+The rule matches `WM_CLASS` **`vessel-kiosk`**, which the launcher sets with `--class`. **That name
+is a contract between two scripts** — change it in `thinkcentre-setup.sh` and the rule in
+`plasma-dark-setup.sh` silently stops matching, with no error anywhere and the kiosk back on top of
+you. Matching a bare `chromium` was the alternative and is worse: it would drag every Chromium
+window you open by hand onto the second desktop too.
+
+`WM_CLASS` is an X11 property, and the note above was written expecting the rule to be dead until
+the X11 reboot. **It is not**: Chromium 152 sets its Wayland `app_id` from `--class` as well, so
+KWin reports `resourceClass = vessel-kiosk` under either. Keep the X11 pin for the reasons at the
+top of this file — the blanking and the remote viewing — but do not expect this rule to be the
+thing that breaks under Wayland, because it is not.
+
+**The rule also forces `minimize=false`, and that is the half that matters.** Minimising is what
+somebody does to get a fullscreen window out of the way, and on this machine that window is the
+sharing agent. Taking the option away and giving it a workspace of its own is one answer, not two.
+
+**A second desktop is created two different ways and using the wrong one is a silent no-op.**
+Written first as `kwriteconfig6 --file kwinrc --group Desktops --key Number 2` plus a generated
+UUID, which is correct with no session running and does nothing at all with KWin up: `reconfigure`
+does not re-read the desktop count, and the next time KWin saved it wrote **its own** UUID over the
+one just written. So the rule pointed at a desktop that did not exist and the kiosk stayed put. The
+rule looked wrong; it was fine, and there was nowhere for it to send anything. With a session
+running the desktop comes from
+`qdbus6 org.kde.KWin /VirtualDesktopManager org.kde.KWin.VirtualDesktopManager.createDesktop 1 Sharing`,
+and **the UUID is read back afterwards rather than assumed**, because in that case KWin chooses it.
+`plasma-dark-setup.sh` §6 does both and picks between them.
 
 ---
 
@@ -166,13 +287,64 @@ remote into — it was an appliance in the original design.
 
 ## Still to do on this machine
 
-1. Run the four scripts and then `--verify` after a reboot. **Anything `--verify` flags is the
-   first thing to fix** — the setup script has never run on real hardware before this build.
-2. Add `usbcore.autosuspend=-1` and reboot (above).
-3. Pair the machine: sign in on `mcclevarty.ca`, `/share`, pick the folder. **The Chromium
-   profile is the pairing** — the handle lives in its IndexedDB, so never launch the kiosk with
+1. ~~Re-run `./plasma-dark-setup.sh --no-install`~~ — **done.** `/etc/sddm.conf.d/10-vessel.conf`
+   is in place, the display manager is SDDM, and the running session is `Type=x11`.
+2. ~~Add `usbcore.autosuspend=-1` and reboot~~ — **done**, and booted into: it is in
+   `/proc/cmdline`.
+3. **Run `--verify` once with a cached sudo credential** (`sudo -v` first). Everything else
+   reports `ok`; the two checks that need root — `firewall active` and `sshd refuses root
+   login` — still report `????`, and `sshd -T` has never actually been consulted on this box.
+4. **Pair the machine**: sign in on `mcclevarty.ca`, `/share`, pick the folder. Not done — the
+   kiosk's IndexedDB holds an empty `vessel-share` database, i.e. the page has loaded and nobody
+   has ever paired. **The Chromium profile is the pairing**, so never launch the kiosk with
    `--user-data-dir` or `--incognito`, and never delete that profile.
-4. **Does Raspberry Pi OS auto-upgrade Chromium under a running kiosk?** Open question for the
+5. **Does Raspberry Pi OS auto-upgrade Chromium under a running kiosk?** Open question for the
    *Pi*, not this box; `pi-setup.sh` says it cannot happen and that is unverified.
-5. The phase-2 walkthrough by eye — pairing, drive picking, a real two-tab WebRTC browse and
+6. The phase-2 walkthrough by eye — pairing, drive picking, a real two-tab WebRTC browse and
    download — has still never been done. This machine is what it needs.
+7. **Install Node 20+** (`sudo apt install nodejs npm`, then `npm ci`). There is no `node`, no
+   `npm` and no `node_modules` on this box, so **`npm run check` — the gate — cannot run here**,
+   and the `PostToolUse` hook in `.claude/settings.json` fails against a missing binary on every
+   edit. `claude-code-setup.sh` deliberately only prints a note about this; the client asked for
+   the toolchain on 2026-09-08.
+
+---
+
+## The desktop's look is scripted, not clicked
+
+Two scripts own it, and both are idempotent, need no sudo, and download nothing.
+
+**`scripts/konsole-profiles.sh`** writes seventeen Konsole colour schemes and profiles — Ubuntu,
+Ubuntu on Black, Green on Black (the legacy Windows console palette), Campbell, Halo, Tron,
+Apollo, Cyberpunk, Dracula, Solarized Dark and Light, Nord, Gruvbox, Tokyo Night, Catppuccin
+Mocha, One Dark, Monokai — all at **86% opacity**. `--default NAME` picks which one new windows
+open with; `--check` reports whether a compositor is running, because **without one every scheme
+renders opaque and nothing in Konsole says why**.
+
+**Opacity is a scheme setting, not a profile setting.** Konsole reads `Opacity` from the
+`[General]` block of the `.colorscheme` file. Putting it on the `.profile` is a silent no-op.
+
+**`scripts/plasma-vibes.sh`** applies a whole look at once — colour scheme, KWin effects,
+a generated wallpaper and the matching Konsole profile: `halo`, `tron`, `apollo`, `cyberpunk`,
+`hacker`, `frost`. `--intensity heavy|medium|light|off` sets what the effects cost, and
+`--restore` puts Breeze Dark back.
+
+Three things about it are load-bearing:
+
+- **A fullscreen window suspends the compositor on this box** (`windowsBlockCompositing` is set),
+  so while the kiosk is in front these effects cost *nothing* — not "less", nothing, because the
+  compositor they configure is not running. The cost lands only on desktop 1, with a person
+  watching and nothing being served. That is the right way round, and `--measure` checks it
+  rather than assuming it.
+- **Background Contrast has no config keys at all.** It declares no config module; KWin takes
+  contrast, intensity and saturation per-window from the Plasma theme. It is on or off. Do not
+  add a strength dial expecting one to exist.
+- **`Effect-translucency` has no `Decoration` key.** The real ones are `MoveResize`, `Dialogs`,
+  `Inactive`, `Menus`, `DropdownMenus`, `PopupMenus`, `ComboboxPopups`, `TornOffMenus`.
+
+**The wallpapers are drawn here with ImageMagick and checked after they are drawn.** Every one is
+deliberately dark, because it is seen *through* translucent terminals. `-rotate` fills the corners
+it opens up with the current background colour, which defaults to **white** — so the `soft` recipe
+shipped a pure-white wedge on a dark desktop, peak brightness 1.0. The fix is `-background` before
+the rotate; the gate is a peak-brightness check on the file that was actually written, which warns
+above 0.97. Verified by running the pre-fix recipe through it: it reports 1.0 and warns.

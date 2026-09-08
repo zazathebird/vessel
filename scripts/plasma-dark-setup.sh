@@ -239,7 +239,219 @@ if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v lookandfeeltool >/dev
 fi
 
 # ----------------------------------------------------------------------------
-# 6. What the kiosk needs to know.
+# 6. The kiosk gets a workspace of its own.
+# ----------------------------------------------------------------------------
+# The Chromium tab IS the sharing agent, so the way to get it out of your way can
+# never be to close it. A fullscreen kiosk on the only workspace makes closing it
+# the obvious move, which is why there are two workspaces and a rule that forces
+# the kiosk onto the second one. You land on an empty desktop; it keeps sharing.
+#
+# The rule matches WM_CLASS "vessel-kiosk", which the launcher written by
+# thinkcentre-setup.sh sets with --class. That name is a CONTRACT between the two
+# scripts: change it there and this rule silently stops matching. Matching a bare
+# "chromium" was the alternative and is worse — it would drag every Chromium window
+# you open by hand onto the second desktop as well.
+#
+# X11 only, and that is the same decision as everything else in this file: --class
+# sets an X11 property. Under Wayland Chromium reports its app_id from the .desktop
+# file, the rule does not match, and the kiosk is back on top of you.
+log "Giving the kiosk its own workspace"
+
+KWRITE=""
+for c in kwriteconfig6 kwriteconfig5; do
+    command -v "${c}" >/dev/null 2>&1 && { KWRITE="${c}"; break; }
+done
+KREAD=""
+for c in kreadconfig6 kreadconfig5; do
+    command -v "${c}" >/dev/null 2>&1 && { KREAD="${c}"; break; }
+done
+
+if [ -z "${KWRITE}" ] || [ -z "${KREAD}" ]; then
+    warn "kwriteconfig/kreadconfig not found, so the kiosk was left on the first workspace.
+             Put it on another one by hand with Ctrl+F2 rather than closing it."
+else
+    # A second virtual desktop, if there is only one. There are two ways to get one and
+    # using the wrong one is a silent no-op, which is how this was got wrong first time
+    # (measured on the real host, 2026-09-08).
+    #
+    # With no session running, kwinrc IS the state, and writing Id_2/Number is right.
+    # With KWin RUNNING, KWin owns that state: writing the file changed nothing a person
+    # could see, `reconfigure` does not re-read the desktop count, and the moment KWin
+    # next saved it wrote its own UUID over the one just written — so the rule below
+    # pointed at a desktop that did not exist and the kiosk stayed where it was. The
+    # window rule looked wrong. It was not; there was nowhere for it to send anything.
+    #
+    # So: ask KWin when KWin is there, and write the file when it is not. Either way the
+    # UUID the rule uses is READ BACK afterwards rather than assumed, because in the live
+    # case it is KWin that chooses it.
+    QDBUS=""
+    for q in qdbus6 qdbus qdbus-qt6; do
+        command -v "${q}" >/dev/null 2>&1 && { QDBUS="${q}"; break; }
+    done
+    VDM="org.kde.KWin.VirtualDesktopManager"
+
+    if [ -n "${QDBUS}" ] && ${QDBUS} org.kde.KWin /VirtualDesktopManager "${VDM}.count" >/dev/null 2>&1; then
+        live="$(${QDBUS} org.kde.KWin /VirtualDesktopManager "${VDM}.count" 2>/dev/null || echo 1)"
+        case "${live}" in ''|*[!0-9]*) live=1 ;; esac
+        if [ "${live}" -lt 2 ]; then
+            ${QDBUS} org.kde.KWin /VirtualDesktopManager "${VDM}.createDesktop" 1 "Sharing" >/dev/null 2>&1 || true
+            sleep 1
+            info "created a second virtual desktop in the running session"
+        else
+            info "${live} virtual desktops already"
+        fi
+    else
+        desktops="$(${KREAD} --file kwinrc --group Desktops --key Number 2>/dev/null || true)"
+        case "${desktops}" in ''|*[!0-9]*) desktops=1 ;; esac
+        if [ "${desktops}" -lt 2 ]; then
+            # /proc is the UUID source rather than uuidgen, which lives in uuid-runtime and
+            # is not installed by default on a netinst.
+            newid="$(cat /proc/sys/kernel/random/uuid 2>/dev/null || true)"
+            if [ -z "${newid}" ]; then
+                warn "could not generate a UUID for a second desktop; leaving the desktops alone."
+            else
+                ${KWRITE} --file kwinrc --group Desktops --key Id_2 "${newid}"
+                ${KWRITE} --file kwinrc --group Desktops --key Name_2 "Sharing"
+                ${KWRITE} --file kwinrc --group Desktops --key Number 2
+                ${KWRITE} --file kwinrc --group Desktops --key Rows 1
+                info "added a second virtual desktop (it appears at the next login)"
+            fi
+        else
+            info "${desktops} virtual desktops already"
+        fi
+    fi
+
+    KIOSK_DESKTOP="$(${KREAD} --file kwinrc --group Desktops --key Id_2 2>/dev/null || true)"
+
+    if [ -z "${KIOSK_DESKTOP}" ]; then
+        warn "no second virtual desktop, so no kiosk rule was written."
+    else
+        # Appended to whatever rules already exist, never written over them: kwinrulesrc
+        # is a file the operator edits from System Settings, and clobbering it would throw
+        # away work that this script has no way to know about.
+        existing="$(${KREAD} --file kwinrulesrc --group General --key rules 2>/dev/null || true)"
+        case ",${existing}," in
+            *,vessel-kiosk,*) info "the kiosk window rule is already in kwinrulesrc" ;;
+            *)
+                if [ -n "${existing}" ]; then
+                    ${KWRITE} --file kwinrulesrc --group General --key rules "${existing},vessel-kiosk"
+                else
+                    ${KWRITE} --file kwinrulesrc --group General --key rules "vessel-kiosk"
+                fi
+                # count is what KWin reads to decide how many rules to load; a rule listed
+                # but not counted is a rule that does nothing.
+                count="$(${KREAD} --file kwinrulesrc --group General --key count 2>/dev/null || true)"
+                case "${count}" in ''|*[!0-9]*) count=0 ;; esac
+                ${KWRITE} --file kwinrulesrc --group General --key count "$((count + 1))"
+                info "added the kiosk window rule"
+                ;;
+        esac
+
+        # Written every run, whether the rule is new or not, so that re-running this script
+        # repairs a rule somebody half-edited in System Settings.
+        #   wmclasscomplete=false  match the class alone, not "instance class"
+        #   wmclassmatch=1         exact, not substring: nothing else may be caught by this
+        #   desktopsrule=2         Force — the window may not be dragged back onto desktop 1
+        #   minimize=false + rule 2
+        #                          Force — the kiosk cannot be minimised AT ALL. This is the
+        #                          half that matters: minimising is what somebody does to get
+        #                          a fullscreen window out of the way, and on this machine that
+        #                          window is the sharing agent. Taking the option away and
+        #                          giving it a workspace of its own is one answer, not two.
+        ${KWRITE} --file kwinrulesrc --group vessel-kiosk --key Description \
+            "Vessel sharing kiosk — keep it on the second workspace"
+        ${KWRITE} --file kwinrulesrc --group vessel-kiosk --key wmclass "vessel-kiosk"
+        ${KWRITE} --file kwinrulesrc --group vessel-kiosk --key wmclasscomplete --type bool false
+        ${KWRITE} --file kwinrulesrc --group vessel-kiosk --key wmclassmatch 1
+        ${KWRITE} --file kwinrulesrc --group vessel-kiosk --key desktops "${KIOSK_DESKTOP}"
+        ${KWRITE} --file kwinrulesrc --group vessel-kiosk --key desktopsrule 2
+        ${KWRITE} --file kwinrulesrc --group vessel-kiosk --key minimize --type bool false
+        ${KWRITE} --file kwinrulesrc --group vessel-kiosk --key minimizerule 2
+        info "the kiosk is forced onto virtual desktop 2 (${KIOSK_DESKTOP}) and cannot be minimised"
+
+        # Live, if KWin is up. Harmless when it is not — the files above are the mechanism.
+        for q in qdbus6 qdbus qdbus-qt6; do
+            command -v "${q}" >/dev/null 2>&1 || continue
+            "${q}" org.kde.KWin /KWin reconfigure >/dev/null 2>&1 && info "KWin reloaded"
+            break
+        done
+    fi
+fi
+
+# ----------------------------------------------------------------------------
+# 7. The screen must never blank, dim or lock.
+# ----------------------------------------------------------------------------
+# THE KIOSK LAUNCHER'S `xset` CALLS ARE NOT THE MECHANISM THAT MATTERS HERE, and
+# believing they were is how this box shipped with the question unanswered.
+#
+# thinkcentre-setup.sh's launcher runs `xset s off`, `xset s noblank` and
+# `xset -dpms` once, at service start. That is the right thing to do on a bare X
+# session, which is what the original XFCE design assumed. On a PLASMA desktop it
+# is not sufficient and it is not even the last word: PowerDevil starts after the
+# kiosk, runs its OWN idle timer, and turns the display off by calling DPMS
+# directly rather than by setting the X server's DPMS timeouts. Measured on this
+# machine: after the launcher had run, `xset q` reported "DPMS is Enabled" with
+# every timeout at 0, and setting `TurnOffDisplayIdleTimeoutSec` to 900, -1 and 0
+# in turn moved nothing in `xset q` at all. So `xset q` cannot answer "will this
+# screen blank" on a Plasma box, and the launcher cannot prevent it. PowerDevil
+# and KScreenLocker have to be told, in their own files.
+#
+# Left alone, both run on KDE's defaults, which are written for a laptop: dim,
+# then turn the display off, then lock. On a host that autologins and is remoted
+# into, a LOCK is worse than a blank — krfb shares the running session, so the
+# thing you connect to see is a password prompt, on the machine you are not
+# standing at. Nothing on this box managed either of these until now.
+#
+# WHY BOTH SPELLINGS OF EACH KEY. KConfig keys are case-sensitive, and PowerDevil's
+# generated accessors are lower-camel (`turnOffDisplayWhenIdle`, confirmed in
+# libpowerdevilcore) while KDE's own settings module has historically written the
+# upper-camel form into this file. A key in the wrong case is not an error: it is
+# silently ignored, and the symptom is a kiosk that blanks itself weeks later. The
+# boolean is safe to write twice — either spelling read yields false — which is the
+# reason this disables the ACTION with a boolean rather than by putting a sentinel
+# in the timeout. A timeout whose "never" value you have guessed wrong is a screen
+# that blanks IMMEDIATELY, and that is not a guess worth taking.
+log "Stopping the screen blanking, dimming and locking"
+
+# The screen locker. Autolock=false is the one that matters; LockOnResume covers
+# the case where something else suspends the box despite the masked sleep targets.
+if [ -n "${KWRITE}" ]; then
+    "${KWRITE}" --file kscreenlockerrc --group Daemon --key Autolock false
+    "${KWRITE}" --file kscreenlockerrc --group Daemon --key LockOnResume false
+
+    # PowerDevil, AC profile. This box has no battery; the AC profile is the only
+    # one it ever loads, and writing the others would be pretending otherwise.
+    for key in turnOffDisplayWhenIdle TurnOffDisplayWhenIdle \
+               dimDisplayWhenIdle DimDisplayWhenIdle; do
+        "${KWRITE}" --file powerdevilrc --group AC --key "${key}" false
+    done
+    # 0 is "do nothing" for an ACTION enum, which is a different kind of value from
+    # a timeout and is unambiguous.
+    for key in autoSuspendAction AutoSuspendAction; do
+        "${KWRITE}" --file powerdevilrc --group AC --key "${key}" 0
+    done
+
+    info "screen locker: autolock off"
+    info "powerdevil: display never dims, never turns off, never auto-suspends"
+
+    # Apply to the running session. Both daemons re-read on request, so this does
+    # not wait for a reboot — which matters, because the window between now and the
+    # next reboot is exactly when somebody is watching to see whether it worked.
+    if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v qdbus6 >/dev/null 2>&1; then
+        qdbus6 org.kde.Solid.PowerManagement /org/kde/Solid/PowerManagement \
+            org.kde.Solid.PowerManagement.reparseConfiguration >/dev/null 2>&1 \
+            && info "powerdevil reloaded live" \
+            || info "powerdevil will pick it up at the next login"
+        qdbus6 org.kde.screensaver /ScreenSaver org.kde.screensaver.configure \
+            >/dev/null 2>&1 || true
+    fi
+else
+    warn "kwriteconfig not found, so the screen locker and PowerDevil were left on KDE's
+     defaults — which dim, blank and then LOCK this machine. Fix that before leaving it."
+fi
+
+# ----------------------------------------------------------------------------
+# 8. What the kiosk needs to know.
 # ----------------------------------------------------------------------------
 if systemctl --user list-unit-files 'vessel-kiosk.service' >/dev/null 2>&1 \
    && systemctl --user cat vessel-kiosk.service >/dev/null 2>&1; then
@@ -247,7 +459,8 @@ if systemctl --user list-unit-files 'vessel-kiosk.service' >/dev/null 2>&1 \
     info "vessel-kiosk.service is installed on this account. It starts Chromium at login and"
     info "keeps the machine online for file sharing — that browser tab IS the sharing agent, so"
     info "closing it takes the machine offline. Put it on another virtual desktop rather than"
-    info "closing it: Ctrl+F2 (or Ctrl+Alt+Right) gives you an empty workspace to work on."
+    info "closing it. Section 6 above forces it onto virtual desktop 2, so desktop 1 is yours;"
+    info "Ctrl+F1 and Ctrl+F2 (or Ctrl+Alt+Left/Right) move between them."
 fi
 
 cat <<EOF

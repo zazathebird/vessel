@@ -79,6 +79,27 @@ export function Footer() {
           </>
         ) : null}
         {/*
+          Share, for anybody signed in — gated on `me`, deliberately not on
+          `isOperator`. `SharePage` itself reads `me`, so sharing is a thing an
+          ACCOUNT does rather than a thing the operator does, and gating the
+          only standing link on `isOperator` would strand every ordinary account
+          holder on exactly the page phase 2 exists for.
+
+          The header carries a `Share` tab too (`OPERATOR_NAV`), and the
+          duplication is the same deliberate kind as `account`, which is also in
+          both: the header tab is operator-only, this is not.
+        */}
+        {me ? (
+          <button
+            type="button"
+            className={`v-footer-link${config.page === "share" ? " is-active" : ""}`}
+            aria-current={config.page === "share" ? "page" : undefined}
+            onClick={() => go("share")}
+          >
+            share
+          </button>
+        ) : null}
+        {/*
           The door's sixth route, and a pointer-only easter egg on purpose.
 
           It was a `<button aria-label="operator access">`, which announced the

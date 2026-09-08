@@ -71,6 +71,25 @@ export const OPERATOR_NAV: { id: PageId; label: string }[] = [
   { id: "notfound", label: "404" },
   { id: "signin", label: "Account" },
   { id: "admin", label: "Admin" },
+  /*
+   * Share (2026-09-08, client: *"once i log in i cant get back to the share
+   * page to set up a shared folder"*).
+   *
+   * It was not unreachable — the footer clock navigates here, typing `share`
+   * works, and the account page carries a "Share this machine" aside. It was
+   * **undiscoverable**, which for the one page you must visit to set the
+   * machine up is the same thing. The clock deliberately has no accessible
+   * name, no role and no place in the tab order, so it cannot be the standing
+   * route to a page with a job; it stays as the easter egg it was asked to be.
+   *
+   * Here rather than `NAV` for the reason this array exists: `useOperatorRoutes`
+   * cycles `NAV` and Radial's orbit renders it, so a pill there would change
+   * arrow-key paging and the dial for every visitor to add a page no visitor
+   * may see. `machines` is deliberately NOT added beside it — `SharePage` links
+   * straight to it and so does the account page, and two more tabs is how a
+   * seven-pill header becomes a scroller on the phone band.
+   */
+  { id: "share", label: "Share" },
 ];
 
 /**
