@@ -97,8 +97,18 @@ boots SDDM into Plasma **on X11**, `usbcore.autosuspend=-1` is live in `/proc/cm
    `account`/`admin`), and `scripts/check.ts` (a new three-nav reachability gate). **Run
    `npm run check` and look at the page before deploying any of it.**
 
-   **Node is installed on the host now (v20.19.2, npm 9.2.0) but the dependency install is
-   BROKEN**: `npm ci` and `npm install` both exit 0 while extracting every package directory
+   **FIXED 2026-09-08: the dependency install works on this box.** A plain
+   `npm ci --no-audit --no-fund` added 110 packages in 5s, `node_modules/.bin` is populated, and
+   `npm run check` ran all 77 checks green on the same npm 9.2.0 that failed before — so whatever
+   it was, it was not the npm version. Node 20 still draws an `EBADENGINE` warning for
+   `wrangler@4.122.0` (wants Node 22) — and that one is not only a warning:
+   `npx wrangler whoami` **refuses to start** ("Wrangler requires at least Node.js v22.0.0"), so
+   this box can check, typecheck and build but **cannot deploy** until it has Node 22. There are
+   no Cloudflare credentials on it either, and no GitHub credentials, so `git push` fails too. The old note is kept below
+   because the symptom was real and may come back:
+
+   ~~**Node is installed on the host now (v20.19.2, npm 9.2.0) but the dependency install is
+   BROKEN**~~: `npm ci` and `npm install` both exit 0 while extracting every package directory
    EMPTY — `node_modules/esbuild/` has no `bin/`, `node_modules/.bin/` has zero entries, and
    `@esbuild/linux-x64` contains no binary. So `npm run check` dies at `esbuild: not found` and
    nothing on this box can typecheck, build or deploy. Debian trixie's npm 9.2.0 is the suspect
@@ -153,9 +163,19 @@ boots SDDM into Plasma **on X11**, `usbcore.autosuspend=-1` is live in `/proc/cm
 
 ## Needs hardware or a human eye — cannot be done from here
 
-1. **Re-upload the setup bundle.** `launch.bat` changed (audit item 45); `dist-setup/` is rebuilt
-   and its `CHECKSUMS.txt` is current, the published one is not. Downloads editor, existing ids,
-   password at each finish. `docs/DOWNLOADS.md`.
+1. **Publish the setup bundle, and check whether it was ever published at all.** `launch.bat`
+   changed (audit item 45); `dist-setup/` is rebuilt and its `CHECKSUMS.txt` is current, the
+   published one is not. Downloads editor, existing ids, password at each finish.
+   `docs/DOWNLOADS.md`.
+
+   **2026-09-08: no setup page is publicly listed.** `GET /api/downloads/pages` unauthenticated
+   returns exactly one page — slug `downloads`, title "Scripts", the Windows cleanup tool — with
+   **zero files on it**. That listing withholds `unlisted`, `granted` and draft pages
+   (`worker/downloadPages.ts:357`), so this is not proof the bundle is absent; it is proof that a
+   customer standing on `/share` cannot reach it. **`/share` now links to `/downloads`**, so the
+   setup page has to be `public` and `live` for that link to lead anywhere. If it should be
+   unlisted instead, the share page needs the address hardcoded rather than the index — say which,
+   and it is a one-line change in `SetupChecklist`.
 2. **On a real Pi**: does Raspberry Pi OS add its own archive to unattended-upgrades' origins? If
    so Chromium is replaced under the running kiosk, which `pi-setup.sh` says cannot happen.
 3. **`scripts/macos-share-setup.sh` has never run on a Mac.** `choose_folders` exists now; only the

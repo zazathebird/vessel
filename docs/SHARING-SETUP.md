@@ -34,8 +34,15 @@ points at `pi-setup.sh`, which does a far more thorough job on exactly that hard
 bash scripts/setup-bundle.sh          # writes dist-setup/
 ```
 
-Then upload through the downloads editor — `docs/DOWNLOADS.md` is that runbook. Three things about
+Then upload through the downloads editor — `docs/DOWNLOADS.md` is that runbook. Four things about
 this particular page:
+
+- **It must be `public` and `live`, because `/share` links to the downloads index rather than to a
+  slug** (2026-09-08). The four steps a person follows live on `/share` itself — the client's call,
+  and the right one: that is where somebody is standing when they need them. Step 1 sends them to
+  `/downloads` for the bytes, and a page address is a D1 row somebody types, so a hardcoded slug
+  would 404 until it happened to be typed the same way. An `unlisted` page is withheld from that
+  index (`worker/downloadPages.ts:357`) and the link would lead to a list the setup page is not in.
 
 - **Publish the `.txt` beside every script.** It is byte-identical, and the point is that what a
   cautious person reads is what runs. The page should say out loud that reading it, or pasting it into

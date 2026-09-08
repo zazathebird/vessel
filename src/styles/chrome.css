@@ -2741,6 +2741,37 @@
   color: var(--muted);
 }
 
+/* The four steps above the setup-code box (SPEC-SHARING.md §4).
+
+   A real <ol> with the browser's own markers, not a flex list with numbers
+   drawn in CSS: these are ordered instructions, `list-item` is what makes a
+   screen reader say so, and a counter in a pseudo-element is decoration that
+   announces nothing.
+
+   --muted, not --faint: instructions are content, and --faint measures
+   2.78-4.09:1 on the 25 palettes. The lead of each step is --fg so the four
+   verbs can be scanned without reading the sentences. */
+.v-setup-steps {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.v-setup-steps strong {
+  color: var(--fg);
+  font-weight: var(--type-body-weight);
+}
+
+.v-setup-steps code {
+  font-family: var(--font-mono);
+  color: var(--fg);
+}
+
 /* The setup-script checklist (SPEC-SHARING.md §4). Built on .v-drive-row's
    shape deliberately — it is the same kind of thing one step earlier, and a
    second visual idiom for "a folder and a button" would be one too many.

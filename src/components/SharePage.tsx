@@ -564,7 +564,7 @@ function SetupChecklist({
   drives: DriveInfo[];
   onAdd: (label: string, handle: FileSystemDirectoryHandle) => Promise<void>;
 }) {
-  const { say } = useConfig();
+  const { say, go } = useConfig();
   const [plan, setPlan] = useState<SetupPlan | null | undefined>(undefined);
   const [paste, setPaste] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
@@ -621,7 +621,50 @@ function SetupChecklist({
   if (plan === null) {
     return (
       <form className="v-account-form" onSubmit={applyCode}>
-        <h3 className="v-field-label">Ran the setup script?</h3>
+        <h3 className="v-field-label">Sharing a folder, in four steps</h3>
+
+        {/*
+          The steps exist because the paste box on its own asked a question the
+          page could not answer: "Ran the setup script?" with nothing anywhere
+          saying where a setup script comes from. The client hit it — *"it asks
+          if i ran the script but doesnt offer the script to run"* — and chose
+          the share page over the downloads page for the instructions, because
+          this is where somebody is standing when they need them.
+
+          The bytes still come from the downloads catalogue, which is where
+          every program on this site is served from and where the safety block,
+          the readable .txt copies and CHECKSUMS.txt live. **The link is to the
+          index rather than to a slug**: page addresses are D1 rows the operator
+          types, so a hardcoded one would 404 until it happened to be typed the
+          same way, and the index cannot.
+
+          Step 4 is not a formality either — it is `showDirectoryPicker()`'s
+          human gesture, the property this whole feature is built on, so it is
+          stated as a step rather than apologised for.
+        */}
+        <ol className="v-setup-steps">
+          <li>
+            <strong>Get the setup script</strong> for this computer — Windows, Mac or Linux — from
+            the{" "}
+            <button type="button" className="v-account-link" onClick={() => go("downloads")}>
+              downloads page
+            </button>
+            .
+          </li>
+          <li>
+            <strong>Run it.</strong> It asks which folders you want to share and prints a code
+            starting <code>VS1.</code> — on your clipboard, and in a file called setup-code.txt.
+          </li>
+          <li>
+            <strong>Paste that code below</strong> to turn the folders you chose into a labelled
+            list.
+          </li>
+          <li>
+            <strong>Pick each folder</strong> when this page asks. A browser only takes a folder
+            from a real click, which is why nothing had to be installed.
+          </li>
+        </ol>
+
         <label className="v-field">
           <span className="v-field-label">Setup code</span>
           <input
@@ -646,6 +689,17 @@ function SetupChecklist({
             {error}
           </p>
         ) : null}
+
+        {/*
+          The way out, stated where the steps are rather than left to be
+          discovered: the script saves a trip through the picker per folder and
+          nothing else, so somebody sharing one folder should not be sent to a
+          downloads page to fetch a program first.
+        */}
+        <p className="v-account-note">
+          No script needed for one or two folders — <strong>Pick a folder to share</strong>, below,
+          does the same job one at a time.
+        </p>
       </form>
     );
   }
