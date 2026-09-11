@@ -1,0 +1,68 @@
+#!/bin/bash
+# Set up xrdp on Debian 13 / KDE Plasma, reachable ONLY over Tailscale or the LAN.
+set -euo pipefail
+
+LAN_CIDR="<your-lan-cidr>"   # e.g. 192.168.0.0/24
+TS_IFACE="tailscale0"
+RDP_USER="user"
+
+echo "### 0. Current ufw state (before changes)"
+ufw status verbose | sed 's/^/    /'
+echo
+
+echo "### 1. Firewall FIRST, so port 3389 is never briefly world-open"
+# Order matters in ufw: the allows are matched before the catch-all deny.
+ufw allow in on "$TS_IFACE" to any port 3389 proto tcp comment 'RDP over Tailscale'
+ufw allow from "$LAN_CIDR" to any port 3389 proto tcp comment 'RDP over LAN'
+ufw deny 3389/tcp comment 'RDP: block everything else'
+echo
+
+echo "### 2. Install xrdp + xorgxrdp"
+apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y xrdp xorgxrdp
+echo
+
+echo "### 3. Let xrdp read the TLS key"
+adduser xrdp ssl-cert || true
+echo
+
+echo "### 4. Make RDP logins land in KDE Plasma (X11)"
+install -o "$RDP_USER" -g "$RDP_USER" -m 700 /dev/stdin "/home/$RDP_USER/.xsession" <<'XS'
+#!/bin/sh
+exec /usr/bin/startplasma-x11
+XS
+echo "    wrote /home/$RDP_USER/.xsession"
+echo
+
+echo "### 5. Silence the colord/networkmanager polkit nags in the RDP session"
+cat > /etc/polkit-1/rules.d/02-allow-colord.rules <<'PK'
+polkit.addRule(function(action, subject) {
+    if ((action.id == "org.freedesktop.color-manager.create-device" ||
+         action.id == "org.freedesktop.color-manager.create-profile" ||
+         action.id == "org.freedesktop.color-manager.delete-device" ||
+         action.id == "org.freedesktop.color-manager.delete-profile" ||
+         action.id == "org.freedesktop.color-manager.modify-device" ||
+         action.id == "org.freedesktop.color-manager.modify-profile") &&
+        subject.isInGroup("users")) {
+        return polkit.Result.YES;
+    }
+});
+PK
+echo
+
+echo "### 6. Enable at boot + start now"
+systemctl enable --now xrdp xrdp-sesman
+systemctl restart xrdp
+echo
+
+echo "### 7. Verify"
+echo "--- services ---"
+systemctl is-enabled xrdp xrdp-sesman
+systemctl is-active  xrdp xrdp-sesman
+echo "--- listening ---"
+ss -tlnp | grep 3389 || echo "    !! nothing on 3389"
+echo "--- ufw ---"
+ufw status verbose | sed 's/^/    /'
+echo
+echo "DONE. Connect from the laptop to:  <TAILSCALE-IP>  (Tailscale)"
+echo "                              or:  <LAN-IP>  (LAN)"

@@ -86,7 +86,20 @@ boots SDDM into Plasma **on X11**, `usbcore.autosuspend=-1` is live in `/proc/cm
    wifi."* So Wi-Fi is the state to keep working, not a fault to fix — **do not write anything
    that assumes a wired link**, and do not disable the wireless when the cable eventually goes
    in. Re-run `--verify` after any move; the kiosk reports the machine offline within seconds of
-   losing the link, so a move shows up as "offline" on the site rather than as an error here.
+   losing the link, so a move shows up as "offline" on the site rather than as an error here. **Update 2026-09-11: the cable went in.** `eno1` is up on
+   `<LAN-IP>` and the Wi-Fi adapter `wlx<MAC>` is `DOWN`. Wi-Fi must still keep
+   working per the above, but the LAN firewall rules written for remote access assume the wired
+   `<LAN-CIDR>` and would need a second rule if it ever goes back to wireless.
+
+8. **Remote access is broken until someone runs the fix** — `docs/REMOTE-ACCESS.md` is the full
+   record. xrdp is installed but `disabled`; `freerdp-shadow-cli3` held 3389 on 2026-09-11 but is
+   not a systemd unit, so **after the next reboot there is no RDP server at all** and SSH on 22 is
+   the only way in. Two halves, and they are different tools: `scripts/rdp-separate-user.sh` plus
+   `systemctl enable --now xrdp xrdp-sesman` gives a *second* desktop that survives reboot;
+   shadow-over-RDP or `krfb` gives the *live kiosk screen* and still needs a user unit and
+   `loginctl enable-linger user` to persist. `/home/user/.xsession` is still present and is still
+   the black-screen bug — the fix script removes it. Do not reach for GNOME/GDM; it would break
+   the kiosk's autologin.
 
 ## Open, raised by the client 2026-09-08
 

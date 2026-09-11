@@ -265,13 +265,21 @@ restart it, which is the point.
 To get it out of your way without closing it, put it on another virtual desktop — Ctrl+F2, or
 Ctrl+Alt+Right. **Do not** disable the service.
 
-**To see that screen remotely, use `krfb`**, which shares the running session. An RDP server
-starts a *second* session and you would never see the kiosk window at all.
+**To see that screen remotely you need a server that shares the running session**, not one
+that starts its own. `krfb` does this over VNC; `freerdp-shadow-cli3` does it over RDP, which
+is easier from a Windows laptop. **xrdp does not** — it builds a *second* session, and you
+would never see the kiosk window at all.
 
 ```sh
 sudo apt install krfb
 sudo ufw allow from 192.168.0.0/16 to any port 5900 proto tcp   # LAN only, never forward it
 ```
+
+Wanting a desktop of your own on this box is the other half of the problem, and xrdp is the
+right tool for *that* — but not as `user`, whose Plasma session the kiosk already occupies.
+**See `docs/REMOTE-ACCESS.md`**, which has the black-screen diagnosis, the current state of
+the host (as of 2026-09-11 there is no working RDP server after a reboot), and why GNOME/GDM
+must not be used here.
 
 ---
 

@@ -479,9 +479,12 @@ After the reboot:
     far more reliable than a script driving plasmashell's scripting API.
   - Kvantum (installed) is the theme engine for anything Breeze cannot reach:
     run 'kvantummanager' if you want a look Plasma's own themes do not offer.
-  - Remoting in: use krfb, which shares the session already running. An RDP
-    server would start a SECOND session and you would never see the kiosk.
+  - Remoting in: to see the kiosk screen you need a server that SHARES the
+    running session - krfb over VNC, or freerdp-shadow-cli3 over RDP. xrdp
+    starts a SECOND session and you would never see the kiosk.
         sudo apt install krfb
         sudo ufw allow from 192.168.0.0/16 to any port 5900 proto tcp
     LAN only. Never forward 5900.
+    For a desktop of your own instead, see docs/REMOTE-ACCESS.md - xrdp works
+    but only as a separate user, never as 'user'.
 EOF

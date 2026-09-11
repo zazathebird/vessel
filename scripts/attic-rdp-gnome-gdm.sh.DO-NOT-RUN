@@ -1,0 +1,97 @@
+#!/bin/bash
+# Switch to GNOME + enable GNOME Remote Desktop "Remote Login" (headless, survives reboot).
+# Restricted to Tailscale + LAN. Does NOT enable autologin.
+set -euo pipefail
+
+LAN_CIDR="<your-lan-cidr>"   # e.g. 192.168.0.0/24
+TS_IFACE="tailscale0"
+GRD_DIR="/var/lib/gnome-remote-desktop"
+
+echo "### 0. ufw state before"
+ufw status verbose | sed 's/^/    /'
+echo
+
+echo "### 1. Firewall first: 3389 = remote login, 3390 = live-session sharing"
+for P in 3389 3390; do
+  ufw allow in on "$TS_IFACE" to any port $P proto tcp comment "RDP $P over Tailscale"
+  ufw allow from "$LAN_CIDR" to any port $P proto tcp comment "RDP $P over LAN"
+  ufw deny $P/tcp comment "RDP $P: block everything else"
+done
+echo
+
+echo "### 2. Ubuntu-style look on top of stock GNOME"
+apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y \
+  yaru-theme-gtk yaru-theme-icon yaru-theme-gnome-shell \
+  gnome-shell-extension-dashtodock gnome-shell-extension-manager \
+  gnome-tweaks || echo "    (some theme pkgs unavailable; non-fatal, look can be tuned later)"
+echo
+
+echo "### 3. Display manager SDDM -> GDM (required by Remote Login; autologin stays OFF)"
+echo "/usr/sbin/gdm3" > /etc/X11/default-display-manager
+systemctl disable sddm
+systemctl enable gdm3
+echo "    switched. Revert any time with: sudo dpkg-reconfigure sddm"
+echo
+
+echo "### 4. TLS cert for the system daemon"
+if [ ! -f "$GRD_DIR/tls.crt" ]; then
+  openssl req -new -newkey rsa:4096 -days 3650 -nodes -x509 \
+    -subj "/CN=debian" \
+    -out "$GRD_DIR/tls.crt" -keyout "$GRD_DIR/tls.key" 2>/dev/null
+  chown gnome-remote-desktop:gnome-remote-desktop "$GRD_DIR/tls.crt" "$GRD_DIR/tls.key"
+  chmod 600 "$GRD_DIR/tls.key"
+  echo "    generated $GRD_DIR/tls.{crt,key}"
+else
+  echo "    cert already present, leaving alone"
+fi
+echo
+
+echo "### 5. Enable Remote Login (headless system daemon on 3389)"
+grdctl --system rdp set-tls-cert "$GRD_DIR/tls.crt"
+grdctl --system rdp set-tls-key  "$GRD_DIR/tls.key"
+grdctl --system rdp set-port 3389
+grdctl --system rdp disable-port-negotiation
+grdctl --system rdp enable
+systemctl enable --now gnome-remote-desktop.service
+echo
+
+echo "### 5b. Server hygiene: no desktop file-indexing on shares"
+# GNOME's indexer would otherwise crawl large shares: pure disk/CPU churn on a fileserver.
+mkdir -p /etc/xdg/autostart
+for d in tracker-miner-fs-3 tracker-miner-fs-control-3 tracker-extract-3 \
+         localsearch-3 localsearch-control-3 localsearch-extract-3; do
+  if [ -f "/etc/xdg/autostart/$d.desktop" ]; then
+    printf '[Desktop Entry]\nType=Application\nName=%s\nHidden=true\nX-GNOME-Autostart-enabled=false\n' "$d" \
+      > "/etc/xdg/autostart/$d.desktop.disabled-tmp"
+    mv "/etc/xdg/autostart/$d.desktop.disabled-tmp" "/etc/xdg/autostart/$d.desktop"
+    echo "    masked autostart: $d"
+  fi
+done
+# Belt and braces: tell the indexer to index nothing even if it does start.
+mkdir -p /etc/dconf/db/local.d
+cat > /etc/dconf/db/local.d/00-no-indexing <<'DC'
+[org/freedesktop/Tracker3/Miner/Files]
+index-recursive-directories=@as []
+index-single-directories=@as []
+enable-monitors=false
+crawling-interval=-2
+DC
+mkdir -p /etc/dconf/profile
+grep -qs '^user-db:user' /etc/dconf/profile/user 2>/dev/null || printf 'user-db:user\nsystem-db:local\n' > /etc/dconf/profile/user
+dconf update || true
+echo
+
+echo "### 6. Verify"
+echo "--- grdctl --system status ---"
+grdctl --system status || true
+echo "--- service ---"
+systemctl is-enabled gnome-remote-desktop.service || true
+systemctl is-active  gnome-remote-desktop.service || true
+systemctl status gnome-remote-desktop.service --no-pager -l | tail -20 || true
+echo "--- listening ---"
+ss -tlnp | grep -E '3389|3390' || echo "    !! nothing on 3389/3390 yet (may need the reboot into GDM)"
+echo "--- ufw ---"
+ufw status verbose | sed 's/^/    /'
+echo
+echo "REBOOT needed to land in GDM + GNOME. Pick 'GNOME' (Wayland) at the login screen."
