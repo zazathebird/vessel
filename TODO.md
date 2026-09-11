@@ -102,10 +102,36 @@ boots SDDM into Plasma **on X11**, `usbcore.autosuspend=-1` is live in `/proc/cm
    `npm run check` ran all 77 checks green on the same npm 9.2.0 that failed before — so whatever
    it was, it was not the npm version. Node 20 still draws an `EBADENGINE` warning for
    `wrangler@4.122.0` (wants Node 22) — and that one is not only a warning:
-   `npx wrangler whoami` **refuses to start** ("Wrangler requires at least Node.js v22.0.0"), so
-   this box can check, typecheck and build but **cannot deploy** until it has Node 22. There are
-   no Cloudflare credentials on it either, and no GitHub credentials, so `git push` fails too. The old note is kept below
-   because the symptom was real and may come back:
+   `npx wrangler whoami` **refused to start** ("Wrangler requires at least Node.js v22.0.0").
+
+   **Node 22 is installed now (2026-09-10), in user space.** `~/.local/lib/nodejs/node-v22.23.2-linux-x64`,
+   with `current` symlinked beside it and `node`/`npm`/`npx`/`corepack` linked into `~/.local/bin`,
+   which `.profile` already puts on PATH. Debian's own `nodejs` package is untouched, so nothing
+   system-wide changed and removing the two directories reverts it. The tarball was checksummed
+   against nodejs.org's published SHASUMS256 before unpacking. `npm ci` then added 108 packages on
+   npm 10.9.8 and `npm run check` is green at 77; `wrangler 4.122.0` starts.
+
+   **What this box still has NO credentials for, and what that blocks:**
+   - **Cloudflare** — `wrangler whoami` says *not authenticated*; there is no `~/.config/.wrangler`
+     token and no `CLOUDFLARE_API_TOKEN`. So **nothing can be deployed from here.** `wrangler login`
+     works as far as opening the dashboard OAuth page in Firefox on `:0`, but its window is roughly
+     **two minutes** and four attempts expired unclicked. Note the kiosk is fullscreen Chromium on
+     that display, so `firefox --new-tab` opens *behind* it — use `firefox --new-window`, and expect
+     to alt-tab. **Do not open anything in the kiosk's own Chromium**: that profile is the pairing,
+     and a new tab takes over the window that is holding the folder handles.
+   - **GitHub** — no `gh`, no credential helper, no `~/.git-credentials`. `git push` over HTTPS dies
+     with *"could not read Username"* because a non-interactive shell has nowhere to prompt.
+     **An ed25519 key was generated for this host on 2026-09-08** at `~/.ssh/id_ed25519`
+     (`ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFI5Xt0LfDVlig346cZ/bG58bsvQcZdU2WeMGOSC3UJ8
+     thinkcentre-host-20260908`). It is **not yet on the account** — `ssh -T git@github.com` answers
+     *Permission denied (publickey)*. Paste it at github.com/settings/ssh/new, then
+     `git remote set-url origin git@github.com:zazathebird/vessel.git` and the push needs nothing
+     typed ever again on this box.
+
+   **Two commits are unpushed** as of 2026-09-11: `ae2ef52` (the host blanking fix) and the
+   share-page steps commit. Both are green under `npm run check`. Nothing is deployed.
+
+   The old note is kept below because the symptom was real and may come back:
 
    ~~**Node is installed on the host now (v20.19.2, npm 9.2.0) but the dependency install is
    BROKEN**~~: `npm ci` and `npm install` both exit 0 while extracting every package directory
