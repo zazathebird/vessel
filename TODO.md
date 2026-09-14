@@ -5,10 +5,11 @@ they are, `docs/DECISIONS.md` records what was decided when, and `docs/TODO-ARCH
 dated session logs this file used to carry (moved out 2026-09-07 — read it for the reasoning
 behind any item here, by date).
 
-State on 2026-09-14: `npm run check` **80** green, `npm run test:auth` **407**. Live is Worker
-`38ceae8d` (rollback `df6dba2a`); `main` is at `2315676`, pushed, and **is ahead of what is
-deployed** — the commits since `186468d` are documentation, gates and one security fix, none of
-them deployed yet. Four security passes are recorded in `docs/SECURITY-AUDIT.md` (items 1–49);
+State on 2026-09-14: `npm run check` **82** green (80 plus the `--faint` allow-list and the
+byte-ceiling gate), `npm run test:auth` **407**. Live is Worker `38ceae8d` (rollback `df6dba2a`);
+`main` is at `be5da66`, **not yet pushed**, and **is ahead of what is deployed** — the commits
+since `186468d` are documentation, gates, one security fix and the audit's mechanical group, none
+of them deployed yet. Four security passes are recorded in `docs/SECURITY-AUDIT.md` (items 1–49);
 nothing in it is open except what is listed below.
 
 **The desktop of the ThinkCentre is a separate repository**, `../debian-desktop`. The boundary is
