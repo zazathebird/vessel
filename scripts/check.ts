@@ -22,6 +22,7 @@
 
 import { execFileSync } from "node:child_process";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -5699,6 +5700,135 @@ check("both host scripts write the Chromium managed policy, and parse", () => {
   return `2 host scripts, ${seen} policy keys, both parse`;
 });
 
+/*
+ * The desktop-looks project is a SEPARATE repository (2026-09-14), checked out
+ * beside this one as `../debian`. The split is by authority: every script that can
+ * take the file host offline — `plasma-dark-setup.sh` above all, which pins the X11
+ * session the kiosk silently depends on — stays HERE, gated; the switcher, the
+ * screenshots and the looks' documentation, none of which touch anything outside
+ * `$HOME`, live there. `../debian/CLAUDE.md` carries the boundary.
+ *
+ * These two gates stay on this side because the thing that breaks them is an edit
+ * to the BUILDER, which lives here and fires the check hook on every change. When
+ * the sibling is not checked out they name themselves under "could not be run"
+ * rather than passing quietly — that is the 2026-09-03 lesson, and a cross-repo
+ * gate is exactly where it would be easiest to forget.
+ */
+const DESKTOP_REPO = "../debian";
+const desktopCheckedOut = existsSync(`${DESKTOP_REPO}/look-switcher.sh`);
+
+/*
+ * `LOOK_FILES` is two copies of one list — one in the builder here, one in the
+ * switcher there. If they drift, a look saved by one restores incompletely under
+ * the other and the symptom is a panel that comes back wearing the wrong colours:
+ * nothing errors, and you find out by looking at a screen that has no monitor on it
+ * and is usually blanked.
+ */
+check("the two LOOK_FILES copies agree", () => {
+  if (!desktopCheckedOut) {
+    SKIPPED.push(`the LOOK_FILES parity check — ${DESKTOP_REPO} is not checked out beside this repo`);
+    return `NOT RUN — no ${DESKTOP_REPO}, named under 'could not be run' below`;
+  }
+  const slice = (file: string) => {
+    const text = readFileSync(file, "utf8");
+    const start = text.indexOf("LOOK_FILES=(");
+    must(start >= 0, `${file} has no LOOK_FILES`);
+    const end = text.indexOf(")", start);
+    must(end > start, `${file}'s LOOK_FILES is unterminated`);
+    return text
+      .slice(start + "LOOK_FILES=(".length, end)
+      .split(/\s+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  };
+  const builder = slice("scripts/plasma-dark-setup.sh");
+  const switcher = slice(`${DESKTOP_REPO}/look-switcher.sh`);
+  must(builder.length >= 8, `only ${builder.length} files in the builder's list`);
+  must(
+    builder.join("\n") === switcher.join("\n"),
+    `the copies have drifted:\n  builder:  ${builder.join(" ")}\n  switcher: ${switcher.join(" ")}`,
+  );
+  return `${builder.length} files, identical in both repositories`;
+});
+
+/*
+ * A look name is written FOUR times in the builder — two validator arms, the error
+ * message, the accent table — and again as preview filenames in the other
+ * repository. The validator is a closed set precisely because the name reaches a
+ * filename and a qdbus payload, so a look present in one place and absent from
+ * another is either a look you cannot ask for or a name that no longer exists. The
+ * three in-repo copies are always checked; the previews only when the sibling is
+ * there. `ubuntu` is the one look with no accent of its own (it keeps the default)
+ * and no previews (it is "whatever was already there").
+ */
+check("the desktop looks are one closed set", () => {
+  const text = readFileSync("scripts/plasma-dark-setup.sh", "utf8");
+
+  const caseStart = text.indexOf('case "${LOOK}" in');
+  must(caseStart > 0, "the builder no longer validates --look against a closed set");
+  const arms = text.slice(caseStart, text.indexOf("esac", caseStart));
+  const accepted = new Set(
+    arms
+      .split("\n")
+      .filter((line) => /^\s+[a-z0-9|-]+\)\s*;;\s*$/.test(line))
+      .flatMap((line) => line.trim().replace(/\).*$/, "").split("|")),
+  );
+  must(accepted.size >= 18, `the validator accepts only ${accepted.size} looks`);
+
+  const message = /--look must be one of: ([a-z0-9 -]+) \(got:/.exec(text);
+  must(message !== null, "the --look error message no longer lists the looks");
+  const listed = new Set(message![1].trim().split(/\s+/));
+  const validatorOnly = [...accepted].filter((l) => !listed.has(l));
+  const messageOnly = [...listed].filter((l) => !accepted.has(l));
+  must(
+    validatorOnly.length === 0 && messageOnly.length === 0,
+    `the validator and its error message disagree — validator only: ${validatorOnly.join(" ") || "none"}; message only: ${messageOnly.join(" ") || "none"}`,
+  );
+
+  const accentStart = text.indexOf("if [ \"${ACCENT_SET}\" -eq 0 ]; then");
+  must(accentStart > 0, "the accent table is gone");
+  const accented = new Set(
+    text
+      .slice(accentStart, text.indexOf("esac", accentStart))
+      .split("\n")
+      .filter((line) => /^\s+[a-z0-9-]+\)\s+ACCENT=/.test(line))
+      .map((line) => line.trim().replace(/\).*$/, "")),
+  );
+  const strayAccent = [...accented].filter((l) => !accepted.has(l));
+  must(strayAccent.length === 0, `the accent table names looks the validator refuses: ${strayAccent.join(" ")}`);
+
+  if (!desktopCheckedOut) {
+    SKIPPED.push(`the look previews — ${DESKTOP_REPO} is not checked out beside this repo`);
+    return `${accepted.size} looks, ${accented.size} accents agree; previews NOT checked (no ${DESKTOP_REPO})`;
+  }
+  const previews = new Set(
+    readdirSync(`${DESKTOP_REPO}/previews`)
+      .filter((f) => /-\d+\.png$/.test(f))
+      .map((f) => f.replace(/-\d+\.png$/, "")),
+  );
+  const orphans = [...previews].filter((l) => !accepted.has(l));
+  must(orphans.length === 0, `previews name looks that do not exist: ${orphans.join(" ")}`);
+  return `${accepted.size} looks, ${accented.size} accents, ${previews.size} photographed, all agree`;
+});
+
+/*
+ * `bash -n` over the host scripts. Before 2026-09-13 `debian-basics.sh`,
+ * `plasma-dark-setup.sh` and `claude-code-setup.sh` had no gate of any kind — not
+ * even this one — and a heredoc that swallows the rest of the file is exactly the
+ * failure this shape of script invites. The sibling repository parses its own two.
+ */
+check("every host script parses", () => {
+  const files = [
+    "scripts/debian-basics.sh",
+    "scripts/plasma-dark-setup.sh",
+    "scripts/claude-code-setup.sh",
+    "scripts/linux-drive-report.sh",
+    "scripts/06-wifi-tools.sh",
+  ];
+  for (const file of files) execFileSync("bash", ["-n", file], { stdio: "pipe" });
+  return `${files.length} scripts parse`;
+});
+
 const UNCHECKABLE = [
   "whether the fight reads well — it cannot be watched here (rAF parks)",
   "whether any layout is beautiful, or the copy sounds right",
@@ -5708,6 +5838,11 @@ const UNCHECKABLE = [
   // orphaned. It cannot prove the mark is the right one, or that two of them are
   // not the same idea drawn twice — and at 18px that is the whole question.
   "whether a category's icon reads as that category, and whether any two are alike",
+  // The four desktop gates prove the look NAMES agree everywhere and that every
+  // script parses. Nothing here can open a screenshot. The machine has no monitor
+  // and its screen is usually DPMS-blanked, so the only answer is `capture-look.sh`
+  // and a pair of eyes on `desktop/previews/`.
+  "whether a desktop look resembles the distribution it imitates — and whether the host is actually serving files",
 ];
 
 // ---- report ----------------------------------------------------------------
