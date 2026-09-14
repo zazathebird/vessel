@@ -22,7 +22,7 @@ each was found; that is history, and history lives in `docs/DECISIONS.md`.
 | `docs/SHARING-SETUP.md` | The setup-script runbook — publish them, and what is known not to work |
 | `docs/pi-sharing-host.md`, `docs/thinkcentre-sharing-host.md` | Phase 2's always-on host |
 | `docs/HOST-BUILD-LOG.md` | The ThinkCentre as actually built (2026-09-08). **Newer than the guide** |
-| `../debian/BLUEPRINT.md` | **A separate repository** beside this one — the host's desktop, the eighteen looks, and §3 is the boundary |
+| `../debian-desktop/BLUEPRINT.md` | **A separate repository** beside this one — the host's desktop, the eighteen looks, and §3 is the boundary |
 | `design/GUIDE-SUBDOMAINS.md` | How to add a page; what per-account subdomains would break |
 
 **Load every skill that applies before starting, and say which ones** — a skill used silently is
@@ -1238,7 +1238,7 @@ than conservative.
 
 ## The sharing host — the invariants
 
-**That machine's DESKTOP is a separate repository, `../debian`, and the boundary is not
+**That machine's DESKTOP is a separate repository, `../debian-desktop`, and the boundary is not
 "website versus desktop"** (2026-09-14). It is one question: **can this take the file host
 offline?** Every privileged script stays here in `scripts/` — `plasma-dark-setup.sh` above
 all, which builds the eighteen desktop looks *and* pins the X11 session that the kiosk's
@@ -1248,21 +1248,21 @@ documentation, none of which touch anything outside `$HOME`, live over there.
 **`plasma-dark-setup.sh` must never move into that repository.** It will look like it
 belongs there — it is the look builder and the looks are there — and moving it takes the
 X11 pin out of the only gated repository in the estate, to somewhere a change made for
-looks can take file sharing down. `../debian/BLUEPRINT.md` §3 carries the argument and the
+looks can take file sharing down. `../debian-desktop/BLUEPRINT.md` §3 carries the argument and the
 revisit-if: only when the kiosk launcher stops depending on X11.
 
 **Two gates here span both repositories**, on this side deliberately, because what breaks
 them is an edit to the builder — which lives here and fires the check hook on every change
-to `scripts/`: `LOOK_FILES` parity between the builder and `../debian/look-switcher.sh`,
+to `scripts/`: `LOOK_FILES` parity between the builder and `../debian-desktop/look-switcher.sh`,
 and the eighteen look names agreeing across both validator arms, the error message, the
-accent table and the preview filenames. **When `../debian` is not checked out beside this
+accent table and the preview filenames. **When `../debian-desktop` is not checked out beside this
 repo they name themselves under "could not be run"** rather than passing quietly. A third
 gate, `bash -n` over the five host scripts, closed a gap where `debian-basics.sh`,
 `plasma-dark-setup.sh` and `claude-code-setup.sh` had no gate of any kind.
 
 **The machine's identity is in neither repository.** This one is public; the scripts and
 the procedure are meant to be read, and the LAN address, the Tailscale address, the host
-alias and the account details are not. They live in `../debian/LOCAL.md`, git-ignored and
+alias and the account details are not. They live in `../debian-desktop/LOCAL.md`, git-ignored and
 gated by that repository's `check.sh`.
 
 Two setup scripts, and **each hard-refuses on the other's hardware**: `scripts/pi-setup.sh` on

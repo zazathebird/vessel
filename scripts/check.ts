@@ -5702,7 +5702,7 @@ check("both host scripts write the Chromium managed policy, and parse", () => {
 
 /*
  * The desktop-looks project is a SEPARATE repository (2026-09-14), checked out
- * beside this one as `../debian`. The split is by authority: every script that can
+ * beside this one as `../debian-desktop`. The split is by authority: every script that can
  * take the file host offline — `plasma-dark-setup.sh` above all, which pins the X11
  * session the kiosk silently depends on — stays HERE, gated; the switcher, the
  * screenshots and the looks' documentation, none of which touch anything outside
@@ -5714,8 +5714,18 @@ check("both host scripts write the Chromium managed policy, and parse", () => {
  * rather than passing quietly — that is the 2026-09-03 lesson, and a cross-repo
  * gate is exactly where it would be easiest to forget.
  */
-const DESKTOP_REPO = "../debian";
+/*
+ * The sibling is `debian-desktop`; `debian` was its name for a few hours on
+ * 2026-09-14 and is accepted so an older checkout beside this one still gates
+ * rather than silently skipping. Resolved by looking for the switcher itself, not
+ * for the directory — a directory can exist and be empty, and "the folder is
+ * there" is not the question either gate is asking.
+ */
+const DESKTOP_REPO_CANDIDATES = ["../debian-desktop", "../debian"];
+const DESKTOP_REPO =
+  DESKTOP_REPO_CANDIDATES.find((dir) => existsSync(`${dir}/look-switcher.sh`)) ?? DESKTOP_REPO_CANDIDATES[0];
 const desktopCheckedOut = existsSync(`${DESKTOP_REPO}/look-switcher.sh`);
+const DESKTOP_ABSENT = `neither ${DESKTOP_REPO_CANDIDATES.join(" nor ")} is checked out beside this repo`;
 
 /*
  * `LOOK_FILES` is two copies of one list — one in the builder here, one in the
@@ -5726,8 +5736,8 @@ const desktopCheckedOut = existsSync(`${DESKTOP_REPO}/look-switcher.sh`);
  */
 check("the two LOOK_FILES copies agree", () => {
   if (!desktopCheckedOut) {
-    SKIPPED.push(`the LOOK_FILES parity check — ${DESKTOP_REPO} is not checked out beside this repo`);
-    return `NOT RUN — no ${DESKTOP_REPO}, named under 'could not be run' below`;
+    SKIPPED.push(`the LOOK_FILES parity check — ${DESKTOP_ABSENT}`);
+    return `NOT RUN — ${DESKTOP_ABSENT}, named under 'could not be run' below`;
   }
   const slice = (file: string) => {
     const text = readFileSync(file, "utf8");
@@ -5798,8 +5808,8 @@ check("the desktop looks are one closed set", () => {
   must(strayAccent.length === 0, `the accent table names looks the validator refuses: ${strayAccent.join(" ")}`);
 
   if (!desktopCheckedOut) {
-    SKIPPED.push(`the look previews — ${DESKTOP_REPO} is not checked out beside this repo`);
-    return `${accepted.size} looks, ${accented.size} accents agree; previews NOT checked (no ${DESKTOP_REPO})`;
+    SKIPPED.push(`the look previews — ${DESKTOP_ABSENT}`);
+    return `${accepted.size} looks, ${accented.size} accents agree; previews NOT checked (${DESKTOP_ABSENT})`;
   }
   const previews = new Set(
     readdirSync(`${DESKTOP_REPO}/previews`)
