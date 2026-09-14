@@ -5660,12 +5660,92 @@ check("the browsing tab pins the agent key: first use pins, a change is refused 
   const pinSave = src.indexOf("shareStore.savePin(");
   must(open > 0 && dial > open && pinRead > open && pinRead < dial, "the pin is not consulted before the socket is dialled");
   must(pinSave > dial, "the pin is saved before the agent has proven its key");
-  must(/if \(verdict === "changed"\) throw new AgentKeyChanged/.test(src), "a changed key is not refused");
+  must(
+    /if \(verdict === "changed" && !acceptNewKey\) throw new AgentKeyChanged/.test(src),
+    "a changed key is not refused, or the accept flag no longer guards the refusal",
+  );
+  /*
+   * The accept flag suppresses the REFUSAL and nothing else (2026-09-14). If it
+   * ever short-circuits the dial, "I re-keyed it" would pin an unverified key —
+   * which is the bug this whole shape was rewritten to remove. `dial()` must be
+   * unconditional, and the write must cover the accepted re-key as well as the
+   * first use, or an accepted key is verified and then not remembered.
+   */
+  must(
+    /const conn = await DriveConnection\.dial\(machine, grantKey\);/.test(src),
+    "the dial is no longer unconditional — an accepted re-key must still be verified",
+  );
+  must(
+    /if \(verdict !== "same"\) await shareStore\.savePin\(/.test(src),
+    "the pin is not written for an accepted re-key, so the owner is asked again every time",
+  );
+  /*
+   * WHO MAY WRITE A PIN (2026-09-14, and the reason this gate grew). The three
+   * assertions above read `browse.ts` and prove the ordering inside `open()`.
+   * They said nothing about anyone ELSE calling `savePin`, and the machines
+   * page did: its "I re-keyed it — accept the new key" button wrote the offered
+   * key straight to the pin store and only then called `connect()`. So the pin
+   * was taken on a key that had proven nothing — the exact inversion of the rule
+   * the lines above exist to enforce — and because nothing rolled it back, a
+   * connection that then failed left the impostor's key pinned, silencing this
+   * very warning for whatever answered next. `deletePin` existed and had no
+   * caller anywhere.
+   *
+   * The fix is to clear the stale pin and let `open()` take its "first" path, so
+   * this is now an ALLOW-LIST rather than an ordering check: two files may write
+   * a pin, and a third one appearing is the bug returning by a different door.
+   * `browse.ts` pins after `dial()` verifies by signature; `SharePage.tsx` pins
+   * at pair time, where `pairMachine` has already proven the key locally against
+   * the password (AES-KW plus the `Q = d·G` import check) rather than trusting
+   * the server's claim.
+   */
+  const PIN_WRITERS = ["src/share/browse.ts", "src/components/SharePage.tsx"];
+  const writers: string[] = [];
+  const walkSrc = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) walkSrc(path);
+      else if (/\.(ts|tsx)$/.test(entry.name) && readFileSync(path, "utf8").includes("shareStore.savePin("))
+        writers.push(path.split("\\").join("/"));
+    }
+  };
+  walkSrc("src");
+  const strayWriters = writers.filter((f) => !PIN_WRITERS.includes(f));
+  must(
+    strayWriters.length === 0,
+    `${strayWriters.join(", ")} writes an agent-key pin — only ${PIN_WRITERS.join(" and ")} may, and only after the key is proven`,
+  );
+  for (const expected of PIN_WRITERS) {
+    must(writers.includes(expected), `${expected} no longer writes a pin — has the trust-on-first-use path moved?`);
+  }
+
+  /*
+   * The page must not reach the pin store AT ALL. It wrote the offered key
+   * before `connect()` (pinning something unverified, with no rollback when the
+   * connect then failed); clearing the pin instead only moved the hole, since a
+   * failed connect after an accept left the machine un-pinned and the next
+   * successful one silently trusted whatever the server named by then. Both were
+   * the page deciding something only the verified connection can know, so the
+   * decision travels as a flag and the store is `browse.ts`'s alone.
+   */
+  const page = readFileSync("src/components/MachinesPage.tsx", "utf8");
+  must(
+    !page.includes("shareStore."),
+    "the machines page touches the pin store — the accept decision must travel as open()'s flag, not as a write",
+  );
+  must(
+    /connect\(asked\.machine, asked\.drive, asked\.key, true\)/.test(page),
+    "the accept-the-new-key button does not pass the accept flag, so the owner cannot get past the warning",
+  );
+  must(
+    /DriveConnection\.open\(machine, key, acceptNewKey\)/.test(page),
+    "the page does not forward the accept flag to open()",
+  );
   must(
     readFileSync("src/components/MachinesPage.tsx", "utf8").includes("cause instanceof AgentKeyChanged"),
     "the machines page does not catch AgentKeyChanged, so the owner is never asked",
   );
-  return "3 verdicts, refusal wording, pin read before dial and saved after verification, page asks";
+  return `3 verdicts, refusal wording, pin read before dial and saved after verification, ${writers.length} permitted pin writers, page holds no pin of its own`;
 });
 
 /*

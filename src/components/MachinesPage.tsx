@@ -4,7 +4,6 @@ import { api, type DriveInfo, type MachineInfo } from "../auth/api";
 import { useSession } from "../auth/SessionContext";
 import { useConfig } from "../config/ConfigContext";
 import { AgentKeyChanged, DriveConnection } from "../share/browse";
-import { shareStore } from "../share/store";
 import type { ListEntry } from "../share/protocol";
 import { unlockForConnect } from "../share/unlock";
 import { categorise, FileIcon } from "./FileIcon";
@@ -550,7 +549,7 @@ export function MachinesPage() {
   }, []);
 
   const connect = useCallback(
-    async (machine: MachineInfo, drive: DriveInfo, key: CryptoKey) => {
+    async (machine: MachineInfo, drive: DriveInfo, key: CryptoKey, acceptNewKey = false) => {
       setConnecting(drive.id);
       setCardErrors((errors) => ({ ...errors, [machine.id]: "" }));
       try {
@@ -560,7 +559,7 @@ export function MachinesPage() {
           conn = undefined;
         }
         if (!conn) {
-          conn = await DriveConnection.open(machine, key);
+          conn = await DriveConnection.open(machine, key, acceptNewKey);
           connections.current.set(machine.id, conn);
         }
         setOpen({ machine, drive, conn });
@@ -735,19 +734,17 @@ export function MachinesPage() {
                       onClick={() => {
                         const asked = keyChanged;
                         setKeyChanged(null);
-                        void (async () => {
-                          try {
-                            await shareStore.savePin(asked.machine.id, asked.offered);
-                          } catch {
-                            setCardErrors((errors) => ({
-                              ...errors,
-                              [asked.machine.id]:
-                                "This browser could not remember the new key, so nothing was connected.",
-                            }));
-                            return;
-                          }
-                          await connect(asked.machine, asked.drive, asked.key);
-                        })();
+                        /*
+                         * The page writes no pin, in either direction
+                         * (2026-09-14). It says "the owner accepted" and lets
+                         * `DriveConnection.open` do the rest: dial, verify by
+                         * signature, and only then replace the pin. Writing the
+                         * offered key here pinned something unverified; clearing
+                         * the pin here left the machine un-pinned whenever the
+                         * connect then failed. Both were the page deciding
+                         * something only the verified connection can know.
+                         */
+                        void connect(asked.machine, asked.drive, asked.key, true);
                       }}
                     >
                       I re-keyed it — accept the new key

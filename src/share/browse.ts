@@ -93,15 +93,36 @@ export class DriveConnection {
    * wording on every way it can fail: offline, refused, identity mismatch, or
    * a NAT pair that will not traverse (§12 P — no relay is enabled).
    */
-  static async open(machine: MachineInfo, grantKey: CryptoKey): Promise<DriveConnection> {
+  static async open(
+    machine: MachineInfo,
+    grantKey: CryptoKey,
+    /*
+     * The owner answered the `AgentKeyChanged` question with "I re-keyed it"
+     * (2026-09-14). It suppresses the refusal and NOTHING else: the new key is
+     * still dialled, still verified by signature, and still pinned only after
+     * `dial()` resolves.
+     *
+     * It is a parameter rather than a pin the page writes itself because the
+     * page used to do exactly that — `savePin` before `connect()` — which pinned
+     * a key that had proven nothing and, with no rollback, left it pinned when
+     * the connection then failed, silencing this warning for whatever answered
+     * next. Clearing the pin instead only moved the hole: a connect that failed
+     * after an accept left the machine un-pinned indefinitely, so the next
+     * successful connect silently trusted whatever the server named by then.
+     * Routing the decision through here means the pin is never absent and never
+     * written ahead of verification.
+     */
+    acceptNewKey = false,
+  ): Promise<DriveConnection> {
     // The pin is consulted BEFORE the socket, so a changed key never gets as
     // far as signalling — the agent that is answering learns nothing.
     const verdict = pinVerdict(await shareStore.pin(machine.id), machine.agentPubkey);
-    if (verdict === "changed") throw new AgentKeyChanged(machine, machine.agentPubkey);
+    if (verdict === "changed" && !acceptNewKey) throw new AgentKeyChanged(machine, machine.agentPubkey);
     const conn = await DriveConnection.dial(machine, grantKey);
-    // Trust on first use, taken only once the agent has proven the key by
-    // signature — a pin on an unverified key would pin the impostor.
-    if (verdict === "first") await shareStore.savePin(machine.id, machine.agentPubkey);
+    // Trust on first use, and the accepted re-key, both taken only once the
+    // agent has proven the key by signature — a pin on an unverified key would
+    // pin the impostor. `same` needs no write.
+    if (verdict !== "same") await shareStore.savePin(machine.id, machine.agentPubkey);
     return conn;
   }
 
