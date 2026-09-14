@@ -5,9 +5,16 @@ they are, `docs/DECISIONS.md` records what was decided when, and `docs/TODO-ARCH
 dated session logs this file used to carry (moved out 2026-09-07 — read it for the reasoning
 behind any item here, by date).
 
-State on 2026-09-07: `npm run check` **77** green, `npm run test:auth` **407**. Live is Worker
-`38ceae8d` (rollback `df6dba2a`), commit `186468d`, pushed. Four security passes are recorded in
-`docs/SECURITY-AUDIT.md` (items 1–49); nothing in it is open except what is listed below.
+State on 2026-09-14: `npm run check` **80** green, `npm run test:auth` **407**. Live is Worker
+`38ceae8d` (rollback `df6dba2a`); `main` is at `2315676`, pushed, and **is ahead of what is
+deployed** — the commits since `186468d` are documentation, gates and one security fix, none of
+them deployed yet. Four security passes are recorded in `docs/SECURITY-AUDIT.md` (items 1–49);
+nothing in it is open except what is listed below.
+
+**The desktop of the ThinkCentre is a separate repository**, `../debian-desktop`. The boundary is
+"can this take the file host offline?" — every privileged script stays in `scripts/` here.
+`../debian-desktop/BLUEPRINT.md` §3 is the argument; §6 is that machine's own task list, and it is
+newer than the host section below.
 
 ---
 
@@ -65,6 +72,51 @@ named "Untitled folderwebsite".
    `--incognito` afterwards — the Chromium profile *is* the pairing.
 4. **`thinkcentre-setup.sh` should learn SDDM.** `plasma-dark-setup.sh` writes the autologin
    today, which means the knowledge lives in two scripts. Fold it back in once the host is up.
+5. **Checked over SSH 2026-09-12 and found ABSENT on that box:** `claude` is not installed and
+   there is no `~/project/website` clone, so `claude-code-setup.sh --with-repo` never ran or did
+   not stick — nothing on the host can read any of this. `krfb` is absent too, so the
+   remote-viewing half of the X11 rationale is unrealised and that desktop can only be
+   photographed, not watched.
+6. **It is not certain `thinkcentre-setup.sh` has ever been run there at all** — only a loose
+   `~/Downloads/thinkcentre-setup.sh` was found. Item 1 above assumes it has; establish that
+   first. **`../debian-desktop/BLUEPRINT.md` §6 is the live version of this list.**
+
+## The site-wide debug audit — 22 findings, 1 fixed, 21 open
+
+A five-pass read of the whole project on 2026-09-13/14, by a second session. **`AUDIT-FINDINGS.md`
+is the index** and `.audit/pass*.md` are the evidence, both committed so this does not live on one
+machine. Findings-only by design: nothing in it was fixed by the pass that found it.
+
+**Read the two caveats before acting on any of it.** The audit was reading a tree that was being
+changed under it, so exact line numbers in the pass files are historical; function and file names
+were written to survive. And it is one model's reading — #12 was verified by hand and was real,
+but the rest are unverified claims until somebody checks them.
+
+1. ~~**#12, sharing: the pin was taken before the key was verified.**~~ **Fixed 2026-09-14**,
+   commit `2315676` — verified by hand first, then fixed twice (the first fix moved the hole
+   rather than closing it), gated as an allow-list of pin writers, break-verified four ways.
+2. **#13, downloads (Medium–High): a code for a never-finished upload redeems and burns a use.**
+   Neither `mintCode` nor `opened()` checks `uploaded_at IS NULL`, so the customer spends one of
+   a limited number of uses, lands on a page showing nothing, and gets no error saying why. Same
+   bug class already fixed for withdrawn files. **This is the next one to do.**
+3. **#10/#17, the duel bench (Medium): `scripts/duel-bench.template.html` still floors the frame
+   delta at `0.2`, not `0`.** The exact regression `CLAUDE.md` records fixing in the other three
+   hosts; it is not in `check.ts`'s `hosts` array and has no gate. It is now the only
+   frame-timing host left with it — and it is the one tool built so the client can judge duel
+   *tempo*, which on a fast display it runs up to 1.67× too quickly.
+4. **#2/#3, accessibility (Medium): `aria-modal="true"` on two non-modal overlays**, and arrow-key
+   NAV paging checks `!panelOpen` but not `!doorOpen`, so the page moves under an open door.
+5. **#5, config (latent): `Object.freeze` is shallow**, so `DEFAULT_DUEL_SETTINGS.tuning` is not
+   frozen — contradicting both the file's comment and `CLAUDE.md`. Nothing mutates it today.
+6. **#14/#15/#16/#19/#27 and the rest** — id normalisation missed on two downloads routes, the
+   free-vs-unpriced price sort, two `--faint` labels failing WCAG, and a case-collision race on
+   bare-binary unique indexes in `setups.ts` and `machines.ts`. See the index.
+7. **Not a finding, a decision for the client:** the "accept the new key" dialog never shows the
+   offered key, so the owner attests "I re-keyed it" without being able to compare fingerprints.
+   Pre-existing and inherent to the design as written.
+
+**Gate coverage was checked and is zero** for the five most severe: #12 (now gated), #13, #15,
+#10/#17 and #5. Each fix wants a gate, per this project's own discipline.
 
 ## Needs hardware or a human eye — cannot be done from here
 
