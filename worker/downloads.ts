@@ -817,9 +817,9 @@ export async function listCodes(request: Request, env: Env): Promise<Response> {
 }
 
 /**
- * Revoke by reference — the first eight hex characters of the hash, which is
- * what the list shows. The operator cannot revoke by code because they no
- * longer have it, which is the point of not storing it.
+ * Revoke by reference — the first `REF_LENGTH` (sixteen) hex characters of the
+ * hash, which is what the list shows. The operator cannot revoke by code
+ * because they no longer have it, which is the point of not storing it.
  */
 export async function revokeCode(request: Request, env: Env): Promise<Response> {
   await operator(request, env);

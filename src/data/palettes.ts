@@ -1,6 +1,7 @@
 /**
- * The 24 palettes, copied verbatim from PALETTES in the design prototype
- * (design_handoff_vessel_v2/Site v2 - Vessel.dc.html:288).
+ * The 25 palettes. The first 24 are copied verbatim from PALETTES in the design
+ * prototype (design_handoff_vessel_v2/Site v2 - Vessel.dc.html:288); Cold Open,
+ * at index 24, is the one appended since and is not in the prototype.
  *
  * Nine token roles each. Do not "improve" the values — several palettes
  * (Peat especially) are deliberately low-contrast; calm mode is the remedy.

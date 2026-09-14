@@ -144,7 +144,9 @@ export function probeTier(): number {
      * Thresholds are per round of the burst above — roughly one busy effect
      * frame at 640×360.
      *
-     * **The probe can only ever start things two tiers down.**
+     * **The probe can only ever start things three tiers down** — `TIERS[3]`,
+     * the 0.5 multiplier, is its floor; the two no-evidence branches (no
+     * context, or the probe throwing) land on `TIERS[2]`.
      *
      * It is a single short sample taken once, and a browser that happens to be
      * software-rendering at that moment — an automation host, a machine still

@@ -355,8 +355,12 @@ The spec's *Product decisions already made* table is binding. The ones most like
   directions. Two details are load-bearing: an **untimed warm-up round** (the first touch of a fresh
   context pays an allocation the real effects pay once at mount) and a **pixel read-back** (without it
   the timer measures how fast commands were *enqueued* — the one number that looks healthy on a slow
-  GPU). **It can only ever start two tiers down**: demotion takes ~0.33s, so guessing high is cheap
-  and guessing low strands a fast machine soft for seconds.
+  GPU). **It can only ever start three tiers down** — `TIERS[3]`, the 0.5 multiplier, is the threshold
+  ladder's floor; only the two no-evidence branches (no 2d context, or the probe throwing) land on
+  `TIERS[2]`. This entry said *two* until 2026-09-14, and `perf.ts`'s own comment said it too: the
+  `return TIERS[3]` and the sentence claiming two landed in the same commit, so the claim was never
+  true of the threshold path. The reasoning is unchanged and is why guessing high is right: demotion
+  takes ~0.33s, so guessing high is cheap and guessing low strands a fast machine soft for seconds.
 - **The site's sound is synthesised and cannot play uninvited** (`src/audio/engine.ts`). No files, so
   the *Assets* rule holds; pitch derives from the palette exactly as every colour does, so no voice
   contains a literal frequency. **No ambient bed, no loop, no timer** — every voice is fired by a

@@ -1,11 +1,11 @@
 /**
- * The sixteen pages and their real URLs — the spec's nine, plus setup and scams,
- * plus signup, signin and admin (phase 1), and machines and share (phase 2,
- * SPEC-ACCOUNTS.md §13).
+ * The seventeen pages and their real URLs — the spec's nine, plus setup and
+ * scams, plus signup, signin and admin (phase 1), machines and share (phase 2,
+ * SPEC-ACCOUNTS.md §13), and downloads (2026-08-19).
  *
  * The prototype swaps pages in place with no URL change; the spec is explicit
  * that this is a prototype limitation, not a design decision, so the real build
- * gets sixteen addressable routes.
+ * gets seventeen addressable routes.
  */
 
 export type PageId =

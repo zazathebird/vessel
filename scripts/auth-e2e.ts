@@ -2548,14 +2548,6 @@ async function main(): Promise<void> {
     );
   }
 
-  // Rate limiting ---------------------------------------------------------------
-  //
-  // **This runs last, and it has to.** §4's per-client bucket is keyed by
-  // `clientKey`, and in local development there is no edge in front of the
-  // Worker, so `cf-connecting-ip` is absent and every request in this harness
-  // shares the single bucket named "local". Tripping the backoff therefore
-  // blocks the whole run. That is the rate limiter working correctly rather than
-  // a flaw in it — but it does mean nothing can follow this section.
   /*
    * Downloads sub-pages (2026-08-20). The operator authors a page, uploads a
    * real file into local R2, and every one of the four visibilities is checked
@@ -3399,6 +3391,16 @@ async function main(): Promise<void> {
     ).catch(() => undefined);
   }
 
+  // Rate limiting ---------------------------------------------------------------
+  //
+  // **This runs last, and it has to.** §4's per-client bucket is keyed by
+  // `clientKey`, and in local development there is no edge in front of the
+  // Worker, so `cf-connecting-ip` is absent and every request in this harness
+  // shares the single bucket named "local". Tripping the backoff therefore
+  // blocks the whole run. That is the rate limiter working correctly rather than
+  // a flaw in it — but it does mean nothing can follow this section. (The banner
+  // sat above the Downloads section for a while, which was inserted beneath it
+  // and so contradicted it; it lives on the section it describes now.)
   section("Rate limiting (§4) — the RateLimiter's backoff path, exercised at last");
   {
     // A handle of its own, so tripping the backoff cannot lock out an account
