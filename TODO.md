@@ -81,7 +81,7 @@ named "Untitled folderwebsite".
    `~/Downloads/thinkcentre-setup.sh` was found. Item 1 above assumes it has; establish that
    first. **`../debian-desktop/BLUEPRINT.md` §6 is the live version of this list.**
 
-## The site-wide debug audit — 45 findings, 1 fixed, 44 open
+## The site-wide debug audit — 45 findings, 14 fixed, 31 open
 
 Two scans by a second session, both findings-only by design: **Passes 1–5** (2026-09-13/14) read
 the whole application, **Pass 6** (2026-09-14) took four slices none of them had touched — the
@@ -153,29 +153,29 @@ the hole instead of closing it, #12's first attempt among them.
    wallpaper subsystem's own "THE TRAP" comment says are required are never installed outside a
    `LOOK=deepin` branch. Straddles `../debian-desktop`, which is under independent development.
 
-**Mechanical — safe to hand to a smaller model** (pattern already exists in-tree, gate is a text
-or simple behavioural check; every one of them must show `npm run check` green *and* the new gate
-failing against the un-fixed code):
+**Mechanical — DONE 2026-09-14**, by Fable under review, four commits, each break-verified and
+each leaving `npm run check` green (80 → 82; the two new gates are the `--faint` allow-list and the
+byte-ceiling one). `b321a6f` **#10/#17 + #47**, the two `0.2` frame-delta floors, both templates now
+in `check.ts`'s `hosts` array — plus a knock-on it found and I closed: a zero floor makes `60 /
+elapsed` reachable, and the duel bench's fps average is sticky, so one such frame parked the readout
+at Infinity. `607857a` **#16**, both `--faint` labels — and `.v-saver-label`'s `opacity: 0.6` had to
+go with it, since `--muted` at 0.6 measures 3.19–4.01:1 and the colour change alone would not have
+closed the finding. **That makes the screensaver's exit instruction visibly brighter; it wants his
+eye.** `112416a` **#5, #4, #7, #6, #50**. `b2a1269` the seven stale comments (**#8/#45, #9, #46,
+#26, #49, #25**) — two of which the audit had itself described wrongly, and one of which
+(**`perf.ts`'s "two tiers down" is three**) was false in `CLAUDE.md` too and is corrected there.
 
-- **#10/#17 + #47 — the two `0.2` frame-delta floors**, in `duel-bench.template.html:647` and
-  `fx-bench.template.html:356`, then both files into `check.ts`'s existing `hosts` array. All four
-  real hosts already floor at `0`. Two characters and one array entry; **the best value in the
-  whole list per unit of risk**, and the duel bench is the one tool built so the client can judge
-  *tempo*, which on a fast display it currently runs up to 1.67× too quickly.
-- **#16** — `.v-knock` and `.v-saver-label` from `--faint` to `--muted`, plus a gate grepping every
-  `color: var(--faint)` against an allow-list. The 2026-08-17 pass did exactly this four times.
-- **#14** — `fileId()` on `addGrant`/`mintCode`'s id reads; the normaliser's own comment names this
-  bug. **#5** — deep-freeze `DEFAULT_DUEL_SETTINGS.tuning` (gate: mutate it, expect a throw).
-  **#4** — cancel `useEdgeFade`'s `fonts.ready` on unmount. **#7** — make `check.ts` import
-  `LOOK_KEYS` instead of hardcoding the same eleven names. **#6** — gate that `MAX_CONFIG_BYTES`
-  compares bytes. **#50** — the missing quote guard in `local-operator.ts`'s `d1()`.
+**Left in the mechanical group deliberately:**
+
+- **#14** — `fileId()` on `addGrant`/`mintCode`'s id reads. One line each, but it is in `worker/`,
+  which the rule above puts on the judgment side however small the fix is. Do it in the same pass
+  as #13, which is in the same file.
 - **#32/#33/#34** — `deepin-exact` excluded from its own package gate, `--accent` checking digit
-  count rather than range, and the `fc-list` guard applied to the display font but not the mono one
-  a line above the comment explaining why. Each has the correct pattern adjacent in the same file.
-- **#43** — the scope qualifier on the three look-dial toasts that lack one.
-- **Seven stale comments**: #8, #9, #45 (page counts), #46 (palette count), #26 ("eight hex"),
-  #49 (a "nothing can follow" banner ~830 lines before the section it describes), #25 ("two tiers
-  down" is three in the worst case).
+  count rather than range, the `fc-list` guard applied to the display font but not the mono one a
+  line above the comment explaining why. All three are in `plasma-dark-setup.sh`, which carries the
+  host's X11 pin: low value against a blast radius that ends at "the file host does not come back".
+- **#43** — the scope qualifier on the three look-dial toasts that lack one. It is operator-facing
+  copy, so it is his voice, not a smaller model's.
 
 **Left deliberately unrouted**: #15, #18, #20, #21, #22, #23, #24, #35, #44 — real but narrow, and
 none of them is worth a session of its own. See the index; fold them into whichever pass is already
@@ -185,8 +185,8 @@ in that file.
 offered key, so the owner attests "I re-keyed it" without being able to compare fingerprints.
 Pre-existing and inherent to the design as written.
 
-**Gate coverage was checked and is zero** for the most severe: #12 (now gated), #13, #15, #10/#17,
-#47, #5, #28 and #29. Each fix wants a gate, per this project's own discipline.
+**Gate coverage** was zero for the most severe. #12, #10/#17, #47, #5 and #6 are gated now. **#13,
+#15, #28 and #29 still are not**, and each fix wants one, per this project's own discipline.
 
 ## Needs hardware or a human eye — cannot be done from here
 
