@@ -131,20 +131,40 @@ import { PRESETS } from "../src/data/presets";
  */
 const FAST = process.argv.includes("--fast");
 
-type Result = { name: string; ok: boolean; detail: string };
+type Status = "ok" | "fail" | "skip";
+type Result = { name: string; status: Status; detail: string };
 const results: Result[] = [];
 
 /*
- * Gates that need a tool this machine may not have. A gate that quietly passes
- * when it could not run is the 2026-09-03 lesson wearing a different hat, so
- * anything landing here is NAMED in the report instead of disappearing.
+ * A gate that needs a tool or a checkout this machine may not have calls
+ * `skip(reason)` — it throws, like `must()`, but a distinct class so it can never
+ * be mistaken for a failure. The gate is recorded as SKIP: not a pass, not a
+ * failure, and NAMED in the report on green and red runs alike. A gate that
+ * quietly reports `ok` when it verified nothing is the 2026-09-03 lesson wearing
+ * a different hat (audit items 36, 39, 40 — until 2026-09-14 a skipped gate wrote
+ * `ok` in the status column, counted as a pass, and the "could not be run" list
+ * vanished the moment any other gate failed). The test for skip versus ok: skip
+ * is for a gate that verified NOTHING; a gate that did most of its work stays
+ * `ok` and names the part that went dark in its detail.
  */
-const SKIPPED: string[] = [];
+class Skipped extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = "Skipped";
+  }
+}
+const skip = (reason: string): never => {
+  throw new Skipped(reason);
+};
+const record = (error: unknown): Pick<Result, "status" | "detail"> =>
+  error instanceof Skipped
+    ? { status: "skip", detail: error.message }
+    : { status: "fail", detail: (error as Error).message };
 const check = (name: string, fn: () => string) => {
   try {
-    results.push({ name, ok: true, detail: fn() });
+    results.push({ name, status: "ok", detail: fn() });
   } catch (error) {
-    results.push({ name, ok: false, detail: (error as Error).message });
+    results.push({ name, ...record(error) });
   }
 };
 const must = (cond: boolean, message: string) => {
@@ -160,7 +180,7 @@ const must = (cond: boolean, message: string) => {
  */
 const pending: Promise<void>[] = [];
 const checkAsync = (name: string, fn: () => Promise<string>, timeoutMs = 5_000) => {
-  const slot: Result = { name, ok: false, detail: "did not settle" };
+  const slot: Result = { name, status: "fail", detail: "did not settle" };
   results.push(slot);
   const timeout = new Promise<string>((_, reject) =>
     setTimeout(() => reject(new Error(`did not settle within ${timeoutMs}ms — a body reader that cannot be cancelled hangs exactly like this`)), timeoutMs),
@@ -168,12 +188,11 @@ const checkAsync = (name: string, fn: () => Promise<string>, timeoutMs = 5_000) 
   pending.push(
     Promise.race([fn(), timeout]).then(
       (detail) => {
-        slot.ok = true;
+        slot.status = "ok";
         slot.detail = detail;
       },
-      (error: Error) => {
-        slot.ok = false;
-        slot.detail = error.message;
+      (error: unknown) => {
+        Object.assign(slot, record(error));
       },
     ),
   );
@@ -5447,12 +5466,9 @@ check("the Windows script resolves EVERY path component, not just the leaf", () 
   } catch {
     hasPwsh = false;
   }
-  if (!hasPwsh) {
-    SKIPPED.push(
-      "the Windows path resolver in windows-share-setup.ps1 — no `pwsh` here (snap install powershell --classic)",
-    );
-    return "NOT RUN — pwsh absent, named under 'could not be run' below";
-  }
+  // Nothing below the guard runs without pwsh: the resolver is executed, never
+  // read, so this gate verifies nothing at all on a machine without it.
+  if (!hasPwsh) skip("no `pwsh` here (snap install powershell --classic), so the resolver was not driven");
 
   const src = readFileSync("scripts/windows-share-setup.ps1", "utf8").replace(/^\uFEFF/, "");
   const from = src.indexOf("    try {\n        $rounds = 0");
@@ -6012,10 +6028,9 @@ const DESKTOP_ABSENT = `neither ${DESKTOP_REPO_CANDIDATES.join(" nor ")} is chec
  * and is usually blanked.
  */
 check("the two LOOK_FILES copies agree", () => {
-  if (!desktopCheckedOut) {
-    SKIPPED.push(`the LOOK_FILES parity check — ${DESKTOP_ABSENT}`);
-    return `NOT RUN — ${DESKTOP_ABSENT}, named under 'could not be run' below`;
-  }
+  // Without the switcher there is nothing to compare against — zero bytes
+  // verified — so this is a skip, not a pass.
+  if (!desktopCheckedOut) skip(`${DESKTOP_ABSENT}, so the switcher's copy could not be compared`);
   const slice = (file: string) => {
     const text = readFileSync(file, "utf8");
     const start = text.indexOf("LOOK_FILES=(");
@@ -6084,9 +6099,10 @@ check("the desktop looks are one closed set", () => {
   const strayAccent = [...accented].filter((l) => !accepted.has(l));
   must(strayAccent.length === 0, `the accent table names looks the validator refuses: ${strayAccent.join(" ")}`);
 
+  // Three of the four copies live in this repo and were just checked for real,
+  // so this stays `ok` — but the detail must say which copy went dark.
   if (!desktopCheckedOut) {
-    SKIPPED.push(`the look previews — ${DESKTOP_ABSENT}`);
-    return `${accepted.size} looks, ${accented.size} accents agree; previews NOT checked (${DESKTOP_ABSENT})`;
+    return `${accepted.size} looks, ${accented.size} accents agree in the builder; the preview filenames were NOT checked — ${DESKTOP_ABSENT}`;
   }
   const previews = new Set(
     readdirSync(`${DESKTOP_REPO}/previews`)
@@ -6134,20 +6150,34 @@ const UNCHECKABLE = [
 
 // ---- report ----------------------------------------------------------------
 
-const failed = results.filter((r) => !r.ok);
+const passed = results.filter((r) => r.status === "ok");
+const failed = results.filter((r) => r.status === "fail");
+const skipped = results.filter((r) => r.status === "skip");
+const LABEL: Record<Status, string> = { ok: "ok  ", fail: "FAIL", skip: "SKIP" };
 for (const r of results) {
-  console.log(`${r.ok ? "ok  " : "FAIL"}  ${r.name.padEnd(46)} ${r.detail}`);
+  console.log(`${LABEL[r.status]}  ${r.name.padEnd(46)} ${r.detail}`);
 }
 console.log("");
+// A skip is never a pass, and never a failure: it is counted beside the passes
+// so the number cannot be read as "everything was verified", and it leaves the
+// exit code alone, because the sibling checkout is legitimately not always
+// there and predeploy must not break over it.
+const couldNot =
+  skipped.length === 0 ? "" : `, ${skipped.length} could not be run`;
 if (failed.length === 0) {
-  console.log(`${results.length} checks passed${FAST ? " (fast — duel simulation skipped)" : ""}.`);
+  console.log(
+    `${passed.length} check${passed.length === 1 ? "" : "s"} passed${couldNot}${FAST ? " (fast — duel simulation skipped)" : ""}.`,
+  );
   console.log("Still needs a person:");
   for (const u of UNCHECKABLE) console.log(`  · ${u}`);
-  if (SKIPPED.length > 0) {
-    console.log("Could NOT be run on this machine:");
-    for (const sk of SKIPPED) console.log(`  · ${sk}`);
-  }
 } else {
-  console.log(`${failed.length} of ${results.length} checks FAILED.`);
+  console.log(`${failed.length} of ${results.length} checks FAILED${couldNot}.`);
   process.exitCode = 1;
+}
+// Printed on red runs too. A red run is exactly when you most need to know what
+// ELSE went unverified, and this list vanishing behind the failure branch was
+// audit item 36.
+if (skipped.length > 0) {
+  console.log("Could NOT be run on this machine:");
+  for (const sk of skipped) console.log(`  · ${sk.name} — ${sk.detail}`);
 }
