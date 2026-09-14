@@ -31,6 +31,7 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
 
 const execAsync = promisify(exec);
 async function d1(sql: string): Promise<void> {
+  if (sql.includes('"')) throw new Error("keep double quotes out of harness SQL");
   await execAsync(`npx wrangler d1 execute vessel --local --command "${sql}"`);
 }
 

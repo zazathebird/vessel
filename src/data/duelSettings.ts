@@ -99,6 +99,12 @@ export interface DuelSettings {
  * becoming the default every later visitor is handed, with nothing thrown and
  * nothing logged. Frozen, the same mistake is a `TypeError` on the line that
  * makes it — module code is strict, so the write throws rather than passing.
+ *
+ * **`Object.freeze` is shallow, so `tuning` is the frozen object itself, not a
+ * spread of it** (2026-09-14 audit). `{ ...DEFAULT_DUEL_TUNING }` here was a
+ * fresh, writable object under a frozen parent — the one nested value on this
+ * default, and the one the sentence above was claiming for it. Gated by
+ * writing to it.
  */
 export const DEFAULT_DUEL_TUNING: DuelTuning = Object.freeze({
   circling: 1,
@@ -111,7 +117,7 @@ export const DEFAULT_DUEL_SETTINGS: DuelSettings = Object.freeze({
   pin: null,
   good: null,
   evil: null,
-  tuning: { ...DEFAULT_DUEL_TUNING },
+  tuning: DEFAULT_DUEL_TUNING,
   // `DEFAULT_RIM` in duel.ts. Deliberately not imported: this module is read
   // during the first render and importing the engine to learn one number would
   // pull the whole simulation into that path. The gate asserts they agree.

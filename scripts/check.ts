@@ -100,6 +100,11 @@ import type { SortableFile } from "../src/data/downloads";
 import { DRAWN_CATEGORIES } from "../src/components/CategoryIcon";
 import { rangePlan } from "../worker/downloads";
 import { readJson, readJsonLenient } from "../worker/accounts";
+import { publishSiteConfig } from "../worker/site-config";
+import { authHash } from "../worker/crypto";
+import { toBase64Url } from "../worker/encoding";
+import { SESSION_COOKIE, mint as mintSession } from "../worker/session";
+import type { Env } from "../worker/env";
 import type { BadRequest } from "../worker/encoding";
 import { PATHS, pageFromPath, pathFor, subFromPath } from "../src/data/pageIds";
 import { metaForPath, robotsTxt, sitemapXml } from "../worker/page-meta";
@@ -113,7 +118,7 @@ import { adaptLayout } from "../src/config/bands";
 import { DEFAULT_STATION, PICKABLE_STATIONS, STATIONS } from "../src/data/stations";
 import { GUARDRAILS, combinationOf, effectiveGrain, isAllowed, matched, resolve, warnings } from "../src/data/guardrails";
 import { applyLook, themeClasses, themeVars } from "../src/theme";
-import { validLookPages } from "../src/data/lookSettings";
+import { LOOK_KEYS, validLookPages } from "../src/data/lookSettings";
 import { effectiveStation } from "../src/data/stations";
 import { edgeState } from "../src/hooks/useEdgeFade";
 import type { Band } from "../src/config/bands";
@@ -3573,6 +3578,42 @@ check("the duel settings publish, refuse rubbish, and default to a no-op", () =>
     `settings default rim ${DEFAULT_DUEL_SETTINGS.rim} against the engine's ${DEFAULT_RIM}`,
   );
 
+  // 1b. And they are frozen all the way down — driven by writing, not by
+  //     `Object.isFrozen` alone (2026-09-14 audit). `Object.freeze` is shallow,
+  //     so `tuning` was a writable object under a frozen parent for as long as
+  //     the file's own comment claimed a write would throw. `DEFAULT_CONFIG.duel`
+  //     hands this exact object to every un-published visitor, so the write is
+  //     made through that route as well: it must throw, and the value must
+  //     still read 1 afterwards.
+  const frozenWrites: Array<[string, () => void]> = [
+    ["DEFAULT_DUEL_TUNING.rest", () => ((DEFAULT_DUEL_TUNING as { rest: number }).rest = 2)],
+    ["DEFAULT_DUEL_SETTINGS.zoom", () => ((DEFAULT_DUEL_SETTINGS as { zoom: number }).zoom = 2)],
+    [
+      "DEFAULT_DUEL_SETTINGS.tuning.circling",
+      () => ((DEFAULT_DUEL_SETTINGS.tuning as { circling: number }).circling = 2),
+    ],
+    [
+      "DEFAULT_CONFIG.duel.tuning.patience",
+      () => ((DEFAULT_CONFIG.duel.tuning as { patience: number }).patience = 2),
+    ],
+  ];
+  for (const [what, write] of frozenWrites) {
+    let threw: unknown = null;
+    try {
+      write();
+    } catch (error) {
+      threw = error;
+    }
+    must(threw instanceof TypeError, `writing ${what} on the frozen default did not throw`);
+  }
+  must(
+    DEFAULT_DUEL_TUNING.rest === 1 &&
+      DEFAULT_DUEL_SETTINGS.zoom === 1 &&
+      DEFAULT_DUEL_SETTINGS.tuning.circling === 1 &&
+      DEFAULT_CONFIG.duel.tuning.patience === 1,
+    "a write to a frozen duel default went through",
+  );
+
   // 2. **Both** published-key lists must carry both fields. They are separate
   //    arrays in separate files and either one missing a key drops the value
   //    silently on publish — the operator's own browser shows a setting that
@@ -4402,7 +4443,11 @@ check("a page's look override reaches the page, and only that page", () => {
    * does, because Ornament.tsx names `config.ornament` in prose.
    */
   const ALLOWED = new Set(["SiteConfigPanel.tsx", "CommandPalette.tsx"]);
-  const DIALS = /\bconfig\.(pal|layout|fx|ornament|type|station|grain|breathe|cursor|slots|entrances)\b/;
+  // Built from `LOOK_KEYS`, not typed out (2026-09-14 audit): the list here
+  // used to be a hand-copied twin of the one in `lookSettings.ts`, so a twelfth
+  // dial would have been validated, merged and rendered while this scan never
+  // learned to look for it.
+  const DIALS = new RegExp(`\\bconfig\\.(${LOOK_KEYS.join("|")})\\b`);
   const offenders: string[] = [];
   for (const dir of ["src/components", "src/fx", "src/hooks"]) {
     for (const file of readdirSync(dir)) {
@@ -5604,6 +5649,92 @@ checkAsync("every JSON body the Worker reads is bounded on the stream", async ()
   must(raw.length === 0, `these read a request body without a bound: ${raw.join(", ")}`);
 
   return `endless body cancelled after ${pulled} chunks; UTF-16 and ASCII overflows 413; lenient reader still 413s; ${readdirSync("worker").filter((f) => f.endsWith(".ts")).length} Worker files read no body bare`;
+});
+
+/*
+ * **The published-config ceiling is measured in BYTES, and this drives the real
+ * route to prove it** (2026-09-14 audit). The 2026-09-03 fix swapped
+ * `JSON.stringify(...).length` — UTF-16 code units, which let 11,921 CJK
+ * characters through as "under 12,000" at 35,721 actual bytes — for a
+ * `TextEncoder` count. The gate above it only ever read the constant's value
+ * and that nothing truncates, so a revert to `.length` passed every check in
+ * this file. Here `publishSiteConfig` itself is called, over a stub `env` that
+ * answers the session, the account, the password hash and the limiter the way
+ * D1 and the Durable Object do, with a payload that is under the ceiling in
+ * code units and over it in bytes. The write must not happen and the refusal
+ * must name bytes. Two controls bracket it: the same shape in ASCII is
+ * accepted and written, and an ASCII payload over the ceiling is refused —
+ * so the stub is proven to reach the write, and the ceiling is proven to hold
+ * in both units.
+ */
+checkAsync("the published-config ceiling counts bytes, not UTF-16 units, on the real route", async () => {
+  const account = { id: "acct-check", handle: "operator", is_operator: 1, created_at: 0, reset_at: null };
+  const authSecret = toBase64Url(new Uint8Array(32).fill(7));
+  const env = {
+    SESSION_SECRET: "check-session-secret",
+    AUTH_PEPPER: "check-pepper",
+    RATE_SALT_SEED: "check-seed",
+  } as unknown as Env & Record<string, unknown>;
+  const hash = await authHash(env.AUTH_PEPPER, authSecret);
+  let written: string | null = null;
+  env.RATE_LIMIT = {
+    idFromName: (name: string) => name,
+    get: () => ({
+      fetch: async () => new Response(JSON.stringify({ allowed: true, retryAt: 0 })),
+    }),
+  };
+  env.DB = {
+    prepare: (sql: string) => ({
+      bind: (...args: unknown[]) => ({
+        first: async () =>
+          /FROM accounts/.test(sql) ? account : /FROM credentials/.test(sql) ? { auth_hash: hash } : null,
+        run: async () => {
+          if (/INTO site_config/.test(sql)) written = String(args[0]);
+          return { meta: { changes: 1 } };
+        },
+      }),
+    }),
+  };
+  const cookie = `${SESSION_COOKIE}=${await mintSession(env.SESSION_SECRET, "session", account.id)}`;
+
+  const publish = async (config: unknown): Promise<"ok" | string> => {
+    written = null;
+    const request = new Request("https://mcclevarty.ca/api/site-config", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json", "cf-connecting-ip": "203.0.113.9" },
+      body: JSON.stringify({ authSecret, config }),
+    });
+    try {
+      await publishSiteConfig(request, env);
+      return "ok";
+    } catch (error) {
+      return `${(error as BadRequest).status ?? -1} ${(error as Error).message}`;
+    }
+  };
+
+  // `lookPages` is one of the growing keys, and the Worker validates shape and
+  // size only — the browser judges the values — so a string is a fair payload.
+  const units = 5_000;
+  const wide = { lookPages: "日".repeat(units) };
+  const encoded = JSON.stringify({ lookPages: wide.lookPages });
+  const bytes = new TextEncoder().encode(encoded).byteLength;
+  must(encoded.length < 12_000 && bytes > 12_000, `the probe is ${encoded.length} units and ${bytes} bytes — it must straddle the ceiling`);
+
+  const narrow = await publish({ lookPages: "a".repeat(units) });
+  must(narrow === "ok" && written !== null, `the ASCII control was refused (${narrow}) — the stub is not reaching the write`);
+  must(JSON.parse(written!).lookPages === "a".repeat(units), "the ASCII control was written, but not as sent");
+
+  const over = await publish({ lookPages: "a".repeat(12_100) });
+  must(over.startsWith("400 ") && written === null, `12,100 ASCII bytes were not refused (${over})`);
+
+  const verdict = await publish(wide);
+  must(
+    verdict.startsWith("400 ") && written === null,
+    `${units} three-byte characters (${bytes} bytes) passed a 12,000-byte ceiling — the config length is being measured in UTF-16 units (${verdict})`,
+  );
+  must(/\b\d{5} bytes\b/.test(verdict) && verdict.includes(`${bytes} bytes`), `the refusal does not say how many bytes it measured: ${verdict}`);
+
+  return `real publishSiteConfig: ${units} ASCII written, 12,100 ASCII refused, ${units} CJK (${bytes} bytes) refused`;
 });
 
 
