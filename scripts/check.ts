@@ -993,6 +993,66 @@ check("every custom property a stylesheet reads is one something writes", () => 
   return `${styles.length} stylesheets, ${written.size} properties written, none read that are not`;
 });
 
+// ---- 2b′. `--faint` is not a text colour ------------------------------------
+//
+// 2026-09-14, audit item 16. `--faint` measures 2.78–4.09:1 against `--bg`
+// across the 25 palettes, under AA's 4.5 on every one, and CLAUDE.md has said
+// "text uses `--muted`" since the 2026-08-17 pass. That pass fixed five
+// selectors and missed two — `.v-knock`'s own label ("operator access") and
+// `.v-saver-label` ("click to return", the screensaver's only exit
+// instruction) — and in both a *sibling* was fixed while the parent's own text
+// was not. A rule that lives in a paragraph of prose is a rule the next
+// stylesheet edit does not read; this is the rule as a gate.
+//
+// The allow-list is the whole design. Two elements genuinely are decorative,
+// each is named here with the reason, and anything else setting `color` from
+// `--faint` fails by selector. A third instance cannot survive the way these
+// two did, because adding one means adding a line *here*, with a reason, in a
+// file that is reviewed. An entry that no longer matches anything also fails:
+// a stale allow-list is a hole waiting for a selector to be reused.
+//
+// There is no CSS shorthand that sets `color`; `-webkit-text-fill-color` is the
+// one other property that paints glyphs, so both are matched. Borders and
+// hairlines in `--faint` are not text and are not this gate's business.
+
+check("`--faint` colours nothing but the named decorative elements", () => {
+  const ALLOWED: Record<string, string> = {
+    // Console's prompt word beside the blinking block. `aria-hidden`, and the
+    // console log above it is the content; the word carries no instruction.
+    ".v-caret": "decorative console prompt, aria-hidden",
+    // The footer's middle dot. `aria-hidden`, a single glyph, and its click is
+    // one of the door's theatre routes, which must not advertise itself.
+    ".v-footer-dot": "decorative footer glyph, aria-hidden",
+  };
+
+  const dir = "src/styles";
+  const offenders: string[] = [];
+  const seen = new Set<string>();
+  let rules = 0;
+  for (const file of readdirSync(dir).filter((f) => f.endsWith(".css")).sort()) {
+    const css = readFileSync(join(dir, file), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    for (const m of css.matchAll(/([^{}]*)\{([^{}]*)\}/g)) {
+      const paints = /(?:^|[;\s])(?:-webkit-text-fill-)?color\s*:\s*var\(\s*--faint\b/.test(m[2]);
+      if (!paints) continue;
+      rules += 1;
+      for (const raw of m[1].split(",")) {
+        const selector = raw.trim().split(/\s+/).pop() ?? raw.trim();
+        // The last compound of a selector names the element painted; the full
+        // selector is what the report prints, so the line is findable.
+        if (selector in ALLOWED) seen.add(selector);
+        else offenders.push(`${file}: ${raw.trim()}`);
+      }
+    }
+  }
+  must(
+    offenders.length === 0,
+    `text set in \`--faint\`, which fails AA on all 25 palettes — use \`--muted\`, or name it in this gate's allow-list with a reason: ${offenders.join(" / ")}`,
+  );
+  const stale = Object.keys(ALLOWED).filter((s) => !seen.has(s));
+  must(stale.length === 0, `allow-list entries that no longer set \`--faint\` anywhere: ${stale.join(", ")}`);
+  return `${rules} rules paint text in --faint, all ${Object.keys(ALLOWED).length} on the named decorative allow-list`;
+});
+
 // ---- 2c. The download's partial-response arithmetic -------------------------
 //
 // 2026-08-19, the first time the bucket was made to hand over a byte, and the

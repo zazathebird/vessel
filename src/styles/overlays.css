@@ -378,7 +378,10 @@
   font-size: 11px;
   letter-spacing: 0.2em;
   text-transform: uppercase;
-  color: var(--faint);
+  /* `--muted`, not `--faint` (2026-09-14, audit item 16): this is the button's
+     own label, "operator access", and `--faint` fails AA on all 25 palettes.
+     The 2026-08-17 pass fixed `.v-knock-state` beside it and left the parent. */
+  color: var(--muted);
 }
 
 .v-knock-state {
@@ -561,8 +564,12 @@
   font-size: 10px;
   letter-spacing: 0.3em;
   text-transform: uppercase;
-  color: var(--faint);
-  opacity: 0.6;
+  /* `--muted`, not `--faint` (2026-09-14, audit item 16): "click to return" is
+     the screensaver's only exit instruction, and `--faint` fails AA on all 25
+     palettes. No `opacity` either — it was 0.6, and `--muted` at 0.6 over `--bg`
+     measures 3.19–4.01:1 across the palettes, under 4.5 on every one; over a
+     boosted effect, which is brighter than bare `--bg`, it is lower still. */
+  color: var(--muted);
 }
 
 
