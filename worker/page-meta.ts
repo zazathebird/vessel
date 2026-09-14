@@ -259,7 +259,19 @@ export function withPageMeta(response: Response, url: URL): Response {
         // A sub-page's canonical is the index it hangs off, never itself: it is
         // one of an unbounded family of addresses and none of them is preferred.
         ? `https://${SITE}${PATHS.downloads}`
-        : `https://${SITE}${meta.id === "home" ? "/" : url.pathname}`;
+        : /*
+           * **From `PATHS`, never from the request's own pathname**
+           * (2026-09-14). `pageFromPath` strips trailing slashes, so `/contact/`
+           * resolves to `contact`, is not `UNLISTED`, gets no `noindex` — and
+           * emitted `<link rel="canonical" href=".../contact/">`, pointing at
+           * itself. So did `/contact//`, `/contact///` and `//`: an unbounded
+           * family of indexable 200s each nominating *itself* as preferred,
+           * which is the exact failure this file argues at length about two
+           * lines above for a sub-page, arriving through a door it did not
+           * check. `PATHS` is a total map from a closed union, so the canonical
+           * is now the one address the page actually has.
+           */
+          `https://${SITE}${PATHS[meta.id]}`;
   const title = esc(meta.title);
   const description = esc(meta.description);
 

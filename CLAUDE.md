@@ -17,6 +17,7 @@ each was found; that is history, and history lives in `docs/DECISIONS.md`.
 | `docs/DUEL.md`, `docs/DUEL-ABSORB.md` | The duel's design and its five build phases |
 | `docs/DOWNLOADS.md` | The downloads runbook — upload a program, mint a code, give one away |
 | `docs/SECURITY-AUDIT.md`, `docs/BREAK-GLASS.md` | Standing security notes; operator recovery of last resort |
+| `AUDIT-FINDINGS.md`, `docs/AUDIT-2026-09-14.md` | The site-wide audits. The first is passes 1–6, findings-only. **The second is the fifth pass, which fixed as well as found, and which RAN things** — the Worker, the scripts' blocklists, the site in a browser |
 | `docs/FONTS.md`, `docs/PHOTOS.md` | Asset ledgers — keep in sync when either changes |
 | `design/SPEC-SHARING.md` | Sharing, hosted storage and setup. **DRAFT, awaiting sign-off**; §2 is its decision log |
 | `docs/SHARING-SETUP.md` | The setup-script runbook — publish them, and what is known not to work |
@@ -443,9 +444,15 @@ The spec's *Product decisions already made* table is binding. The ones most like
   60Hz display never produces — so promotion was unreachable on the commonest display while demotion
   stayed reachable, and since every change persists and `calibrateOnce` will not re-probe, one GC
   pinned a profile to a soft canvas permanently. **Rising is judged on headroom**: time inside
-  `drawFx`, scaled by the square of the tier ratio, against the frame's budget. A promotion undone
-  within ~900 frames sets a session ceiling so the detector cannot oscillate, and the sampler runs
-  *after* the draw so calm frames are not evidence.
+  `drawFx`, scaled by the square of the tier ratio, against the frame's budget. **There is exactly one
+  promotion attempt per load** (`mayPromote`), spent whether it is taken or never earned, and the first
+  demotion spends it too — measured beats guessed, so a tier arrived at by a late frame is never
+  climbed back out of. That one rule is what stops the detector oscillating. This entry claimed until
+  2026-09-14 that a promotion undone within ~900 frames also set a *session ceiling*; the `ceiling` and
+  `sincePromotion` locals existed and were provably dead — `ceiling` was read only under `mayPromote`
+  and written only where `mayPromote` is cleared on the next line, so it was 0 at every read — and they
+  are deleted rather than wired up, because `mayPromote` already forbids the retry a ceiling exists to
+  forbid. The sampler runs *after* the draw so calm frames are not evidence.
 - **Particle counts scale with area, and the reseed guard is the box, not the count** (`field()`).
   Fixed counts gave a phone ~4× the density of a desktop at ~4× the cost on weaker hardware; scaling
   the count breaks a `length !== n` guard, hence the stored box and the 35%-area threshold.

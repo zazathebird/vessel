@@ -357,28 +357,46 @@ export function DuelSettingsEditor({ enabled }: { enabled: boolean }) {
             </label>
             {value.pin ? (
               <div className="v-duelset-pair">
-                {[0, 1].map((i) => (
-                  <label key={i}>
-                    <span>{i === 0 ? "One" : "The other"}</span>
-                    <select
-                      value={value.pin![i]}
-                      onChange={(e) => {
-                        const next: [FighterStyle, FighterStyle] = [...value.pin!] as [
-                          FighterStyle,
-                          FighterStyle,
-                        ];
-                        next[i] = e.target.value as FighterStyle;
-                        set("pin", next);
-                      }}
-                    >
-                      {(Object.keys(FIGHTERS) as FighterStyle[]).map((id) => (
-                        <option key={id} value={id}>
-                          {FIGHTERS[id].label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                ))}
+                {/*
+                 * One list per side, because `validDuelSettings` refuses a pin
+                 * whose two fighters share a side and **drops it whole**. Both
+                 * dropdowns offering all twenty-four let the operator build a
+                 * good-versus-good pin that previews here, publishes, is
+                 * refused for every visitor, and unticks its own checkbox on
+                 * his next reload with nothing said. The editor may only
+                 * express what the validator accepts.
+                 *
+                 * The side comes from the fighter already in the slot rather
+                 * than from the index: a stored pin is legal in either order,
+                 * and a list keyed on the index would offer a set the current
+                 * value is not in. The lists are `DUEL_POOLS`, which is derived
+                 * from `side` — never a hand-written pair of lists.
+                 */}
+                {[0, 1].map((i) => {
+                  const side = FIGHTERS[value.pin![i]].side;
+                  return (
+                    <label key={i}>
+                      <span>{side === "good" ? "Good" : "Evil"}</span>
+                      <select
+                        value={value.pin![i]}
+                        onChange={(e) => {
+                          const next: [FighterStyle, FighterStyle] = [...value.pin!] as [
+                            FighterStyle,
+                            FighterStyle,
+                          ];
+                          next[i] = e.target.value as FighterStyle;
+                          set("pin", next);
+                        }}
+                      >
+                        {DUEL_POOLS.duel[side].map((id) => (
+                          <option key={id} value={id}>
+                            {FIGHTERS[id].label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  );
+                })}
               </div>
             ) : (
               <p className="v-duelset-note">

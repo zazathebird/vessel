@@ -274,7 +274,22 @@
   overflow-y: hidden;
   width: 100%;
   order: 3;
-  padding: 2px 0 4px;
+  /*
+   * The padding is the focus ring's room, not spacing (2026-09-14).
+   *
+   * A scroll container clips to its *padding* box, and `base.css` draws the
+   * ring as a 2px outline at a 3px offset — 5px outside the pill on every
+   * side. At `2px 0 4px` the ring on the site's primary navigation was sliced
+   * top and bottom by `overflow-y: hidden` and flattened against the inline
+   * start by `overflow-x: auto`, which is where the first pill sits before
+   * anybody scrolls. An outline is not part of the scrollable overflow region,
+   * so scrolling cannot reveal it; only padding can.
+   *
+   * 5px inline as well as block: the trailing edge is safe either way (the
+   * end padding scrolls into reach) but the leading one is not, and the two
+   * have to match or the row sits visibly off-centre.
+   */
+  padding: 5px;
   gap: 7px;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
@@ -511,9 +526,12 @@
   padding: 0 34px 34px;
 }
 
-.band-phone .v-termbody {
-  padding: 0 18px 26px;
-}
+/* No `.band-phone` twin, deliberately (2026-09-14): App.tsx renders this
+   element only while the *adapted* layout is `terminal`, and `PHONE_LAYOUTS`
+   maps terminal→console, so on the phone band the element does not exist at
+   all. The rule that used to sit here could never match — dead weight inviting
+   someone to rely on a guard that isn't there, exactly as Ledger's note in
+   layouts.css and Side-scroll's below record for the compound form. */
 
 /*
  * Side-scroll's track. The mask is the change worth making: cards used to clip
@@ -2278,11 +2296,17 @@
  * way off the right-hand edge. The tell was that toggling calm fixed it: calm
  * kills `animation` with `!important`, handing `transform` back.
  *
- * This is the same trap CLAUDE.md documents for `.v-block`, and `.v-shock`
- * dodges it by folding its centring into its own keyframes. Using `translate`
- * is the better answer here and is the rule interaction.css already states:
- * `translate` and `transform` are separate properties that compose, so the
- * keyframe can own `transform` while this rule keeps the centring.
+ * This is the same trap CLAUDE.md documents for `.v-block`. `translate` is the
+ * answer and is the rule interaction.css already states: `translate` and
+ * `transform` are separate properties that compose, so the keyframe can own
+ * `transform` while this rule keeps the centring.
+ *
+ * `.v-shock` used to be cited here as the other way out — folding its centring
+ * into its own keyframes — and it was the *wrong* way out, for a reason the
+ * sentence above spells out and then walks past: calm kills `animation` with
+ * `!important`, so a keyframe holding the centring loses the centring in
+ * exactly the mode that made this bug visible. It takes `translate` too now
+ * (2026-09-14).
  */
 .v-toast {
   position: fixed;
@@ -2519,7 +2543,13 @@
 /* A saved setup's row: the name + code fills the row and the apply/delete
    links sit together at its end, wrapping under on narrow bands. The class
    existed unstyled (review 2026-08-13) and fell back to the bare code-chip
-   block with the links run on inline. */
+   block with the links run on inline.
+
+   **This is the only place `.v-setup-row`'s flex shape is declared.** The
+   setup-script checklist further down re-declared the same four properties
+   with the same four values (2026-09-14) — two copies at the same specificity,
+   the later one silently winning, and nothing to say which was meant to move
+   when the shape changed. It adds its rule and nothing else now. */
 .v-setup-row,
 .v-passkey-row {
   display: flex;
@@ -2747,12 +2777,11 @@
 
    The path wraps rather than truncating with an ellipsis: it is there so
    somebody can tell D:\Photos from C:\Users\me\Photos, and an ellipsis eats
-   the end of a path, which is the half that distinguishes them. */
+   the end of a path, which is the half that distinguishes them.
+
+   Only the rule and only what it adds: the `display: flex` shape comes from
+   `.v-setup-row, .v-passkey-row` above, which is where it is declared once. */
 .v-setup-row {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  flex-wrap: wrap;
   padding: 6px 0;
   border-bottom: 1px solid var(--line);
 }
@@ -2834,6 +2863,21 @@
   white-space: normal;
 }
 
+/*
+ * The only way into a folder in List view, so it is a target and not a label
+ * (2026-09-14).
+ *
+ * WCAG 2.5.8 (AA) asks for 24 × 24 CSS pixels. At 13px type with `padding: 0`
+ * this button's own box was about 16px tall — the `<td>` around it is padded,
+ * and the band rules below pad that `<td>` further, but padding a cell grows
+ * the *cell*: the pointer target is the button, and the space above and below
+ * it did nothing. The floor goes on the control.
+ *
+ * `inline-flex` so the floor centres the name rather than stranding it at the
+ * top of a 24px box, which is the shape `.v-reveal` takes for the same reason
+ * further down this file. `min-width` as well, because a one-character name is
+ * an ordinary thing to find on a drive.
+ */
 .v-file-name {
   font: inherit;
   font-size: 13px;
@@ -2844,6 +2888,10 @@
   cursor: pointer;
   text-align: left;
   overflow-wrap: anywhere;
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  min-width: 24px;
 }
 
 .v-file-name:disabled {
@@ -3520,8 +3568,17 @@
   color: var(--a1);
 }
 
+/* `--muted`, not `--line`: this paints a real `·` glyph, and `--line` is the
+   hairline *border* token at 1.22–1.61:1 — as type that reads as absent rather
+   than as faint, the same mistake the sonar's channel colours and
+   `telemetry`'s lane baselines made on canvas. `--muted`, and not the
+   decorative `--faint` that `.v-footer-dot` takes: this dot is the only thing
+   dividing "Windows" from "4.2 MB" from a price inside one wrapping row, so it
+   is doing a separator's work in a line of facts and has to be read at their
+   weight. (`aria-hidden` settles what a screen reader is told, not what the
+   eye can find.) */
 .v-dl-dot {
-  color: var(--line);
+  color: var(--muted);
 }
 
 .v-dl-action {
@@ -4092,6 +4149,29 @@
   min-height: 44px;
 }
 
+/*
+ * …and the same floor for the controls that *replace* the chips, which is the
+ * half that was missed (2026-09-14).
+ *
+ * `padding-block: 6px` at 13px type is about 33px, and on a phone the Kind
+ * chips are not rendered at all — DownloadPage swaps them for a `<select>`,
+ * and the whole argument for that swap is the one written above it: eight
+ * chips *at the 44px touch minimum* wrap to five rows. Trading a 44px control
+ * for a 33px one to save the space 44px costs is the swap arguing against
+ * itself. Find, Runs on and Order sit in the same row and are the same size of
+ * target, so all four take the floor together.
+ *
+ * Both narrow bands, per the touch convention two rules up: a phone in
+ * landscape is `band-tablet`. Desk is untouched — the compact register is
+ * deliberate there, where the pointer is a mouse.
+ */
+.band-phone .v-dl-select,
+.band-phone .v-dl-search,
+.band-tablet .v-dl-select,
+.band-tablet .v-dl-search {
+  min-height: 44px;
+}
+
 /* ---------------------------------------------------------------------------
  * The editor's own additions (2026-08-20). Operator-only, so it reuses
  * `.v-admin-*` and `.v-field-*` wholesale and only styles what has no
@@ -4494,13 +4574,23 @@
 
 /* A tab, not a chip: `aria-pressed` carries the state, so the styling has
    something true to hang off and a screen reader is told the same thing the
-   eye is. Never colour alone — the pressed tab also gains a solid edge. */
+   eye is. Never colour alone — the pressed tab is the one with a *fill*, and a
+   painted panel against a transparent one is a difference in what is drawn
+   rather than in what hue it is drawn in. (This note used to say the edge was
+   what carried it. That stopped being true when the unpressed border was raised
+   from `--line` to `--edge` below: at 1.22–1.61:1 the unpressed edge was simply
+   absent, which made the pressed edge look like the distinction while it was
+   really the only edge on screen.) */
 .v-duelset-tab {
   font: inherit;
   font-size: 12px;
   letter-spacing: 0.04em;
   padding: 5px 10px;
-  border: 1px solid var(--line);
+  /* `--edge`, not `--line`: the unpressed tab has no fill either, so this
+     border is its only boundary and 1.4.11 wants 3:1 of it. The pressed state
+     below already takes `--edge` — leaving the unpressed one on `--line` made
+     the only visible tab the one you were already on. */
+  border: 1px solid var(--edge);
   border-radius: 3px;
   background: transparent;
   color: var(--muted);

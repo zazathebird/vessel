@@ -17,6 +17,7 @@ import { shareStore } from "./store";
 import {
   CHANNEL_LABEL,
   ICE_SERVERS,
+  MAX_QUEUED_ICE,
   unpackChunk,
   type FileReply,
   type ListEntry,
@@ -24,11 +25,26 @@ import {
 
 const CONNECT_TIMEOUT_MS = 20_000;
 
+/**
+ * How long a request may go without a word before it is given up on.
+ *
+ * Nothing in the file protocol waits on a condition and nothing retries, so
+ * before this every way a reply could fail to arrive — a listing the agent
+ * could not send, a frame it refused, an agent that folded without closing the
+ * channel — left a promise pending for the life of the tab, holding whatever
+ * chunks it had accumulated, with the explorer showing "Listing…" for ever.
+ *
+ * IDLE time, not total: a read's timer is reset by every chunk, so a slow
+ * legitimate transfer of a large file cannot trip it however long it takes.
+ */
+const REQUEST_IDLE_MS = 60_000;
+
 interface PendingRead {
   kind: "read";
   chunks: Uint8Array[];
   received: number;
   size: number;
+  timer: ReturnType<typeof setTimeout> | null;
   onProgress?: (received: number, size: number) => void;
   resolve: (value: unknown) => void;
   reject: (reason: Error) => void;
@@ -36,6 +52,7 @@ interface PendingRead {
 
 interface PendingCall {
   kind: "call";
+  timer: ReturnType<typeof setTimeout> | null;
   resolve: (value: unknown) => void;
   reject: (reason: Error) => void;
 }
@@ -116,13 +133,43 @@ export class DriveConnection {
   ): Promise<DriveConnection> {
     // The pin is consulted BEFORE the socket, so a changed key never gets as
     // far as signalling — the agent that is answering learns nothing.
-    const verdict = pinVerdict(await shareStore.pin(machine.id), machine.agentPubkey);
+    //
+    // A read that throws is a refusal, not a "first" verdict: IndexedDB has no
+    // fallback here, and treating an unreadable store as "nothing pinned" would
+    // turn every blocked-site-data browser into one that trusts whatever the
+    // server names. Nothing is dialled, and the message says which it is.
+    let pinned: string | null;
+    try {
+      pinned = await shareStore.pin(machine.id);
+    } catch {
+      throw new Error(
+        "This browser could not read what it remembers about that machine's key, so it cannot tell whether the key has changed. Check that site data is allowed for this site, then try again.",
+      );
+    }
+    const verdict = pinVerdict(pinned, machine.agentPubkey);
     if (verdict === "changed" && !acceptNewKey) throw new AgentKeyChanged(machine, machine.agentPubkey);
     const conn = await DriveConnection.dial(machine, grantKey);
-    // Trust on first use, and the accepted re-key, both taken only once the
-    // agent has proven the key by signature — a pin on an unverified key would
-    // pin the impostor. `same` needs no write.
-    if (verdict !== "same") await shareStore.savePin(machine.id, machine.agentPubkey);
+    /*
+     * Trust on first use, and the accepted re-key, both taken only once the
+     * agent has proven the key by signature — a pin on an unverified key would
+     * pin the impostor. `same` needs no write.
+     *
+     * The write can fail on its own, and IndexedDB has no fallback here: a full
+     * quota, evicted site data, a private window. Failing out of `open()` with
+     * the connection already established leaked it — WebSocket, peer connection
+     * and data channel open for the life of the tab, still counted in the
+     * agent's `peers`, while the owner read "Could not connect" over a raw
+     * IndexedDB error. Close it first, then say what actually went wrong. The
+     * ordering above is untouched: nothing is pinned before `dial()` verifies.
+     */
+    try {
+      if (verdict !== "same") await shareStore.savePin(machine.id, machine.agentPubkey);
+    } catch {
+      conn.close(new Error("This browser could not remember that machine's key."));
+      throw new Error(
+        "Connected, but this browser could not remember that machine's key — so it cannot warn you if the key changes. Check that site data is allowed for this site, then try again.",
+      );
+    }
     return conn;
   }
 
@@ -158,6 +205,26 @@ export class DriveConnection {
       pc.onicecandidate = (event) => {
         if (event.candidate && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "ice", payload: { candidate: event.candidate.toJSON() } }));
+        }
+      };
+
+      /*
+       * The agent's candidates arrive before its answer does — it emits them
+       * the moment it sets its local description, and then `await`s a WebCrypto
+       * signature before the answer is sent. `addIceCandidate` with no remote
+       * description rejects, and that rejection went into a `.catch(() =>
+       * undefined)`, so every early candidate was lost silently and the 20s
+       * timer above blamed NAT for it. `remoteReady` is set only once
+       * `setRemoteDescription` has RESOLVED, because `ws.onmessage` is async and
+       * nothing serialises frames: an `ice` frame can be handled while the
+       * answer is still being applied.
+       */
+      const queuedIce: RTCIceCandidateInit[] = [];
+      let remoteReady = false;
+      const flushIce = async () => {
+        while (queuedIce.length > 0) {
+          const candidate = queuedIce.shift();
+          if (candidate) await pc.addIceCandidate(candidate).catch(() => undefined);
         }
       };
 
@@ -212,13 +279,20 @@ export class DriveConnection {
             return fail("That machine failed its identity check. Refusing to connect.");
           }
           await pc.setRemoteDescription({ type: "answer", sdp });
+          remoteReady = true;
+          await flushIce();
           return;
         }
 
         if (frame.type === "ice") {
           const candidate = (frame.payload as { candidate?: RTCIceCandidateInit } | undefined)
             ?.candidate;
-          if (candidate) await pc.addIceCandidate(candidate).catch(() => undefined);
+          if (!candidate) return;
+          if (!remoteReady) {
+            if (queuedIce.length < MAX_QUEUED_ICE) queuedIce.push(candidate);
+            return;
+          }
+          await pc.addIceCandidate(candidate).catch(() => undefined);
           return;
         }
 
@@ -237,6 +311,7 @@ export class DriveConnection {
   close(reason?: Error): void {
     this.closed = true;
     for (const pending of this.pending.values()) {
+      if (pending.timer !== null) clearTimeout(pending.timer);
       pending.reject(reason ?? new Error("The connection closed."));
     }
     this.pending.clear();
@@ -247,6 +322,29 @@ export class DriveConnection {
     }
     this.pc.close();
     this.ws.close();
+  }
+
+  /**
+   * Start, or restart, a request's idle timer. Every word from the agent about
+   * a request resets it, so the clock measures silence and not the size of the
+   * job — a listing of a slow spinning disk and a gigabyte read are both fine
+   * as long as something keeps arriving.
+   */
+  private arm(id: number): void {
+    const pending = this.pending.get(id);
+    if (!pending) return;
+    if (pending.timer !== null) clearTimeout(pending.timer);
+    pending.timer = setTimeout(() => {
+      this.pending.delete(id);
+      pending.reject(new Error("That machine stopped answering. Try again, or reconnect to it."));
+    }, REQUEST_IDLE_MS);
+  }
+
+  /** Take a request off the board: its timer stops with it. */
+  private settle(id: number): void {
+    const pending = this.pending.get(id);
+    if (pending && pending.timer !== null) clearTimeout(pending.timer);
+    this.pending.delete(id);
   }
 
   private onChannelMessage(data: unknown): void {
@@ -261,33 +359,53 @@ export class DriveConnection {
       if (!pending) return;
 
       if (!reply.ok) {
-        this.pending.delete(reply.id);
+        this.settle(reply.id);
         pending.reject(new Error(reply.error));
         return;
       }
       if (pending.kind === "read") {
         if ("size" in reply) {
           pending.size = reply.size;
+          this.arm(reply.id);
           return;
         }
         if ("done" in reply) {
-          this.pending.delete(reply.id);
+          this.settle(reply.id);
           pending.resolve(new Blob(pending.chunks as BlobPart[]));
           return;
         }
         return;
       }
-      this.pending.delete(reply.id);
+      this.settle(reply.id);
       pending.resolve(reply);
       return;
     }
 
     if (data instanceof ArrayBuffer) {
-      const { id, data: bytes } = unpackChunk(data);
+      /*
+       * `unpackChunk` refuses a frame too short to carry its own header, and
+       * this handler used to call it bare: the `RangeError` came straight out
+       * of the event handler, the pending read was never rejected, and with no
+       * request timeout its promise and its accumulated chunks stayed resident
+       * for the life of the tab. The frame names no request — there is no id in
+       * it to reject — and a data channel is reliable and message-oriented, so
+       * a frame this shape is not truncation but a peer sending something this
+       * protocol does not contain. Fold the connection: every pending request
+       * is rejected with a reason the page can show.
+       */
+      let id: number;
+      let bytes: Uint8Array;
+      try {
+        ({ id, data: bytes } = unpackChunk(data));
+      } catch {
+        this.close(new Error("That machine sent something this protocol does not contain."));
+        return;
+      }
       const pending = this.pending.get(id);
       if (pending?.kind !== "read") return;
       pending.chunks.push(bytes);
       pending.received += bytes.length;
+      this.arm(id);
       pending.onProgress?.(pending.received, pending.size);
     }
   }
@@ -297,11 +415,29 @@ export class DriveConnection {
     return new Promise<T>((resolve, reject) => {
       this.pending.set(id, {
         kind: "call",
+        timer: null,
         resolve: resolve as (value: unknown) => void,
         reject,
       });
-      this.channel.send(JSON.stringify({ v: 1, id, ...request }));
+      this.arm(id);
+      this.ask(id, { v: 1, id, ...request }, reject);
     });
+  }
+
+  /**
+   * Send a request, or settle it now. A `send()` that throws — the channel
+   * closed between the check and the call — would otherwise reject the promise
+   * from inside the executor while leaving the entry on the board with its
+   * timer running, and the timer would then reject an already-settled promise
+   * a minute later.
+   */
+  private ask(id: number, request: Record<string, unknown>, reject: (reason: Error) => void): void {
+    try {
+      this.channel.send(JSON.stringify(request));
+    } catch {
+      this.settle(id);
+      reject(new Error("That machine could not be asked — the connection has closed."));
+    }
   }
 
   list(drive: string, path: string[]): Promise<{ entries: ListEntry[]; truncated: boolean }> {
@@ -320,11 +456,13 @@ export class DriveConnection {
         chunks: [],
         received: 0,
         size: 0,
+        timer: null,
         onProgress,
         resolve: resolve as (value: unknown) => void,
         reject,
       });
-      this.channel.send(JSON.stringify({ v: 1, id, op: "read", drive, path }));
+      this.arm(id);
+      this.ask(id, { v: 1, id, op: "read", drive, path }, reject);
     });
   }
 }

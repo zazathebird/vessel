@@ -123,7 +123,35 @@ export function useOperatorRoutes(): void {
       // returned them to where they started. The keyboard Back shortcut was
       // unusable on all six NAV pages. ⌘K is above this line because a modifier
       // is the point of it.
-      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      //
+      // **Shift counts, and leaving it out had its own cost**: Shift+Arrow is
+      // the text-selection gesture, so selecting a line of a paragraph paged
+      // the site out from under the selection. Nothing below wants a shifted
+      // key — `sudo` and the konami are both typed unshifted — so this is the
+      // whole fix rather than a special case for the arrows.
+      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+
+      // Autorepeat is not a keystroke. Holding an arrow paged on every repeat —
+      // the keyboard's rate, ~30 a second — and each one re-armed the 300ms
+      // dive with a new target, so the stage sat diving on the stale page until
+      // the key came up, and with sound on it fired a `nav` voice per repeat.
+      // Arrow paging is not operator-gated, so any visitor could do it.
+      // Above the buffer as well: a held letter has never meant "type it
+      // eleven times", and `ConfigContext` throttles the `nav` voice as the
+      // floor under this.
+      if (event.repeat) return;
+
+      // A modifier's own keydown is not a keystroke either. `event.key` is
+      // "shift" for it and it repeats while the key is held, so the
+      // twelve-slot buffer filled with "shift" and wiped a half-typed `sudo`,
+      // and a "shift" wedged between two arrows is a break in the konami that
+      // `buffer.includes(KONAMI)` reads as exactly that.
+      //
+      // `useAccountRoutes` answers this with `key.length !== 1`; this buffer
+      // cannot, because the konami's four arrows are the one multi-character
+      // key that belongs in it. Everything below is the buffer and arrow
+      // paging, and neither has ever wanted any other key.
+      if (key.length !== 1 && !KONAMI_KEYS.includes(key)) return;
 
       // The buffer is read before paging, not after, because an arrow key can
       // belong to either and the sequence has the stronger claim on it.

@@ -1485,6 +1485,26 @@ if (!FAST) check("duel: a blow always flashes, and no reaction precedes its caus
 
 if (!FAST) check("duel: fairness, reachability, stability", () => {
   const styles = ["hooded", "caped", "maned", "horned"] as const;
+  const PROBE: number[] = [];
+  for (let probe = 0; probe < 40; probe += 1) {
+    let pl = 0; let pr = 0;
+    for (let r = 0; r < 3; r += 1) {
+      const st = createDuel(styles[r % 4], styles[(r + 1) % 4]);
+      let over = 0;
+      for (let i = 0; i < 120_000; i += 1) {
+        advanceDuel(st, 1);
+        if (st.over > 0 && over === 0) {
+          if (st.a.health <= 0 && st.b.health > 0) pr += 1;
+          else if (st.b.health <= 0 && st.a.health > 0) pl += 1;
+        }
+        over = st.over;
+      }
+    }
+    const pn = pl + pr;
+    PROBE.push(Number((Math.abs(pl - pn / 2) / Math.sqrt(pn * 0.25)).toFixed(2)));
+    console.error(`PROBE ${probe + 1}: n=${pn} left=${pl} sigma=${PROBE[PROBE.length - 1]}`);
+  }
+  console.error("PROBE_RESULT " + JSON.stringify(PROBE));
   let left = 0;
   let right = 0;
   let nan = 0;

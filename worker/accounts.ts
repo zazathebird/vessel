@@ -58,7 +58,24 @@ import {
  * of foreclosing them for whichever accounts happened to use those characters.
  * After the first real signup this would have been a breaking migration.
  */
-const HANDLE_PATTERN = /^[a-z0-9][a-z0-9-]{2,23}$/i;
+/*
+ * **The pattern above did not actually enforce the DNS-label safety the reason
+ * for it rests on** (2026-09-14). `/^[a-z0-9][a-z0-9-]{2,23}$/i` accepted
+ * `abc-`, `a-b-`, `a--b` and `ab--`, none of which is a legal DNS label (RFC
+ * 1035 forbids a trailing hyphen), and `xn--abc`, which is a reserved IDNA
+ * A-label prefix — `xn--abc.mcclevarty.ca` is a punycode name. So a handle
+ * registered today could still be the one that forecloses the subdomain plan,
+ * in exactly the way the note above says would become a breaking migration once
+ * accounts exist.
+ *
+ * The last character must now be alphanumeric, and the `xn--` prefix is
+ * refused. This is free only while the account count is what it is, which is
+ * the same argument the 2026-08-12 tightening made. A doubled hyphen elsewhere
+ * (`a--b`) stays legal: it is a valid label, and only the `xn--` position is
+ * reserved.
+ */
+const HANDLE_PATTERN = /^[a-z0-9][a-z0-9-]{1,22}[a-z0-9]$/i;
+const HANDLE_RESERVED_PREFIX = /^xn--/i;
 
 /**
  * Reserved so that nobody can sign up as the operator and be believed. The
@@ -131,6 +148,30 @@ const TOTP_BACKUP_CODE_COUNT = 10;
  */
 const MIN_ITERATIONS = 100_000;
 const MAX_ITERATIONS = 5_000_000;
+
+/**
+ * The floor for a **password** credential, which is not the same number and
+ * must not be collapsed back into one (2026-09-14).
+ *
+ * `MIN_ITERATIONS` is the recovery floor: a recovery code is 100 bits straight
+ * from the CSPRNG, there is nothing in it to guess, and `RECOVERY_ITERATIONS`
+ * in `src/auth/derive.ts` legitimately derives at 100,000. A password is
+ * human-chosen and might hold thirty bits, and the browser has floored it at
+ * `DEFAULT_ITERATIONS` — 600,000 — through `checkIterations` since the day it
+ * shipped. `expectIterations` applied the one 100,000 floor to both fields, so
+ * a modified client could register a password credential six times cheaper to
+ * grind offline than any honest one, on the endpoint whose own comment says the
+ * floor exists to stop exactly that. The two counts were already separate
+ * arguments; only the floor was shared.
+ *
+ * **This is deliberately its own constant rather than `DEFAULT_ITERATIONS`.**
+ * §4 wants the default raised over time, and a floor that tracks the default
+ * would refuse every account registered before the rise — including, on the
+ * very next `changePassword`, an owner who has done nothing wrong. The floor is
+ * "the oldest count ever deployed for a password"; when the default rises, this
+ * stays put.
+ */
+const MIN_PASSWORD_ITERATIONS = 600_000;
 
 /**
  * Mirrors `RECOVERY_ITERATIONS` in `src/auth/derive.ts`.
@@ -253,8 +294,15 @@ function expectHandle(value: unknown): string {
     // was told and the rule they were held to disagreed, and the refusal read as
     // a bug in the site.
     throw new BadRequest(
-      "A handle is 3 to 24 characters: letters, numbers, and hyphens after the first.",
+      "A handle is 3 to 24 characters: letters, numbers, and hyphens in between.",
     );
+  }
+  // Reserved by IDNA for punycode, so a handle starting `xn--` would be a
+  // hostname the subdomain plan cannot give out. Refused with its own sentence
+  // rather than folded into the shape message, which would then be describing a
+  // rule it does not state.
+  if (HANDLE_RESERVED_PREFIX.test(handle)) {
+    throw new BadRequest("A handle cannot start with “xn--”. Pick another.");
   }
   if (RESERVED_HANDLES.has(handle.toLowerCase())) {
     throw new BadRequest("That handle is reserved. Pick another.");
@@ -263,15 +311,28 @@ function expectHandle(value: unknown): string {
 }
 
 /**
- * The handle on a sign-in path, validated for *shape* before it is used to name
- * a rate-limit bucket.
+ * The handle on a sign-in path, validated for *shape* before it is used.
  *
- * Shape is not existence, so this discloses nothing. What it prevents is a
- * namespace collision: the synthetic bucket names used elsewhere contain a `:`,
- * which `HANDLE_PATTERN` forbids. Without this check an attacker who learned an
- * account id could send failed sign-ins for the handle `second-factor:<id>` and
- * block that victim's second-factor bucket for an hour — so the victim's correct
- * password would earn them a ticket they could not spend.
+ * Shape is not existence, so this discloses nothing. What it buys is that
+ * `signin` and `challenge` agree about what a handle *is* — they are the two
+ * unauthenticated routes that take one, and a value one accepts and the other
+ * refuses is a difference an enumerator can measure — and that an untrusted
+ * string of unbounded length and arbitrary content is refused before it is
+ * lowercased, HMAC'd, bound into a query and interpolated into the decoy's
+ * `decoy-salt:` input.
+ *
+ * **It is not what stops a bucket-namespace collision, and the note that said
+ * so was describing an attack this code cannot have** (2026-09-14). The claim
+ * was that without the pattern an attacker who learned an account id could send
+ * failed sign-ins for the handle `second-factor:<id>` and block that victim's
+ * second-factor bucket. `buckets()` does not put the handle in the bucket name:
+ * it HMACs it under the rate salt and emits `account:${hex}` / `proof:${hex}`,
+ * so a handle can no more reach the `second-factor:` namespace than it can
+ * reach `signup:`, whatever characters it contains. A true reason for a check
+ * is worth more than a vivid one — the vivid one is what a later reader deletes
+ * the check with, once they notice it cannot happen. **If a bucket name is ever
+ * built from a handle directly, that is the day this becomes load-bearing in
+ * the way it used to claim.**
  */
 function expectSignInHandle(value: unknown): string {
   const handle = typeof value === "string" ? value.trim() : "";
@@ -279,11 +340,82 @@ function expectSignInHandle(value: unknown): string {
   return handle;
 }
 
-function expectIterations(value: unknown): number {
+/**
+ * Line-breaking and control characters, and characters that make a name *lie
+ * about what it says*, refused in every display name the account stores.
+ *
+ * **A deliberate near-copy of `CONTROL` and `DECEPTIVE` in
+ * `src/share/setupCode.ts`, and the duplication is the same trade
+ * `encoding.ts` documents** — the two sides compile under separate tsconfigs
+ * against different libs, and the Worker imports nothing from `src/`. Keep them
+ * in step: the decoder is the authority on the rules and this must never be the
+ * looser of the two.
+ *
+ * Why the Worker needs them at all (2026-09-14): a machine name and a drive
+ * label arrive by **two** routes. One is a setup code, where `decodeSetupCode`
+ * refuses bidi overrides, zero-widths, lone surrogates, private-use, unassigned
+ * code points and every space that is not U+0020 — because a person reads those
+ * strings while deciding which folder to hand to the picker. The other is
+ * somebody typing into the form on `/share` or `/machines`, which reached
+ * `expectName` and got a trim and a length check. So the strict path was the
+ * machine-generated one and the lax path was the hand-typed one, which is
+ * backwards; and the names then render side by side in one list on
+ * `MachinesPage`, where two rows reading identically is the twin-row failure
+ * the decoder's whole filter exists to prevent, one surface along.
+ *
+ * U+FE0E and U+FE0F are carved out here for the decoder's reason: they are the
+ * emoji presentation selectors and an emoji in a folder name is ordinary.
+ *
+ * **Written as `\u` escapes, never as literal characters**, which is the
+ * decoder's rule and is load-bearing twice over. U+2028 and U+2029 are
+ * LineTerminators in JavaScript source: ES2019 legalised them inside *string*
+ * literals only, so a literal one inside a **regex** literal still ends the
+ * line and the regex is simply unterminated — written that way first here, and
+ * the parse error lands three lines further down where nothing is wrong. The
+ * rest are invisible in an editor and in a diff, and one of them is a
+ * carve-out, which is the worst rule to leave unreadable.
+ *
+ * `\p{Cs}` refuses a **lone** surrogate and not an emoji: under `/u` a
+ * well-formed pair is one astral code point and never matches the class, which
+ * is exactly the distinction `setupCode.ts` reasons about.
+ */
+const NAME_CONTROL = /[\p{Cc}\u2028\u2029]/u;
+const NAME_DECEPTIVE =
+  /(?![\ufe0e\ufe0f])[\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Default_Ignorable_Code_Point}\p{Variation_Selector}\u2800]|(?!\u0020)\p{Zs}/u;
+
+/**
+ * A display name a person will read off a list: a machine, a drive, a setup.
+ *
+ * **Refuse, never repair.** Stripping the offending characters would store a
+ * name the person did not type and, worse, would silently turn two names that
+ * render alike into one name and one rename — the exact repair
+ * `decodeSetupCode` refuses for labels. One sentence, and it names the field so
+ * the form can say which box is wrong.
+ */
+export function expectDisplayName(value: unknown, what: string, max: number): string {
+  const name = typeof value === "string" ? value.trim() : "";
+  if (!name || name.length > max) {
+    throw new BadRequest(`Give the ${what} a name, up to ${max} characters.`);
+  }
+  if (NAME_CONTROL.test(name) || NAME_DECEPTIVE.test(name)) {
+    throw new BadRequest(
+      `That ${what} name contains characters that cannot be shown. Use ordinary letters, numbers and spaces.`,
+    );
+  }
+  return name;
+}
+
+/**
+ * The floor defaults to the password one, so a call that has not thought about
+ * which credential it is validating gets the stricter of the two — the same
+ * shape as `roll()`'s `isOperator = false`. Only the recovery field passes
+ * `MIN_ITERATIONS`, and it says so at the call site.
+ */
+function expectIterations(value: unknown, floor = MIN_PASSWORD_ITERATIONS): number {
   if (typeof value !== "number" || !Number.isInteger(value)) {
     throw new BadRequest("Missing key-derivation parameters.");
   }
-  if (value < MIN_ITERATIONS || value > MAX_ITERATIONS) {
+  if (value < floor || value > MAX_ITERATIONS) {
     throw new BadRequest("Those key-derivation parameters are out of range.");
   }
   return value;
@@ -301,13 +433,45 @@ function expectIterations(value: unknown): number {
  * address: the client bucket is named by `clientKey`, an HMAC under a salt that
  * rotates daily (§9, and `crypto.ts`).
  */
-export async function buckets(request: Request, env: Env, handleLower: string | null): Promise<string[]> {
+export async function buckets(
+  request: Request,
+  env: Env,
+  handleLower: string | null,
+  /*
+   * **Which per-account bucket, and the two are deliberately not one**
+   * (2026-09-14).
+   *
+   * `signin` is reachable by anybody who knows a handle; `assertPassword` is
+   * reachable only by a caller already holding a valid session for that
+   * account. Sharing one bucket name between them meant the anonymous route
+   * could fill the authenticated one: six wrong-password POSTs to
+   * `/api/auth/signin` blocked the handle, the penalty doubles to the
+   * hour-long ceiling, and one request per hour thereafter held it there —
+   * taking down, for the *owner*, `publishSiteConfig`, all five admin writes,
+   * the six release-gated downloads routes, `keySlot`, `changePassword`, TOTP
+   * enrolment and confirmation, passkey register and remove, and
+   * `machines.pair`. An operator signed in **with a passkey** — which has no
+   * rate limiting at all — still could not publish his own site, for as long
+   * as a stranger kept it up. The comment on `MAX_PENALTY_MS` says the cap
+   * exists so an attack cannot become a denial of service; the cap bounds one
+   * penalty, never the repetition, so it did not.
+   *
+   * Splitting the namespace costs nothing in defence. The `proof` bucket keeps
+   * the same tight five-attempt allowance, so a stolen cookie grinding the
+   * password through `/api/account/slot` is throttled exactly as before — it
+   * simply can no longer be filled by somebody who has not got in at all.
+   */
+  kind: "signin" | "proof" = "signin",
+): Promise<string[]> {
   // Absent in local development, where there is no edge in front of us. The
   // literal is a bucket name and not an address, so nothing is written down
   // either way.
   const ip = request.headers.get("cf-connecting-ip") ?? "local";
   const names = [`client:${await clientKey(ip, env.RATE_SALT_SEED)}`];
-  if (handleLower) names.push(`account:${toHex(await hmac(env.RATE_SALT_SEED, handleLower))}`);
+  if (handleLower) {
+    const key = toHex(await hmac(env.RATE_SALT_SEED, handleLower));
+    names.push(kind === "proof" ? `proof:${key}` : `account:${key}`);
+  }
   return names;
 }
 
@@ -336,6 +500,9 @@ const SIGNUP_FREE_ATTEMPTS = 12;
 function freeFor(name: string): number {
   if (name.startsWith("client:")) return CLIENT_FREE_ATTEMPTS;
   if (name.startsWith("signup:")) return SIGNUP_FREE_ATTEMPTS;
+  // `account:` and `proof:` both land here, and deliberately share the figure:
+  // they are two buckets so that one cannot be filled by the other (see
+  // `buckets`), not because a re-proof deserves a looser allowance.
   return ACCOUNT_FREE_ATTEMPTS;
 }
 
@@ -380,31 +547,74 @@ export async function assertAttempt(env: Env, names: string[]): Promise<void> {
   await gate(env, names, "/attempt");
 }
 
+/**
+ * Ask every bucket, and **refund the ones that said yes if any of them says no**
+ * (2026-09-14).
+ *
+ * This walked the names in order and threw at the first refusal, which left the
+ * buckets before it holding a reservation for an attempt that never happened.
+ * `client:` is index 0 by construction (see `buckets`), so once the `account:`
+ * or `signup:` bucket was blocked, every further request still burnt one of the
+ * shared client allowance of fifty — and that allowance is the household's, not
+ * the attacker's. Fifty more requests against one already-locked handle cost
+ * the whole /64 its ability to *sign in at all*, which is the denial of service
+ * the split in `buckets` was just written to close, arriving from the other
+ * side.
+ *
+ * **The reserve-and-check-in-one-round-trip property is untouched**, because it
+ * is a property of each bucket separately: the decision for a bucket still comes
+ * from a single `/attempt`, so the Nth concurrent caller still sees N-1 already
+ * counted and no caller ever does `/check` then `/fail`. What changes is only
+ * what happens *after* a bucket has decided — a reservation taken for an attempt
+ * that is then refused elsewhere is given back with `/succeed`, which decrements
+ * by one and lifts a block it has just armed. That is the same refund
+ * `recordSuccess` performs on the honest path, for the same reason.
+ *
+ * Every bucket is asked, rather than stopping at the first refusal, so that the
+ * message can name the **latest** retry time: telling somebody to come back in
+ * thirty seconds when a second bucket holds them for an hour is an answer that
+ * does not survive them acting on it.
+ */
 async function gate(env: Env, names: string[], path: string): Promise<void> {
-  for (const name of names) {
-    const verdict = await limiterFetch(env, name, path);
-    if (!verdict.allowed) {
-      const seconds = Math.max(1, Math.ceil((verdict.retryAt - Date.now()) / 1000));
-      throw new BadRequest(
-        seconds > 90
-          ? `Too many attempts. Try again in about ${Math.ceil(seconds / 60)} minutes.`
-          : `Too many attempts. Try again in about ${seconds} seconds.`,
-        429,
-      );
-    }
+  const verdicts = await Promise.all(
+    names.map(async (name) => ({ name, verdict: await limiterFetch(env, name, path) })),
+  );
+
+  const refused = verdicts.filter((v) => !v.verdict.allowed);
+  if (refused.length === 0) return;
+
+  // `/check` consumes nothing, so there is nothing to give back on that path.
+  if (path === "/attempt") {
+    await Promise.all(
+      verdicts
+        .filter((v) => v.verdict.allowed)
+        .map((v) => limiterFetch(env, v.name, "/succeed")),
+    );
   }
+
+  const retryAt = Math.max(...refused.map((v) => v.verdict.retryAt));
+  const seconds = Math.max(1, Math.ceil((retryAt - Date.now()) / 1000));
+  throw new BadRequest(
+    seconds > 90
+      ? `Too many attempts. Try again in about ${Math.ceil(seconds / 60)} minutes.`
+      : `Too many attempts. Try again in about ${seconds} seconds.`,
+    429,
+  );
 }
 
-/**
- * Count a failure that `assertAttempt` did not already reserve.
- *
- * Still needed for the paths that are not credential checks — signup's handle
- * collision and its creation quota — and harmless after `assertAttempt`, which
- * is why the credential paths drop their trailing call rather than keeping both.
+/*
+ * **`recordFailure` is gone, and its last caller is why** (2026-09-14). It
+ * counted a failure that `assertAttempt` had not already reserved, and its own
+ * comment claimed signup's handle collision still needed it — while that branch
+ * sat under an `assertAttempt` reserving the same names, so the one surviving
+ * caller was double-counting rather than filling a gap. With the rule now
+ * uniform — *any route that consumes an allowance reserves* — a bare `/fail` is
+ * the wrong tool by construction: used after a reservation it halves the
+ * allowance, and used instead of one it is the `/check`-then-`/fail` race that
+ * `assertAttempt` exists to close. Leaving it exported as a convenience is
+ * leaving that race one import away. `/fail` itself stays on the Durable
+ * Object; nothing in the Worker reaches for it.
  */
-async function recordFailure(env: Env, names: string[]): Promise<void> {
-  await Promise.all(names.map((name) => limiterFetch(env, name, "/fail")));
-}
 
 /**
  * A success clears the slate for the **account**, so an ordinary user who
@@ -549,10 +759,21 @@ export async function assertPassword(
   const refused = new BadRequest(wording, 401);
   if (typeof supplied !== "string") throw refused;
 
-  const names = await buckets(request, env, account.handle.toLowerCase());
+  /*
+   * **The shape is checked before the attempt is reserved** (2026-09-14).
+   * `assertAttempt` ran first, so a truncated paste or a client bug — an
+   * `authSecret` of the wrong length, which is not a guess at anything — burnt
+   * one of the account's five with no refund, and answered 400 rather than this
+   * route's 401. Only a well-formed secret is an attempt at a password.
+   */
+  const authSecret = expectBytes(supplied, AUTH_SECRET_BYTES, "Authentication secret");
+
+  // `"proof"`, not the sign-in bucket: see `buckets`. The caller is already
+  // holding a session for this account, so this allowance must not be spendable
+  // by somebody who is not.
+  const names = await buckets(request, env, account.handle.toLowerCase(), "proof");
   await assertAttempt(env, names);
 
-  const authSecret = expectBytes(supplied, AUTH_SECRET_BYTES, "Authentication secret");
   const row = await env.DB.prepare(
     "SELECT auth_hash FROM credentials WHERE account_id = ? AND kind = 'password'",
   )
@@ -615,7 +836,9 @@ export async function signup(request: Request, env: Env): Promise<Response> {
   const kdf = (body.kdf ?? {}) as Record<string, unknown>;
   const salt = expectBytes(kdf.salt, KDF_SALT_BYTES, "Key-derivation salt");
   const iterations = expectIterations(kdf.iterations);
-  const recoveryIterations = expectIterations(kdf.recoveryIterations);
+  // The one field that legitimately derives at 100,000 — see
+  // `MIN_PASSWORD_ITERATIONS` for why the other does not.
+  const recoveryIterations = expectIterations(kdf.recoveryIterations, MIN_ITERATIONS);
   const authSecret = expectBytes(body.authSecret, AUTH_SECRET_BYTES, "Authentication secret");
   const grantPubkey = expectBytes(body.grantPubkey, GRANT_PUBKEY_BYTES, "Grant public key");
   const passwordSlot = expectBytes(body.passwordSlot, WRAPPED_KEY_BYTES, "Key slot");
@@ -660,7 +883,13 @@ export async function signup(request: Request, env: Env): Promise<Response> {
   if (taken) {
     // Handle availability is public by nature — anyone can probe it by trying to
     // sign up — so saying so plainly costs nothing and saves a confusing failure.
-    await recordFailure(env, names);
+    //
+    // **No `recordFailure` here** (2026-09-14, `AUDIT-FINDINGS.md` #1).
+    // `assertAttempt` above already reserved this attempt, exactly as the
+    // batch's own `UNIQUE` branch below notes; counting it a second time made a
+    // taken handle cost two of the twelve, so the real signup quota was six and
+    // the client bucket drained at double rate on the one branch a person hits
+    // by typing a popular word. One attempt, one debit.
     throw new BadRequest("That handle is taken. Pick another.", 409);
   }
 
@@ -965,6 +1194,25 @@ async function lookupCredentials(
  * the slot it leaves behind is unreachable without another credential. Clearing
  * spent slots belongs to `setPassword`, which is the only thing that can replace
  * one, and which this response hands the ticket for.
+ *
+ * **The spend is a conditional UPDATE whose guard rides in its own `WHERE`, and
+ * it happens before anything else** (2026-09-14). It used to be an
+ * unconditional `SET used_at = ?` inside the batch below, which is right only
+ * if nothing can reach this function twice with the same credential — and
+ * `signinTotp` can. `signin` mints the `totp-ticket` *before* the recovery code
+ * is spent, deliberately, so that somebody holding the codes but not the phone
+ * does not burn one per abandoned attempt; nothing then re-checked `used_at`
+ * when the ticket came back. Inside the ticket's five-minute life that is one
+ * completion per 30-second TOTP step — about ten sessions, ten `used_at`
+ * re-stamps and ten fresh copies of the key slot off a single code, and
+ * reachable without a race at all by holding the ticket and waiting. Two tabs
+ * posting the same ticket at once is the same thing in one step.
+ *
+ * Check-then-act would close the patient version and leave the concurrent one,
+ * which is the `totp.last_step` lesson from migration 0002 one credential kind
+ * over: zero `meta.changes` is the refusal. The `account_id` and `kind`
+ * clauses ride in the same `WHERE` so a ticket cannot name a credential on
+ * another account or of another kind, which nothing checked either.
  */
 async function completeSignIn(
   env: Env,
@@ -973,6 +1221,22 @@ async function completeSignIn(
   credentialId: string,
 ): Promise<Response> {
   const now = Date.now();
+
+  if (kind === "recovery") {
+    const claimed = await env.DB.prepare(
+      `UPDATE credentials SET used_at = ?
+        WHERE id = ? AND account_id = ? AND kind = 'recovery' AND used_at IS NULL`,
+    )
+      .bind(now, credentialId, account.id)
+      .run();
+    // The same sentence a stale ticket gets. "That code has already been
+    // redeemed" would be true and would also tell a holder of a captured ticket
+    // which of their copies landed.
+    if (claimed.meta.changes !== 1) {
+      throw new BadRequest("That sign-in timed out. Start again.", 401);
+    }
+  }
+
   const statements = [
     env.DB.prepare("UPDATE credentials SET last_used_at = ? WHERE id = ?").bind(now, credentialId),
     auditStatement(env, account.id, "auth.signin", kind),
@@ -998,10 +1262,10 @@ async function completeSignIn(
       };
     }
 
-    statements.push(
-      env.DB.prepare("UPDATE credentials SET used_at = ? WHERE id = ?").bind(now, credentialId),
-      auditStatement(env, account.id, "auth.recovery.redeemed", credentialId),
-    );
+    // The `used_at` write is no longer here: it is the conditional claim at the
+    // top of this function, which is what makes the redemption one-shot. The
+    // audit row stays below it, so a refused second attempt writes nothing.
+    statements.push(auditStatement(env, account.id, "auth.recovery.redeemed", credentialId));
 
     // The capability to set a password without presenting the current one, given
     // only to the one caller who by definition cannot present it. Minted here
@@ -1127,7 +1391,11 @@ export async function signinTotp(request: Request, env: Env): Promise<Response> 
   await recordSuccess(env, names);
 
   // Only now is a pending recovery code actually spent (§4: the person holding
-  // the codes but not the phone is who recovery is for).
+  // the codes but not the phone is who recovery is for) — and spent **once**,
+  // in `completeSignIn`'s conditional claim. A valid ticket outlives the code it
+  // names by up to five minutes, which is ten TOTP steps; nothing here can tell
+  // a second presentation of that ticket from the first, so the refusal has to
+  // live at the write.
   return pendingRecoveryId
     ? completeSignIn(env, account, "recovery", pendingRecoveryId)
     : completeSignIn(env, account, "password", await passwordCredentialId(env, accountId));
@@ -1283,6 +1551,21 @@ export async function keySlot(request: Request, env: Env): Promise<Response> {
 
   if (!row) throw new BadRequest("This account has no password key slot.", 404);
 
+  /*
+   * **The NULL-pubkey guard its two siblings already had** (2026-09-14).
+   * `accounts.grant_pubkey` is a nullable BLOB, and the two other places that
+   * hand a slot back both test it — `completeSignIn` with `if (slot?.pubkey)`
+   * and `passkeys.signIn` with `slot?.pubkey`, each omitting the slot rather
+   * than building one it cannot describe. This checked only that the row
+   * existed and then called `fromBlob(row.pubkey)`, which throws a bare `Error`
+   * for a NULL; anything not a `BadRequest` becomes a generic 500, so the
+   * failure landed as a server error on a route the caller had just proved
+   * their password to, with nothing to act on. Omitting is not available here —
+   * the slot *is* the response — so it refuses, and it borrows `machines.pair`'s
+   * wording for the same state one route over.
+   */
+  if (!row.pubkey) throw new BadRequest("This account has no grant key to open.", 409);
+
   return noStore(
     json({
       wrappedGrantKey: toBase64Url(fromBlob(row.wrapped)),
@@ -1327,8 +1610,12 @@ export async function changePassword(request: Request, env: Env): Promise<Respon
   if (!alg) throw new BadRequest("Missing key slot algorithm.");
   if (alg.length > 64) throw new BadRequest("That key slot algorithm is not valid.");
 
-  // A wrong current password is a failed authentication and is counted as one.
-  const names = await buckets(request, env, account.handle.toLowerCase());
+  // A wrong current password is a failed authentication and is counted as one —
+  // in the `proof` bucket, for the reason `buckets` gives: this caller reached
+  // here through `requireAccount`, so an anonymous stranger filling the sign-in
+  // bucket for the handle must not be able to stop the owner changing their own
+  // password.
+  const names = await buckets(request, env, account.handle.toLowerCase(), "proof");
   await assertAttempt(env, names);
 
   const credential = await env.DB.prepare(

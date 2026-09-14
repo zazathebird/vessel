@@ -5,12 +5,18 @@ they are, `docs/DECISIONS.md` records what was decided when, and `docs/TODO-ARCH
 dated session logs this file used to carry (moved out 2026-09-07 — read it for the reasoning
 behind any item here, by date).
 
-State on 2026-09-14: `npm run check` **82** green (80 plus the `--faint` allow-list and the
-byte-ceiling gate), `npm run test:auth` **407**. Live is Worker `38ceae8d` (rollback `df6dba2a`);
-`main` is at `be5da66`, **not yet pushed**, and **is ahead of what is deployed** — the commits
-since `186468d` are documentation, gates, one security fix and the audit's mechanical group, none
-of them deployed yet. Four security passes are recorded in `docs/SECURITY-AUDIT.md` (items 1–49);
-nothing in it is open except what is listed below.
+State on 2026-09-14: `npm run check` **86** green, `npm run test:auth` **409**. Live is Worker
+`38ceae8d` (rollback `df6dba2a`); `main` is at `07b930d`, **not yet pushed**, and **is ahead of
+what is deployed**. Four security passes are recorded in `docs/SECURITY-AUDIT.md` (items 1–49).
+
+**A fifth pass ran on 2026-09-14 — a find-AND-fix sweep, not findings-only** (the four before it
+were read-only). Ten parallel reviews covering every slice of the tree, then six fix crews; the
+whole of it is in `docs/AUDIT-2026-09-14.md`, which is the file to read before acting on anything
+below. What separates it from passes 1–6 is that it **ran things**: the Worker under
+`wrangler dev` driven by the real browser auth modules, the setup scripts' blocklists executed
+against throwaway home directories, the PowerShell under `pwsh`, and the site itself in a browser
+across all fourteen layouts and every route. Several of its findings are fixed *and*
+break-verified — the fix was confirmed by watching the test fail against the old code first.
 
 **The desktop of the ThinkCentre is a separate repository**, `../debian-desktop`. The boundary is
 "can this take the file host offline?" — every privileged script stays in `scripts/` here.
@@ -189,17 +195,12 @@ in that file.
 offered key, so the owner attests "I re-keyed it" without being able to compare fingerprints.
 Pre-existing and inherent to the design as written.
 
-**A flaky gate, found in passing on 2026-09-14 and not yet chased** (not an audit finding — it
-surfaced during the #36 work). `duel: the health bar clears every costume, and stays in frame`
-failed once with `musketeer: the bar's underside is -80.2 above the torso against a costume
-reaching 26`, and passed on the runs either side. It drives `createDuel`/`advanceDuel` for 900
-frames per pairing against the engine's own randomness, and ~80 units is the gap its own comment
-describes for a fighter at the apex of a somersault — so the bar looks to be anchored below an
-airborne fighter's `f.y`. **Either the renderer anchors the bar to the ground mid-somersault and
-the gate must exempt an airborne fighter, or the bar genuinely crosses the costume in flight** —
-and it is the second reading that matters, because `headroom` exists precisely so the bar clears
-the crest. It is nondeterministic, so it will fail `predeploy` at random one day and the
-temptation will be to re-run until green.
+**Closed 2026-09-14** — the flaky `duel: the health bar clears every costume` gate. It was the
+gate, not the renderer: it attributed each bar to a fighter by x, and `stepFighter` clamps *both*
+fighters to the same arena wall while either is airborne, so `st.b`'s bar was judged against
+`st.a`'s `y`. Measured at 2.5% of runs; now attributed by draw order, 0 in 400 passes. The
+renderer is provably safe over all 24 headroom values. Neither reading in the old entry was right,
+and the airborne exemption it offered would have masked it.
 
 **Gate coverage** was zero for the most severe. #12, #10/#17, #47, #5 and #6 are gated now. **#13,
 #15, #28 and #29 still are not**, and each fix wants one, per this project's own discipline.

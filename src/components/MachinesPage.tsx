@@ -6,6 +6,7 @@ import { useConfig } from "../config/ConfigContext";
 import { AgentKeyChanged, DriveConnection } from "../share/browse";
 import type { ListEntry } from "../share/protocol";
 import { unlockForConnect } from "../share/unlock";
+import { Dialog } from "./Dialog";
 import { categorise, FileIcon } from "./FileIcon";
 
 /**
@@ -31,13 +32,32 @@ function formatSize(size: number | undefined): string {
   return `${value.toFixed(1)} ${units[unit]}`;
 }
 
+/**
+ * Hand the fetched bytes to the browser to save. The last step of a phase-2
+ * browse, so it is the step that must not be flaky.
+ *
+ * **Attached, and revoked on a later turn.** `click()` only *queues* the
+ * download; the browser reads the blob URL after the handler returns, so
+ * revoking in the same tick raced it — intermittently, and most often on the
+ * large files, which are the ones somebody waited for. A detached anchor is the
+ * other half of the same trust: Firefox ignores a click on one.
+ *
+ * The timeout is the revoke, not the download: nothing here holds the bytes, so
+ * a minute of one URL mapping costs nothing and dropping it early costs the
+ * file. (`blob:` is deliberately absent from the CSP, which an anchor is not
+ * governed by — see CLAUDE.md before flipping the policy to enforcing.)
+ */
 function saveBlob(blob: Blob, name: string): void {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = name;
+  anchor.rel = "noopener";
+  anchor.style.display = "none";
+  document.body.append(anchor);
   anchor.click();
-  URL.revokeObjectURL(url);
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 interface OpenDrive {
@@ -309,7 +329,9 @@ function Explorer({
       {shown === "column" ? (
         columns.length === 0 ? (
           loading ? (
-            <p className="v-account-note">Listing…</p>
+            <p className="v-account-note" aria-live="polite">
+              Listing…
+            </p>
           ) : null
         ) : (
           <div className="v-cols" ref={colsRef}>
@@ -357,10 +379,14 @@ function Explorer({
           </div>
         )
       ) : loading ? (
-        <p className="v-account-note">Listing…</p>
+        <p className="v-account-note" aria-live="polite">
+          Listing…
+        </p>
       ) : listing ? (
         listing.entries.length === 0 ? (
-          <p className="v-account-note">This folder is empty.</p>
+          <p className="v-account-note" aria-live="polite">
+            This folder is empty.
+          </p>
         ) : (
           <>
             {shown === "grid" ? (
@@ -621,8 +647,45 @@ export function MachinesPage() {
     else setPendingOpen({ machine, drive });
   }
 
+  /**
+   * The safe answer, and the one Escape and the backdrop give: nothing is
+   * pinned, nothing connects, and the machine's own card says what happened —
+   * the dialog is gone by then, so the outcome has to be left somewhere.
+   */
+  function refuseKey() {
+    if (!keyChanged) return;
+    const { machine } = keyChanged;
+    setKeyChanged(null);
+    setCardErrors((errors) => ({
+      ...errors,
+      [machine.id]: "Refused. The old key stays pinned in this browser.",
+    }));
+  }
+
+  function acceptKey() {
+    if (!keyChanged) return;
+    const asked = keyChanged;
+    setKeyChanged(null);
+    /*
+     * The page writes no pin, in either direction (2026-09-14). It says "the
+     * owner accepted" and lets `DriveConnection.open` do the rest: dial, verify
+     * by signature, and only then replace the pin. Writing the offered key here
+     * pinned something unverified; clearing the pin here left the machine
+     * un-pinned whenever the connect then failed. Both were the page deciding
+     * something only the verified connection can know.
+     */
+    void connect(asked.machine, asked.drive, asked.key, true);
+  }
+
   return (
-    <section className="v-account" aria-live="polite">
+    /*
+     * **Not a live region.** It wrapped the whole page, the explorer and its
+     * table of up to 2,000 rows included, so every folder navigation queued a
+     * complete directory listing for announcement — which is both unusable and
+     * how a genuine one-line status gets buried. The live regions are the
+     * status lines themselves, below and in `Explorer`.
+     */
+    <section className="v-account">
       {open ? (
         <Explorer
           key={open.drive.id}
@@ -631,6 +694,42 @@ export function MachinesPage() {
           onClose={() => setOpen(null)}
         />
       ) : null}
+
+      {/*
+       * The one prompt on this site where *reading it before answering* is a
+       * security property, so it is a real dialog rather than a paragraph with
+       * two buttons under it. It was a bare `role="alertdialog"` div — no
+       * accessible name, no focus move, no trap, no `aria-modal` — nested in
+       * the page's own polite live region, which meant a screen reader could be
+       * anywhere on the page, or inside a 2,000-row listing, while those two
+       * buttons sat waiting on a question it had not read out. `Dialog` is
+       * where the name, the focus move, the trap and the modal key stand-down
+       * already live.
+       *
+       * Refuse comes first, so it is what the trap focuses, and Escape and the
+       * backdrop agree with it: the safe answer is the default answer.
+       */}
+      <Dialog
+        open={keyChanged !== null}
+        title={`${keyChanged?.machine.name ?? "This machine"} is answering with a key this browser has not seen`}
+        onClose={refuseKey}
+      >
+        <div className="v-dialog-body">
+          <p>
+            This machine's key is not the one this browser connected to before. If you
+            re-paired or re-keyed it yourself, accept the new key. If you did not, refuse —
+            something else is answering as this machine.
+          </p>
+        </div>
+        <div className="v-dialog-actions">
+          <button type="button" className="v-btn" onClick={refuseKey}>
+            Refuse
+          </button>
+          <button type="button" className="v-btn v-btn-danger" onClick={acceptKey}>
+            I re-keyed it — accept the new key
+          </button>
+        </div>
+      </Dialog>
 
       {pendingOpen && !grantKey ? (
         <form className="v-account-form v-machine-card" onSubmit={onUnlock}>
@@ -671,11 +770,13 @@ export function MachinesPage() {
       ) : null}
 
       {machines === null && !listError ? (
-        <p className="v-account-note">Listing your machines…</p>
+        <p className="v-account-note" aria-live="polite">
+          Listing your machines…
+        </p>
       ) : null}
 
       {machines?.length === 0 ? (
-        <p className="v-account-note">
+        <p className="v-account-note" aria-live="polite">
           No machines yet. On the computer that holds the files, sign in and open{" "}
           <button type="button" className="v-account-link" onClick={() => go("share")}>
             the sharing tab
@@ -705,52 +806,6 @@ export function MachinesPage() {
                 <p className="v-account-error" role="alert">
                   {cardErrors[machine.id]}
                 </p>
-              ) : null}
-
-              {keyChanged && keyChanged.machine.id === machine.id ? (
-                <div className="v-account-error" role="alertdialog" aria-live="assertive">
-                  <p>
-                    This machine's key is not the one this browser connected to before. If
-                    you re-paired or re-keyed it yourself, accept the new key. If you did
-                    not, refuse — something else is answering as this machine.
-                  </p>
-                  <p>
-                    <button
-                      type="button"
-                      className="v-btn v-btn-quiet"
-                      onClick={() => {
-                        setKeyChanged(null);
-                        setCardErrors((errors) => ({
-                          ...errors,
-                          [machine.id]: "Refused. The old key stays pinned in this browser.",
-                        }));
-                      }}
-                    >
-                      Refuse
-                    </button>
-                    <button
-                      type="button"
-                      className="v-btn v-btn-danger"
-                      onClick={() => {
-                        const asked = keyChanged;
-                        setKeyChanged(null);
-                        /*
-                         * The page writes no pin, in either direction
-                         * (2026-09-14). It says "the owner accepted" and lets
-                         * `DriveConnection.open` do the rest: dial, verify by
-                         * signature, and only then replace the pin. Writing the
-                         * offered key here pinned something unverified; clearing
-                         * the pin here left the machine un-pinned whenever the
-                         * connect then failed. Both were the page deciding
-                         * something only the verified connection can know.
-                         */
-                        void connect(asked.machine, asked.drive, asked.key, true);
-                      }}
-                    >
-                      I re-keyed it — accept the new key
-                    </button>
-                  </p>
-                </div>
               ) : null}
 
               {machine.drives.length === 0 ? (

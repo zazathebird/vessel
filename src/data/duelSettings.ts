@@ -47,8 +47,17 @@ export interface DuelSettings {
    * A pinned pairing, or null to roll from the pool on every match.
    *
    * Stored as two ids rather than as a "pinned" flag plus two ids, so the two
-   * cannot disagree. A pin survives match resets because `DuelState.pool` goes
-   * null, which is the same mechanism `createDuel` has always used.
+   * cannot disagree.
+   *
+   * **How it survives a match reset depends on the host, and the second way
+   * arrived on 2026-09-14.** The hero ornament and the bench pin by handing
+   * `createDuel` two ids, which leaves `DuelState.pool` null so there is
+   * nothing to re-roll from; they rebuild the whole fight when this field
+   * changes. The full-bleed background effect deliberately does not rebuild —
+   * a fight that restarts when a slider moves is worse than one that waits for
+   * the next match — so it assigns `DuelState.pin` per frame instead and the
+   * boundary reads it. Same setting, two mechanisms, because the two surfaces
+   * disagree about what a settings change is allowed to interrupt.
    */
   pin: [FighterStyle, FighterStyle] | null;
   /**

@@ -2,6 +2,7 @@ import { FX, LAYOUTS, TYPESETS } from "../data/catalog";
 import { DEFAULT_ORNAMENT, ORNAMENTS } from "../data/ornaments";
 import { DEFAULT_STATION, STATIONS } from "../data/stations";
 import { PALETTES } from "../data/palettes";
+import { DEFAULT_CONFIG } from "./types";
 import type { Config } from "./types";
 
 /**
@@ -153,10 +154,26 @@ export function decodeShareCode(input: string): SharedConfig | null {
     // The FX/layout fallbacks below stay on index 0 because their index 0 is
     // not hidden; if one ever is, it needs this same treatment.
     ...(ornament === undefined ? {} : { ornament: ORNAMENTS[ornament]?.id ?? DEFAULT_ORNAMENT }),
-    pal: Math.min(pal, PALETTES.length - 1),
+    /*
+     * **The two numeric fields fall back; they used to CLAMP, which is a
+     * repair.** `Math.min(pal, PALETTES.length - 1)` took every out-of-range
+     * palette — a mistyped character, a truncated paste, a code minted against
+     * a longer catalogue — and silently landed it on the *last* entry, Cold
+     * Open, which is the newest one and moves again the next time a palette is
+     * appended. The typeface did the same onto the last typeset. Every other
+     * field on this line refuses or falls back to a named default; these two
+     * quietly corrected the sender's code into a working one pointing somewhere
+     * else, which is the failure `CLAUDE.md` names for this file — a wrong
+     * share code that nothing throws on and nothing logs.
+     *
+     * `DEFAULT_CONFIG`'s values rather than a literal 0, for the reason the
+     * ornament above records: index 0 is only the right answer while it happens
+     * to be the default, and the ornament list proved that can stop being true.
+     */
+    pal: pal < PALETTES.length ? pal : DEFAULT_CONFIG.pal,
     layout: (LAYOUTS[layout] ?? LAYOUTS[0]).id,
     fx: (FX[fx] ?? FX[0]).id,
-    type: Math.min(type, TYPESETS.length - 1),
+    type: type < TYPESETS.length ? type : DEFAULT_CONFIG.type,
     grain: !!(bits & GRAIN),
     breathe: !!(bits & BREATHE),
     cursor: !!(bits & CURSOR),

@@ -31,6 +31,25 @@ function day(ms: number | null): string {
 }
 
 /**
+ * A whole number as typed, or `null` if that is not one.
+ *
+ * `<input type="number">` reports `""` for an emptied box and `"2.5"` for a
+ * typed decimal, and `Number` turns the first into `0` — which the Worker then
+ * clamps in silence, minting a one-use code where the box was blank and a
+ * five-use one where it said 2.5. `min` and `max` are hints the browser gives
+ * while typing; nothing enforced them on submit. **A code is shown once and
+ * cannot be read back**, so what the operator saw has to be what was minted:
+ * refused here rather than repaired there.
+ */
+function wholeNumber(typed: string, min: number, max: number): number | null {
+  const trimmed = typed.trim();
+  if (!trimmed) return null;
+  const value = Number(trimmed);
+  if (!Number.isInteger(value) || value < min || value > max) return null;
+  return value;
+}
+
+/**
  * What a code opens, in the operator's words.
  *
  * **This row used to read `row.item_id ?? "everything paid"`, which was wrong in
@@ -78,8 +97,9 @@ export function DownloadCodes() {
    */
   const [item, setItem] = useState("");
   const [pages, setPages] = useState<DownloadPageSummary[]>([]);
-  const [maxUses, setMaxUses] = useState(5);
-  const [days, setDays] = useState(0);
+  /** Both as typed, resolved on submit — see `wholeNumber`. */
+  const [maxUses, setMaxUses] = useState("5");
+  const [days, setDays] = useState("0");
   /**
    * Minting is a release, and a release demands the password (2026-09-06, the
    * client's call): the Worker refuses a mint on a session alone. Typed here,
@@ -116,15 +136,28 @@ export function DownloadCodes() {
   async function onMint(event: React.FormEvent) {
     event.preventDefault();
     if (busy) return;
+    // The Worker's own bands, asked here so the answer is the operator's rather
+    // than a silent clamp on a code nobody can inspect afterwards.
+    const uses = wholeNumber(maxUses, 1, 50);
+    if (uses === null) {
+      setError("Uses has to be a whole number between 1 and 50.");
+      return;
+    }
+    const life = wholeNumber(days, 0, 3650);
+    if (life === null) {
+      setError("Expires in has to be a whole number of days, 0 to 3650. 0 never expires.");
+      return;
+    }
     setBusy(true);
+    setError(null);
     try {
       const { authSecret } = await derivePassword(me?.account?.handle ?? "", password);
       const result = await api.adminDownloadMint({
         label: label.trim(),
         item: null,
         slug: item || null,
-        maxUses,
-        days,
+        maxUses: uses,
+        days: life,
         authSecret,
       });
       setFresh(result.code);
@@ -247,7 +280,7 @@ export function DownloadCodes() {
               min={1}
               max={50}
               value={maxUses}
-              onChange={(e) => setMaxUses(Number(e.target.value))}
+              onChange={(e) => setMaxUses(e.target.value)}
             />
           </div>
           <div className="v-field">
@@ -261,7 +294,7 @@ export function DownloadCodes() {
               min={0}
               max={3650}
               value={days}
-              onChange={(e) => setDays(Number(e.target.value))}
+              onChange={(e) => setDays(e.target.value)}
             />
           </div>
         </div>

@@ -75,34 +75,29 @@ export function base32Encode(bytes: Uint8Array): string {
   return out;
 }
 
-export function base32Decode(text: string): Uint8Array {
-  // Tolerant on input by design. What comes back is whatever the user retyped
-  // from a screen or pasted out of a password manager: lowercase, grouped into
-  // readable runs with spaces, and sometimes padded because some encoders pad.
-  const cleaned = text.replace(/[\s-]/g, "").replace(/=+$/, "").toUpperCase();
-
-  const out = new Uint8Array(Math.floor((cleaned.length * 5) / 8));
-  let bits = 0;
-  let value = 0;
-  let written = 0;
-
-  for (let i = 0; i < cleaned.length; i += 1) {
-    const index = ALPHABET.indexOf(cleaned[i]);
-    // Throwing rather than skipping the character: a secret that decodes to
-    // *something* after dropping a typo produces an enrolment that silently
-    // never matches, and the user has no way to tell that from a broken clock.
-    if (index < 0) throw new Error(`not base32: ${JSON.stringify(cleaned[i])}`);
-    value = (value << 5) | index;
-    bits += 5;
-    if (bits >= 8) {
-      bits -= 8;
-      out[written] = (value >>> bits) & 255;
-      written += 1;
-    }
-  }
-
-  return out.subarray(0, written);
-}
+/*
+ * **`base32Decode` is deleted, and the asymmetry is correct** (2026-09-14). It
+ * was exported with zero references anywhere in the repository — not in
+ * `worker/`, not in `src/`, not in `scripts/`, not in a gate.
+ *
+ * The asymmetry is the design rather than an omission. A TOTP secret is minted
+ * here as bytes, stored encrypted, and verified from those same bytes; base32
+ * is the *display* encoding, for the person typing the key into an
+ * authenticator by hand when the QR will not scan. It travels outward only, and
+ * §9 is why it never comes back: the secret is never re-presented to the
+ * server, by anybody, for any reason. So a decoder has no caller it could
+ * acquire without something else being wrong first — and an exported one, sat
+ * beside an encoder with a doc comment about how tolerant it is of what "the
+ * user retyped", reads as a live inbound path and is an invitation to build
+ * one. `docs/BREAK-GLASS.md` covers the operator's last resort, and it does not
+ * route through here.
+ *
+ * `base32Encode` keeps its own tail-bits branch, which is the half that has to
+ * be right: it is what `scripts/auth-e2e.ts` recomputes TOTP codes against
+ * independently from RFC 6238, so the encoder has a second opinion checking it
+ * on every run. The decoder had none, which is the other half of why keeping it
+ * for symmetry would have been keeping an untested one.
+ */
 
 /** The otpauth:// URI an authenticator app scans or accepts pasted. */
 export function otpauthUri(secret: Uint8Array, handle: string, issuer: string): string {

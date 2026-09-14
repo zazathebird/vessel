@@ -299,30 +299,37 @@ export function CommandPalette() {
         />
 
         <ul className="v-cmd-list" role="listbox" id="v-cmd-list" aria-label="matching commands">
-          {matches.length === 0 ? (
-            <li className="v-cmd-empty" aria-disabled="true">
-              nothing answers to that
+          {matches.map((command) => (
+            <li
+              key={command.id}
+              id={`v-cmd-${command.id}`}
+              role="option"
+              aria-selected={command === active}
+              className={`v-cmd-item${command === active ? " is-selected" : ""}`}
+              // Mouse path: run on mouse down so the input never blurs first.
+              onMouseDown={(event) => {
+                event.preventDefault();
+                run(command);
+              }}
+              onMouseMove={() => setSelected(matches.indexOf(command))}
+            >
+              {command.label}
             </li>
-          ) : (
-            matches.map((command) => (
-              <li
-                key={command.id}
-                id={`v-cmd-${command.id}`}
-                role="option"
-                aria-selected={command === active}
-                className={`v-cmd-item${command === active ? " is-selected" : ""}`}
-                // Mouse path: run on mouse down so the input never blurs first.
-                onMouseDown={(event) => {
-                  event.preventDefault();
-                  run(command);
-                }}
-                onMouseMove={() => setSelected(matches.indexOf(command))}
-              >
-                {command.label}
-              </li>
-            ))
-          )}
+          ))}
         </ul>
+
+        {/*
+           Outside the listbox deliberately. `role="listbox"` may own only
+           options and groups, so a plain `<li>` parked in it is invalid — and
+           with no match there is no `aria-activedescendant` either, so a query
+           that found nothing was announced by nothing at all: the typing went
+           on into silence. `role="status"` is what says so.
+        */}
+        {matches.length === 0 ? (
+          <div className="v-cmd-empty" role="status">
+            nothing answers to that
+          </div>
+        ) : null}
       </div>
     </div>
   );

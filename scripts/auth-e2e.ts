@@ -3261,6 +3261,25 @@ async function main(): Promise<void> {
       filename: "scoped.exe",
       free: true,
     });
+    /*
+     * **The bytes are actually uploaded, and that is load-bearing for what this
+     * block is testing** (2026-09-14). `opened()` now refuses a file whose
+     * `uploaded_at` is still null, because a code minted for one is inert:
+     * `readPage` hides the row and `canDownload` refuses it, so redeeming spent
+     * one of a handful of uses and handed back a ticket that 403s at the first
+     * byte, with nothing on screen that reads as a refusal.
+     *
+     * Without this upload the fixture was a file-scoped code for a file that
+     * had never arrived — so the assertion below read "a code for a
+     * half-finished upload opens it", which is the bug rather than the rule.
+     * The row has to be a real, downloadable file for the next three checks to
+     * be about the page's *status* at all.
+     */
+    {
+      const b = await api.adminUploadBegin(scopedId, "application/octet-stream");
+      const part = await uploadPart(scopedId, b.uploadId, 1, new Uint8Array(64).fill(3).buffer as ArrayBuffer);
+      await api.adminUploadFinish(scopedId, b.uploadId, [part], opProof);
+    }
     const fileScoped = await api.adminDownloadMint({ authSecret: opProof,
       label: "harness-file-scope",
       item: scopedId,
@@ -3278,6 +3297,59 @@ async function main(): Promise<void> {
       "a file-scoped code opens its own file while the page is live",
       scopedWorks?.items?.includes(scopedId) === true,
       JSON.stringify(scopedWorks?.items ?? null),
+    );
+
+    /*
+     * **A code for a file whose bytes never arrived is refused, and does not
+     * spend a use.** `readPage` hides an un-uploaded row and `canDownload`
+     * refuses it, so such a code opens nothing — but `opened()` used to return
+     * the id anyway, which satisfies `claim`'s emptiness guard, so the
+     * redemption succeeded, incremented `uses`, and handed back a ticket that
+     * 403s at the first byte. The customer sees a success and gets nothing, and
+     * burns all five uses one empty success at a time.
+     *
+     * The refusal has to be the shared `denied`/403, not a distinct status:
+     * anything else makes the code route an existence oracle over the table.
+     * Both halves are asserted — the refusal, and that the count did not move.
+     */
+    asBrowser(opSession);
+    const pendingId = `pending-${RUN}`;
+    await api.adminFileSave({
+      id: pendingId,
+      slug: scopedSlug,
+      name: "Not yet uploaded",
+      filename: "pending.exe",
+      free: true,
+    });
+    const pendingCode = await api.adminDownloadMint({
+      authSecret: opProof,
+      label: "harness-pending-upload",
+      item: pendingId,
+      slug: null,
+      maxUses: 5,
+      days: 0,
+    });
+
+    asBrowser(stranger);
+    const pendingRefused = await api.downloadClaim(pendingCode.code).then(
+      () => null,
+      (thrown: unknown) => thrown as { status?: number },
+    );
+    check(
+      "a code for a file that never finished uploading is refused",
+      pendingRefused?.status === 403,
+      `status ${pendingRefused?.status}`,
+    );
+
+    asBrowser(opSession);
+    const pendingList = await api.adminDownloadsList();
+    // Matched on the label rather than the ref: `listCodes` derives `ref` with
+    // SQL's `hex()`, which is uppercase, and the mint response is not.
+    const pendingRow = pendingList.codes.find((c) => c.label === "harness-pending-upload");
+    check(
+      "and that refusal does not spend one of its uses",
+      pendingRow?.uses === 0,
+      `uses ${pendingRow?.uses}`,
     );
 
     asBrowser(opSession);

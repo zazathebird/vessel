@@ -30,7 +30,17 @@ const MAX_COMPONENT = 255;
  */
 export function isValidPath(value: unknown): value is string[] {
   if (!Array.isArray(value) || value.length > MAX_DEPTH) return false;
-  return value.every(isValidComponent);
+  // Indexed, never `every`, which SKIPS HOLES: `new Array(3)` and
+  // `[<hole>, "a"]` both validated, and the agent's walk is a `for...of`, which
+  // does not skip them — it yields `undefined`, and `getDirectoryHandle`
+  // coerces that to the string "undefined". `JSON.parse` cannot produce a hole
+  // today, so this was unreachable over the wire; the contract of this function
+  // is that EVERY slot is safe to hand over verbatim, and a validator with a
+  // slot it never looked at does not have that contract.
+  for (let i = 0; i < value.length; i += 1) {
+    if (!isValidComponent(value[i])) return false;
+  }
+  return true;
 }
 
 function isValidComponent(component: unknown): boolean {

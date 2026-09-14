@@ -222,12 +222,42 @@ case "${ACTION}" in
         [ -f "${ARCHIVE}" ] || { echo "No saved look called '${PROFILE}'. Try --list-profiles." >&2; exit 1; }
         # Snapshot what is there now first. Restoring is how you find out that the
         # thing you were about to overwrite was the one you wanted.
+        #
+        # STAMPED, NOT A FIXED NAME. It was always `before-restore.tar.gz`, so the
+        # second --restore overwrote the snapshot the first one took — which is
+        # the account's ORIGINAL look, the only copy nobody made on purpose —
+        # while printing a line saying it was saved. Two restores in a row is
+        # the ordinary way to use this: try one, dislike it, try another.
         mkdir -p "${PROFILE_DIR}"
         prev=()
         for f in "${LOOK_FILES[@]}"; do [ -f "${HOME}/${f}" ] && prev+=("${f}"); done
-        [ "${#prev[@]}" -gt 0 ] && tar czf "${PROFILE_DIR}/before-restore.tar.gz" -C "${HOME}" "${prev[@]}"
-        tar xzf "${ARCHIVE}" -C "${HOME}"
-        printf 'Restored "%s". The previous look is saved as "before-restore".\n' "${PROFILE}"
+        BACKUP="before-restore-$(date '+%Y%m%d-%H%M%S')"
+        if [ "${#prev[@]}" -gt 0 ]; then
+            tar czf "${PROFILE_DIR}/${BACKUP}.tar.gz" -C "${HOME}" "${prev[@]}"
+        else
+            BACKUP=""
+        fi
+
+        # AN EXPLICIT MEMBER LIST, because the sentence above LOOK_FILES — "a
+        # profile is a tarball of just these, so restoring one cannot disturb
+        # anything else in the account" — was a description of how the tarball
+        # is WRITTEN and not of how it is read. `tar xzf` with no member list
+        # extracts whatever the file happens to contain, and on this machine
+        # that includes ~/.config/systemd/user, where the kiosk unit lives: a
+        # tarball from anywhere else, or one edited, could replace the service
+        # that does the sharing. Only names this script knows are extracted, so
+        # an archive can add nothing to the account, and the intersection is
+        # taken first because naming a member tar cannot find is an error.
+        want=()
+        while IFS= read -r member; do
+            for f in "${LOOK_FILES[@]}"; do
+                if [ "${member}" = "${f}" ]; then want+=("${member}"); break; fi
+            done
+        done < <(tar tzf "${ARCHIVE}")
+        [ "${#want[@]}" -gt 0 ] || die "'${PROFILE}' contains none of the files a look is made of."
+        tar xzf "${ARCHIVE}" -C "${HOME}" -- "${want[@]}"
+        printf 'Restored "%s" (%d files).\n' "${PROFILE}" "${#want[@]}"
+        if [ -n "${BACKUP}" ]; then printf 'The look it replaced is saved as "%s".\n' "${BACKUP}"; fi
         if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && [ -S "/run/user/$(id -u)/bus" ]; then
             export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus"
         fi
@@ -351,8 +381,19 @@ if command -v sddm >/dev/null 2>&1; then
         for other in lightdm gdm3 lxdm; do
             systemctl list-unit-files "${other}.service" >/dev/null 2>&1 && sudo systemctl disable "${other}" >/dev/null 2>&1 || true
         done
+        # VERIFIED, NOT ASSUMED. `|| true` followed by an unconditional "switched
+        # to sddm" is how a machine reboots to a text console with no kiosk and
+        # no file sharing, with the only record of the change saying it worked.
+        # `is-enabled` is asked of systemd rather than of this script.
         sudo systemctl enable sddm >/dev/null 2>&1 || true
-        info "display manager switched from ${current:-none} to sddm (takes effect at reboot)"
+        if [ "$(systemctl is-enabled sddm 2>/dev/null || true)" = "enabled" ]; then
+            info "display manager switched from ${current:-none} to sddm (takes effect at reboot)"
+        else
+            warn "sddm was NOT enabled (systemctl is-enabled says '$(systemctl is-enabled sddm 2>&1 | head -1)').
+       /etc/X11/default-display-manager now names it, so this machine may reboot to a
+       console with no desktop and no sharing. Fix it before rebooting:
+           sudo systemctl enable sddm && systemctl is-enabled sddm"
+        fi
     else
         info "sddm is already the display manager"
     fi
@@ -393,7 +434,14 @@ set_key kdeglobals General fixed "JetBrains Mono,10,-1,5,50,0,0,0,0,0"
 
 # The font, only if it is actually installed — a named-but-absent font is how a
 # desktop ends up rendering in the toolkit's last-resort fallback.
-if fc-list 2>/dev/null | grep -qi 'Ubuntu-R\|Ubuntu Regular'; then
+# NO `grep -q` ON THE END OF THIS PIPE. `-q` exits at the first match, `fc-list`
+# then takes SIGPIPE, and `set -o pipefail` at the top of this file reports the
+# pipeline's status as 141 — so a SUCCESSFUL match reads as "font not
+# installed", and the desktop is left on the Plasma default with a line saying
+# fonts-ubuntu is missing. It only bites once fc-list's output passes the pipe
+# buffer, which is every real machine and no small test one. Letting grep read
+# to the end costs a few milliseconds and cannot lie.
+if fc-list 2>/dev/null | grep -i 'Ubuntu-R\|Ubuntu Regular' >/dev/null; then
     for key in font menuFont toolBarFont smallestReadableFont; do
         set_key kdeglobals General "${key}" "Ubuntu,10,-1,5,50,0,0,0,0,0"
     done
@@ -437,7 +485,20 @@ gtk-cursor-theme-name="breeze_cursors"
 EOF
 # The environment variable is what catches apps that read neither file — notably
 # anything launched from a terminal rather than from the menu.
-if ! grep -qs 'GTK_THEME' "${HOME}/.profile" 2>/dev/null; then
+# WRITTEN EVERY RUN, NOT ONCE. This used to append only when the variable was
+# absent, so the FIRST look this script ever applied owned $GTK_THEME for good:
+# switching from a dark look to `deepin-exact` or `kdeneon` rewrote all three
+# settings files and left the environment variable naming the dark theme, so
+# every application started from a terminal stayed dark on a light desktop —
+# and the line saying "GTK theme: Breeze" was true of the files and false of the
+# session. The rewrite is surgical: only this script's own export line changes.
+if grep -qs '^export GTK_THEME=' "${HOME}/.profile" 2>/dev/null; then
+    tmp="$(mktemp)"
+    awk -v theme="${GTK_THEME}" '
+        /^export GTK_THEME=/ { print "export GTK_THEME=" theme; next }
+        { print }
+    ' "${HOME}/.profile" > "${tmp}" && mv "${tmp}" "${HOME}/.profile"
+else
     printf '\n# dark GTK apps (plasma-dark-setup.sh)\nexport GTK_THEME=%s\n' "${GTK_THEME}" >> "${HOME}/.profile"
 fi
 info "GTK theme: ${GTK_THEME} (gtk2, gtk3, gtk4 and \$GTK_THEME)"

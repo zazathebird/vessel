@@ -166,6 +166,20 @@ export interface FxCache {
   /** The `partsBox` identity `bokeh` last depth-sorted its field for. */
   bokehSorted?: { w: number; h: number } | null;
   /**
+   * `bokeh`'s aperture ramps, one per disc, in the disc's own space.
+   *
+   * Every stop is a function of the disc's fixed `z` and `r` and the three
+   * accents, so the gradient is constant between rebuilds — and building it in
+   * the loop was 60 gradient objects and 120 hex strings a frame. Keyed on the
+   * accents and on `partsBox` by identity, so a palette bleed or a resize
+   * rebuilds and a steady state does not.
+   */
+  bokehRamps?: {
+    key: string;
+    box: { w: number; h: number } | null;
+    discs: CanvasGradient[];
+  } | null;
+  /**
    * The grown tree, with the box it was grown for and the pool of random
    * numbers it was grown from. Both are part of the cache because `vessels` is
    * the one effect whose geometry is neither recomputed per frame nor able to
@@ -175,6 +189,17 @@ export interface FxCache {
   flow?: Channel[] | null;
   /** The duel's match state — fighters, health, sparks, the match counter. */
   duel?: DuelState | null;
+  /**
+   * The settings object `st.allow` was last resolved from, by identity.
+   *
+   * The restriction has to be re-read while the fight runs — it is honoured at
+   * the match boundary, inside `advanceDuel`, long after the mount — but
+   * `allowFor` filters two arrays, so re-running it sixty times a second for an
+   * answer that changes when the operator moves a control is the per-frame
+   * allocation this file otherwise refuses. `resolveDuel` is a `useMemo`, so
+   * identity is exactly the right test.
+   */
+  duelAllowFor?: DuelSettings | null;
   /**
    * `scan`'s static sphere, pre-rendered once per box and palette.
    *
@@ -728,7 +753,21 @@ const rain: Effect = ({ ctx, w, h, p, boost, quality }, cache) => {
       bctx.fillStyle = g;
       bctx.fillRect(0, 0, BLOOM, BLOOM);
     }
-    atlas = cache.rainAtlas = { key, canvas: sheet, bloom, cw, ch };
+    /*
+     * **A failed allocation is used for this frame and never cached.**
+     *
+     * Both `getContext("2d")` calls above are already guarded — and the result
+     * was then written into the cache regardless, where the key matches on
+     * every later frame. So one transient context failure (a browser out of
+     * canvas memory, a backgrounded tab losing its GPU process) cached a
+     * permanently blank atlas for that palette, size and tier: `rain` drew
+     * nothing at all, for ever, with no retry and nothing logged. The strip is
+     * still drawn from this frame so the effect degrades to blank rather than
+     * throwing, but the cache keeps whatever it had and the next frame builds
+     * it again.
+     */
+    atlas = { key, canvas: sheet, bloom, cw, ch };
+    if (o && bctx) cache.rainAtlas = atlas;
   }
   const glyphH = size * RAIN_CELL_H;
 
@@ -1408,7 +1447,59 @@ const bokeh: Effect = ({ ctx, w, h, p, t, boost, mx, my }, cache) => {
     cache.bokehSorted = cache.partsBox;
   }
 
-  for (const s of parts) {
+  /*
+   * **One gradient per disc, built once, not once per disc per frame.**
+   *
+   * This allocated a `createRadialGradient` plus two `toString(16)` strings
+   * inside the draw loop — up to 60 gradients and 120 strings a frame, about
+   * 3,600 gradient objects a second at 60Hz, and the only per-object per-frame
+   * allocation left in this file. `plasma`'s buckets and `drawDuel`'s lock
+   * flare both carry comments about exactly this. It is also invisible to the
+   * quality tier, which moves fill rate and not CPU-side construction, so a
+   * machine that demoted twice paid the same for it.
+   *
+   * Every stop is a function of the disc's own `z` and `r` — both fixed at
+   * seeding — and the three accents, so the whole ramp is constant between
+   * rebuilds. Built in the disc's *own* space, centred on the origin, and the
+   * draw translates to `px, py`: a radial gradient is evaluated in user space
+   * at paint time, so the pixels are identical to the per-frame version and
+   * only the allocation is gone. Keyed on the palette and on `partsBox` by
+   * identity, the same guard the sort above uses — `field()` hands out a fresh
+   * box object on every rebuild, so a resize re-ramps and a steady state does
+   * not.
+   */
+  const rampKey = `${p.a1}|${p.a2}|${p.a3}`;
+  let ramps = cache.bokehRamps;
+  if (!ramps || ramps.key !== rampKey || ramps.box !== cache.partsBox) {
+    ramps = cache.bokehRamps = {
+      key: rampKey,
+      box: cache.partsBox ?? null,
+      discs: parts.map((s) => {
+        const col = s.z > 0.85 ? p.a1 : s.z > 0.55 ? p.a2 : p.a3;
+        // Peak alpha falls as the disc grows — the same light spread over more
+        // area.
+        const peak = Math.round(Math.min(255, 2900 / s.r));
+        const hex = peak.toString(16).padStart(2, "0");
+        const rim = Math.min(255, Math.round(peak * 1.8))
+          .toString(16)
+          .padStart(2, "0");
+        const flat = 0.3 + s.z * 0.52;
+        // The nearest discs get a chromatic rim — the bright stop in `a2` while
+        // the body stays `a1`. Real fast glass fringes its out-of-focus
+        // highlights at the edge; one token swap on one stop is the whole cost.
+        const rimCol = s.z > 0.85 ? p.a2 : col;
+        const g = ctx.createRadialGradient(0, 0, 0, 0, 0, s.r);
+        g.addColorStop(0, `${col}${hex}`);
+        g.addColorStop(flat, `${col}${hex}`);
+        g.addColorStop(flat * 0.985 + 0.015, `${rimCol}${rim}`);
+        g.addColorStop(1, `${col}00`);
+        return g;
+      }),
+    };
+  }
+
+  for (let i = 0; i < parts.length; i += 1) {
+    const s = parts[i];
     s.y -= (0.09 + s.z * 0.52) * boost;
     // `boost` was missing here while the rise had it, so on a 120Hz display the
     // sway ran at double speed relative to the climb and the two decoupled.
@@ -1423,32 +1514,20 @@ const bokeh: Effect = ({ ctx, w, h, p, t, boost, mx, my }, cache) => {
     const px = s.x + (mx - 0.5) * s.z * 34;
     const py = s.y + (my - 0.5) * s.z * 22;
 
-    const col = s.z > 0.85 ? p.a1 : s.z > 0.55 ? p.a2 : p.a3;
-    // Peak alpha falls as the disc grows — the same light spread over more area.
-    const peak = Math.round(Math.min(255, 2900 / s.r));
-    const hex = peak.toString(16).padStart(2, "0");
-    const rim = Math.min(255, Math.round(peak * 1.8))
-      .toString(16)
-      .padStart(2, "0");
-    const flat = 0.3 + s.z * 0.52;
-
-    // The nearest discs get a chromatic rim — the bright stop in `a2` while
-    // the body stays `a1`. Real fast glass fringes its out-of-focus
-    // highlights at the edge; one token swap on one stop is the whole cost.
-    const rimCol = s.z > 0.85 ? p.a2 : col;
-    const g = ctx.createRadialGradient(px, py, 0, px, py, s.r);
-    g.addColorStop(0, `${col}${hex}`);
-    g.addColorStop(flat, `${col}${hex}`);
-    g.addColorStop(flat * 0.985 + 0.015, `${rimCol}${rim}`);
-    g.addColorStop(1, `${col}00`);
-    ctx.fillStyle = g;
+    ctx.fillStyle = ramps.discs[i];
     // Weighted outward, as every depth-of-field photograph is: the subject is
     // in the middle, and here the subject is the body copy.
     const d = Math.hypot((px - w / 2) / w, (py - h / 2) / h) * 2;
     ctx.globalAlpha = 0.5 + Math.min(1, d) * 0.5;
+    // The ramp lives at the origin, so the disc comes to it. `save`/`restore`
+    // rather than a matching inverse translate: this runs sixty times a frame
+    // and a float that drifts is a background that slides.
+    ctx.save();
+    ctx.translate(px, py);
     ctx.beginPath();
-    ctx.arc(px, py, s.r, 0, TAU);
+    ctx.arc(0, 0, s.r, 0, TAU);
     ctx.fill();
+    ctx.restore();
   }
   ctx.globalAlpha = 1;
 };
@@ -1685,7 +1764,16 @@ const scan: Effect = ({ ctx, w, h, p, t, mx, my }, cache) => {
         o.stroke();
       }
     }
-    sphere = cache.scanSphere = { w, h, key, canvas: off };
+    /*
+     * **A failed allocation is used for this frame and never cached** — the
+     * same trap `rainAtlas` sets, and it bites harder here: the cache key
+     * matches on every later frame, so one transient `getContext` failure left
+     * `scan` blitting an empty canvas for the life of the tab and the effect
+     * lost the instrument it is named after. Keeping the cache untouched means
+     * the next frame simply builds it again.
+     */
+    sphere = { w, h, key, canvas: off };
+    if (o) cache.scanSphere = sphere;
   }
   ctx.globalAlpha = 1;
   // Explicit destination size: the buffer is in device pixels now, so the
@@ -2070,6 +2158,51 @@ function duelling(pool: DuelPool): Effect {
       st = cache.duel = v.pin
         ? createDuel(v.pin[0], v.pin[1])
         : createDuelFrom(pool, Math.random, allowFor(v, pool));
+    }
+    /*
+     * **And the restriction is re-read every frame, which is the other half of
+     * the sentence above** (2026-09-14). "Takes until the next match" was what
+     * the comment claimed and not what the code did: `st.allow` was written
+     * once, inside the `if (!st)` that runs on the mount, so a roster
+     * restriction changed afterwards reached the background fight *never* — not
+     * at the next match, not at the tenth — while `DuelOrnament`, whose effect
+     * depends on `duel.good` / `duel.evil`, honoured it immediately. The
+     * ornament and the full-bleed background then disagreed about the same
+     * published setting on the same page, which is the documented "it ignores
+     * my settings after a minute" shape one surface over.
+     *
+     * Assigned per frame rather than watched, exactly as `DuelOrnament` assigns
+     * `st.tuning`: this is a rAF loop with no dependency list, and the
+     * re-roll it feeds happens inside `advanceDuel` on a match boundary, which
+     * is where `DuelState.allow` exists to be read. So the new restriction
+     * lands on the next match and nothing restarts under the viewer.
+     *
+     * **The pin rides the same way, and it had the same bug** (2026-09-14,
+     * second pass). It used to be expressed by picking a different constructor
+     * on the mount — `createDuel`, which leaves `pool` null so the pair
+     * survives every boundary — and that says "these two, for ever" exactly
+     * once. Changing the pin, or lifting it, reached a running fight never.
+     * `DuelState.pin` and `DuelState.pool` are both assigned here now, so the
+     * operator's pairing control is read at the boundary like the restriction:
+     * pin two fighters and the next match is those two; lift it and the next
+     * match rolls from the pool again. Neither restarts the match in flight.
+     *
+     * `st.pool` has to be assigned too, and that is the half a pin-only fix
+     * would miss: a fight built pinned has no pool, so lifting the pin would
+     * leave the boundary with nothing to roll from and the pinned pair would
+     * outlive the pin that named it.
+     *
+     * Guarded on the settings object's *identity* rather than recomputed, the
+     * same trick `bokeh` uses against `partsBox`: `resolveDuel` is a `useMemo`,
+     * so `v` is a new object only when the settings actually move, and
+     * `allowFor` filters two arrays — which at 60Hz is the per-frame allocation
+     * every other hot loop in this file goes out of its way to avoid.
+     */
+    st.pin = v.pin;
+    st.pool = pool;
+    if (cache.duelAllowFor !== v) {
+      cache.duelAllowFor = v;
+      st.allow = allowFor(v, pool);
     }
 
     /*

@@ -82,6 +82,10 @@ export function Setups() {
       setError(`${setup.name} does not decode any more. Delete it and save afresh.`);
       return;
     }
+    // Cleared on success like `onSave` and `onDelete`: a refusal about the setup
+    // applied a moment ago otherwise sits under this one, naming a different
+    // setup and reading as a complaint about this one.
+    setError(null);
     update(shared);
     say(`Applied ${setup.name}.`);
   }

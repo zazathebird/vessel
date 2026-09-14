@@ -3,6 +3,18 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- In the shell, not only in base.css. `color-scheme: dark` is set in the
+         stylesheet, which is render-blocking but still arrives *after* the
+         first paint of the UA's own canvas — so every cold load flashed white
+         before a palette whose brightest background measures 0.0104 relative
+         luminance. The meta is read by the parser before any CSS, and
+         `theme-color` does the same job for the browser chrome on a phone,
+         which otherwise stays light against the same palettes. Neither is a
+         colour the site themes from: they are the *absence* of a flash, and
+         both are deliberately fixed rather than palette-derived, since the
+         palette is not known until the bundle runs. -->
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0b0b0c" />
     <title>mcclevarty.ca</title>
     <!-- An inline data: icon, not a file: no image files and no third-party
          assets (SPEC.md § Assets). The drawing is the client's own choice

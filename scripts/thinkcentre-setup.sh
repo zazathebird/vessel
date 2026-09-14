@@ -898,8 +898,22 @@ configure_autologin() {
                 # rather than from session start — including at the greeter.
                 printf '%s\n' "xserver-command=X -s 0 -dpms"
             } > "${tmp}"
-            place_root_file "${tmp}" /etc/lightdm/lightdm.conf.d/50-vessel-autologin.conf 0644 || true
-            AUTOLOGIN_STATE="lightdm, autologin as ${USER}"
+            # THE STATE FOLLOWS THE WRITE, the way POLICY_STATE does. `place_root_file` returns
+            # 2 when the file did NOT reach the disk, every call site swallows that with `|| true`,
+            # and the next line said autologin was configured regardless — so the summary's one
+            # line about how this machine starts a session could describe a file that is not there.
+            # A host that boots to a greeter nobody is sitting at shares nothing.
+            local rc=0
+            place_root_file "${tmp}" /etc/lightdm/lightdm.conf.d/50-vessel-autologin.conf 0644 || rc=$?
+            if [ "${rc}" -le 1 ]; then
+                AUTOLOGIN_STATE="lightdm, autologin as ${USER}"
+            else
+                AUTOLOGIN_STATE="NOT CONFIGURED — /etc/lightdm/lightdm.conf.d could not be written"
+                warn "The lightdm autologin drop-in could not be written, so this machine will stop at
+             a greeter after a reboot and the kiosk will never start. Fix the cause and re-run."
+                MANUAL+=("Autologin was NOT configured. Until it is, this host needs somebody to log in
+             at the keyboard after every restart before it shares anything.")
+            fi
 
             # Debian's lightdm creates an 'autologin' group on some installs and PAM refuses the
             # autologin unless the user is in it. Harmless where the group does not exist.
@@ -928,7 +942,18 @@ configure_autologin() {
                     END { if (!seen) { print "[daemon]"; print "AutomaticLoginEnable=true"; print "AutomaticLogin=" user } }
                 ' /etc/gdm3/daemon.conf > "${tmp}" 2>/dev/null || true
                 if [ -s "${tmp}" ]; then
-                    place_root_file "${tmp}" /etc/gdm3/daemon.conf 0644 || true
+                    # And the PLACEMENT has to be reported too, not just the rewrite: the awk can
+                    # produce a perfect file that `place_root_file` then fails to install, and
+                    # `|| true` said nothing about the difference.
+                    local grc=0
+                    place_root_file "${tmp}" /etc/gdm3/daemon.conf 0644 || grc=$?
+                    if [ "${grc}" -gt 1 ]; then
+                        AUTOLOGIN_STATE="NOT CONFIGURED — /etc/gdm3/daemon.conf could not be written"
+                        warn "Could not install the rewritten /etc/gdm3/daemon.conf, so this machine will
+             stop at a greeter after a reboot and the kiosk will never start."
+                        MANUAL+=("Autologin was NOT configured. Set AutomaticLoginEnable=true and
+             AutomaticLogin=${USER} in the [daemon] section of /etc/gdm3/daemon.conf by hand.")
+                    fi
                 else
                     AUTOLOGIN_STATE="NOT CONFIGURED — /etc/gdm3/daemon.conf could not be rewritten"
                     warn "Could not rewrite /etc/gdm3/daemon.conf. Set AutomaticLoginEnable=true and
@@ -1663,6 +1688,32 @@ configure_chromium_policy() {
             ;;
     esac
 
+    # THE CHARSET TEST COMES FIRST, AND IT IS A SHELL PATTERN, BECAUSE `grep`
+    # MATCHES PER LINE (2026-09-14). `url_host` splits on `/` and nothing else,
+    # so a ${URL_FILE} with a second line hands this a host containing a
+    # NEWLINE — and `grep -Eq '^...$'` is satisfied by the first line of it
+    # while the WHOLE value is what gets interpolated below. A payload whose
+    # second line is a bare word produced a policy file that is still valid
+    # JSON, so `jq empty` approved it and POLICY_STATE reported success, while
+    # the effective "URLAllowlist" became ["*"]: the navigation lockdown gone,
+    # on the box that autologins into the browser holding the folder handle and
+    # the operator's session. That is the exploit the comment above says was
+    # closed, rebuilt through the neighbouring field.
+    #
+    # A `case` glob is matched against the ENTIRE string, newlines included, so
+    # this cannot be fooled the same way. The value is REFUSED WHOLE, never
+    # stripped down to its first line: a host somebody edited by hand into two
+    # lines is a file to fix, not a value to guess at.
+    case "${host}" in
+        *[!A-Za-z0-9.:-]*|"")
+            POLICY_STATE="NOT WRITTEN — the host in ${URL_FILE} is not usable in a policy"
+            warn "The URL in ${URL_FILE} has a host with a character — a line break, a space, a
+             quote — that cannot be in a host name, so the browser lockdown was NOT written.
+             Fix that file: one line, the full URL, nothing else."
+            return
+            ;;
+    esac
+
     if ! printf '%s' "${host}" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]{1,5})?$'; then
         # A warn-and-return rather than a die, deliberately: this step runs after packages,
         # autologin, the launcher, the unit and lingering, and BEFORE the firewall and sshd. Dying
@@ -1722,8 +1773,23 @@ EOF
 
     # Validate before installing. A malformed policy file is ignored silently by Chromium, which
     # would leave this host unlocked while the summary claims otherwise.
-    if have jq; then
-        jq empty "${tmp}" >/dev/null 2>&1 || die "The generated Chromium policy is not valid JSON. This is a bug in this script."
+    #
+    # WARN AND RETURN, NOT `die`, for the same reason the host check above gives (2026-09-14).
+    # This step runs after packages, autologin, the launcher, the unit and lingering, and BEFORE
+    # configure_firewall and harden_ssh — so dying here left a machine with no ufw and root SSH
+    # still permitted, which is a worse outcome than the one it was reacting to. An ordinary
+    # two-line ${URL_FILE} was enough to reach it. The two neighbouring checks on the same
+    # untrusted line now agree about what a bad value costs: this step, and nothing else.
+    if have jq && ! jq empty "${tmp}" >/dev/null 2>&1; then
+        POLICY_STATE="NOT WRITTEN — the generated policy is not valid JSON (a bug in this script)"
+        warn "The Chromium policy this script generated is not valid JSON, so it was NOT installed —
+             Chromium ignores a malformed policy file silently, which would leave this host
+             unlocked while the summary said otherwise. The URL in ${URL_FILE} is the first thing
+             to look at. Everything after this step still ran."
+        MANUAL+=("The Chromium managed policy was NOT written: the generated file was not valid JSON.
+             Until it is, the browser on this machine has no navigation allowlist, DevTools are
+             available and sync is not blocked.")
+        return
     fi
 
     # POLICY_STATE IS BUILT FROM THE WRITE, NOT FROM THE LOOP. It used to append the path on every
@@ -1825,8 +1891,17 @@ Unattended-Upgrade::Remove-Unused-Dependencies "true";
 EOF
     place_root_file "${tmp2}" /etc/apt/apt.conf.d/52vessel-unattended-upgrades 0644 || true
 
+    # REPORTED FROM `is-enabled`, NOT FROM THE ATTEMPT. `|| true` followed by a line stating it
+    # is enabled is a machine that says it patches itself and does not.
     sudo systemctl enable --now unattended-upgrades >/dev/null 2>&1 || true
-    info "unattended-upgrades: enabled, security origins only, no automatic reboot"
+    if [ "$(systemctl is-enabled unattended-upgrades 2>/dev/null || true)" = "enabled" ]; then
+        info "unattended-upgrades: enabled, security origins only, no automatic reboot"
+    else
+        warn "unattended-upgrades could not be enabled, so this host will NOT install security
+             updates on its own. The configuration is on disk; the timer is not running."
+        MANUAL+=("Enable unattended upgrades by hand — this box runs for months unattended with a
+             browser on it:  sudo systemctl enable --now unattended-upgrades")
+    fi
 }
 
 configure_chromium_update_timer() {
@@ -1936,7 +2011,20 @@ runuser -u "${KIOSK_USER}" -- env \
 
 echo "vessel-chromium-update: kiosk restarted."
 UPDATER_EOF
-    place_root_file "${up}" "${UPDATER}" 0755 || true
+    # THE SCRIPT ITSELF HAS TO REACH THE DISK, and `|| true` said nothing when it did not — the
+    # timer below would then be enabled, fire every Sunday, and fail on a missing ExecStart while
+    # the summary reported a browser on a schedule. Same rule as POLICY_STATE.
+    local uprc=0
+    place_root_file "${up}" "${UPDATER}" 0755 || uprc=$?
+    if [ "${uprc}" -gt 1 ]; then
+        warn "The Chromium updater could not be written to ${UPDATER}, so the weekly upgrade window
+             was NOT set up. Chromium is excluded from unattended upgrades, so it will not be
+             patched at all until this is fixed."
+        MANUAL+=("Upgrade Chromium by hand until this is fixed — it is excluded from unattended
+             upgrades deliberately, and its own timer was not installed:
+                 sudo apt update && sudo apt install --only-upgrade chromium")
+        return
+    fi
 
     # An earlier version of this script installed the updater in /usr/local/sbin. Leaving it there
     # would leave a stale root-executed script in a directory the `staff` group can write to.
@@ -1988,8 +2076,15 @@ EOF
     place_root_file "${tim}" /etc/systemd/system/vessel-chromium-update.timer 0644 || true
 
     sudo systemctl daemon-reload
-    sudo systemctl enable --now vessel-chromium-update.timer >/dev/null
-    info "vessel-chromium-update.timer: Sundays at 04:00, restarts the kiosk only if the version moved"
+    sudo systemctl enable --now vessel-chromium-update.timer >/dev/null 2>&1 || true
+    if [ "$(systemctl is-enabled vessel-chromium-update.timer 2>/dev/null || true)" = "enabled" ]; then
+        info "vessel-chromium-update.timer: Sundays at 04:00, restarts the kiosk only if the version moved"
+    else
+        warn "vessel-chromium-update.timer could not be enabled. Chromium is excluded from
+             unattended upgrades, so nothing patches the browser on this host until it is."
+        MANUAL+=("Enable the Chromium upgrade window, or patch the browser by hand on a schedule you
+             keep:  sudo systemctl enable --now vessel-chromium-update.timer")
+    fi
 }
 
 # ---------------------------------------------------------------------------------------------

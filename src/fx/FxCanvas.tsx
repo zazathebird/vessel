@@ -196,19 +196,23 @@ export function FxCanvas() {
     // frame, a hidden tab or `off` measures the gap, not the effect.
     let drewLast = false;
     /*
-     * The best tier this machine is allowed to try again, and the frames since
-     * it last tried.
+     * **There was a second, `ceiling` mechanism here and it never ran** (removed
+     * 2026-09-14). It recorded the tier a promotion had been undone from, so
+     * that tier could not be reached for again — "a session ceiling so the
+     * detector cannot oscillate", which this repository's own notes described
+     * as live behaviour. It was not: `ceiling` was *read* only in the promotion
+     * branch, which is guarded by `mayPromote`, and *assigned* only in the
+     * demotion branch, which clears `mayPromote` on the very next line. So it
+     * was provably 0 at every read, and `sincePromotion`, which existed only to
+     * decide whether to set it, was write-only.
      *
-     * A promotion that has to be undone within a few seconds is evidence, and
-     * without recording it the detector oscillates: promote on 150 samples,
-     * demote on 20, repeat every few seconds, reallocating the buffer each way.
-     * One failed attempt puts the tier it reached out of bounds for the rest of
-     * the page's life. It is deliberately *not* persisted — the stored tier is
-     * a measurement, this is a note about one session, and a machine that was
-     * busy once should get to try again on the next load.
+     * Nothing is lost by deleting it, which is why it is deleted rather than
+     * wired up: `mayPromote` below already allows **one** promotion attempt per
+     * load and spends it whether the attempt is made or undone, so a promotion
+     * can never be retried and there is no oscillation for a ceiling to stop.
+     * A ceiling is the weaker of the two rules, and it was shadowed by the
+     * stronger one.
      */
-    let ceiling = 0;
-    let sincePromotion = Infinity;
     /*
      * **Promotion is a single, bounded correction of the *probe*, not an
      * ongoing search** (2026-08-17, after an adversarial re-review of the
@@ -275,6 +279,25 @@ export function FxCanvas() {
       // world with scale(-1, 1) inside a save/restore pair, and one missed
       // restore would otherwise mirror the site permanently.
       ctx.setTransform(scale, 0, 0, scale, 0, 0);
+      /*
+       * **And the two stroke ends, for exactly the same reason** (2026-09-14).
+       *
+       * Four effects — `vessels`, `flow`, `orbits`, `telemetry` — set `lineCap`
+       * and/or `lineJoin` to "round" outside any save/restore, and the context
+       * is one object for the life of the canvas. Every other stroking effect
+       * (`stars`, `constellation`, `tunnel`, `pressure`, `scan`) never sets
+       * either, so switching away from one of the four left round caps on for
+       * the life of the tab: `stars`' streaks and `constellation`'s links drew
+       * with rounded ends they were not designed with, and only ever after a
+       * particular navigation, which is why nobody could reproduce it.
+       *
+       * Reset here rather than scoped in the four, because this is already the
+       * line that says the frame path owns the context's baseline — and one
+       * reset covers the next effect that reaches for a cap as well. Two
+       * property writes a frame; the defaults are the canvas spec's own.
+       */
+      ctx.lineCap = "butt";
+      ctx.lineJoin = "miter";
 
       motion.scrollV *= 0.92;
       if (id === "off") {
@@ -336,7 +359,6 @@ export function FxCanvas() {
        * deltas that say nothing about the GPU.
        */
       sinceChange += 1;
-      sincePromotion += 1;
       if (drewLast && frameMs > 4 && frameMs < 200) {
         sampleMs += frameMs;
         sampleWork += workMs;
@@ -356,9 +378,6 @@ export function FxCanvas() {
         };
         // 19ms is a hair over 52fps. Anything slower than that is visible.
         if (avg > 19 && tier < TIERS.length - 1) {
-          // Undoing a promotion made moments ago: that tier is out of reach on
-          // this machine, so stop reaching for it.
-          if (sincePromotion < 900) ceiling = tier + 1;
           // Measured beats guessed: once the frame has actually been late, the
           // probe's opinion is spent and nothing climbs again this session.
           mayPromote = false;
@@ -368,7 +387,8 @@ export function FxCanvas() {
           settle();
         } else if (
           mayPromote &&
-          tier > ceiling &&
+          // There is a tier above this one to reach for.
+          tier > 0 &&
           sampled >= 150 &&
           sinceChange >= 300 &&
           avg < 19 &&
@@ -395,7 +415,7 @@ export function FxCanvas() {
           quality.current = TIERS[tier - 1];
           saveTier(quality.current);
           refit.current?.();
-          sincePromotion = 0;
+          // The one attempt, spent. See the note above `mayPromote`.
           mayPromote = false;
           settle();
         } else if (sampled >= 150) {

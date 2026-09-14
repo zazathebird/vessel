@@ -279,6 +279,30 @@ export interface DuelState {
    */
   allow: RosterAllow | null;
   /**
+   * A pinned pairing that beats the roll, or null to roll from `pool`.
+   *
+   * **On the state for the same reason `allow` is**, and it arrived a fix
+   * later (2026-09-14). A pin used to be expressed by handing `createDuel` two
+   * ids, which leaves `pool` null — so the pair survived every match boundary
+   * because there was nothing to re-roll *from*. That works exactly once. A
+   * host whose settings can move under it (the full-bleed background effect,
+   * which deliberately does not rebuild its fight when a slider moves) then had
+   * no way to say "the pin changed" or "the pin is gone" short of restarting
+   * the match under whoever is watching, which is the thing that surface
+   * refuses to do. Both halves of the operator's pairing control now ride here
+   * and are read at the boundary, where the caller is a rAF loop that has long
+   * since forgotten what it was configured with.
+   *
+   * **Alignment is not checked here, deliberately.** `pin` bypasses
+   * `rollPairing`, so it is the one route into the engine `ROSTER_GOOD` /
+   * `ROSTER_EVIL` do not guard — and the guard for that is `validDuelSettings`,
+   * which refuses a same-alignment pin whole rather than repairing it, gated
+   * over all 576 orderings. A second opinion here would be two checks that
+   * agree today and disagree after the next change, and it would also break
+   * the bench and `duel-shot`, which pin arbitrary pairs on purpose.
+   */
+  pin: [FighterStyle, FighterStyle] | null;
+  /**
    * The pacing knobs this fight runs at.
    *
    * **This used to be read straight off the `DUEL_TUNING` global, and the note
@@ -379,6 +403,11 @@ export function createDuel(left: FighterStyle, right: FighterStyle): DuelState {
   return {
     pool: null,
     allow: null,
+    // Null, not `[left, right]`: this constructor's two arguments are the
+    // *opening* pair, and with no pool there is nothing to roll, so the pair
+    // already survives every boundary. A host that wants the pin to keep
+    // tracking a setting assigns `pin` itself — see the note on the field.
+    pin: null,
     // The global itself, by reference — a fight nobody configures keeps
     // tracking whatever `applyDuelTuning` was last given, which is what the
     // bench, `duel-shot --tune` and every gate rely on.
@@ -3886,7 +3915,17 @@ function step(st: DuelState): void {
       // Fresh fighters if this fight came from a pool, the same two if it was
       // pinned to a pairing. Rolled here rather than in the caller so every
       // home of the duel gets it without knowing the roster exists.
-      const [left, right] = st.pool ? rollPairing(st.pool, Math.random, st.allow) : [a.style, b.style];
+      //
+      // `st.pin` wins outright, and it is read here rather than at the call
+      // that rolls the pair for the reason its own note gives: a pin that only
+      // applied to the match in flight comes back as "it ignores my settings
+      // after a minute", exactly as a restriction that did would. A fight with
+      // neither a pin nor a pool keeps the two it has, which is the bench.
+      const [left, right] = st.pin
+        ? st.pin
+        : st.pool
+          ? rollPairing(st.pool, Math.random, st.allow)
+          : [a.style, b.style];
       st.a = makeFighter(START_A, 1, left);
       st.b = makeFighter(START_B, -1, right);
       /*
