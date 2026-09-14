@@ -81,7 +81,7 @@ named "Untitled folderwebsite".
    `~/Downloads/thinkcentre-setup.sh` was found. Item 1 above assumes it has; establish that
    first. **`../debian-desktop/BLUEPRINT.md` §6 is the live version of this list.**
 
-## The site-wide debug audit — 45 findings, 14 fixed, 31 open
+## The site-wide debug audit — 45 findings, 17 fixed, 28 open
 
 Two scans by a second session, both findings-only by design: **Passes 1–5** (2026-09-13/14) read
 the whole application, **Pass 6** (2026-09-14) took four slices none of them had touched — the
@@ -110,13 +110,16 @@ the hole instead of closing it, #12's first attempt among them.
 
 **Wants judgment (Opus or equivalent), in the order worth doing them:**
 
-1. **#36/#39/#40/#41 — check.ts's own honesty about what it did not run.** The `SKIPPED` banner is
-   nested inside `if (failed.length === 0)`, so it disappears on exactly the runs that are already
-   red; and `the two LOOK_FILES copies agree` records a plain `ok` having compared zero bytes when
-   the sibling repo is absent, which is the default state of a fresh clone. **Do these first** —
-   every other fix's gate is worth what the reporting is worth. Needs a decision, not just a
-   patch: does a skipped gate get a third status column, and does it still count toward the green
-   total?
+1. ~~**#36/#39/#40 — check.ts's own honesty about what it did not run.**~~ **Fixed 2026-09-14**,
+   commit `4ad2f49`. `skip()` throws a sentinel the way `must()` does, the status column gains
+   SKIP, skipped gates leave the pass count ("70 checks passed, 1 could not be run"), the banner
+   prints on red runs too, and a skip never sets a non-zero exit code. Break-verified with the
+   sibling absent *and* with an unrelated gate deliberately broken, which is the half of #36 that
+   a plausible fix leaves undone. **#41 is deliberately not fixed**: the pin-writer allow-list is
+   a substring scan, which its author weighed and called proportionate for a script with no access
+   to the TypeScript compiler API, and the audit's own read agreed it is reasonable but
+   incomplete. Closing it properly means a real AST pass; a cleverer regex would only buy false
+   confidence. It stays a known limit on a gate protecting a property that has regressed once.
 2. **#13, downloads (Medium–High): a code for a never-finished upload redeems and burns a use.**
    Neither `mintCode` nor `opened()` checks `uploaded_at IS NULL`, so the customer spends one of a
    limited number of uses, lands on a page showing nothing, and gets no error saying why. Same bug
@@ -184,6 +187,18 @@ in that file.
 **Not a finding, a decision for the client:** the "accept the new key" dialog never shows the
 offered key, so the owner attests "I re-keyed it" without being able to compare fingerprints.
 Pre-existing and inherent to the design as written.
+
+**A flaky gate, found in passing on 2026-09-14 and not yet chased** (not an audit finding — it
+surfaced during the #36 work). `duel: the health bar clears every costume, and stays in frame`
+failed once with `musketeer: the bar's underside is -80.2 above the torso against a costume
+reaching 26`, and passed on the runs either side. It drives `createDuel`/`advanceDuel` for 900
+frames per pairing against the engine's own randomness, and ~80 units is the gap its own comment
+describes for a fighter at the apex of a somersault — so the bar looks to be anchored below an
+airborne fighter's `f.y`. **Either the renderer anchors the bar to the ground mid-somersault and
+the gate must exempt an airborne fighter, or the bar genuinely crosses the costume in flight** —
+and it is the second reading that matters, because `headroom` exists precisely so the bar clears
+the crest. It is nondeterministic, so it will fail `predeploy` at random one day and the
+temptation will be to re-run until green.
 
 **Gate coverage** was zero for the most severe. #12, #10/#17, #47, #5 and #6 are gated now. **#13,
 #15, #28 and #29 still are not**, and each fix wants one, per this project's own discipline.
