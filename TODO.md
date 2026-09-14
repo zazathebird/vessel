@@ -81,42 +81,112 @@ named "Untitled folderwebsite".
    `~/Downloads/thinkcentre-setup.sh` was found. Item 1 above assumes it has; establish that
    first. **`../debian-desktop/BLUEPRINT.md` §6 is the live version of this list.**
 
-## The site-wide debug audit — 22 findings, 1 fixed, 21 open
+## The site-wide debug audit — 45 findings, 1 fixed, 44 open
 
-A five-pass read of the whole project on 2026-09-13/14, by a second session. **`AUDIT-FINDINGS.md`
-is the index** and `.audit/pass*.md` are the evidence, both committed so this does not live on one
-machine. Findings-only by design: nothing in it was fixed by the pass that found it.
+Two scans by a second session, both findings-only by design: **Passes 1–5** (2026-09-13/14) read
+the whole application, **Pass 6** (2026-09-14) took four slices none of them had touched — the
+host-provisioning scripts, a meta-audit of `scripts/check.ts` itself, the remaining components and
+data files, and the dev/test tooling. **`AUDIT-FINDINGS.md` is the index** and `.audit/pass*.md`
+are the evidence, both committed so this does not live on one machine.
 
-**Read the two caveats before acting on any of it.** The audit was reading a tree that was being
+**Read the caveats before acting on any of it.** The audit was reading a tree that was being
 changed under it, so exact line numbers in the pass files are historical; function and file names
-were written to survive. And it is one model's reading — #12 was verified by hand and was real,
-but the rest are unverified claims until somebody checks them.
+were written to survive. And it is one model's reading. **Six have since been verified by hand
+against live source** (2026-09-14, third session) and all six held: the two `0.2` frame-delta
+floors (#10/#17, #47), `canon_store`'s bypass (#28), the Pi Chromium fallback (#29), check.ts's
+nested `SKIPPED` banner and `ok`-on-zero-bytes (#36, #39), and the panel's `[config]` dependency
+(#42). **#28's severity is argued down to Medium**: it needs a symlink whose ancestor already
+points into `/etc`, on a box being run with sudo by its own operator. Everything else is still an
+unverified claim until somebody checks it.
 
-1. ~~**#12, sharing: the pin was taken before the key was verified.**~~ **Fixed 2026-09-14**,
-   commit `2315676` — verified by hand first, then fixed twice (the first fix moved the hole
-   rather than closing it), gated as an allow-list of pin writers, break-verified four ways.
+### Who should fix what
+
+**The fix is rarely the work here — the gate is**, and it has to be break-verified. So the routing
+is not by severity, it is by whether the correct pattern already exists in-tree to copy. **The
+line is the one `CLAUDE.md` already draws:** anything touching `worker/`, `src/auth`, `src/share`,
+`migrations/` or the host scripts' security controls wants the more capable model, one-line fix or
+not — three of the four worst findings in this audit are places where an earlier careful fix moved
+the hole instead of closing it, #12's first attempt among them.
+
+**Wants judgment (Opus or equivalent), in the order worth doing them:**
+
+1. **#36/#39/#40/#41 — check.ts's own honesty about what it did not run.** The `SKIPPED` banner is
+   nested inside `if (failed.length === 0)`, so it disappears on exactly the runs that are already
+   red; and `the two LOOK_FILES copies agree` records a plain `ok` having compared zero bytes when
+   the sibling repo is absent, which is the default state of a fresh clone. **Do these first** —
+   every other fix's gate is worth what the reporting is worth. Needs a decision, not just a
+   patch: does a skipped gate get a third status column, and does it still count toward the green
+   total?
 2. **#13, downloads (Medium–High): a code for a never-finished upload redeems and burns a use.**
-   Neither `mintCode` nor `opened()` checks `uploaded_at IS NULL`, so the customer spends one of
-   a limited number of uses, lands on a page showing nothing, and gets no error saying why. Same
-   bug class already fixed for withdrawn files. **This is the next one to do.**
-3. **#10/#17, the duel bench (Medium): `scripts/duel-bench.template.html` still floors the frame
-   delta at `0.2`, not `0`.** The exact regression `CLAUDE.md` records fixing in the other three
-   hosts; it is not in `check.ts`'s `hosts` array and has no gate. It is now the only
-   frame-timing host left with it — and it is the one tool built so the client can judge duel
-   *tempo*, which on a fast display it runs up to 1.67× too quickly.
-4. **#2/#3, accessibility (Medium): `aria-modal="true"` on two non-modal overlays**, and arrow-key
+   Neither `mintCode` nor `opened()` checks `uploaded_at IS NULL`, so the customer spends one of a
+   limited number of uses, lands on a page showing nothing, and gets no error saying why. Same bug
+   class already fixed for withdrawn files. The refusal has to come through the single `denied`
+   object or it becomes an existence oracle — that reasoning is the whole fix.
+3. **#28, `thinkcentre-setup.sh` (Medium): `canon_store()` resolves symlinks only when the full
+   target path already exists**, so `--store <symlinked-ancestor>/newdir` — the normal first-run
+   shape — is compared as a plain string and `prepare_store()` then follows the link for real.
+   Fix is "resolve the longest existing prefix, re-append the tail, fail closed", and the gate has
+   to *execute* `canon_store` against throwaway symlinked directories the way the share-script
+   blocklist gate does.
+4. **#29, `pi-setup.sh` (Medium): the documented fallback to Debian's `chromium` silently defeats
+   the no-auto-upgrade invariant.** `configure_unattended_upgrades()`'s premise is "Chromium comes
+   from the Raspberry Pi archive", which is false the moment the fallback fires. Needs *both*
+   halves — the blacklist and its own timer — or it is worse than leaving it. This is the concrete
+   mechanism behind *Needs hardware* item 2 below, and answers half of it from source.
+5. **#19 + #27, worker (Low–Medium): two case-collision races** on bare binary-collated unique
+   indexes behind `COLLATE NOCASE` runtime checks (`setups.ts`, `machines.ts`), plus `rename()`
+   lacking the `try/catch` its sibling `pair()` has three lines above. Wants a migration.
+6. **#2/#3, accessibility (Medium): `aria-modal="true"` on two non-modal overlays**, and arrow-key
    NAV paging checks `!panelOpen` but not `!doorOpen`, so the page moves under an open door.
-5. **#5, config (latent): `Object.freeze` is shallow**, so `DEFAULT_DUEL_SETTINGS.tuning` is not
-   frozen — contradicting both the file's comment and `CLAUDE.md`. Nothing mutates it today.
-6. **#14/#15/#16/#19/#27 and the rest** — id normalisation missed on two downloads routes, the
-   free-vs-unpriced price sort, two `--faint` labels failing WCAG, and a case-collision race on
-   bare-binary unique indexes in `setups.ts` and `machines.ts`. See the index.
-7. **Not a finding, a decision for the client:** the "accept the new key" dialog never shows the
-   offered key, so the owner attests "I re-keyed it" without being able to compare fingerprints.
-   Pre-existing and inherent to the design as written.
+   `CLAUDE.md` says non-modal is deliberate, so resolving the contradiction is a design call; the
+   edit afterwards is one line.
+7. **#42, the panel (Medium): the "Published" note is invalidated by mere navigation.** The
+   resetting `useEffect` depends on the whole `Config`, which carries `page`/`sub` — so publishing
+   and then clicking a nav link to see how it reads elsewhere says the publish was lost. The right
+   dependency is the publishable subset, and choosing that is a judgment about what "anything
+   changes" means.
+8. **#1 + #48 together**: signup's taken-handle path double-counts against its own rate-limit
+   bucket, and `auth-e2e.ts`'s own test accepts anything from 2 through 14 so it cannot see it.
+   Coupled — tightening the test fails while the bucket bug is open.
+9. **#30/#31, `plasma-dark-setup.sh` (Medium)**: `set_key()` silently no-ops **all** theming when
+   `kwriteconfig` is absent while promising a fallback that does not exist, and the two tools the
+   wallpaper subsystem's own "THE TRAP" comment says are required are never installed outside a
+   `LOOK=deepin` branch. Straddles `../debian-desktop`, which is under independent development.
 
-**Gate coverage was checked and is zero** for the five most severe: #12 (now gated), #13, #15,
-#10/#17 and #5. Each fix wants a gate, per this project's own discipline.
+**Mechanical — safe to hand to a smaller model** (pattern already exists in-tree, gate is a text
+or simple behavioural check; every one of them must show `npm run check` green *and* the new gate
+failing against the un-fixed code):
+
+- **#10/#17 + #47 — the two `0.2` frame-delta floors**, in `duel-bench.template.html:647` and
+  `fx-bench.template.html:356`, then both files into `check.ts`'s existing `hosts` array. All four
+  real hosts already floor at `0`. Two characters and one array entry; **the best value in the
+  whole list per unit of risk**, and the duel bench is the one tool built so the client can judge
+  *tempo*, which on a fast display it currently runs up to 1.67× too quickly.
+- **#16** — `.v-knock` and `.v-saver-label` from `--faint` to `--muted`, plus a gate grepping every
+  `color: var(--faint)` against an allow-list. The 2026-08-17 pass did exactly this four times.
+- **#14** — `fileId()` on `addGrant`/`mintCode`'s id reads; the normaliser's own comment names this
+  bug. **#5** — deep-freeze `DEFAULT_DUEL_SETTINGS.tuning` (gate: mutate it, expect a throw).
+  **#4** — cancel `useEdgeFade`'s `fonts.ready` on unmount. **#7** — make `check.ts` import
+  `LOOK_KEYS` instead of hardcoding the same eleven names. **#6** — gate that `MAX_CONFIG_BYTES`
+  compares bytes. **#50** — the missing quote guard in `local-operator.ts`'s `d1()`.
+- **#32/#33/#34** — `deepin-exact` excluded from its own package gate, `--accent` checking digit
+  count rather than range, and the `fc-list` guard applied to the display font but not the mono one
+  a line above the comment explaining why. Each has the correct pattern adjacent in the same file.
+- **#43** — the scope qualifier on the three look-dial toasts that lack one.
+- **Seven stale comments**: #8, #9, #45 (page counts), #46 (palette count), #26 ("eight hex"),
+  #49 (a "nothing can follow" banner ~830 lines before the section it describes), #25 ("two tiers
+  down" is three in the worst case).
+
+**Left deliberately unrouted**: #15, #18, #20, #21, #22, #23, #24, #35, #44 — real but narrow, and
+none of them is worth a session of its own. See the index; fold them into whichever pass is already
+in that file.
+
+**Not a finding, a decision for the client:** the "accept the new key" dialog never shows the
+offered key, so the owner attests "I re-keyed it" without being able to compare fingerprints.
+Pre-existing and inherent to the design as written.
+
+**Gate coverage was checked and is zero** for the most severe: #12 (now gated), #13, #15, #10/#17,
+#47, #5, #28 and #29. Each fix wants a gate, per this project's own discipline.
 
 ## Needs hardware or a human eye — cannot be done from here
 

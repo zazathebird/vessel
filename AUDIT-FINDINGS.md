@@ -3,7 +3,8 @@
 Started 2026-09-13; committed 2026-09-14 so it does not live on one machine only. Purpose: find and record every bug,
 inconsistency, dead code path, or invariant violation across the whole vessel-main project —
 **no fixes applied here**, just findings. Five sequential passes, each reviewing and building on
-the last.
+the last — then a sixth, a fresh scan of four slices the first five never touched. The routing of
+every open finding is in `TODO.md`; this file is the index and `.audit/pass*.md` the evidence.
 
 Baseline: `npm run check` — 81/81 automated checks pass (2026-09-13). **Superseded 2026-09-14**: the
 desktop-looks project split into its own repository (`../debian`, see CLAUDE.md's "The desktop of
@@ -240,3 +241,149 @@ in `TODO.md`. That decision is the client's/operator's to make, consistent with 
 `conflicts-are-my-call`-style memory note reserving money/business/taste calls for him — a fix
 decision for customer-facing bugs like #12/#13 plausibly falls there rather than being mine to
 just apply.
+
+**Update, 2026-09-14, later the same day**: this whole file (Pass 1–5, `.audit/pass1-*.md` through
+`pass3-followups.md`) was committed to `vessel-main` at Patrick's explicit request by the peer
+session working the desktop-host split (`72ea204`), and the findings were triaged into `TODO.md` as
+the project's single backlog rather than left in a second next-steps document. **#12 has since been
+fixed and gated** (commit `2315676`) — the peer session's own security review caught that its first
+attempted fix (bare `deletePin`) left a worse gap (an unpinned state after a failed connect, which
+the *next* successful connect would then silently trust), so the shipped fix threads an
+`acceptNewKey` flag through `DriveConnection.open` instead, and the check.ts gate for it is
+discussed again below (Pass 6, Finding 6 of the meta-audit). #13 remains open, unclaimed, in
+`TODO.md`.
+
+---
+
+## Pass 6 — a second scan, entirely new territory (done, 2026-09-14)
+
+Requested explicitly as a fresh bug-hunting pass rather than a continuation of Passes 1–5 ("do
+another scan, of something different this time... I'll have opus or fable do the fixes" —
+findings-only, as before). Four parallel agents, each given a slice of the codebase none of Passes
+1–5 had touched: the host-provisioning scripts (as opposed to the customer-facing setup scripts
+Pass 2 already covered), a meta-audit of `scripts/check.ts` itself (does the checker's own logic
+hold up, as opposed to auditing what it checks), the remaining untouched components and data files,
+and the project's own dev/test tooling (`auth-e2e.ts`, `webauthn-sim.ts`, the bench/shot scripts).
+**23 new findings.**
+
+### 6A — Host provisioning scripts (`.audit/pass6-host-scripts.md`)
+
+`thinkcentre-setup.sh`, `pi-setup.sh`, `plasma-dark-setup.sh` plus four smaller scripts — the ones
+that turn a fresh machine into the always-on sharing host, distinct from the setup scripts a
+*customer* runs (Pass 2). An unusually well-defended set of scripts; every "obvious" bug class
+(word-splitting, ufw/sshd ordering, docker-group shortcuts, kiosk-unit hardening, `--no-sandbox`)
+was checked and found genuinely, carefully handled. The two real findings are novel structural gaps:
+
+| # | Severity | One-line summary |
+|---|---|---|
+| 28 | 🔴 **Medium–High** | `thinkcentre-setup.sh`'s `canon_store()` only resolves symlinks via `cd -P`/`pwd -P` when the **full target path already exists** (`[ -d "${out}" ]`) — so `--store <symlinked-ancestor>/newdir`, where the leaf doesn't exist yet (the normal first-run case), bypasses the `/etc`/`/usr`/etc. blocklist entirely as a plain string comparison, and `prepare_store()`'s subsequent `mkdir -p`/`chown`/`chmod` all follow the symlink for real — landing a desktop-user-owned, mode-0750 directory inside (e.g.) `/etc`. The identical attack against an *already-existing* leaf **is** caught correctly; the gap is specific to the not-yet-created case, which is also the overwhelmingly common one. Same failure class CLAUDE.md documents fixing three times in the customer-facing setup scripts, reappearing in a fourth, previously-unaudited script. |
+| 29 | 🔴 Medium | `pi-setup.sh`'s documented fallback to Debian's plain `chromium` package (when Raspberry Pi OS's `chromium-browser` is unavailable) silently defeats the "Chromium never auto-upgrades under the kiosk" invariant — `configure_unattended_upgrades()`'s premise for leaving Chromium unblocked only holds for the Pi-specific package, and nothing tracks which package a run actually installed or blacklists the Debian-origin fallback the way `thinkcentre-setup.sh` does. This is the concrete mechanism behind an already-flagged-as-unverified open question in `docs/HOST-BUILD-LOG.md` item 4. |
+| 30 | 🔵 Medium | `plasma-dark-setup.sh`'s `set_key()` silently no-ops **all** theming (colour scheme, accent, icons, fonts, window buttons — ~2 dozen call sites) when `kwriteconfig6`/`5` are absent, contradicting its own warning message, which promises a "writing config files directly" fallback that doesn't exist. The script completes and reports success with a completely unthemed, default-Breeze desktop underneath. |
+| 31 | 🔵 Medium | `imagemagick`/`rsvg-convert` — the two tools the wallpaper subsystem's own extensively-commented "THE TRAP" section says are required to avoid a previously-shipped rendering bug — are never installed by any script in the repo except inside a `LOOK=deepin`-only branch, so the per-look wallpaper feature (11 of 17 looks, plus the universal fallback used by every look including the default) silently does nothing on a fresh netinst. |
+| 32 | 🔵 Low | `DEEPINISH`'s optional-package gate checks `[ "${LOOK}" = "deepin" ]` exactly, excluding `deepin-exact` even though it needs the identical icon theme and drawing tool — the icon list silently falls through to a less-faithful theme with no warning that the intended package was never requested. |
+| 33 | 🔵 Low | `--accent`'s validation regex (`^[0-9]{1,3},[0-9]{1,3},[0-9]{1,3}$`) checks digit *count*, not value *range* — `999,999,999` passes despite the error message's own "0-255 each" claim. |
+| 34 | 🔵 Low | The "only set a font key if `fc-list` confirms it's installed" pattern is applied to the Ubuntu display font but not to the JetBrains Mono monospace font one line above the comment explaining why it should be — if `fonts-jetbrains-mono` fails to install, the desktop is left naming an absent font in `kdeglobals`. |
+| 35 | 🔵 Low | `thinkcentre-setup.sh`'s `sshd_ports()` final fallback (reached only when both `sshd -T` and the `ssh.socket` probe fail) parses only `/etc/ssh/sshd_config`, never `sshd_config.d/*.conf` drop-ins — contradicting the file's own "ask the daemon, never parse the file" principle. Current outcome is fail-closed (an empty result correctly `die`s rather than defaulting to port 22), but a stale `Port` line in the main file alongside a real one in a drop-in could report a wrong-but-non-empty port. |
+
+### 6B — Meta-audit of `scripts/check.ts` (`.audit/pass6-check-meta-audit.md`)
+
+Not an audit of the application — an audit of the 274KB gate suite itself, applying CLAUDE.md's own
+standard ("a gate that reads the source is testing shape, not behaviour") to the checker rather than
+to what it checks. Every one of the 77 registered checks was read in full. The great majority —
+essentially the entire 22-check duel section, the guardrail/station resolvers, the per-page
+look-override gate, the QR section, and the two execution-driven filesystem/PowerShell gates — are
+genuinely behaviour-driven and several explicitly carry the scar tissue of having been rewritten
+from a predicate-only shape after a real incident. No inverted conditions, off-by-ones,
+self-comparisons, or always-false-gated checks were found anywhere. Three of the six findings below
+were an explicit adversarial re-read requested by the check's own author (the peer session) of the
+three newest gates in the file:
+
+| # | Severity | One-line summary |
+|---|---|---|
+| 36 | 🟡 Medium | The "Could NOT be run on this machine" (`SKIPPED`) summary banner is nested inside the `if (failed.length === 0)` branch of the final report — the moment *any* check fails, for any unrelated reason, the one piece of information the file's own philosophy insists must never silently disappear does exactly that. Per-line `NOT RUN` text is unaffected; only the end-of-run summary reminder is lost, and only on runs that are already red. |
+| 37 | 🟡 Medium (latent) | `checkAsync` has no synchronous-exception safety, unlike `check`. Safe today because its one call site is a proper `async` function (JS auto-converts a pre-`await` throw into a rejected promise), but the type signature doesn't require `async`, and a future gate written as `checkAsync("x", () => syncSetup().then(...))` where `syncSetup()` can throw would crash the entire Node process mid-suite, silently dropping every check registered after it — no `FAIL` line, no summary, nothing. |
+| 38 | 🔵 Low | `every page is reachable off the desk`'s two `CommandPalette` assertions are regex-on-source (`/for \(const entry of \[\.\.\.NAV, \.\.\.FOOTER_NAV\]\)/`, `/:\s*commands;/`) despite the check's name and messages describing a behavioural guarantee ("reachable", "browsed by touch") — the exact shape the guardrail/station gates were rewritten away from after a real incident, not fixed here. Regexes are narrow enough that a plausible rewrite would fail loudly rather than pass silently, so practical risk is low today. |
+| 39 | 🟡 **Medium** *(adversarial re-read, confirmed)* | `the two LOOK_FILES copies agree` records a plain `ok` — same status column as every genuine pass — when the sibling desktop repo is absent, having compared **zero bytes** of either file. `SKIPPED.push(...)` is the intended second-mention safety net, but that's Finding 36's exact nested-banner bug, and even when it does print, the check's own line already reads as an ordinary pass to anything that only looks at the `ok`/`FAIL` column (a human skimming for `FAIL`, a CI dashboard counting "ok" lines). On the default state of a fresh clone (no sibling checked out), this check would report green forever regardless of whether the two `LOOK_FILES` copies have actually drifted. |
+| 40 | 🔵 Low *(adversarial re-read, confirmed)* | `the desktop looks are one closed set` has the identical absent-sibling fallback shape, but is meaningfully more honest: three of its four sub-checks (validator/error-message/accent-table agreement) run unconditionally and for real even without the sibling; only the fourth (preview-screenshot parity) goes dark, and the returned text says so in the same sentence as the real result. The `ok`-vs-partial distinction is still invisible at the status-column level, same underlying gap as #39, just smaller in what it actually leaves unverified. |
+| 41 | 🟡 Low–Medium *(adversarial re-read, confirmed)* | The agent-key pin-writer allow-list gate (protecting Finding #12, now fixed) is a raw substring scan for the literal spelling `shareStore.savePin(` across `src/`. It would not catch a destructured/aliased binding (`const { savePin } = shareStore`), a re-exported wrapper using dynamic property access, or the function passed by reference to a third file (`onAccept={shareStore.savePin}` — structurally the same shape of indirection as the bug it exists to catch a recurrence of). No live bug today (both current call sites match the expected shape); the identical substring-scan-as-allow-list technique also appears at check.ts's per-page-look-override gate (line ~4338) for a different invariant, so this is a systemic technique in the file, not a one-off shortcut. The check's own author judged this an acceptable, proportionate trade-off given what a text-reading script can do without the TypeScript compiler API; this pass's independent judgement agrees it's reasonable but not complete, and worth naming precisely because it protects a security property that has already regressed once. |
+
+### 6C — Remaining components and data files (`.audit/pass6-components-data.md`)
+
+`Admin.tsx`, `SiteConfigPanel.tsx` (full logic this time — Pass 1 only touched one CSS/ARIA line on
+it), `QrCode.tsx`, `Hero.tsx`, `palettes.ts`, `snippets.ts`, `mail.ts`, plus a structural pass over
+`pages.ts`/`pageIds.ts`/`migrations/0003`. Notably: the hand-rolled QR encoder needed no
+hand-re-derivation at all — `scripts/check.ts`'s existing QR section already re-derives it from the
+ISO spec four independent ways and would have caught the kind of fault the file's own history
+comments describe. An independent WCAG contrast recomputation across all 25 palettes reproduced
+CLAUDE.md's cited figures within rounding tolerance — no palette has drifted out of step with the
+document.
+
+| # | Severity | One-line summary |
+|---|---|---|
+| 42 | 🔴 Medium | `SiteConfigPanel`'s "Published" success toast is invalidated by mere **navigation**, not just an appearance edit — the `useEffect` resetting `publishState` depends on the whole `Config` object, which also carries `page`/`sub`. The panel is a 420px drawer, not a scrim (the rest of the page, including nav, stays clickable) — so an operator who publishes, then clicks a nav link to check how it reads on another page (an entirely natural next action), sees the message flip back to "Unpublished changes are lost when you reload" for a publish that fully succeeded and is still live. The functional twin of Pass 1's #2 (the same drawer's `aria-modal="true"` already flagged as false for the identical reason). |
+| 43 | 🔵 Low | Look-dial toast feedback is inconsistent across six per-page dials: Palette/Layout/Background announce "on `<page>` only" in page-scope mode; Ornament/Station give a toast but never the scope qualifier; Typography gives no toast at all, in either scope. An operator relying on the panel's own stated mechanism for telling site-wide from page-scoped edits apart gets it for half the dials. |
+| 44 | 🔵 Low | `Admin.tsx`'s "reset password" button disables purely on `recoveryCodesRemaining === 0`, ignoring that the server's actual guard also accepts a `prf`-capable passkey (with a key slot) as a valid "other way in" — a server-legitimate reset can be client-unreachable. Low-impact: the same account could just self-service `changePassword` via the working passkey instead. |
+| 45 | 🔵 Cosmetic | `pageIds.ts`'s header comment says "sixteen pages" and omits `downloads`; real union has 17 (matches CLAUDE.md elsewhere) — same drift pattern as Pass 1's #8, on the same file, not yet corrected. |
+| 46 | 🔵 Cosmetic | `palettes.ts`'s header comment says "The 24 palettes"; the real array has 25 (Cold Open was appended after the comment was written, and calls itself "the twenty-fifth" in its own nearby comment) — matches CLAUDE.md elsewhere. |
+
+### 6D — Dev/test tooling (`.audit/pass6-dev-tooling.md`)
+
+`auth-e2e.ts` (3,495 lines), `webauthn-sim.ts`, and the five bench/shot scripts Pass 1 either didn't
+cover at all (`fx-bench`/`fx-shot`/`ornament-shot`) or covered only the *duel*-specific template
+(not the `.mjs` generators themselves). Confirmed independently sound: the documented `auth-e2e.ts`
+reachability-gate "known wart," the fetch-shim's cookie isolation between raw-`Client` and
+`src/auth`-driven requests, genuine independence of both the TOTP and WebAuthn CBOR/DER "second
+opinions" from the application code they check, and that none of the five dev-only benches leaks
+into the production bundle.
+
+| # | Severity | One-line summary |
+|---|---|---|
+| 47 | 🔴 Medium | `scripts/fx-bench.template.html`'s Play-loop floors the frame delta at `0.2`, not `0` — a **third** instance of the exact bug CLAUDE.md documents fixing everywhere else (after `duel-bench.template.html`, #10/#17), with a comment that falsely claims parity with `FxCanvas.tsx` (which correctly floors at 0). Zero `check.ts` gate coverage, same as its duel counterpart. On a >300Hz display, every one of the sixteen live-preview effects — including both duel-effects' pacing — runs up to 1.67× too fast for the one tool built to let a human judge their real tempo. |
+| 48 | 🟡 Low–Medium | `auth-e2e.ts`'s own signup-rate-limit test states the exact expected block point in a comment ("attempt 14") but its assertion accepts anything from 2 through 14 — wide enough to pass whether the still-open #1 (handle-taken double-count) is live or not. Hand-simulating the arithmetic puts the real, current block point at ~7-8, roughly half the documented-correct value, and this test cannot tell the difference. |
+| 49 | 🔵 Low | A "this runs last, nothing can follow" comment banner in `auth-e2e.ts` sits ~830 lines before the section it actually describes, directly above (and factually contradicted by) the large Downloads section that immediately follows it. No behavioural effect (the real section genuinely does run last); a real trap for a future editor trusting the comment's position to mean end-of-file. |
+| 50 | 🔵 Low | `local-operator.ts`'s copy of the `d1()` shell helper is missing the double-quote guard its `auth-e2e.ts` counterpart has, via an unvalidated `OP_HANDLE` environment variable — a local-only, self-triggered shell-quoting hazard, not remotely exploitable. |
+
+### Pass 6 running total
+
+**23 new findings**: 5 at 🔴/🟡 Medium-or-higher (#28 host-scripts symlink bypass, #29 Pi chromium
+auto-upgrade hole, #36/#39/#41 check.ts's own honesty-of-reporting gaps, #42 SiteConfigPanel's false
+"unpublished" message, #47 the third 0.2-floor instance, #48 the too-loose rate-limit test), the
+rest Low/informational/cosmetic. Combined with Passes 1–5's 22, **the audit's running total across
+both scans is 45 real findings**, of which one (#12) is fixed and gated as of this update.
+
+The most notable pattern from this second scan: three of Pass 6's findings (#36, #39, #41) are about
+the checker's own honesty in reporting what it did and didn't verify — a different category from
+everything Passes 1–5 found, and arguably the most structurally important, since a gate that reports
+`ok` for work it never did is the mechanism by which every other kind of finding in this whole audit
+stays hidden the longest.
+
+### Triage, 2026-09-14 — six verified by hand, all 44 open findings routed
+
+A third session read this index and **verified six findings directly against live source** rather
+than trusting the pass files' excerpts, choosing the ones that drive the routing decision. All six
+held, unchanged:
+
+- **#10/#17 and #47** — `grep` across `scripts/`, `src/`, `worker/`: exactly two `Math.max(0.2` frame
+  floors (`duel-bench.template.html:647`, `fx-bench.template.html:356`) against four hosts correctly
+  at `Math.max(0` (`DuelOrnament`, `DuelBench`, `DuelSettingsEditor`, `FxCanvas`). Confirmed.
+- **#28** — `canon_store()` read in full: the `cd -P`/`pwd -P` resolution is genuinely inside
+  `if [ -d "${out}" ]`, so a not-yet-created leaf is compared lexically. Confirmed. **Severity argued
+  down from Medium–High to Medium**: it requires a symlink whose ancestor already points into a
+  blocked directory, on a machine being run with sudo by its own operator. The rule it breaks is
+  real; the exploit path is not.
+- **#29** — `configure_unattended_upgrades()` read in full: its stated premise is "Chromium comes
+  from the Raspberry Pi archive, [which] is not in that list", which the `chromium` fallback at
+  line ~305 makes false. Confirmed.
+- **#36 and #39** — `if (SKIPPED.length > 0)` is nested inside `if (failed.length === 0)`, and the
+  `LOOK_FILES` check's absent-sibling branch returns a `NOT RUN —` *detail* while `check()` still
+  records `ok`. Both confirmed as described.
+- **#42** — `useEffect(… , [config])` at `SiteConfigPanel.tsx:103`, and `config` carries `page`/`sub`
+  (`ConfigContext`). Confirmed.
+
+The routing itself lives in **`TODO.md`**, not here, so there is one backlog rather than two: nine
+findings wanting judgment (led by the check.ts honesty group, then #13), a mechanical group safe for
+a smaller model (led by the two frame floors), and nine left deliberately unrouted as too narrow to
+carry a session. The stated rule for the split is that **the fix is rarely the work in this
+codebase — the gate is**, so the line is drawn where `CLAUDE.md` already draws it: `worker/`,
+`src/auth`, `src/share`, `migrations/` and the host scripts' security controls want the more capable
+model regardless of how few characters the fix is.
