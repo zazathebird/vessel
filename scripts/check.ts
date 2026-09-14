@@ -2265,6 +2265,12 @@ check("every frame clamp floors at zero, so a fast display is not a fast world",
     "src/components/DuelOrnament.tsx",
     "src/components/DuelBench.tsx",
     "src/components/DuelSettingsEditor.tsx",
+    // The two self-contained benches carry their own copy of the loop and
+    // were still floored at 0.2 after the four hosts were fixed, ungated — a
+    // bench that runs fast on a fast display misreports the tempo it exists
+    // to judge.
+    "scripts/duel-bench.template.html",
+    "scripts/fx-bench.template.html",
   ];
   let clamps = 0;
   for (const file of hosts) {
