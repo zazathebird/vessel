@@ -856,7 +856,10 @@ export async function signup(request: Request, env: Env): Promise<Response> {
   try {
     await crypto.subtle.importKey(
       "raw",
-      grantPubkey,
+      // `as BufferSource` for the reason `worker/totp.ts` gives at length: DOM
+      // declares a stricter `BufferSource` than workers-types, and
+      // `tsconfig.scripts.json` has both in scope. No runtime effect.
+      grantPubkey as BufferSource,
       { name: "ECDSA", namedCurve: "P-256" },
       false,
       ["verify"],

@@ -17,11 +17,12 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  // `scripts` is deliberately absent: `auth-e2e.ts` is a Node program, so it
-  // needs `@types/node` and a lib set this config does not have, and adding it
-  // here fails on `process` and on the TS 5.7 `ArrayBuffer` variance rules. It
-  // is therefore typechecked by nothing — `test:auth` bundles it with esbuild,
-  // which strips types without checking them. Recorded in TODO.md rather than
-  // half-fixed here.
+  // `scripts` is deliberately absent, and it is NOT unchecked any more:
+  // `tsconfig.scripts.json` is the third project and `npm run typecheck` runs
+  // all three. It stays out of *this* config for the reason this comment has
+  // always given — those are Node programs needing `@types/node` and a lib set
+  // the app does not have — but the conclusion it used to draw, that they were
+  // "typechecked by nothing", was true until 2026-09-15 and cost real bugs. See
+  // `tsconfig.scripts.json`, which carries what turning it on found.
   "include": ["src", "vite.config.ts"]
 }

@@ -376,6 +376,44 @@ on that point is stale; the bump itself is sound.
    record. The real fix is a third config (`tsconfig.scripts.json`, with `@types/node` and its own
    lib set) added to `npm run typecheck` — **not** widening the app config, which fails on
    `process` and on TS 5.7's `ArrayBuffer` variance rules.
+
+   > **✅ DONE 2026-09-15.** `tsconfig.scripts.json` exists, is clean, and is **wired into
+   > `npm run typecheck`** as a third project — which the deploy-shape gate now asserts, so it
+   > cannot be quietly dropped again. It needed `@types/node` (pinned to v22, matching the Node
+   > 22 runtime) and `@types/ws`, plus **both** `DOM` and `@cloudflare/workers-types`, because
+   > `check.ts` imports from `src/` and `worker/` in the same file.
+   >
+   > **Turning it on found five things, none of which any other gate could see:**
+   > - **`DuelView.paper` was never enforced.** Its own doc comment promises *"A missing field is
+   >   a compile error"* — and both `drawDuel` gates had been building `paper`-less views for as
+   >   long as they existed. The type's stated safety mechanism was unenforced in the only place
+   >   in the repo that drives `drawDuel`. Traced: it changes no measurement (both stubs trap only
+   >   `fillStyle` / `globalCompositeOperation`, and `paper` reaches nothing but `strokeStyle`), so
+   >   both sites now pass a real value. On a **real** canvas `strokeStyle = undefined` is an
+   >   ignored assignment, so the carve would have been stroked in `ink` — a fat blob instead of a
+   >   rim. Nothing shipped that way; the type was the only thing standing between a future caller
+   >   and exactly that.
+   > - **Two duplicate imports** in `check.ts` (`PATHS`, `decodeShareCode`), tolerated by esbuild.
+   > - **Four assertions in `auth-e2e.ts` that TypeScript read as always false** — the reachability
+   >   guard `if (client.lastStatus !== 200)` narrows the property for the rest of `main()`, and TS
+   >   does not model `client.call()` reassigning it. They pass at runtime; the narrowing was the
+   >   artefact, and it is now read into a local.
+   > - **`SoftwareAuthenticator.create` had drifted from the `Authenticator` interface it
+   >   implements** — TS checks method parameters bivariantly, so the narrower signature satisfied
+   >   the `implements` clause and two of three arguments were being discarded at the call site.
+   >   `CLAUDE.md` justifies that file as an *independent second opinion*; its parameter type is
+   >   taken **from** the interface now, so it cannot drift again.
+   > - **`rangePlan`'s gate held its own structural copy of `R2Range`, and the copy had drifted** —
+   >   it could express `{}`, a shape R2 never reports. Deleted in favour of the real type.
+   >
+   > **One known hole, recorded in the config itself:** `@cloudflare/workers-types` declares
+   > `declare const Buffer: any` globally, which clobbers `@types/node`'s, so anything in
+   > `scripts/` touching the global `Buffer` is unchecked — and it fails confusingly, losing the
+   > *interface* rather than the inference. Five `as BufferSource` casts in `worker/totp.ts` and
+   > `worker/accounts.ts` come from the same collision (DOM declares the stricter of two
+   > `BufferSource` definitions and wins); they are type-only, follow `src/auth/grantKey.ts:95`,
+   > and `npm run test:auth` is **409 green** with them in, which exercises TOTP enrolment and
+   > verification end to end.
 2. **`index.html:19-23`** claims the inline data: icon "keeps /favicon.ico from falling through to
    the Worker". Measured false: `/favicon.ico` answers **200 `text/html`** — the app shell with an
    injected config script — and so does `/apple-touch-icon.png`, which iOS fetches for a
@@ -383,10 +421,28 @@ on that point is stale; the bump itself is sound.
    do. Recommended beyond the comment fix: a Worker route returning 404 (or the real SVG) for both
    — it is the same shape as audit item 39 and the trailing-slash bug, the SPA fallback answering
    200 at addresses that are not pages.
+
+   > **✅ DONE 2026-09-15, both halves.** Re-measured first — both really did answer `200
+   > text/html`. `crawlerFile` in `worker/page-meta.ts` now 404s the two of them, in the same
+   > shape and for the same stated reason as its existing `/robots.txt` and `/sitemap.xml`
+   > entries. 404 rather than a generated image, deliberately: *Assets* forbids adding one, and a
+   > browser handed a 404 falls back to the icon `index.html` already declares. Verified against
+   > a rebuilt `wrangler dev` — both are `404 text/plain`, while `/`, `/contact`, `/robots.txt`
+   > and `/sitemap.xml` are unchanged. The false sentence in `index.html` is replaced by one that
+   > records the measurement.
+
 3. **`docs/DOWNLOADS.md`** wants the operator-facing note that `code`-visibility pages are publicly
    enumerable (slug, title, summary, layout, file count) so they should be **named neutrally**, or
    use `granted` if the name itself is the secret. The agent deliberately did not draft wording
    without reading the file first — matching that runbook's voice matters more than speed.
+
+   > **✅ DONE 2026-09-15.** Confirmed in the code (`canList` returns true for any *live* `code`
+   > page, before `canRead` is consulted) and then **proved on the wire**: a live page inserted as
+   > `Rebuild for Jane Smith` came back in full to an anonymous `GET /api/downloads/pages` — no
+   > cookie, no code — with the name in both the slug and the title. The row was removed again.
+   > The note is a new subsection under *Who can see what*, in that runbook's voice, and it gives
+   > the rule as a naming habit (*name it after the work, not the person*) with the `granted`
+   > fallback and its cost spelled out.
 
 ### 5. Setup-code lookalikes — **COMPLETE. Nothing outstanding.**
 

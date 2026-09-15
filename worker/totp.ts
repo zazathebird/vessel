@@ -116,8 +116,24 @@ export function otpauthUri(secret: Uint8Array, handle: string, issuer: string): 
   return `otpauth://totp/${label}?${params.toString()}`;
 }
 
+/*
+ * The `as BufferSource` casts in this file, once, rather than five times.
+ *
+ * `lib.dom.d.ts` declares `BufferSource = ArrayBufferView<ArrayBuffer> |
+ * ArrayBuffer` and `@cloudflare/workers-types` declares the looser
+ * `ArrayBufferView | ArrayBuffer`. Under `tsconfig.worker.json` only the second
+ * is in scope and these read fine; under `tsconfig.scripts.json`, which needs
+ * DOM *and* workers-types because `check.ts` imports from both halves of the
+ * tree, the stricter DOM one wins and a plain `Uint8Array` no longer satisfies
+ * it. Every value cast below is a byte buffer that both runtimes accept — the
+ * cast states that, and changes nothing at runtime.
+ *
+ * Same cast and same reason as `src/auth/grantKey.ts:95`. They are here because
+ * without them `tsconfig.scripts.json` cannot join `npm run typecheck`, and the
+ * gate suite goes back to being typechecked by nothing.
+ */
 async function sha1Key(secret: Uint8Array): Promise<CryptoKey> {
-  return crypto.subtle.importKey("raw", secret, { name: "HMAC", hash: "SHA-1" }, false, ["sign"]);
+  return crypto.subtle.importKey("raw", secret as BufferSource, { name: "HMAC", hash: "SHA-1" }, false, ["sign"]);
 }
 
 /**
@@ -146,7 +162,7 @@ function counterBytes(step: number): Uint8Array {
 }
 
 async function codeForStep(secret: Uint8Array, step: number): Promise<string> {
-  const mac = new Uint8Array(await crypto.subtle.sign("HMAC", await sha1Key(secret), counterBytes(step)));
+  const mac = new Uint8Array(await crypto.subtle.sign("HMAC", await sha1Key(secret), counterBytes(step) as BufferSource));
 
   // Dynamic truncation, RFC 4226 §5.3. The low nibble of the last byte picks
   // where in the digest to read from, so which four bytes decide the code varies
@@ -234,7 +250,7 @@ async function aesKey(key: string): Promise<CryptoKey> {
 export async function encryptSecret(key: string, secret: Uint8Array): Promise<Uint8Array> {
   const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
   const cipher = new Uint8Array(
-    await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await aesKey(key), secret),
+    await crypto.subtle.encrypt({ name: "AES-GCM", iv: iv as BufferSource }, await aesKey(key), secret as BufferSource),
   );
 
   // The IV is prepended rather than stored in a second column. It is not secret,
@@ -249,6 +265,6 @@ export async function encryptSecret(key: string, secret: Uint8Array): Promise<Ui
 export async function decryptSecret(key: string, blob: Uint8Array): Promise<Uint8Array> {
   const iv = blob.subarray(0, IV_BYTES);
   const cipher = blob.subarray(IV_BYTES);
-  const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, await aesKey(key), cipher);
+  const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: iv as BufferSource }, await aesKey(key), cipher as BufferSource);
   return new Uint8Array(plain);
 }

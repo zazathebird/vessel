@@ -16,6 +16,14 @@
  * already ships inside Vite and points it at a running `wrangler dev`.
  *
  * There is no assertion library, for the same reason there is no UI library.
+ *
+ * The `as BufferSource` casts on the WebCrypto calls below are the convention
+ * `src/auth/grantKey.ts` already uses, and they assert nothing about the bytes:
+ * a bare `Uint8Array` is typed as backed by `ArrayBufferLike`, which includes
+ * `SharedArrayBuffer`, and WebCrypto's signature takes only the `ArrayBuffer`
+ * case. Nothing here is ever shared memory. The alternative is to thread a type
+ * argument through every helper that returns bytes, which would put a compiler
+ * detail in the signature of code that exists to be read against the spec.
  */
 
 import { exec } from "node:child_process";
@@ -426,7 +434,18 @@ async function main(): Promise<void> {
   const health = await client.call("/api/health");
   check("the Worker answers /api/health", client.lastStatus === 200, `status ${client.lastStatus}`);
   check("D1 has all eight tables — phase 1 plus machines and drives", health.ok === true, `tables: ${health.tables}`);
-  if (client.lastStatus !== 200) {
+  /*
+   * Read the status into a local before testing it, rather than testing the
+   * property directly. TypeScript narrows a property access through a guard
+   * and does not model `client.call()` reassigning it, so an `if
+   * (client.lastStatus !== 200)` here pins `client.lastStatus` to the literal
+   * `200` for the whole of the rest of `main()` — which made the four later
+   * assertions that expect 201, 409, 400 and 401 read as comparisons that can
+   * never be true. They pass at runtime; it was the narrowing that was wrong.
+   * Found 2026-09-15, the first time `scripts/` was ever typechecked.
+   */
+  const healthStatus: number = client.lastStatus;
+  if (healthStatus !== 200) {
     console.log("\nThe Worker is not running. Start it with `npm run dev:worker`.");
     process.exit(1);
   }
@@ -489,7 +508,7 @@ async function main(): Promise<void> {
     const payload = new TextEncoder().encode("a grant document would go here");
     const publicKey = await crypto.subtle.importKey(
       "raw",
-      grant.publicKeyRaw,
+      grant.publicKeyRaw as BufferSource,
       { name: "ECDSA", namedCurve: "P-256" },
       false,
       ["verify"],
@@ -498,7 +517,7 @@ async function main(): Promise<void> {
       crypto.subtle.verify(
         { name: "ECDSA", hash: "SHA-256" },
         publicKey,
-        await signWithGrantKey(key, payload),
+        (await signWithGrantKey(key, payload)) as BufferSource,
         payload,
       );
 
@@ -636,7 +655,7 @@ async function main(): Promise<void> {
     const payload = new TextEncoder().encode("stored, retrieved, reopened");
     const publicKey = await crypto.subtle.importKey(
       "raw",
-      fromBase64Url(slot.grantPubkey),
+      fromBase64Url(slot.grantPubkey) as BufferSource,
       { name: "ECDSA", namedCurve: "P-256" },
       false,
       ["verify"],
@@ -646,7 +665,7 @@ async function main(): Promise<void> {
       await crypto.subtle.verify(
         { name: "ECDSA", hash: "SHA-256" },
         publicKey,
-        await signWithGrantKey(key, payload),
+        (await signWithGrantKey(key, payload)) as BufferSource,
         payload,
       ),
     );
@@ -893,7 +912,7 @@ async function main(): Promise<void> {
       const message = new TextEncoder().encode("recovered grant authority");
       const pub = await crypto.subtle.importKey(
         "raw",
-        fromBase64Url(redeemed.keySlot.grantPubkey),
+        fromBase64Url(redeemed.keySlot.grantPubkey) as BufferSource,
         { name: "ECDSA", namedCurve: "P-256" },
         false,
         ["verify"],
@@ -903,7 +922,7 @@ async function main(): Promise<void> {
         await crypto.subtle.verify(
           { name: "ECDSA", hash: "SHA-256" },
           pub,
-          await signWithGrantKey(opened, message),
+          (await signWithGrantKey(opened, message)) as BufferSource,
           message,
         ),
       );
@@ -1059,7 +1078,7 @@ async function main(): Promise<void> {
     const message = new TextEncoder().encode("still the same grant key");
     const pub = await crypto.subtle.importKey(
       "raw",
-      fromBase64Url(slot.grantPubkey),
+      fromBase64Url(slot.grantPubkey) as BufferSource,
       { name: "ECDSA", namedCurve: "P-256" },
       false,
       ["verify"],
@@ -1069,7 +1088,7 @@ async function main(): Promise<void> {
       await crypto.subtle.verify(
         { name: "ECDSA", hash: "SHA-256" },
         pub,
-        await signWithGrantKey(reopened, message),
+        (await signWithGrantKey(reopened, message)) as BufferSource,
         message,
       ),
     );
@@ -1182,7 +1201,7 @@ async function main(): Promise<void> {
     const message = new TextEncoder().encode("one signature, then the key dies");
     const pub = await crypto.subtle.importKey(
       "raw",
-      fromBase64Url(grantPubkeyAtSignup),
+      fromBase64Url(grantPubkeyAtSignup) as BufferSource,
       { name: "ECDSA", namedCurve: "P-256" },
       false,
       ["verify"],
@@ -1192,7 +1211,7 @@ async function main(): Promise<void> {
       await crypto.subtle.verify(
         { name: "ECDSA", hash: "SHA-256" },
         pub,
-        await signWithGrantKey(opened, message),
+        (await signWithGrantKey(opened, message)) as BufferSource,
         message,
       ),
     );
@@ -1429,7 +1448,7 @@ async function main(): Promise<void> {
     const message = new TextEncoder().encode("same key, four credentials later");
     const pub = await crypto.subtle.importKey(
       "raw",
-      fromBase64Url(slot.grantPubkey),
+      fromBase64Url(slot.grantPubkey) as BufferSource,
       { name: "ECDSA", namedCurve: "P-256" },
       false,
       ["verify"],
@@ -1439,7 +1458,7 @@ async function main(): Promise<void> {
       await crypto.subtle.verify(
         { name: "ECDSA", hash: "SHA-256" },
         pub,
-        await signWithGrantKey(reopened, message),
+        (await signWithGrantKey(reopened, message)) as BufferSource,
         message,
       ),
     );
@@ -1637,7 +1656,7 @@ async function main(): Promise<void> {
       const message = new TextEncoder().encode("a passkey opens the same key");
       const pub = await crypto.subtle.importKey(
         "raw",
-        fromBase64Url(grantPubkey),
+        fromBase64Url(grantPubkey) as BufferSource,
         { name: "ECDSA", namedCurve: "P-256" },
         false,
         ["verify"],
@@ -1647,7 +1666,7 @@ async function main(): Promise<void> {
         await crypto.subtle.verify(
           { name: "ECDSA", hash: "SHA-256" },
           pub,
-          await signWithGrantKey(opened, message),
+          (await signWithGrantKey(opened, message)) as BufferSource,
           message,
         ),
       );

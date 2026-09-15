@@ -771,6 +771,21 @@ covers how to *see* any of this — rAF parks in an automated browser, so use `s
 
 - **No sequence names a side.** Every beat is `ATT` or `DEF`, and the role coin consults nothing — not
   health, not position, not who won last.
+
+  **The fairness gate measures that coin, and it counts THROWS rather than sequence starts**
+  (2026-09-15). It used to count match wins — ~119 samples over 360,000 frames — which was blind
+  (at 3σ it only rejected a bias of p ≥ 0.638, so a director favouring one side 60/40 sailed
+  through) *and* self-tripping (≥3σ in 2 of 200 standalone passes, about 1 predeploy in 175).
+  `chooseSequence` throws the coin only when `st.dir.chain` has reached 0, because a chained
+  phrase deliberately reuses its aggressor; **entering those repeats as independent samples is the
+  same modelling error the win statistic made, one level down.** ~1,646 samples a pass instead of
+  119, so the threshold is 4σ and is *stricter and quieter at once* — it detects p ≥ 0.549 while
+  false failures fall to ~1 run in 16,000. **This is the one case where raising a threshold was
+  not masking flakiness**, because the statistic changed underneath it; do not raise it again
+  without changing the statistic again. Calibrated before the threshold was chosen: pooled
+  p = 0.49983 over 329,113 throws, lag-1 0.49931, max σ 2.88 over 200 passes. **The win count is
+  kept at a loose 6σ**, because a fair coin does not prove fair outcomes — damage, reach or the
+  reaction table could be asymmetric under a perfectly fair director.
 - **Nothing waits on a condition** — sequences have fixed lengths and the director advances
   unconditionally.
 - **`dist` is the sole authority on whether a blow lands.** Sparks come off the true blade-to-blade
@@ -1661,6 +1676,20 @@ that they are gates.
 **Each gate is there because that exact failure shipped**, and each was verified by breaking it
 deliberately. **When you fix a bug that got past the checks, add a check.** That is the whole discipline.
 
+**`npm run typecheck` runs THREE projects, and the third is `scripts/` itself** (2026-09-15).
+`tsconfig.scripts.json` exists because the gate suite — the only thing between this repository and a
+bad deploy — **was typechecked by nothing at all**: `esbuild` bundles `check.ts` and `auth-e2e.ts`
+and strips types without checking them, so whatever they said, compiled. Turning it on immediately
+found that **`DuelView.paper`'s promised compile error had never once fired** (its own note says *"A
+missing field is a compile error"*, and both `drawDuel` gates had been building `paper`-less views
+for as long as they existed), that `webauthn-sim.ts`'s `create` had silently drifted from the
+`Authenticator` interface it implements — TypeScript checks method parameters **bivariantly**, so a
+narrower signature satisfies an `implements` clause — and that `rangePlan`'s gate held a structural
+copy of `R2Range` that had drifted, which is `DUEL_TABLES`' own warning one type over. **The deploy
+gate asserts `typecheck` still names all three**, so this cannot be quietly dropped. The config
+carries one known hole: `@cloudflare/workers-types` declares `const Buffer: any` globally, so a
+`Buffer` in `scripts/` is unchecked.
+
 **And breaking it is not a formality — two gates written on 2026-08-30 passed while the fix was
 reverted.** One restated the renderer's arithmetic from the same constant the renderer reads, so
 reverting the renderer left it agreeing with itself; it drives `drawDuel` through a recording context
@@ -1695,6 +1724,16 @@ redeploying.**
   is what gives `/assets/*` its `immutable`, and it is the bundles' `nosniff` on the Pages rollback.
   **Do not generalise "strip the config files at deploy" to this one.**
 - **The Worker's SPA fallback is `not_found_handling`**, not `_redirects`.
+- **An address that is not a page must be answered before the fallback reaches it** — the fallback
+  says 200 and hands over the whole app shell, published config and all, at *any* unknown path.
+  `crawlerFile` in `worker/page-meta.ts` is where that is done, and it now holds four: the Google
+  verification token, `/robots.txt`, `/sitemap.xml`, and **`/favicon.ico` + `/apple-touch-icon.png`,
+  which are 404** (2026-09-15). The last two are the same fault as audit item 39 and the
+  trailing-slash pages, and `index.html`'s comment asserted the opposite for months — **a declared
+  inline icon stops most *browsers* asking and does nothing about crawlers, unfurlers or iOS**,
+  which fetches `/apple-touch-icon.png` when the site is saved to a home screen. 404 rather than a
+  generated image, because *Assets* forbids adding one and a browser handed a 404 falls back to the
+  icon `index.html` already declares.
 - **`run_worker_first = true`, with no negation** (2026-09-07, audit item 39). It is what lets the
   Worker inline published site config into HTML — by default a request matching a real file never
   invokes the Worker, so `/` got no injection while `/contact` did. It used to be

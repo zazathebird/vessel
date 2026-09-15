@@ -240,6 +240,25 @@ Four settings per page, and two of them are worth understanding properly.
 **A file keeps its own free/paid switch on top of that.** A public page full of paid files is the
 shape the site already had, and it still works: the page reads, each locked row says *needs a code*.
 
+### Name a code page as if a stranger will read the name, because one can
+
+**"Needs an access code" hides the files. It does not hide the page.** A live code page is listed on
+`/downloads` to anybody at all — no account, no code, no cookie — and what they get is its address,
+its title, its summary, its layout and how many files are on it. Only the files themselves are held
+back. That is deliberate: somebody holding a code has to be able to find the page to type it into.
+
+So the title and the address are public writing, and a page called *Rebuild for Jane Smith* tells
+every visitor to `/downloads` that Jane Smith had her machine rebuilt. Measured 2026-09-15 —
+exactly that row came back to an anonymous request, name and all.
+
+Name them after **the work**, not the person: *Recovery build*, *Toshiba rebuild*, *Invoice 114*.
+The code is what identifies whose it is, and the customer already has it.
+
+**When the name itself is the secret, use "Only people I have named" instead.** That one 404s to
+everybody else, so nothing leaks — but it needs them to have an account, which is the trade. If they
+will not make one and the name cannot be neutral, rename the page and put the person's name inside
+it, where only somebody who has already opened it can read it.
+
 ### Codes and named people answer different questions
 
 - **A code** needs no account. It is a bearer token — whoever holds it can use it — which is exactly

@@ -76,6 +76,7 @@ import {
   validDuelPages,
   validDuelSettings,
 } from "../src/data/duelSettings";
+import type { DuelSettings } from "../src/data/duelSettings";
 import { PUBLISHED_KEYS } from "../src/config/siteConfig";
 import { decodeShareCode, encodeShareCode } from "../src/config/shareCode";
 import { roll } from "../src/config/randomiser";
@@ -108,14 +109,13 @@ import { toBase64Url } from "../worker/encoding";
 import { SESSION_COOKIE, mint as mintSession } from "../worker/session";
 import type { Env } from "../worker/env";
 import type { BadRequest } from "../worker/encoding";
-import { PATHS, pageFromPath, pathFor, subFromPath } from "../src/data/pageIds";
-import { metaForPath, robotsTxt, sitemapXml } from "../worker/page-meta";
+import { pageFromPath, pathFor, subFromPath } from "../src/data/pageIds";
+import { crawlerFile, metaForPath, robotsTxt, sitemapXml } from "../worker/page-meta";
 import { NEVER_ROTATES, SNIPPETS, snippetFor } from "../src/data/snippets";
 import { LAYOUTS, FX, PICKABLE_FX, TYPESETS, SCOPES } from "../src/data/catalog";
 import type { LayoutId } from "../src/data/catalog";
 import { LOW_CONTRAST, PALETTES } from "../src/data/palettes";
 import { DEFAULT_ORNAMENT, ORNAMENTS, PICKABLE_ORNAMENTS } from "../src/data/ornaments";
-import { decodeShareCode } from "../src/config/shareCode";
 import { adaptLayout } from "../src/config/bands";
 import { DEFAULT_STATION, PICKABLE_STATIONS, STATIONS } from "../src/data/stations";
 import { GUARDRAILS, combinationOf, effectiveGrain, isAllowed, matched, resolve, warnings } from "../src/data/guardrails";
@@ -1108,10 +1108,16 @@ check("`--faint` colours nothing but the named decorative elements", () => {
 
 check("a download is a 206 only when it is genuinely partial", () => {
   const size = 300_000;
-  // The three shapes `R2Range` is a union of, spelled structurally: this file is
-  // bundled for Node and has no workers-types in scope.
-  type Served = { offset?: number; length?: number } | { suffix: number };
-  const rows: Array<[string, boolean, Served | undefined, { offset: number; length: number } | null]> = [
+  /*
+   * `R2Range` itself, not a copy of it. This table used to spell the union
+   * structurally — `{ offset?, length? } | { suffix }` — on the grounds that the
+   * file is bundled for Node and has no workers-types in scope, which stopped
+   * being true when `tsconfig.scripts.json` arrived. The copy had already
+   * drifted: it made both `offset` and `length` optional in one arm, so it could
+   * express `{}`, a shape R2 never reports and `rangePlan` is not written for.
+   * A checker holding its own copy of a type only ever confirms its own copy.
+   */
+  const rows: Array<[string, boolean, R2Range | undefined, { offset: number; length: number } | null]> = [
     ["no Range header, R2 reports the whole object", false, { offset: 0, length: size }, null],
     ["no Range header, no reported range", false, undefined, null],
     ["bytes=100000-100999", true, { offset: 100_000, length: 1_000 }, { offset: 100_000, length: 1_000 }],
@@ -2241,6 +2247,12 @@ check("duel: the health bar clears every costume, and stays in frame", () => {
     bars: true,
     kick: false,
     dim: 1,
+    // `paper` is required on `DuelView` on purpose — the field's own note says a
+    // missing one must be a compile error — and this gate omitted it for as long
+    // as `scripts/` went unchecked. Nothing here reads a stroke colour, so it
+    // changes no measurement; what it restores is the guarantee. `rim` stays
+    // unset so the carve runs at `DEFAULT_RIM`, as it does on the page.
+    paper: "#000",
   };
 
   // The whole attribution rides on the two blade colours differing, so say so
@@ -2903,6 +2915,11 @@ if (!FAST) check("duel: the renderer leaves the canvas as it found it", () => {
     bars: true,
     kick: true,
     dim: 1,
+    // Required on `DuelView`, and omitted here until `scripts/` was typechecked.
+    // This gate counts `save`/`restore` and the composite operation, neither of
+    // which a stroke colour touches — but the carve's `save`/`clip`/`restore` is
+    // exactly what it is counting, so the field belongs at a real value.
+    paper: "#000",
   };
   let flashes = 0;
   let marks = 0;
@@ -5676,7 +5693,17 @@ check("the Windows setup downloads keep their encodings", () => {
     ps1[0] === 0xef && ps1[1] === 0xbb && ps1[2] === 0xbf,
     "windows-share-setup.ps1 has lost its UTF-8 BOM — PowerShell 5.1 reads it as ANSI",
   );
-  const bat = readFileSync("scripts/launch.bat");
+  /*
+   * The cast names what `readFileSync` already hands back. A Node `Buffer`
+   * decodes itself, but `@cloudflare/workers-types` declares `const Buffer: any`
+   * in the global scope and that clobbers `@types/node`'s, so under this file's
+   * config the compiler can only see `Uint8Array`'s no-argument `toString`.
+   * Annotating the binding as `Buffer` does not help — it is the interface that
+   * is lost, not the inference.
+   */
+  const bat = readFileSync("scripts/launch.bat") as Uint8Array & {
+    toString(encoding: string): string;
+  };
   for (const byte of bat) {
     must(
       byte < 0x80,
@@ -6200,12 +6227,16 @@ checkAsync("the published-config ceiling counts bytes, not UTF-16 units, on the 
   } as unknown as Env & Record<string, unknown>;
   const hash = await authHash(env.AUTH_PEPPER, authSecret);
   let written: string | null = null;
+  // Both stubs are deliberately partial: the limiter answers `idFromName` and a
+  // stub whose `fetch` allows, and D1 answers `prepare().bind().first()/.run()`.
+  // That is every call `publishSiteConfig` makes and nothing else — a fuller
+  // fake would be a second implementation to keep honest.
   env.RATE_LIMIT = {
     idFromName: (name: string) => name,
     get: () => ({
       fetch: async () => new Response(JSON.stringify({ allowed: true, retryAt: 0 })),
     }),
-  };
+  } as unknown as DurableObjectNamespace;
   env.DB = {
     prepare: (sql: string) => ({
       bind: (...args: unknown[]) => ({
@@ -6217,7 +6248,7 @@ checkAsync("the published-config ceiling counts bytes, not UTF-16 units, on the 
         },
       }),
     }),
-  };
+  } as unknown as D1Database;
   const cookie = `${SESSION_COOKIE}=${await mintSession(env.SESSION_SECRET, "session", account.id)}`;
 
   const publish = async (config: unknown): Promise<"ok" | string> => {
@@ -6654,6 +6685,185 @@ const UNCHECKABLE = [
   // and a pair of eyes on `desktop/previews/`.
   "whether a desktop look resembles the distribution it imitates — and whether the host is actually serving files",
 ];
+
+/*
+ * The deploy shape, which nothing gated at all until 2026-09-15.
+ *
+ * `docs/AUDIT-2026-09-14.md` names this as one of three places where the suite
+ * was green throughout the bug it is named after: **no check mentioned
+ * `_redirects`, `_headers`, `rollupOptions`, `fxlab`, `sitelab` or
+ * `run_worker_first`.** Audit item 39 — whose absence served a frameable,
+ * nonce-less, year-cached copy of the app shell at any `/assets/<name>`
+ * somebody chose, live on production — was fixed by deleting a negation from
+ * one line of `wrangler.toml`, and **re-adding that negation passed every check
+ * in the suite.** Its fix exists only as a comment until this gate.
+ *
+ * Every assertion is a sentence `CLAUDE.md` states as an invariant, and each has
+ * a live failure behind it rather than a preference.
+ */
+check("the deploy shape — the traps that had no other gate", () => {
+  const wrangler = readFileSync("wrangler.toml", "utf8");
+  const vite = readFileSync("vite.config.ts", "utf8");
+  const pkg = JSON.parse(readFileSync("package.json", "utf8")) as {
+    scripts: Record<string, string>;
+  };
+  const predeploy = pkg.scripts.predeploy ?? "";
+
+  /*
+   * Item 39. It must be the bare boolean: a negation is matched against the
+   * PATH, not against what exists at it, so `["/*", "!/assets/*"]` excluded
+   * every *miss* under `/assets/` as well as every hit — and a miss is the asset
+   * server's SPA fallback, i.e. the shell with no security headers and
+   * `_headers`' year-long `immutable`. Narrowing the glob only moves the name.
+   */
+  const rwf = wrangler.match(/^\s*run_worker_first\s*=\s*(.+?)\s*$/m);
+  must(rwf !== null, "wrangler.toml no longer sets run_worker_first at all");
+  must(
+    rwf![1] === "true",
+    `run_worker_first is ${rwf![1]}, not the bare \`true\` — a list reintroduces audit item 39, because a negation excludes MISSES under the glob as well as hits, and a miss is the unhardened app shell`,
+  );
+
+  // `/404` is a real page here, not a host fallback.
+  must(
+    /not_found_handling\s*=\s*"single-page-application"/.test(wrangler),
+    "wrangler.toml lost not_found_handling — every client-routed path would become a host 404",
+  );
+
+  /*
+   * `workers_dev` defaults to false once a route exists, and that is wanted: it
+   * closes the signup endpoint that was publicly reachable on the workers.dev
+   * subdomain, outside the route bindings, before cutover.
+   */
+  must(
+    !/^\s*workers_dev\s*=\s*true/m.test(wrangler),
+    "workers_dev = true reopens the signup endpoint on the workers.dev subdomain",
+  );
+
+  // Load-bearing for local development: the routes make `wrangler dev` simulate
+  // `http://mcclevarty.ca/...`, so without this the loopback exemption in
+  // `httpsRedirect` never matches and every local request 301s to itself.
+  must(
+    /\[dev\][\s\S]*?upstream_protocol\s*=\s*"https"/.test(wrangler),
+    "[dev] upstream_protocol is no longer https — every local request will 301 to itself",
+  );
+
+  /*
+   * The dev-only benches are excluded from the build **by construction**: Vite
+   * declares no `rollupOptions.input`, so the build has one entry
+   * (`index.html`) and `dist/` receives none of them.
+   */
+  must(
+    !/rollupOptions/.test(vite),
+    "vite.config.ts declares rollupOptions — if that becomes a multi-page input map, fxlab/sitelab ship to production",
+  );
+  for (const bench of ["fxlab.html", "sitelab.html"]) {
+    must(existsSync(bench), `${bench} has moved — it is a dev-only bench and lives at the repo root`);
+    must(
+      !existsSync(`public/${bench}`),
+      `${bench} is in public/, so it is copied into dist/ and shipped — the benches are dev-only`,
+    );
+  }
+
+  /*
+   * `_redirects` is valid for Pages and is *configuration* to Workers static
+   * assets, which parses it and rejects it as an infinite loop — the deploy
+   * fails at the API call. So it stays in `public/` (Pages is the rollback) and
+   * is stripped from `dist/` at deploy time.
+   */
+  must(
+    existsSync("public/_redirects"),
+    "public/_redirects is gone — it is the Pages rollback, and Pages still auto-deploys from main",
+  );
+  must(
+    /_redirects/.test(predeploy),
+    "predeploy no longer strips dist/_redirects — Workers static assets parses it as configuration and refuses the deploy outright",
+  );
+  /*
+   * And `_headers` is deliberately NOT stripped: unlike `_redirects` it is valid
+   * for both hosts, it is what gives `/assets/*` its `immutable`, and it is the
+   * bundles' `nosniff` on the Pages rollback. Do not generalise "strip the
+   * config files at deploy" to this one.
+   */
+  must(
+    existsSync("public/_headers"),
+    "public/_headers is gone — it carries /assets/* immutable and the Pages rollback's nosniff",
+  );
+  must(
+    !/_headers/.test(predeploy),
+    "predeploy strips dist/_headers — that is the one config file both hosts accept, and it must ship",
+  );
+
+  /*
+   * `npm run deploy`, never bare `wrangler deploy`. The whole guarantee is that
+   * `predeploy` runs the full suite and the build first.
+   */
+  must(
+    /npm run check/.test(predeploy),
+    "predeploy no longer runs the check suite — nothing would stand between this repo and a bad deploy",
+  );
+  must(
+    /npm run build|vite build/.test(predeploy),
+    "predeploy no longer builds — wrangler would publish whatever dist/ happened to hold",
+  );
+  /*
+   * And the suite itself must typecheck all three projects. `scripts/` was
+   * typechecked by nothing until 2026-09-15 — including `check.ts`, this file —
+   * because esbuild bundles it and strips types without checking them.
+   */
+  must(
+    /tsconfig\.scripts\.json/.test(pkg.scripts.typecheck ?? ""),
+    "npm run typecheck dropped tsconfig.scripts.json — the gate suite goes back to being typechecked by nothing",
+  );
+
+  return "run_worker_first bare true, SPA fallback, no workers_dev, benches unshipped, _redirects stripped and _headers kept, predeploy gates the deploy, scripts typechecked";
+});
+
+/*
+ * The addresses that are not pages, driven through the real `crawlerFile`.
+ *
+ * The SPA fallback answers an unknown path with **200 and the whole app shell**,
+ * published config inlined into its head. Right for a page-shaped path, wrong
+ * for everything else — and the wrongness keeps recurring: audit item 39, the
+ * trailing-slash pages, and `/favicon.ico` + `/apple-touch-icon.png`, which
+ * answered `200 text/html` to crawlers, unfurlers and iOS for months while
+ * `index.html`'s comment asserted that the inline icon prevented it.
+ *
+ * This drives the function rather than reading it, and it asserts the converse
+ * too — a page-shaped path must still come back `null` and fall through — so
+ * nobody can satisfy it with a `crawlerFile` that intercepts everything.
+ */
+check("crawlerFile answers the addresses that are not pages, and only those", () => {
+  const at = (path: string) => crawlerFile(new URL(`https://mcclevarty.ca${path}`));
+
+  for (const path of ["/favicon.ico", "/apple-touch-icon.png"]) {
+    const response = at(path);
+    must(response !== null, `${path} falls through to the SPA fallback, which answers 200 with the app shell`);
+    must(
+      response!.status === 404,
+      `${path} answers ${response!.status}; it must be 404, because there is genuinely no file there`,
+    );
+    must(
+      !/text\/html/.test(response!.headers.get("content-type") ?? ""),
+      `${path} is answered as HTML — that is the shell leaking at an address that is not a page`,
+    );
+  }
+
+  const robots = at("/robots.txt");
+  must(robots !== null && robots.status === 200, "/robots.txt no longer answers 200");
+  const sitemap = at("/sitemap.xml");
+  must(sitemap !== null && sitemap.status === 200, "/sitemap.xml no longer answers 200");
+
+  /*
+   * The converse, and it is the half that stops this being satisfied by a
+   * `crawlerFile` that intercepts everything: a real page must still fall
+   * through to the shell, or the site stops rendering.
+   */
+  for (const path of ["/", "/contact", "/scams", "/downloads", "/downloads/some-file"]) {
+    must(at(path) === null, `crawlerFile intercepted ${path}, which is a page and must reach the app shell`);
+  }
+
+  return "favicon.ico and apple-touch-icon.png are 404 and not HTML; robots and sitemap still 200; five page paths still fall through";
+});
 
 // ---- report ----------------------------------------------------------------
 

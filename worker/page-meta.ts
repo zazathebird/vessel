@@ -192,6 +192,34 @@ export function crawlerFile(url: URL): Response | null {
       headers: { "content-type": "application/xml; charset=utf-8", "cache-control": "public, max-age=3600" },
     });
   }
+  /*
+   * The icon addresses, answered 404 because there is genuinely nothing there.
+   *
+   * The site's favicon is an inline SVG `data:` URI in `index.html` (deviation
+   * 10), so no file exists at either of these — and the SPA fallback answers an
+   * unknown path with **200 and the app shell**. Measured: `/favicon.ico` and
+   * `/apple-touch-icon.png` both returned `200 text/html`, a whole HTML
+   * document with the published config inlined into its head, to anything that
+   * asked. That is the same fault as audit item 39 and the trailing-slash
+   * pages, and the same one the `robots.txt` comment above describes: the
+   * fallback claiming success at an address that is not a page.
+   *
+   * **`index.html`'s comment claimed the inline icon prevented this, and it
+   * does not.** The declared icon stops most *browsers* asking; crawlers,
+   * link unfurlers and iOS do not read it before they fetch. iOS in particular
+   * requests `/apple-touch-icon.png` when somebody saves the site to a home
+   * screen, and was being handed the shell.
+   *
+   * 404 rather than a generated image, deliberately: *Assets* forbids adding
+   * one, an honest "there is no file here" is what is true, and a browser
+   * handed a 404 falls back to the icon `index.html` already declares.
+   */
+  if (url.pathname === "/favicon.ico" || url.pathname === "/apple-touch-icon.png") {
+    return new Response("Not found.", {
+      status: 404,
+      headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=3600" },
+    });
+  }
   return null;
 }
 

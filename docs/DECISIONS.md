@@ -13,6 +13,74 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-09-15 — the fairness gate measures the coin, and `scripts/` is typechecked at last
+
+Picking up the paused find-and-fix sweep (`docs/SESSION-HANDOFF-2026-09-14.md`).
+
+**The fairness gate was blind, and separately it did cry wolf.** It counted match wins — ~119
+samples over 360,000 frames — and at 3σ that only rejects a bias of p ≥ 0.638, so a director
+favouring one side 60/40 sailed through. It measures the **role coin** now, which is the invariant
+`CLAUDE.md` actually states ("no sequence names a side"), and it counts **throws rather than
+sequence starts**: `chooseSequence` throws the coin only when `chain` has reached 0, because a
+chained phrase deliberately reuses its aggressor, and counting those repeats as independent
+samples would be the same modelling error the win statistic made one level down.
+
+Calibrated before the threshold was chosen, over 200 passes: pooled p(att="a") = **0.49983 over
+329,113 throws** (z = 0.19), lag-1 agreement 0.49931, σ median 0.75 / max 2.88, ≥3σ in **0 of
+200**. So the engine is fair and the throws are independent — and ~1,646 samples a pass instead of
+119 means 4σ is **stricter and quieter at once**: p ≥ 0.549 detected, false failures down to ~1 run
+in 16,000 from ~1 in 175. That is the one case where raising a threshold was not masking flakiness,
+because the statistic changed underneath it.
+
+Break-verified in both directions, which is the only evidence that matters here: with the coin
+forced to 0.57 the new gate fails **11 of 12** passes at ≥4σ (median 5.74σ) while **the old win
+statistic saw nothing at all — 0 of 12, median 0.74σ.** The win count is kept at a loose 6σ,
+because a fair coin does not prove fair outcomes; damage, reach or the reaction table could be
+asymmetric under a perfectly fair director.
+
+**One correction to the 2026-09-14 record.** It reported the win statistic as "not reproducible
+standalone" on the strength of 0 in 150 passes. It is reproducible: **2 of 200** here, max 3.29,
+and the two runs pool to 2/350 ≈ 0.57%. The separate 2-failures-in-5 *in-suite* observation is
+still unexplained and stays recorded as unexplained rather than as noise.
+
+**`scripts/` had never been typechecked by anything** — ~274KB including `check.ts`, the only thing
+between this repository and a bad deploy, and `auth-e2e.ts`. esbuild bundles both and strips types
+without checking them, so whatever they said, compiled. `tsconfig.scripts.json` is the third config
+(the app's cannot absorb them: Node programs need `@types/node` and a lib set it does not carry).
+Turning it on found, immediately: two **duplicate imports** in `check.ts`; four assertions in
+`auth-e2e.ts` that TypeScript read as **always false**, because the reachability guard
+`if (client.lastStatus !== 200)` narrows the property for the rest of `main()` and TS does not model
+`client.call()` reassigning it; a **missing type import**; and `SoftwareAuthenticator.create` having
+silently **drifted from the `Authenticator` interface it implements** — TS checks method parameters
+bivariantly, so the narrower signature satisfied the `implements` clause and the mismatch surfaced
+only at the call site, where two of three arguments were being discarded. That last one matters
+beyond its runtime effect (none): `CLAUDE.md` justifies `webauthn-sim.ts` as an *independent second
+opinion*, and one that has quietly stopped matching the shape of what it stands in for is worth less
+than it looks. Its parameter type is taken **from** the interface now, so it cannot drift again.
+
+**`/favicon.ico` and `/apple-touch-icon.png` answered `200 text/html`** — the whole app shell, with
+the published config inlined into its head — to anything that asked. `index.html` carried a comment
+asserting that the inline `data:` icon prevented exactly this; measured, it does not, because a
+declared icon stops most *browsers* asking and does nothing about crawlers, unfurlers or iOS, which
+fetches `/apple-touch-icon.png` when the site is saved to a home screen. Same fault as audit item 39
+and the trailing-slash pages: the SPA fallback claiming success at an address that is not a page.
+`crawlerFile` 404s both now, in the same shape as its `/robots.txt` and `/sitemap.xml` entries. 404
+rather than a generated image, because *Assets* forbids adding one and a browser handed a 404 falls
+back to the icon `index.html` already declares.
+
+**A `code`-visibility downloads page is publicly enumerable, and the runbook now says so.** `canList`
+returns true for any *live* `code` page before `canRead` is consulted — by design, since somebody
+holding a code must be able to find where to type it. Proved on the wire rather than from the code: a
+page inserted as *Rebuild for Jane Smith* came back in full to an anonymous request with no cookie and
+no code, name in both slug and title. The operator-facing consequence had never been written down, so
+`docs/DOWNLOADS.md` now says to name such pages after **the work, not the person**, with `granted` and
+its cost as the fallback when the name itself is the secret.
+
+Also: the **operator surfaces after the bundle split** were driven in a real browser against the
+production chunks with a signed-in operator — all eight lazy chunks mount, zero console errors, zero
+overflow, both overlays opened for the first time. And `scripts/local-operator.ts` defaulted to the
+handle `operator`, which is in `RESERVED_HANDLES`, so the dev scaffolding failed on its first call.
+
 ## 2026-09-07 — the trust root comes from the password, and four smaller ones
 
 The fourth security pass (`docs/SECURITY-AUDIT.md` items 37–41). The one that matters: the agent

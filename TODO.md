@@ -5,7 +5,8 @@ they are, `docs/DECISIONS.md` records what was decided when, and `docs/TODO-ARCH
 dated session logs this file used to carry (moved out 2026-09-07 — read it for the reasoning
 behind any item here, by date).
 
-State on 2026-09-15: `npm run check` **86** green, `npm run test:auth` **409**. Live is Worker
+State on 2026-09-15: `npm run check` **88** green, `npm run test:auth` **409**, `npm run typecheck`
+clean across **three** projects (the third, `scripts/`, is new). Live is Worker
 `38ceae8d` (rollback `df6dba2a`); the audit branch is at `ee9ee75`, **not yet pushed**, and **is
 ahead of what is deployed**. Four security passes are recorded in `docs/SECURITY-AUDIT.md`
 (items 1–49); a fifth, find-and-fix, is in `docs/AUDIT-2026-09-14.md`.
@@ -226,6 +227,23 @@ it detects p ≥ 0.549 where the old gate needed 0.638, while false-failures fal
 at ≥4σ (median 5.74σ) and **the old win statistic saw nothing at all, 0/12, median 0.74σ.** The
 win count is kept at a loose 6σ, because a fair coin does not prove fair outcomes: damage, reach
 or the reaction table could be asymmetric under a perfectly fair director.
+
+**Closed 2026-09-15** — two of the three named gate gaps, and the suite is **88**.
+
+- **The deploy shape had no gate of any kind.** Nothing mentioned `_redirects`, `_headers`,
+  `rollupOptions`, `fxlab`, `sitelab` or `run_worker_first`, so audit item 39's fix existed only as
+  a comment. Break-verified twice: re-adding the exact `["/*", "!/assets/*"]` negation fails it,
+  and so does dropping the `dist/_redirects` strip from `predeploy`.
+- **`crawlerFile` is driven**, and asserts the converse as well — five page paths must still fall
+  through, so it cannot be satisfied by intercepting everything. Break-verified by deleting the
+  favicon branch.
+- **`scripts/` is typechecked** (`tsconfig.scripts.json`, wired into `npm run typecheck`, which the
+  deploy gate now asserts). What that found is in `docs/SESSION-HANDOFF-2026-09-14.md`; the worst
+  is that **`DuelView.paper`'s promised compile error had never once fired.**
+
+**Still ungated** of the three named: the **Windows blocklist** gate still reads the entry arrays as
+text and never calls `Test-ShareableFolder` — the Unix half is driven, the Windows half is not, and
+that is the security-shaped one. **`src/hooks` is still gated by nothing at all.**
 
 **Gate coverage** was zero for the most severe. #12, #10/#17, #47, #5 and #6 are gated now. **#13,
 #15, #28 and #29 still are not**, and each fix wants one, per this project's own discipline.
