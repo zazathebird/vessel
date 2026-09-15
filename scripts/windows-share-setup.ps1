@@ -622,6 +622,37 @@ function Test-ShareableFolder {
         (Join-Path $env:LOCALAPPDATA 'Mozilla')
     ) | Where-Object { $_ } | ForEach-Object { $_.TrimEnd('\') }
 
+    # A PROFILE FOLDER IS NEVER SHAREABLE, WHOEVER OWNS IT (2026-09-15).
+    #
+    # %USERPROFILE% is in $blockExact and so is its parent, and that pair looks
+    # complete until you notice what sits BETWEEN them. `C:\Users\dad` matches
+    # neither: it is not `C:\Users`, it is not this account's %USERPROFILE%, and
+    # no prefix entry names it. Driven under pwsh against the real function, it
+    # was ALLOWED — and so was `C:\Users\dad\.ssh`, which is the sharper half,
+    # because every dot-directory in $blockPrefix is written
+    # `(Join-Path $env:USERPROFILE '.ssh')` and is therefore keyed to YOUR
+    # profile. The list refuses your own SSH keys and hands over your
+    # housemate's.
+    #
+    # Same shape as the failures recorded above, one level over: there it was a
+    # blocked leaf under a shareable ancestor, here a blocked parent with
+    # shareable children. The rule covering both is that a blocked thing must
+    # have no shareable neighbour holding the same secrets.
+    #
+    # The test is CONTAINMENT rather than "is it a direct child", so the `.ssh`
+    # case is caught too, and it deliberately lets the container ITSELF fall
+    # through to $blockExact, which names it and has a message written for it.
+    $profileRoot = $env:USERPROFILE.TrimEnd('\')
+    $profileParent = (Split-Path -Parent $env:USERPROFILE)
+    if ($profileParent) {
+        $profileParent = $profileParent.TrimEnd('\')
+        if ($full.StartsWith($profileParent + '\', [System.StringComparison]::OrdinalIgnoreCase) -and
+            -not ($full -ieq $profileRoot) -and
+            -not $full.StartsWith($profileRoot + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+            return "That is inside somebody else's account folder, so it will not be shared: $full`n      Share the folders inside your own — Documents, or Pictures."
+        }
+    }
+
     foreach ($bad in $blockExact) {
         if ($full -ieq $bad) {
             return "That folder holds far more than you mean to share, so it will not be linked: $full`n      Share the folders inside it instead — Documents, or Pictures, rather than the whole profile."

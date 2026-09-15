@@ -13,6 +13,53 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-09-15 — the Windows blocklist is driven, and it found a hole on its first run
+
+The last security-shaped gap of the three `docs/AUDIT-2026-09-14.md` names. Two gates already
+touched `windows-share-setup.ps1` and **neither called `Test-ShareableFolder`**: one parsed the
+entry arrays as text, the other drove only the reparse resolver. The arrays were checked for
+membership and the code consuming them was checked not at all — which is how the 2026-09-14
+`.ssh`-blocks-its-children-but-not-itself finding sat here with both of them green. The Unix half
+has been executed since 2026-09-03; only Windows was unexecuted, which is why that finding was
+Windows-only.
+
+**The new gate found a live hole on its first run, and it is not Windows-only.** `$HOME` is blocked
+exactly and so is `/home`, and that pair looks complete until you ask what sits between them.
+Driven against the real functions on all three scripts:
+
+```
+own home        refused        /home            refused
+/home/other     ALLOWED        /home/other/.ssh ALLOWED
+```
+
+The second is the sharp one. Every dot-directory in the prefix list is written `$HOME/.ssh`, keyed
+to *your* home — **so the list refuses your own SSH keys and hands over your housemate's.** On
+Debian a home directory is mode 0755 by default, so it needs no privilege at all; on Windows the
+same gap sat between `C:\Users` and `%USERPROFILE%`, reachable by any account that can read the
+other profile. The threat model is the one the scripts already assume: somebody on the phone saying
+"type this in the box". `C:\Users` was blocked as *"the cheapest exploit of the lot"*;
+`C:\Users\Dad` was not.
+
+**This is the third instance of one shape** — a blocked leaf under a shareable ancestor
+(2026-08-27), a blocked ancestor that did not block itself (2026-09-14), and now a blocked parent
+with shareable siblings. The rule that covers all three is written into `CLAUDE.md`: *a blocked
+thing must have no shareable neighbour holding the same secrets.*
+
+The fix tests **containment, not "is it a direct child"** — refusing only the account folder still
+leaves `.ssh` inside it — and names the *containers* (`/home`, `/Users`, `/export/home`,
+`/var/home`, plus `dirname $HOME`, never `/`), because a root account's home is `/root` and refusing
+everything under `/` would refuse `/mnt` and `/media`. `$HOME` is canonicalised first for the same
+reason the entry loops are, or a symlinked ancestor makes it refuse the user's own files. Verified
+not to over-refuse: `~/Documents` and `/mnt/media` still pass.
+
+Break-verified on all three, **behaviourally rather than only structurally**: narrowed to
+direct-children-only with both substitution tokens left intact, the Windows gate fails naming
+`Users/other/.ssh` and the Unix gate fails naming `~other/.ssh`. 22 Windows verdicts, 48 Unix.
+
+**The published setup bundle is now a version behind on all three scripts** — it already was, for
+`launch.bat` (audit item 45). `TODO.md`'s *Needs hardware or a human eye* item 1 covers re-cutting
+it, and this raises its priority from hygiene to security.
+
 ## 2026-09-15 — deployed: Worker `eae7958a`, migration 0009 applied
 
 The find-and-fix audit finally reaches production. Rollback is Worker `38ceae8d`; `main` is

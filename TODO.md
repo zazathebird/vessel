@@ -5,7 +5,7 @@ they are, `docs/DECISIONS.md` records what was decided when, and `docs/TODO-ARCH
 dated session logs this file used to carry (moved out 2026-09-07 — read it for the reasoning
 behind any item here, by date).
 
-State on 2026-09-15: `npm run check` **88** green, `npm run test:auth` **409**, `npm run typecheck`
+State on 2026-09-15: `npm run check` **89** green, `npm run test:auth` **409**, `npm run typecheck`
 clean across **three** projects (the third, `scripts/`, is new). **DEPLOYED** — live is Worker
 `eae7958a`, rollback `38ceae8d`, with **migration 0009 applied to production** (8 commands, no row
 renamed: production held 1 machine and 0 setups, so its two `UPDATE`s matched nothing). The
@@ -254,17 +254,25 @@ unbiased). Break-verified: with the coin forced to 0.57 the new gate fails 11/12
   deploy gate now asserts). What that found is in `docs/SESSION-HANDOFF-2026-09-14.md`; the worst
   is that **`DuelView.paper`'s promised compile error had never once fired.**
 
-**Still ungated** of the three named: the **Windows blocklist** gate still reads the entry arrays as
-text and never calls `Test-ShareableFolder` — the Unix half is driven, the Windows half is not, and
-that is the security-shaped one. **`src/hooks` is still gated by nothing at all.**
+**Closed the same day** — the **Windows blocklist** is driven now (22 verdicts under `pwsh`
+against throwaway profiles), which was the security-shaped one of the three. **It found a live hole
+on its first run**: `/home/other` and `/home/other/.ssh` were shareable on *all three* scripts,
+since the dot-directory entries are keyed to your own `$HOME`. Fixed, gated both platforms (Unix
+went 36 → 48 verdicts) and break-verified behaviourally. See `docs/DECISIONS.md`.
+
+**Still ungated** of the three named: **`src/hooks` is gated by nothing at all**, and three of the
+2026-09-14 findings were in there.
 
 **Gate coverage** was zero for the most severe. #12, #10/#17, #47, #5 and #6 are gated now. **#13,
 #15, #28 and #29 still are not**, and each fix wants one, per this project's own discipline.
 
 ## Needs hardware or a human eye — cannot be done from here
 
-1. **Re-upload the setup bundle.** `launch.bat` changed (audit item 45); `dist-setup/` is rebuilt
-   and its `CHECKSUMS.txt` is current, the published one is not. Downloads editor, existing ids,
+1. **Re-upload the setup bundle — now a SECURITY item, not hygiene** (2026-09-15). All three
+   scripts changed: they refused your own `$HOME/.ssh` and **allowed `/home/someone-else/.ssh`**,
+   because every dot-directory entry is keyed to your own home. The published bundle still has
+   that hole. `launch.bat` was already stale (audit item 45); `dist-setup/` needs rebuilding and
+   `CHECKSUMS.txt` regenerating — both are generated, never typed. Downloads editor, existing ids,
    password at each finish. `docs/DOWNLOADS.md`.
 2. **On a real Pi**: does Raspberry Pi OS add its own archive to unattended-upgrades' origins? If
    so Chromium is replaced under the running kiosk, which `pi-setup.sh` says cannot happen.

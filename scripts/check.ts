@@ -5949,7 +5949,7 @@ check("the setup scripts REFUSE, driven against a real home directory", () => {
   // fails, DEFS comes back empty and every verdict reads BROKEN.
   const probeScript = String.raw`
 set -uo pipefail
-SRC="$1"; FIX="$2"
+SRC="$1"; FIX="$2"; SIB="$3"
 DEFS="$(awk '
   /^(canon|fold_case|check_folder)\(\)/ { infn=1 }
   /^(BLOCK_EXACT|BLOCK_PREFIX)=\(/ { inarr=1 }
@@ -5961,7 +5961,7 @@ DEFS="$(awk '
 HOME="$FIX"; SHARE_ROOT="$FIX/Shared"
 eval "$DEFS"
 for p in "$FIX" "$FIX/.ssh" "$FIX/.gnupg" "$FIX/.config" "$FIX/.local" \
-         "$FIX/.local/share" /etc / "$FIX/Documents"; do
+         "$FIX/.local/share" /etc / "$FIX/Documents" "$SIB" "$SIB/.ssh" "$SIB/Documents"; do
   r="$(check_folder "$p" 2>/dev/null | head -1)"
   case "$r" in OK*) v=ALLOWED ;; NO*) v=refused ;; *) v=BROKEN ;; esac
   printf '%s\t%s\n' "$v" "$p"
@@ -5978,8 +5978,13 @@ done
       for (const d of [".ssh", ".gnupg", ".config", ".local/share/keyrings", "Documents", "Shared"]) {
         mkdirSync(join(fix, d), { recursive: true });
       }
+      // A second account beside it, in the same container — which is what
+      // `dirname "$HOME"` resolves to here, so the containment rule can be
+      // driven in a throwaway tree instead of only on a real /home.
+      const sibling = join(root, `${home}-neighbour`);
+      for (const d of [".ssh", "Documents"]) mkdirSync(join(sibling, d), { recursive: true });
       for (const file of ["scripts/linux-share-setup.sh", "scripts/macos-share-setup.sh"]) {
-        const out = execFileSync("bash", ["-c", probeScript, "probe", file, fix], {
+        const out = execFileSync("bash", ["-c", probeScript, "probe", file, fix, sibling], {
           encoding: "utf8",
         });
         const verdict = new Map<string, string>();
@@ -5997,6 +6002,23 @@ done
           must(
             verdict.get(p) === "refused",
             `${file}: ${p.replace(fix, "~")} is ${verdict.get(p) ?? "unresolved"} with HOME="${home}" — that list is the only barrier there is`,
+          );
+          driven += 1;
+        }
+
+        /*
+         * SOMEBODY ELSE'S HOME, which was ALLOWED on all three scripts until
+         * 2026-09-15. `$HOME` was blocked exactly and so was `/home`, and
+         * nothing named what sits between them. The `.ssh` case is the sharp
+         * one: every dot-directory in BLOCK_PREFIX is written `$HOME/.ssh`, so
+         * the list refused your own keys and handed over your housemate's — and
+         * on Debian a home directory is mode 0755 by default, so it needs no
+         * privilege at all. Found by writing the Windows half of this gate.
+         */
+        for (const p of [sibling, `${sibling}/.ssh`, `${sibling}/Documents`]) {
+          must(
+            verdict.get(p) === "refused",
+            `${file}: ${p.replace(sibling, "~other")} is ${verdict.get(p) ?? "unresolved"} with HOME="${home}" — that is another account's files, and the dot-directory entries are keyed to THIS home so nothing else refuses them`,
           );
           driven += 1;
         }
@@ -6132,6 +6154,178 @@ check("the Windows script resolves EVERY path component, not just the leaf", () 
     driven += 1;
 
     return `${driven} verdicts from the real resolver: ancestor, chained, leaf and unresolvable links`;
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/*
+ * The Windows BLOCKLIST, executed — the last of the three gaps
+ * `docs/AUDIT-2026-09-14.md` names, and the security-shaped one.
+ *
+ * Two gates already touch this file and **neither one calls the blocklist**.
+ * The text gate parses the entry arrays and confirms the required names are
+ * present; the resolver gate above drives the reparse walk and stops short of
+ * the comparison. So the arrays were checked for *membership* and the code that
+ * consumes them was checked not at all — which is precisely how the 2026-09-14
+ * finding sat here with both of them green:
+ *
+ *   %USERPROFILE%\.ssh        ALLOWED     (the entry did not block itself)
+ *   %USERPROFILE%\.ssh\sub    refused
+ *
+ * `StartsWith($bad + '\')` is false when the path *is* the entry, so every
+ * prefix entry that had no twin in `$blockExact` blocked its contents and not
+ * itself. Five were in that shape — `.ssh`, `.aws`, `.gnupg`, `.docker`,
+ * `.kube` — and the script's own page tells the customer to pick the share
+ * root as one folder, so the result is a junction pointing at their private
+ * keys inside the directory they then hand to Chrome. Chrome does not catch it:
+ * its blocklist means "do not pick", never "do not read" (crbug 40061477).
+ *
+ * The Unix half of this has been driven since 2026-09-03 and the Windows half
+ * has not, which is the whole reason the finding was Windows-only.
+ *
+ * Sliced out of the real script exactly as the resolver gate is, with only the
+ * path SEPARATORS substituted and every substitution asserted, so a rewrite
+ * that changes the shape fails here rather than quietly testing nothing.
+ */
+check("the Windows script REFUSES the folders that matter, driven under pwsh", () => {
+  let hasPwsh = true;
+  try {
+    execFileSync("pwsh", ["-NoProfile", "-Command", "exit 0"], { stdio: "pipe" });
+  } catch {
+    hasPwsh = false;
+  }
+  if (!hasPwsh) skip("no `pwsh` here (snap install powershell --classic), so the blocklist was not driven");
+
+  const src = readFileSync("scripts/windows-share-setup.ps1", "utf8").replace(/^﻿/, "");
+  const from = src.indexOf("    $blockExact = @(");
+  must(from >= 0, "$blockExact is gone from windows-share-setup.ps1");
+  const marker = src.indexOf("    foreach ($bad in $blockPrefix) {", from);
+  must(marker >= 0, "the $blockPrefix loop is gone from windows-share-setup.ps1");
+  const end = src.indexOf("\n    }\n", marker);
+  must(end > marker, "could not find the end of the $blockPrefix loop");
+  let block = src.slice(from, end + "\n    }\n".length);
+
+  /*
+   * Separator substitution only. `Join-Path` and `Split-Path` are already
+   * platform-correct under pwsh on Linux; what is hard-coded is the `'\'` in
+   * the trim and in the prefix test, and the prefix test is the line the
+   * finding was in — so if it ever stops looking like this, this gate must
+   * fail rather than carry on testing a shape that no longer ships.
+   */
+  const subs: [string, string][] = [
+    ["TrimEnd('\\')", "TrimEnd([char]$SEP)"],
+    ["$bad + '\\'", "$bad + $SEP"],
+    ["$profileParent + '\\'", "$profileParent + $SEP"],
+    ["$profileRoot + '\\'", "$profileRoot + $SEP"],
+  ];
+  for (const [a, b] of subs) {
+    must(block.includes(a), `the blocklist no longer contains ${a} — this gate is testing nothing`);
+    block = block.split(a).join(b);
+  }
+  // The `-ieq` in the prefix loop is the fix itself. Asserted as text as well as
+  // driven, because losing it is the exact regression and the message should say
+  // so rather than leaving a reader to infer it from a failing path.
+  must(
+    /\$full -ieq \$bad -or/.test(block),
+    "the $blockPrefix loop no longer tests `-ieq` — a prefix entry stops blocking ITSELF, which is the 2026-09-14 finding",
+  );
+
+  const root = mkdtempSync(join(tmpdir(), "vessel-block-"));
+  try {
+    const real = realpathSync(root);
+    const profile = join(real, "Users", "me");
+    for (const d of [
+      ["Windows"], ["Program Files"], ["ProgramData"],
+      ["Users", "me", "Documents"], ["Users", "me", ".ssh"], ["Users", "me", ".ssh", "sub"],
+      ["Users", "me", ".aws"], ["Users", "me", ".gnupg"], ["Users", "me", ".docker"], ["Users", "me", ".kube"],
+      ["Users", "me", "AppData", "Roaming", "Thunderbird"],
+      ["Users", "me", "AppData", "Roaming", "Microsoft", "Protect"],
+      ["Users", "me", "AppData", "Local", "Google", "Chrome"],
+      ["Users", "me", "AppData", "Local", "Packages"],
+      ["Users", "other"], ["Users", "other", ".ssh"], ["Users", "other", "Documents"],
+    ]) mkdirSync(join(real, ...d), { recursive: true });
+
+    const harness = join(root, "block.ps1");
+    writeFileSync(
+      harness,
+      "param([string] $Path)\n" +
+        "$SEP = [string][System.IO.Path]::DirectorySeparatorChar\n" +
+        "$ShareRoot = Join-Path $env:USERPROFILE 'Shared'\n" +
+        "function Test-Block {\n" +
+        "    $full = [System.IO.Path]::GetFullPath($Path).TrimEnd([char]$SEP)\n" +
+        block +
+        "\n    return 'ALLOW'\n}\nTest-Block\n",
+      "utf8",
+    );
+
+    const env = {
+      ...process.env,
+      SystemRoot: join(real, "Windows"),
+      ProgramFiles: join(real, "Program Files"),
+      ProgramData: join(real, "ProgramData"),
+      USERPROFILE: profile,
+      APPDATA: join(profile, "AppData", "Roaming"),
+      LOCALAPPDATA: join(profile, "AppData", "Local"),
+    };
+    const verdict = (p: string) =>
+      execFileSync("pwsh", ["-NoProfile", "-File", harness, p], { encoding: "utf8", env }).trim();
+
+    /*
+     * `.ssh` and its four siblings lead, because they ARE the finding: each was
+     * allowed while its own children were refused. The case-varied one is here
+     * because the comparison is `-ieq`/OrdinalIgnoreCase and Windows paths are
+     * case-insensitive — `.SSH` is the same directory.
+     */
+    const cases: [string, string, boolean][] = [
+      ["the profile itself", profile, false],
+      ["the parent of every profile", join(real, "Users"), false],
+      /*
+       * The two that were ALLOWED when this gate was first run, and the reason
+       * it exists. The second is the sharp one: the `.ssh` entry is keyed to
+       * YOUR profile, so the list refused your own keys and handed over the
+       * other account's.
+       */
+      ["another account's profile", join(real, "Users", "other"), false],
+      ["another account's .ssh", join(real, "Users", "other", ".ssh"), false],
+      ["another account's Documents", join(real, "Users", "other", "Documents"), false],
+      ["%USERPROFILE%\\.ssh ITSELF", join(profile, ".ssh"), false],
+      ["%USERPROFILE%\\.ssh\\sub", join(profile, ".ssh", "sub"), false],
+      ["%USERPROFILE%\\.aws itself", join(profile, ".aws"), false],
+      ["%USERPROFILE%\\.gnupg itself", join(profile, ".gnupg"), false],
+      ["%USERPROFILE%\\.docker itself", join(profile, ".docker"), false],
+      ["%USERPROFILE%\\.kube itself", join(profile, ".kube"), false],
+      [".ssh in a different case", join(profile, ".SSH"), false],
+      ["%APPDATA% itself", join(profile, "AppData", "Roaming"), false],
+      ["%APPDATA%\\Thunderbird", join(profile, "AppData", "Roaming", "Thunderbird"), false],
+      ["%APPDATA%\\Microsoft\\Protect (DPAPI keys)", join(profile, "AppData", "Roaming", "Microsoft", "Protect"), false],
+      ["%LOCALAPPDATA% itself", join(profile, "AppData", "Local"), false],
+      ["%LOCALAPPDATA%\\Google\\Chrome", join(profile, "AppData", "Local", "Google", "Chrome"), false],
+      ["%LOCALAPPDATA%\\Packages", join(profile, "AppData", "Local", "Packages"), false],
+      ["the Windows directory", join(real, "Windows"), false],
+      ["Program Files", join(real, "Program Files"), false],
+      ["ProgramData", join(real, "ProgramData"), false],
+      // The converse. A blocklist that refuses everything is not a blocklist,
+      // and Documents is the folder the whole feature exists to share.
+      ["Documents", join(profile, "Documents"), true],
+    ];
+
+    let driven = 0;
+    let refused = 0;
+    for (const [what, path, shouldAllow] of cases) {
+      const got = verdict(path);
+      const allowed = got === "ALLOW";
+      must(
+        allowed === shouldAllow,
+        shouldAllow
+          ? `${what} was REFUSED — the blocklist has become too broad to share anything: ${got}`
+          : `${what} was ALLOWED by the real Windows blocklist (${path}) — this is the shape that junctions a customer's private keys into the folder the page tells them to hand to Chrome`,
+      );
+      driven += 1;
+      if (!shouldAllow) refused += 1;
+    }
+
+    return `${driven} verdicts from the real Test-ShareableFolder blocklist under pwsh: ${refused} refused (the five dot-directories themselves, both app-data roots, the profile and its parent), Documents still shareable`;
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

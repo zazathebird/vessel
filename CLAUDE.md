@@ -1445,7 +1445,16 @@ wrong machine is worse than not running. `docs/pi-sharing-host.md` and
   folder. So nothing downstream catches a miss. **Never relax an entry to be helpful, and never
   describe this as an echo of what Chrome refuses**; that framing is what left it with working
   bypasses. `npm run check` asserts the required entries, the fail-closed branch, the prefix matching
-  and the framing sentence itself. Four rules, each of which had a working exploit on 2026-08-27:
+  and the framing sentence itself.
+
+  **All three blocklists are now DRIVEN, not read** (Windows added 2026-09-15). The Unix half had
+  been executed since 2026-09-03; the Windows half had two gates and neither called
+  `Test-ShareableFolder` — one parsed the entry arrays as text, the other drove only the reparse
+  resolver. So the arrays were checked for *membership* and the code consuming them was checked not
+  at all, which is exactly how the `.ssh`-blocks-its-children-but-not-itself finding sat here with
+  both green. The new gate slices the real function out under `pwsh` against throwaway profiles,
+  substitutes only the path separators and asserts every substitution, and **found a live hole on
+  its first run** — the sibling-profile one above. 22 Windows verdicts, 48 Unix. Four rules, each of which had a working exploit on 2026-08-27:
   - **Canonicalise first, and fail closed.** Exact equality on the raw path let `/home/user//`,
     `/home/./user`, `//home/user` and `/home/user/../user` straight through. `cd -P` + `pwd -P` on
     Unix (`readlink -f` is absent on BSD, and failing silently there re-opens the hole); `GetFullPath`
@@ -1470,6 +1479,23 @@ wrong machine is worse than not running. `docs/pi-sharing-host.md` and
   - **Block the parent of home** - `/home`, `/Users`, `C:\Users`. The cheapest exploit of the lot:
     "type `C:\Users` in the box" hands over every account on the machine, and the share root lives
     inside it, so the junction was recursive as well.
+  - **And block what sits BETWEEN the parent and your own home** (2026-09-15). Blocking `/home` and
+    `$HOME` looks complete and is not: `/home/somebody-else` is neither, and no prefix entry names
+    it. Driven against the real functions on all three scripts, **`/home/other` and
+    `/home/other/.ssh` were both ALLOWED** — and the second is the sharp one, because every
+    dot-directory in the prefix list is written `$HOME/.ssh`, **keyed to YOUR home, so the list
+    refuses your own SSH keys and hands over your housemate's**. On Debian a home directory is mode
+    0755 by default, so it needs no privilege; on Windows the same gap sat between `C:\Users` and
+    `%USERPROFILE%`. The test is **containment, not "is it a direct child"** — refusing only the
+    account folder still leaves `.ssh` inside it — and it is written as the *containers* (`/home`,
+    `/Users`, `/export/home`, `/var/home`, plus `dirname $HOME`, never `/`) because a root account's
+    home is `/root` and refusing everything under `/` would refuse `/mnt` and `/media`. `$HOME` is
+    canonicalised before the comparison for the same reason the entry loops are, or a symlinked
+    ancestor makes it refuse the user's *own* files. **This is the third instance of one shape**:
+    a blocked leaf under a shareable ancestor, a blocked ancestor with a shareable self, and now a
+    blocked parent with shareable siblings. The rule covering all three: *a blocked thing must have
+    no shareable neighbour holding the same secrets.* Found by writing the Windows execution gate
+    below, which is the argument for that gate in one line.
   - **The app-data roots are prefixes on Windows** (2026-09-07, audit item 44): `%APPDATA%`,
     `%LOCALAPPDATA%` and `%ProgramData%` are block-all-children in Chrome, and as exact entries
     with three vendors named beneath them they left Thunderbird's saved passwords, Telegram's

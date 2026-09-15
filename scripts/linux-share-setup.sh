@@ -435,6 +435,57 @@ check_folder() {
         return
     fi
 
+    # A HOME DIRECTORY IS NEVER SHAREABLE, WHOEVER OWNS IT (2026-09-15).
+    #
+    # `$HOME` is blocked exactly and so is `/home`, and that pair looks complete
+    # until you notice what sits BETWEEN them. `/home/someone-else` matches
+    # neither: it is not `/home`, it is not this user's `$HOME`, and no prefix
+    # entry names it. Driven against the real function, on all three scripts:
+    # the account's own home was refused, `/home` was refused, and
+    # `/home/other` AND `/home/other/.ssh` were both ALLOWED.
+    #
+    # The second one is the sharp end. Every dot-directory in BLOCK_PREFIX is
+    # written `$HOME/.ssh`, keyed to YOUR home — so the list refuses your own
+    # SSH keys and hands over your housemate's. On Debian a home directory is
+    # mode 0755 by default, so this needs no privilege at all.
+    #
+    # This is the same shape as the three failures already recorded above, one
+    # level over: there it was a blocked leaf under a shareable ancestor, here
+    # it is a blocked parent with shareable children. The rule that covers both:
+    # a blocked thing must have no shareable neighbour that contains the same
+    # secrets.
+    #
+    # The test is CONTAINMENT, not "is it a direct child". Refusing only the
+    # account folder itself would still hand over `/home/dad/.ssh`, which is the
+    # sharper half of this: every dot-directory in BLOCK_PREFIX is written
+    # `$HOME/.ssh`, so the list refuses your own keys and not your housemate's.
+    # Inside a profile container and not inside your own home is the whole rule.
+    #
+    # It is written as the CONTAINERS rather than as "anything beside $HOME"
+    # because `dirname` of a root account's home is `/`, and refusing everything
+    # under `/` would refuse `/mnt`, `/media` and `/srv` — ordinary places to
+    # keep the files this script exists to share. `dirname "$HOME"` joins the
+    # fixed names for relocated and NAS-mounted homes, and is also what makes
+    # this testable in a throwaway tree rather than only on a real machine.
+    #
+    # `$HOME` is canonicalised before the comparison for the reason the entry
+    # loops below give: `$f` arrives resolved, `$HOME` is as the shell found it,
+    # and the moment any ancestor of `$HOME` is a symlink the two spellings
+    # differ — which would make this refuse the user's OWN files.
+    ch="$(canon "$HOME" 2>/dev/null)" || ch="$HOME"
+    hp="$(dirname "$ch")"
+    for parent in /home /Users /export/home /var/home "$hp"; do
+        case "$parent" in ""|/) continue ;; esac
+        # The container itself is named in BLOCK_EXACT; let it answer, so the
+        # message a person sees is the one written for that case.
+        [ "$f" = "$parent" ] && continue
+        case "$f/" in "$parent"/*) ;; *) continue ;; esac
+        case "$f/" in "$ch"/*) continue ;; esac
+        echo "NO That is inside somebody else's account folder, so it will not be shared: $c"
+        echo "      Share the folders inside your own — Documents, or Pictures."
+        return
+    done
+
     for bad in "${BLOCK_EXACT[@]}"; do
         [ -n "$bad" ] || continue
         # `${bad%/}` strips a trailing slash, and for the entry `/` that leaves the EMPTY STRING —
