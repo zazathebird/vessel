@@ -1483,18 +1483,86 @@ if (!FAST) check("duel: a blow always flashes, and no reaction precedes its caus
   return `${blows} blows, all flashed; ${reactions} reactions, none before its cause`;
 });
 
+/*
+ * Fairness, and why this gate measures the COIN rather than the wins.
+ *
+ * Until 2026-09-15 this counted match wins: about 119 samples over 360,000
+ * frames. Two things were wrong with that, and only one of them was the one
+ * anybody had noticed.
+ *
+ * **It was blind.** At n ≈ 119 a 3σ threshold only rejects a bias of
+ * p ≥ 0.638 half the time, so a director favouring one side 60/40 — a real
+ * bug, and an obvious one on screen — sailed straight through. The gate spent
+ * 360,000 frames on a question it could not answer.
+ *
+ * **And it cried wolf while doing it.** Measured over 200 standalone passes of
+ * its own simulation, the win statistic reached ≥3σ in **2**, max 3.29. So it
+ * failed `predeploy` at random about 1 run in 175. (A 150-pass run on
+ * 2026-09-14 saw 0 and concluded it was "not reproducible standalone"; it is,
+ * just rarely — the two runs pool to 2/350 ≈ 0.57%. The separate 2-in-5
+ * observation that opened this investigation is still unexplained and should
+ * be treated as unexplained rather than as noise.)
+ *
+ * The invariant CLAUDE.md actually names is *"no sequence names a side. Every
+ * beat is `ATT` or `DEF`, and the role coin consults nothing"*. That coin is
+ * `st.dir.att`, and it is what this measures now.
+ *
+ * **It counts THROWS, not sequence starts, and the difference is the whole
+ * point.** `chooseSequence` throws the coin only when `st.dir.chain` has
+ * reached 0; a chained phrase deliberately reuses the same aggressor for one
+ * to three more sequences, because a run of pressure by one fighter is what a
+ * fight looks like. Counting every sequence start would enter those correlated
+ * repeats as independent samples — the same modelling error the win statistic
+ * made, one level down. A throw is observable from outside: `st.dir.seq` is a
+ * fresh object at every sequence start, and the coin was thrown iff `chain`
+ * was 0 going in.
+ *
+ * That yields **~1,646 samples per pass instead of 119** — 13.8× — and the
+ * null was calibrated before a threshold was chosen, over 200 passes:
+ *
+ *   pooled p(att = "a") = 0.49983 over 329,113 throws   (z = 0.19)
+ *   lag-1 agreement     = 0.49931 over 328,913 pairs    (independent)
+ *   σ per pass: median 0.75, p95 1.97, p99 2.70, max 2.88, ≥3σ in 0 of 200
+ *
+ * So the binomial model fits, and **4σ is both stricter and quieter than the
+ * 3σ it replaces**: it detects a bias of p ≥ 0.549 (was 0.638) while its
+ * false-failure rate falls to ~1 run in 16,000 (was ~1 in 175). This is not
+ * the "raise the threshold until it stops failing" that CLAUDE.md warns about
+ * — that would mask flakiness by giving up detection. Here detection improves
+ * by a factor of 1.8 in the quantity that matters *because* the statistic
+ * changed underneath it; the threshold moved to suit a sample 13.8× larger.
+ *
+ * **The win count is kept, deliberately, as a loose band.** A fair coin does
+ * not prove fair outcomes — damage, reach or the reaction table could be
+ * asymmetric with a perfectly fair director — so the end-to-end property still
+ * wants a gate. At 6σ over ~119 matches it catches gross asymmetry (p ≥ 0.77)
+ * and effectively never false-fires, which is the right trade for a check whose
+ * job is now "did something break badly" rather than "is this exactly fair".
+ */
 if (!FAST) check("duel: fairness, reachability, stability", () => {
   const styles = ["hooded", "caped", "maned", "horned"] as const;
   let left = 0;
   let right = 0;
   let nan = 0;
+  let throws = 0;
+  let heads = 0;
   const seen = new Set<string>();
   for (let r = 0; r < 3; r += 1) {
     const st = createDuel(styles[r % 4], styles[(r + 1) % 4]);
     let over = 0;
+    let prevSeq: unknown = st.dir.seq;
+    let prevChain = st.dir.chain;
     for (let i = 0; i < 120_000; i += 1) {
       advanceDuel(st, 1);
       if (st.dir.seq) seen.add(st.dir.seq.id);
+      // A sequence began this frame, and the coin was thrown iff the chain
+      // counter going in was 0. Otherwise this phrase inherits its aggressor.
+      if (st.dir.seq && st.dir.seq !== prevSeq && prevChain === 0) {
+        throws += 1;
+        if (st.dir.att === "a") heads += 1;
+      }
+      prevSeq = st.dir.seq;
+      prevChain = st.dir.chain;
       if (st.over > 0 && over === 0) {
         if (st.a.health <= 0 && st.b.health > 0) right += 1;
         else if (st.b.health <= 0 && st.a.health > 0) left += 1;
@@ -1504,16 +1572,27 @@ if (!FAST) check("duel: fairness, reachability, stability", () => {
     }
   }
   const n = left + right;
-  const sigma = Math.abs(left - n / 2) / Math.sqrt(n * 0.25);
+  const coin = Math.abs(heads - throws / 2) / Math.sqrt(throws * 0.25);
+  const wins = Math.abs(left - n / 2) / Math.sqrt(n * 0.25);
   must(nan === 0, `${nan} non-finite frames`);
   must(n > 100, `only ${n} matches — the fight may be stalling`);
-  must(sigma < 3, `side bias ${sigma.toFixed(2)} sigma over ${n} matches`);
+  // Calibrated at ~1,646; a collapse in the sample size is itself the finding,
+  // because every threshold below is chosen against that number.
+  must(throws > 1200, `only ${throws} role coins thrown — expected ~1,646`);
+  must(
+    coin < 4,
+    `the role coin named a side: ${(heads / throws).toFixed(4)} over ${throws} throws, ${coin.toFixed(2)} sigma`,
+  );
+  must(
+    wins < 6,
+    `one side wins ${((left / n) * 100).toFixed(0)}% of ${n} matches (${wins.toFixed(2)} sigma) — the coin is fair, so look at damage, reach or the reaction table`,
+  );
   // Nothing is ranged `far` any more — the leash keeps the fight out of that
   // band entirely — so every module in the pool must actually be reachable.
   const total = DUEL_TABLES.modules.length;
   const fired = seen.size;
   must(fired === total, `only ${fired} of ${total} modules fired`);
-  return `${n} matches, ${sigma.toFixed(2)}σ, ${fired}/${total} modules, no NaN`;
+  return `coin ${(heads / throws).toFixed(4)} over ${throws} throws (${coin.toFixed(2)}σ), ${n} matches (${wins.toFixed(2)}σ), ${fired}/${total} modules, no NaN`;
 });
 
 /*

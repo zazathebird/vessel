@@ -5,9 +5,13 @@ they are, `docs/DECISIONS.md` records what was decided when, and `docs/TODO-ARCH
 dated session logs this file used to carry (moved out 2026-09-07 — read it for the reasoning
 behind any item here, by date).
 
-State on 2026-09-14: `npm run check` **86** green, `npm run test:auth` **409**. Live is Worker
-`38ceae8d` (rollback `df6dba2a`); `main` is at `07b930d`, **not yet pushed**, and **is ahead of
-what is deployed**. Four security passes are recorded in `docs/SECURITY-AUDIT.md` (items 1–49).
+State on 2026-09-15: `npm run check` **86** green, `npm run test:auth` **409**. Live is Worker
+`38ceae8d` (rollback `df6dba2a`); the audit branch is at `ee9ee75`, **not yet pushed**, and **is
+ahead of what is deployed**. Four security passes are recorded in `docs/SECURITY-AUDIT.md`
+(items 1–49); a fifth, find-and-fix, is in `docs/AUDIT-2026-09-14.md`.
+
+**Both flaky gates are closed** (health bar 2026-09-14, fairness 2026-09-15), so `predeploy` no
+longer fails at random — which was the one thing blocking a deploy from this branch.
 
 **A fifth pass ran on 2026-09-14 — a find-AND-fix sweep, not findings-only** (the four before it
 were read-only). Ten parallel reviews covering every slice of the tree, then six fix crews; the
@@ -201,6 +205,27 @@ fighters to the same arena wall while either is airborne, so `st.b`'s bar was ju
 `st.a`'s `y`. Measured at 2.5% of runs; now attributed by draw order, 0 in 400 passes. The
 renderer is provably safe over all 24 headroom values. Neither reading in the old entry was right,
 and the airborne exemption it offered would have masked it.
+
+**Closed 2026-09-15** — the second flaky gate, `duel: fairness, reachability, stability`. It
+measures the **role coin** now rather than match wins, and the verdict is that the old statistic
+was *blind* as well as noisy. Two things were established before the threshold was chosen:
+
+- **The engine is not biased.** Pooled p(att = "a") = **0.49983 over 329,113 coin throws**
+  (z = 0.19) across 200 passes, with lag-1 agreement 0.49931 — fair, and independent.
+- **The old gate really did self-trip**, ≥3σ in **2 of 200** standalone passes (max 3.29), i.e.
+  about 1 predeploy in 175. The 2026-09-14 note called this "not reproducible standalone" on the
+  strength of 0 in 150; it is reproducible, just rarely, and the two runs pool to 2/350 ≈ 0.57%.
+  **The separate 2-failures-in-5 in-suite observation remains unexplained** and should still be
+  treated as unexplained rather than as noise.
+
+The coin gives **~1,646 samples a pass instead of 119** (it counts *throws*, not sequence starts —
+a chained phrase deliberately reuses its aggressor, and entering those repeats as independent
+samples is the same modelling error one level down). So 4σ is **stricter and quieter at once**:
+it detects p ≥ 0.549 where the old gate needed 0.638, while false-failures fall to ~1 run in
+16,000. Break-verified both halves — with the coin forced to 0.57 the new gate fails 11/12 passes
+at ≥4σ (median 5.74σ) and **the old win statistic saw nothing at all, 0/12, median 0.74σ.** The
+win count is kept at a loose 6σ, because a fair coin does not prove fair outcomes: damage, reach
+or the reaction table could be asymmetric under a perfectly fair director.
 
 **Gate coverage** was zero for the most severe. #12, #10/#17, #47, #5 and #6 are gated now. **#13,
 #15, #28 and #29 still are not**, and each fix wants one, per this project's own discipline.

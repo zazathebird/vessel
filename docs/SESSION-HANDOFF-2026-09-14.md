@@ -241,6 +241,29 @@ exist and are proven absent from the entry, but **the first-open path was never 
 the highest-value five minutes available on this change.** Also unverified: phone/tablet bands
 (desk only), and anything rAF-driven.
 
+> **✅ DONE 2026-09-15 — the operator surfaces are verified and this item is closed.** Driven in a
+> real browser as a signed-in operator (`scripts/local-operator.ts`) against the **production
+> chunks**, served by `wrangler dev` after `npm run build`, with forced calm defeated.
+> **All eight lazy chunks mount and render: zero console errors, zero horizontal overflow.**
+> `/admin` renders its real `h1` and **all five sections** — Accounts, Downloads pages, Download
+> codes, What the duel does, The duel — with **4 canvases**, which is the three duel hosts
+> `CLAUDE.md` names plus the background, so `DownloadEditor`, `DownloadCodes`, `DuelBench` and
+> `DuelSettingsEditor` are all proven to mount rather than merely to exist. `/machines`, `/share`,
+> `/downloads` and `/signup` likewise. **Both overlays were opened for the first time**: the panel
+> via the Config tab (renders in full), and the door via typed `sudo` *with the panel already
+> open*, which is the exact not-modal behaviour `CLAUDE.md` documents. The panel closing as the
+> door opens is also by design — `useOperatorRoutes.ts:102` says so.
+>
+> Two things this did **not** cover, so they stay open: the phone and tablet bands (desk only),
+> and anything rAF-driven. And it is not the same thing as item 5 of *Needs hardware or a human
+> eye* — the operator surfaces have still not been judged **by eye** since the password fields
+> landed. This proves they mount, not that they look right.
+>
+> **One papercut found:** `scripts/local-operator.ts` defaults to `OP_HANDLE=operator`, and the
+> Worker refuses that handle as reserved — so the dev scaffolding fails out of the box with
+> *"That handle is reserved."* Run it as `OP_HANDLE=patrick node …`. Worth a one-line default
+> change.
+
 **The duel is NOT split, and it is a one-file job outside that agent's scope.**
 `src/fx/effects.ts` *statically* imports `./duel` for `drawFx`, which every visitor's canvas calls
 every frame — so `duel.ts` (39.0 kB) + `fighters.ts` (21.0 kB) sit in the entry whatever `App.tsx`
