@@ -13,6 +13,29 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-09-15 — deployed: Worker `eae7958a`, migration 0009 applied
+
+The find-and-fix audit finally reaches production. Rollback is Worker `38ceae8d`; `main` is
+`57f76cd`. Both required reviews ran first, as `CLAUDE.md` demands for anything touching `worker/`:
+**security-review returned zero findings** (having executed migration 0009 against a seeded scratch
+DB and driven the setup-script blocklists over a 50-path corpus in four home layouts, with a
+directed weakening scan returning no hits), and **code-review returned six, four of them real** —
+they are in the entry below, including one where I had made a gate *worse*.
+
+**Migration 0009 was applied to production before the deploy, and it was checked against the real
+table first rather than assumed.** The migration's own comment says *"this cannot check production
+from here"*; it can now, and the answer was 1 machine and 0 setups, so its two `UPDATE`s matched
+nothing and no row was renamed. 8 commands, both indexes rebuilt as `UNIQUE … COLLATE NOCASE`, row
+counts unchanged after. The two changes on this branch that can *refuse* data which already exists —
+the handle pattern's trailing-hyphen rule and `expectDisplayName` — were checked against the live
+rows too: handles are `piratelife` and `fable-check`, the one machine is `machine1`, so nothing
+existing is locked out.
+
+Verified live afterwards rather than assumed: twelve content routes rendering their real `h1` with
+zero overflow and zero console errors, an anonymous visit fetching **two** JS chunks and no operator
+code, all eight lazy chunks serving 200, `/api/health` reporting 8 tables, and all five icon probes
+answering `404 text/plain` where production had been handing out the app shell.
+
 ## 2026-09-15 — the fairness gate measures the coin, and `scripts/` is typechecked at last
 
 Picking up the paused find-and-fix sweep (`docs/SESSION-HANDOFF-2026-09-14.md`).

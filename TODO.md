@@ -6,13 +6,21 @@ dated session logs this file used to carry (moved out 2026-09-07 — read it for
 behind any item here, by date).
 
 State on 2026-09-15: `npm run check` **88** green, `npm run test:auth` **409**, `npm run typecheck`
-clean across **three** projects (the third, `scripts/`, is new). Live is Worker
-`38ceae8d` (rollback `df6dba2a`); the audit branch is at `ee9ee75`, **not yet pushed**, and **is
-ahead of what is deployed**. Four security passes are recorded in `docs/SECURITY-AUDIT.md`
-(items 1–49); a fifth, find-and-fix, is in `docs/AUDIT-2026-09-14.md`.
+clean across **three** projects (the third, `scripts/`, is new). **DEPLOYED** — live is Worker
+`eae7958a`, rollback `38ceae8d`, with **migration 0009 applied to production** (8 commands, no row
+renamed: production held 1 machine and 0 setups, so its two `UPDATE`s matched nothing). The
+find-and-fix audit branch is merged to `main` at `57f76cd`; `main` is **14 commits ahead of
+`origin/main` and not pushed** — 9 of those predate this session. Four security passes are recorded
+in `docs/SECURITY-AUDIT.md` (items 1–49); a fifth, find-and-fix, is in `docs/AUDIT-2026-09-14.md`.
 
 **Both flaky gates are closed** (health bar 2026-09-14, fairness 2026-09-15), so `predeploy` no
-longer fails at random — which was the one thing blocking a deploy from this branch.
+longer fails at random — which was the one thing that had been blocking the deploy.
+
+**Verified live after deploying**: all twelve content routes render their real `h1` with zero
+overflow and zero console errors; an anonymous visit fetches **two** JS chunks (entry plus the page
+it landed on) and no operator code; all eight lazy chunks serve 200; `/api/health` reports 8 tables;
+and all five icon probes — including `-precomposed` and the sized variants — answer `404 text/plain`
+where production had been serving the whole app shell.
 
 **A fifth pass ran on 2026-09-14 — a find-AND-fix sweep, not findings-only** (the four before it
 were read-only). Ten parallel reviews covering every slice of the tree, then six fix crews; the
