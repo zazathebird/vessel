@@ -1523,27 +1523,31 @@ if (!FAST) check("duel: a blow always flashes, and no reaction precedes its caus
  * fresh object at every sequence start, and the coin was thrown iff `chain`
  * was 0 going in.
  *
- * That yields **~1,646 samples per pass instead of 119** — 13.8× — and the
- * null was calibrated before a threshold was chosen, over 200 passes:
+ * The null was calibrated before any threshold was chosen — first over 200
+ * passes of the three-round shape this replaced (pooled p = 0.49983 over
+ * 329,113 throws, lag-1 0.49931, so the throws are independent as well as
+ * fair), and then **re-measured at the twelve-round shape actually used here,
+ * with the corrected detector**, rather than assumed to transfer. 60 passes:
  *
- *   pooled p(att = "a") = 0.49983 over 329,113 throws   (z = 0.19)
- *   lag-1 agreement     = 0.49931 over 328,913 pairs    (independent)
- *   σ per pass: median 0.75, p95 1.97, p99 2.70, max 2.88, ≥3σ in 0 of 200
+ *   pooled p(att = "a")  = 0.49999 over 401,208 throws    (z = 0.013)
+ *   pooled p(a wins)     = 0.49887 over  28,657 matches   (z = 0.384)
+ *   coin σ: median 0.76, p95 1.98, max 2.40, ≥4σ in 0 of 60
+ *   win  σ: median 0.73, p95 1.65, max 2.74, ≥4σ in 0 of 60
  *
- * So the binomial model fits, and **4σ is both stricter and quieter than the
- * 3σ it replaces**: it detects a bias of p ≥ 0.549 (was 0.638) while its
- * false-failure rate falls to ~1 run in 16,000 (was ~1 in 175). This is not
- * the "raise the threshold until it stops failing" that CLAUDE.md warns about
- * — that would mask flakiness by giving up detection. Here detection improves
- * by a factor of 1.8 in the quantity that matters *because* the statistic
- * changed underneath it; the threshold moved to suit a sample 13.8× larger.
+ * Both statistics fit the binomial model and neither comes near the bar, so
+ * both 4σ thresholds are measured rather than guessed. Note the second line:
+ * the engine's *outcomes* are now established as fair over 28,657 matches,
+ * which is a far stronger statement than the 119 a single pass can make, and it
+ * is what makes a 4σ win threshold a real check rather than a formality.
  *
- * **The win count is kept, deliberately, as a loose band.** A fair coin does
- * not prove fair outcomes — damage, reach or the reaction table could be
- * asymmetric with a perfectly fair director — so the end-to-end property still
- * wants a gate. At 6σ over ~119 matches it catches gross asymmetry (p ≥ 0.77)
- * and effectively never false-fires, which is the right trade for a check whose
- * job is now "did something break badly" rather than "is this exactly fair".
+ * **The win count is kept, and it is NOT a loose band.** A fair coin does not
+ * prove fair outcomes — damage, reach or the reaction table could be asymmetric
+ * under a perfectly fair director — and that is the one property the coin
+ * cannot see, so it is the last thing that should be allowed to go slack. The
+ * first version of this rewrite put it at 6σ over the same ~119 matches, which
+ * bought quiet by giving up detection; the round count is what pays for the
+ * threshold instead. Both halves sit at 4σ now, and both are better than the 3σ
+ * they replace on both axes at once — see the round-count note in the body.
  */
 if (!FAST) check("duel: fairness, reachability, stability", () => {
   const styles = ["hooded", "caped", "maned", "horned"] as const;
@@ -1553,22 +1557,70 @@ if (!FAST) check("duel: fairness, reachability, stability", () => {
   let throws = 0;
   let heads = 0;
   const seen = new Set<string>();
-  for (let r = 0; r < 3; r += 1) {
+  /*
+   * **Twelve rounds, not three, and the win statistic is why** (2026-09-15,
+   * second pass).
+   *
+   * The first version of this rewrite moved the coin to 4σ — correctly, since
+   * the coin gained 13.8× the samples — and moved the *win* count from 3σ to
+   * 6σ at the same time. That second move was wrong, and it is worth saying so
+   * plainly: the win estimator did not change and neither did its ~119 samples,
+   * so only the bar moved, which is exactly the "raise the threshold until it
+   * stops failing" this file warns against, applied to the one half that got no
+   * new evidence. It took detection from p ≥ 0.638 to p ≥ 0.775 for the only
+   * property the coin gate cannot see — a fair director with asymmetric
+   * outcomes, which is what damage, reach or the reaction table getting out of
+   * step would look like.
+   *
+   * The honest fix for a threshold that has to rise is more samples. Twelve
+   * rounds measure at ~478 matches and ~6,690 coins a pass, so at 4σ both
+   * halves are now strictly better than the 3σ they replace, on both axes at
+   * once:
+   *
+   *              detects            false-fails
+   *   wins  old  p >= 0.638         ~1 run in 175
+   *   wins  new  p >= 0.592         ~1 run in 16,000
+   *   coin  new  p >= 0.524         ~1 run in 16,000
+   *
+   * The cost is 1.44M stepped frames instead of 360k, which measured at about
+   * 20 seconds — the whole suite still finishes in ~42. It is `!FAST`, so it is
+   * paid on `predeploy` and never on the edit hook.
+   */
+  const ROUNDS = 12;
+  for (let r = 0; r < ROUNDS; r += 1) {
     const st = createDuel(styles[r % 4], styles[(r + 1) % 4]);
     let over = 0;
     let prevSeq: unknown = st.dir.seq;
     let prevChain = st.dir.chain;
+    let prevMatches = st.matches;
     for (let i = 0; i < 120_000; i += 1) {
       advanceDuel(st, 1);
       if (st.dir.seq) seen.add(st.dir.seq.id);
-      // A sequence began this frame, and the coin was thrown iff the chain
-      // counter going in was 0. Otherwise this phrase inherits its aggressor.
-      if (st.dir.seq && st.dir.seq !== prevSeq && prevChain === 0) {
+      /*
+       * A sequence began this frame, and the coin was thrown iff the chain
+       * counter going in was 0 — **or a match turned over on this frame**,
+       * which is the clause the first version of this gate was missing.
+       *
+       * `step()` clears `chain` to 0 on the reset and then falls through to
+       * `runDirector` in the *same* step, so the opening coin of a new match is
+       * genuinely thrown while `prevChain` — sampled at the end of the previous
+       * frame — still holds whatever the dying match left behind. Measured: it
+       * dropped 1.70% of throws (141 of 8,282 over five passes). Those misses
+       * were unbiased (69/141 heads) so the 4σ calibration survived them, but
+       * the comment claimed an exactness the code did not have, and a sample
+       * count that quietly drifts is the thing every threshold here rests on.
+       */
+      if (
+        st.dir.seq &&
+        st.dir.seq !== prevSeq &&
+        (prevChain === 0 || st.matches !== prevMatches)
+      ) {
         throws += 1;
         if (st.dir.att === "a") heads += 1;
       }
       prevSeq = st.dir.seq;
       prevChain = st.dir.chain;
+      prevMatches = st.matches;
       if (st.over > 0 && over === 0) {
         if (st.a.health <= 0 && st.b.health > 0) right += 1;
         else if (st.b.health <= 0 && st.a.health > 0) left += 1;
@@ -1582,15 +1634,15 @@ if (!FAST) check("duel: fairness, reachability, stability", () => {
   const wins = Math.abs(left - n / 2) / Math.sqrt(n * 0.25);
   must(nan === 0, `${nan} non-finite frames`);
   must(n > 100, `only ${n} matches — the fight may be stalling`);
-  // Calibrated at ~1,646; a collapse in the sample size is itself the finding,
-  // because every threshold below is chosen against that number.
-  must(throws > 1200, `only ${throws} role coins thrown — expected ~1,646`);
+  // Calibrated at ~6,600 over twelve rounds; a collapse in the sample size is
+  // itself the finding, because both thresholds below are chosen against it.
+  must(throws > 5000, `only ${throws} role coins thrown — expected ~6,600 over ${ROUNDS} rounds`);
   must(
     coin < 4,
     `the role coin named a side: ${(heads / throws).toFixed(4)} over ${throws} throws, ${coin.toFixed(2)} sigma`,
   );
   must(
-    wins < 6,
+    wins < 4,
     `one side wins ${((left / n) * 100).toFixed(0)}% of ${n} matches (${wins.toFixed(2)} sigma) — the coin is fair, so look at damage, reach or the reaction table`,
   );
   // Nothing is ranged `far` any more — the leash keeps the fight out of that
@@ -6716,12 +6768,17 @@ check("the deploy shape — the traps that had no other gate", () => {
    * server's SPA fallback, i.e. the shell with no security headers and
    * `_headers`' year-long `immutable`. Narrowing the glob only moves the name.
    */
-  const rwf = wrangler.match(/^\s*run_worker_first\s*=\s*(.+?)\s*$/m);
-  must(rwf !== null, "wrangler.toml no longer sets run_worker_first at all");
-  must(
-    rwf![1] === "true",
-    `run_worker_first is ${rwf![1]}, not the bare \`true\` — a list reintroduces audit item 39, because a negation excludes MISSES under the glob as well as hits, and a miss is the unhardened app shell`,
-  );
+  // Every occurrence, not the first: a second `run_worker_first` in an `[env.*]`
+  // block would be invisible to a non-global match, and it is the one that would
+  // win for that environment.
+  const rwfAll = [...wrangler.matchAll(/^\s*run_worker_first\s*=\s*(.+?)\s*$/gm)];
+  must(rwfAll.length > 0, "wrangler.toml no longer sets run_worker_first at all");
+  for (const rwf of rwfAll) {
+    must(
+      rwf[1] === "true",
+      `run_worker_first is ${rwf[1]}, not the bare \`true\` — a list reintroduces audit item 39, because a negation excludes MISSES under the glob as well as hits, and a miss is the unhardened app shell`,
+    );
+  }
 
   // `/404` is a real page here, not a host fallback.
   must(
@@ -6742,8 +6799,20 @@ check("the deploy shape — the traps that had no other gate", () => {
   // Load-bearing for local development: the routes make `wrangler dev` simulate
   // `http://mcclevarty.ca/...`, so without this the loopback exemption in
   // `httpsRedirect` never matches and every local request 301s to itself.
+  /*
+   * Scoped to the `[dev]` table itself rather than `[dev][\s\S]*?upstream_
+   * protocol`, which is unbounded to the right: that would pass on an
+   * `upstream_protocol` sitting in some *later* table, so moving the key out of
+   * `[dev]` — the exact change this is here to catch — would not be caught.
+   * Slice from `[dev]` to the next table header and look only inside it.
+   */
+  const devAt = wrangler.indexOf("\n[dev]");
+  must(devAt !== -1, "wrangler.toml has no [dev] table — local development will 301 every request to itself");
+  const afterDev = wrangler.slice(devAt + 1);
+  const nextTable = afterDev.slice(1).search(/^\[/m);
+  const devTable = nextTable === -1 ? afterDev : afterDev.slice(0, nextTable + 1);
   must(
-    /\[dev\][\s\S]*?upstream_protocol\s*=\s*"https"/.test(wrangler),
+    /^\s*upstream_protocol\s*=\s*"https"/m.test(devTable),
     "[dev] upstream_protocol is no longer https — every local request will 301 to itself",
   );
 
@@ -6806,13 +6875,24 @@ check("the deploy shape — the traps that had no other gate", () => {
     "predeploy no longer builds — wrangler would publish whatever dist/ happened to hold",
   );
   /*
-   * And the suite itself must typecheck all three projects. `scripts/` was
-   * typechecked by nothing until 2026-09-15 — including `check.ts`, this file —
-   * because esbuild bundles it and strips types without checking them.
+   * All three projects must be typechecked, AND the deploy must actually run
+   * that. Those are two assertions because they were two facts: `typecheck`
+   * named all three from 2026-09-15, but `predeploy` was `check && build`, and
+   * `build` is `tsc -b` over `tsconfig.json`, whose `include` is `["src",
+   * "vite.config.ts"]`. `wrangler deploy` then esbuilds `worker/` without
+   * checking it. So both the Worker and the gate suite were typechecked by
+   * nothing *at deploy time* — asserting the script named them proved only that
+   * a command nobody on the deploy path ran was correctly spelled.
    */
+  for (const project of ["tsconfig.worker.json", "tsconfig.scripts.json"]) {
+    must(
+      pkg.scripts.typecheck?.includes(project) ?? false,
+      `npm run typecheck dropped ${project} — that half of the tree goes back to being typechecked by nothing`,
+    );
+  }
   must(
-    /tsconfig\.scripts\.json/.test(pkg.scripts.typecheck ?? ""),
-    "npm run typecheck dropped tsconfig.scripts.json — the gate suite goes back to being typechecked by nothing",
+    /npm run typecheck/.test(predeploy),
+    "predeploy no longer runs npm run typecheck — worker/ and scripts/ are esbuilt, which strips types without checking them, so nothing on the deploy path would check either",
   );
 
   return "run_worker_first bare true, SPA fallback, no workers_dev, benches unshipped, _redirects stripped and _headers kept, predeploy gates the deploy, scripts typechecked";
@@ -6835,7 +6915,21 @@ check("the deploy shape — the traps that had no other gate", () => {
 check("crawlerFile answers the addresses that are not pages, and only those", () => {
   const at = (path: string) => crawlerFile(new URL(`https://mcclevarty.ca${path}`));
 
-  for (const path of ["/favicon.ico", "/apple-touch-icon.png"]) {
+  /*
+   * All four shapes, not the two obvious ones. `index.html` declares no
+   * `rel="apple-touch-icon"`, so iOS probes the root itself and asks for
+   * `-precomposed` FIRST, with sized variants before either on some versions.
+   * The first version of this fix matched two exact strings and left the name
+   * actually requested first still answering 200 with the shell.
+   */
+  const probes = [
+    "/favicon.ico",
+    "/apple-touch-icon.png",
+    "/apple-touch-icon-precomposed.png",
+    "/apple-touch-icon-180x180.png",
+    "/apple-touch-icon-180x180-precomposed.png",
+  ];
+  for (const path of probes) {
     const response = at(path);
     must(response !== null, `${path} falls through to the SPA fallback, which answers 200 with the app shell`);
     must(
@@ -6847,6 +6941,26 @@ check("crawlerFile answers the addresses that are not pages, and only those", ()
       `${path} is answered as HTML — that is the shell leaking at an address that is not a page`,
     );
   }
+
+  /*
+   * **And the wiring, because driving the function proves nothing about whether
+   * it is called.** `crawlerFile` is pure; delete its call in `worker/index.ts`,
+   * or move it below the asset fetch, and every address above goes straight back
+   * to `200 text/html` while this gate still reports its cheerful summary line.
+   * That is exactly the shape of audit item 39 — a fix that existed only as a
+   * comment — so the source scan is not redundant with the drive above it: one
+   * says the function is right, the other says the function runs, and neither
+   * implies the other.
+   */
+  const indexSrc = readFileSync("worker/index.ts", "utf8");
+  const callAt = indexSrc.indexOf("crawlerFile(url)");
+  const assetAt = indexSrc.indexOf("await asset(request, env)");
+  must(callAt !== -1, "worker/index.ts no longer calls crawlerFile(url) — every icon and crawler address returns the app shell");
+  must(assetAt !== -1, "worker/index.ts no longer fetches the asset — this gate's ordering check cannot be trusted, fix the gate");
+  must(
+    callAt < assetAt,
+    "worker/index.ts calls crawlerFile AFTER the asset fetch — the SPA fallback answers first, so the 404s never happen",
+  );
 
   const robots = at("/robots.txt");
   must(robots !== null && robots.status === 200, "/robots.txt no longer answers 200");
@@ -6862,7 +6976,7 @@ check("crawlerFile answers the addresses that are not pages, and only those", ()
     must(at(path) === null, `crawlerFile intercepted ${path}, which is a page and must reach the app shell`);
   }
 
-  return "favicon.ico and apple-touch-icon.png are 404 and not HTML; robots and sitemap still 200; five page paths still fall through";
+  return `${probes.length} icon probes are 404 and not HTML (precomposed and sized included); crawlerFile is called ahead of the asset fetch; robots and sitemap still 200; five page paths still fall through`;
 });
 
 // ---- report ----------------------------------------------------------------

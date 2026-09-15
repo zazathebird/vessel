@@ -778,14 +778,22 @@ covers how to *see* any of this — rAF parks in an automated browser, so use `s
   through) *and* self-tripping (≥3σ in 2 of 200 standalone passes, about 1 predeploy in 175).
   `chooseSequence` throws the coin only when `st.dir.chain` has reached 0, because a chained
   phrase deliberately reuses its aggressor; **entering those repeats as independent samples is the
-  same modelling error the win statistic made, one level down.** ~1,646 samples a pass instead of
-  119, so the threshold is 4σ and is *stricter and quieter at once* — it detects p ≥ 0.549 while
-  false failures fall to ~1 run in 16,000. **This is the one case where raising a threshold was
-  not masking flakiness**, because the statistic changed underneath it; do not raise it again
-  without changing the statistic again. Calibrated before the threshold was chosen: pooled
-  p = 0.49983 over 329,113 throws, lag-1 0.49931, max σ 2.88 over 200 passes. **The win count is
-  kept at a loose 6σ**, because a fair coin does not prove fair outcomes — damage, reach or the
-  reaction table could be asymmetric under a perfectly fair director.
+  same modelling error the win statistic made, one level down.** It also counts the opening throw
+  of each new match, which the first version missed (the reset clears `chain` and `runDirector`
+  fires in the same frame) — 1.70% of throws, unbiased, but a sample count every threshold rests on
+  must be exact.
+
+  **Both halves sit at 4σ, and the round count is what pays for that.** The gate runs **twelve**
+  rounds, not three: ~478 matches and ~6,690 coins a pass. The first version of this rewrite moved
+  the coin to 4σ (right — it had gained the samples) and the *win* count from 3σ to 6σ at the same
+  time (wrong — same estimator, same ~119 matches, only the bar moved), which is exactly the
+  "raise the threshold until it stops failing" this file warns against, applied to the one property
+  the coin cannot see. **A threshold may only rise when the evidence does.** Calibrated before
+  choosing, and re-measured at the shape actually used: pooled p(coin) = 0.49999 over 401,208
+  throws, p(wins) = 0.49887 over 28,657 matches, max σ 2.40 / 2.74 over 60 passes, 0 at ≥4σ. Both
+  now detect better than the 3σ they replace *and* false-fail ~1 run in 16,000 instead of 1 in 175.
+  **The win count is not a formality** — a fair coin does not prove fair outcomes, since damage,
+  reach or the reaction table could be asymmetric under a perfectly fair director.
 - **Nothing waits on a condition** — sequences have fixed lengths and the director advances
   unconditionally.
 - **`dist` is the sole authority on whether a blow lands.** Sparks come off the true blade-to-blade

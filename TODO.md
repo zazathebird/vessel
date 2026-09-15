@@ -219,14 +219,19 @@ was *blind* as well as noisy. Two things were established before the threshold w
   **The separate 2-failures-in-5 in-suite observation remains unexplained** and should still be
   treated as unexplained rather than as noise.
 
-The coin gives **~1,646 samples a pass instead of 119** (it counts *throws*, not sequence starts —
-a chained phrase deliberately reuses its aggressor, and entering those repeats as independent
-samples is the same modelling error one level down). So 4σ is **stricter and quieter at once**:
-it detects p ≥ 0.549 where the old gate needed 0.638, while false-failures fall to ~1 run in
-16,000. Break-verified both halves — with the coin forced to 0.57 the new gate fails 11/12 passes
-at ≥4σ (median 5.74σ) and **the old win statistic saw nothing at all, 0/12, median 0.74σ.** The
-win count is kept at a loose 6σ, because a fair coin does not prove fair outcomes: damage, reach
-or the reaction table could be asymmetric under a perfectly fair director.
+The gate runs **twelve rounds now, not three** — ~478 matches and ~6,690 coins a pass — and **both
+halves sit at 4σ**. The round count is what pays for the threshold: a first version moved the coin
+to 4σ (right, it had gained 13.8× the samples) and the *win* count to 6σ at the same time (wrong —
+same estimator, same ~119 matches, only the bar moved), which is the "raise the threshold until it
+stops failing" this repo warns against, applied to the one property the coin cannot see. **A
+threshold may only rise when the evidence does.** Caught by `/code-review` before deploy.
+
+Re-measured at the shape actually used, 60 passes: p(coin) = **0.49999 over 401,208 throws**,
+p(wins) = **0.49887 over 28,657 matches**, max σ 2.40 / 2.74, **0 at ≥4σ**. Both halves now detect
+better than the 3σ they replace *and* false-fail ~1 run in 16,000 instead of ~1 in 175. The
+detector also counts the opening throw of each match, which the first version missed (1.70%,
+unbiased). Break-verified: with the coin forced to 0.57 the new gate fails 11/12 passes at ≥4σ
+(median 5.74σ) while **the old win statistic saw nothing at all, 0/12, median 0.74σ.**
 
 **Closed 2026-09-15** — two of the three named gate gaps, and the suite is **88**.
 

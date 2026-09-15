@@ -26,17 +26,29 @@ chained phrase deliberately reuses its aggressor, and counting those repeats as 
 samples would be the same modelling error the win statistic made one level down.
 
 Calibrated before the threshold was chosen, over 200 passes: pooled p(att="a") = **0.49983 over
-329,113 throws** (z = 0.19), lag-1 agreement 0.49931, σ median 0.75 / max 2.88, ≥3σ in **0 of
-200**. So the engine is fair and the throws are independent — and ~1,646 samples a pass instead of
-119 means 4σ is **stricter and quieter at once**: p ≥ 0.549 detected, false failures down to ~1 run
-in 16,000 from ~1 in 175. That is the one case where raising a threshold was not masking flakiness,
-because the statistic changed underneath it.
+329,113 throws** (z = 0.19), lag-1 agreement 0.49931. So the engine is fair and the throws are
+independent.
+
+**The first version of this rewrite then got the other half wrong, and `/code-review` caught it
+before the deploy.** It moved the coin to 4σ — right, it had gained 13.8× the samples — and moved
+the *win* count from 3σ to 6σ in the same edit. The win estimator had not changed and neither had
+its ~119 matches, so only the bar moved: detection went from p ≥ 0.638 to p ≥ 0.775 for the one
+property the coin gate cannot see. That is precisely the "raise the threshold until it stops
+failing" this repo warns against, applied to the half that got no new evidence. **The rule it
+sharpens: a threshold may only rise when the evidence does.**
+
+The fix is samples, not threshold. The gate runs **twelve rounds** now — ~478 matches and ~6,690
+coins a pass — with both halves at 4σ, re-measured at that shape rather than assumed to transfer
+(60 passes): p(coin) = **0.49999 over 401,208 throws**, p(wins) = **0.49887 over 28,657 matches**,
+σ max 2.40 / 2.74, **0 at ≥4σ**. Both now detect better than the 3σ they replace *and* false-fail
+~1 run in 16,000 instead of ~1 in 175. The detector was also corrected to count the opening throw
+of each match, which the first version missed because the reset clears `chain` and `runDirector`
+fires in the same frame — 1.70% of throws, unbiased, but a sample count every threshold rests on
+should be exact. Cost: 1.44M stepped frames, ~20s, and the suite still finishes in ~42.
 
 Break-verified in both directions, which is the only evidence that matters here: with the coin
 forced to 0.57 the new gate fails **11 of 12** passes at ≥4σ (median 5.74σ) while **the old win
-statistic saw nothing at all — 0 of 12, median 0.74σ.** The win count is kept at a loose 6σ,
-because a fair coin does not prove fair outcomes; damage, reach or the reaction table could be
-asymmetric under a perfectly fair director.
+statistic saw nothing at all — 0 of 12, median 0.74σ.**
 
 **One correction to the 2026-09-14 record.** It reported the win statistic as "not reproducible
 standalone" on the strength of 0 in 150 passes. It is reproducible: **2 of 200** here, max 3.29,
@@ -57,6 +69,25 @@ only at the call site, where two of three arguments were being discarded. That l
 beyond its runtime effect (none): `CLAUDE.md` justifies `webauthn-sim.ts` as an *independent second
 opinion*, and one that has quietly stopped matching the shape of what it stands in for is worth less
 than it looks. Its parameter type is taken **from** the interface now, so it cannot drift again.
+
+**Three more from the same review, all pre-deploy:**
+
+- **The `crawlerFile` gate drove the function and never asserted it was called.** Delete the call in
+  `worker/index.ts`, or move it below the asset fetch, and every icon address goes back to `200
+  text/html` while the suite reports 88 green and that gate prints its cheerful summary. Structurally
+  identical to audit item 39 — *a fix that existed only as a comment*. It now checks the call site
+  exists and sits textually above `await asset(request, env)`. **Driving a pure function proves it is
+  right, never that it runs; those are two assertions.**
+- **`/apple-touch-icon-precomposed.png` was still serving the shell.** `index.html` declares no
+  `rel="apple-touch-icon"`, and when no such link exists iOS probes the root itself — asking for
+  `-precomposed` **first**, with sized variants before either on some versions. Matching two exact
+  strings left the name actually requested first wide open, so the fix closed the case it was written
+  for only by accident. It is an anchored pattern now, and the gate drives five probe names.
+- **Nothing on the deploy path ran `npm run typecheck`.** `predeploy` was `check && build`, and
+  `build` is `tsc -b` over the app config alone; `wrangler deploy` esbuilds `worker/` without checking
+  it. So the Worker *and* the newly-typechecked `scripts/` were both unchecked **at deploy time** —
+  asserting the `typecheck` script named all three projects proved only that a command nobody on the
+  deploy path ran was spelled correctly. `predeploy` runs it now, and the gate asserts that too.
 
 **`/favicon.ico` and `/apple-touch-icon.png` answered `200 text/html`** — the whole app shell, with
 the published config inlined into its head — to anything that asked. `index.html` carried a comment

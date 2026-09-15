@@ -64,6 +64,18 @@ const UNLISTED: ReadonlySet<PageId> = new Set<PageId>([
 const SITE = "mcclevarty.ca";
 
 /**
+ * The icon addresses a browser or crawler probes for on its own, none of which
+ * exist here — the favicon is an inline `data:` SVG in `index.html`.
+ *
+ * Anchored at both ends so it can only ever match a root-level icon probe, and
+ * the optional groups are the two things iOS asks for before the plain name:
+ * `-precomposed`, and the sized variants some versions try first. `crawlerFile`
+ * answers all of them 404 rather than letting the SPA fallback hand back the
+ * app shell; see the comment at the branch that uses this.
+ */
+const ICON_PROBE = /^\/(favicon\.ico|apple-touch-icon(-\d{2,4}x\d{2,4})?(-precomposed)?\.png)$/;
+
+/**
  * Attribute-safe escaping.
  *
  * Every value here is site copy rather than visitor input, but the same rule
@@ -213,8 +225,18 @@ export function crawlerFile(url: URL): Response | null {
    * 404 rather than a generated image, deliberately: *Assets* forbids adding
    * one, an honest "there is no file here" is what is true, and a browser
    * handed a 404 falls back to the icon `index.html` already declares.
+   *
+   * **It is a pattern rather than two strings, and that is the half the first
+   * version got wrong.** `index.html` declares only `rel="icon"` — there is no
+   * `rel="apple-touch-icon"` link at all — and when no such link exists iOS
+   * probes the root itself, asking for **`apple-touch-icon-precomposed.png`
+   * first**, then `apple-touch-icon.png`, and on several versions the sized
+   * variants (`-180x180` and friends) before either. Matching the two exact
+   * names left the precomposed one — the one actually asked for first — still
+   * answering 200 with the whole shell, which is the very case the paragraph
+   * above claims to have closed.
    */
-  if (url.pathname === "/favicon.ico" || url.pathname === "/apple-touch-icon.png") {
+  if (ICON_PROBE.test(url.pathname)) {
     return new Response("Not found.", {
       status: 404,
       headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=3600" },
