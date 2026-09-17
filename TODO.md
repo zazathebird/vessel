@@ -5,8 +5,11 @@ they are, `docs/DECISIONS.md` records what was decided when, and `docs/TODO-ARCH
 dated session logs this file used to carry (moved out 2026-09-07 — read it for the reasoning
 behind any item here, by date).
 
-State on 2026-09-15: `npm run check` **89** green, `npm run test:auth` **409**, `npm run typecheck`
-clean across **three** projects (the third, `scripts/`, is new). **DEPLOYED** — live is Worker
+State on 2026-09-17: `npm run check` **90** green, `npm run test:auth` **409**, `npm run typecheck`
+clean across **three** projects (the third, `scripts/`, is new). The 90th gate is audit item 28,
+the host's store blocklist driven through `parse_args` against a symlinked tree. **Not yet
+deployed** — nothing in it touches the Worker or the site; it is `scripts/` and docs only.
+Previously **DEPLOYED** — live is Worker
 `eae7958a`, rollback `38ceae8d`, with **migration 0009 applied to production** (8 commands, no row
 renamed: production held 1 machine and 0 setups, so its two `UPDATE`s matched nothing). The
 find-and-fix audit branch is merged to `main` at `57f76cd`; `main` is **14 commits ahead of
@@ -140,17 +143,21 @@ the hole instead of closing it, #12's first attempt among them.
    to the TypeScript compiler API, and the audit's own read agreed it is reasonable but
    incomplete. Closing it properly means a real AST pass; a cleverer regex would only buy false
    confidence. It stays a known limit on a gate protecting a property that has regressed once.
-2. **#13, downloads (Medium–High): a code for a never-finished upload redeems and burns a use.**
-   Neither `mintCode` nor `opened()` checks `uploaded_at IS NULL`, so the customer spends one of a
-   limited number of uses, lands on a page showing nothing, and gets no error saying why. Same bug
-   class already fixed for withdrawn files. The refusal has to come through the single `denied`
-   object or it becomes an existence oracle — that reasoning is the whole fix.
-3. **#28, `thinkcentre-setup.sh` (Medium): `canon_store()` resolves symlinks only when the full
-   target path already exists**, so `--store <symlinked-ancestor>/newdir` — the normal first-run
-   shape — is compared as a plain string and `prepare_store()` then follows the link for real.
-   Fix is "resolve the longest existing prefix, re-append the tail, fail closed", and the gate has
-   to *execute* `canon_store` against throwaway symlinked directories the way the share-script
-   blocklist gate does.
+2. ~~**#13, downloads: a code for a never-finished upload redeems and burns a use.**~~ **Was
+   already fixed and gated on 2026-09-14; this entry was stale.** `opened()` refuses on
+   `uploaded_at === null` and `claim` resolves the scope *before* spending the use, so the refusal
+   is the shared `denied`/403 and the count does not move. Both halves are asserted in
+   `auth-e2e.ts` ("a code for a file that never finished uploading is refused" / "and that refusal
+   does not spend one of its uses"). **`mintCode` deliberately does not refuse** — minting before
+   uploading is a normal order of work, so the file simply is not yet something a code can open.
+3. ~~**#28, `thinkcentre-setup.sh`: `canon_store()` resolves symlinks only when the full target
+   path already exists.**~~ **Fixed and gated 2026-09-17.** It walks back to the longest prefix
+   that exists as a directory, resolves that, and re-appends the tail; a component that exists but
+   is not a directory is refused rather than carried into the tail (`-L` beside `-e`, for the
+   dangling symlink `mkdir -p` would follow). **The gate drives `parse_args`, not `canon_store`** —
+   driving the resolver alone stays green when the caller stops consulting it — against a real
+   symlinked throwaway tree, 7 verdicts. Break-verified: it fails against the pre-fix script,
+   naming `TMP/link-to-etc/vessel` as ACCEPTED. `docs/DECISIONS.md` carries the reasoning.
 4. **#29, `pi-setup.sh` (Medium): the documented fallback to Debian's `chromium` silently defeats
    the no-auto-upgrade invariant.** `configure_unattended_upgrades()`'s premise is "Chromium comes
    from the Raspberry Pi archive", which is false the moment the fallback fires. Needs *both*
@@ -263,17 +270,20 @@ went 36 → 48 verdicts) and break-verified behaviourally. See `docs/DECISIONS.m
 **Still ungated** of the three named: **`src/hooks` is gated by nothing at all**, and three of the
 2026-09-14 findings were in there.
 
-**Gate coverage** was zero for the most severe. #12, #10/#17, #47, #5 and #6 are gated now. **#13,
-#15, #28 and #29 still are not**, and each fix wants one, per this project's own discipline.
+**Gate coverage** was zero for the most severe. #12, #10/#17, #47, #5, #6, **#13** (in
+`auth-e2e.ts`, both halves — the refusal and that no use is spent) and **#28** (2026-09-17, driving
+`parse_args` against a symlinked tree) are gated now. **#15 and #29 still are not**, and each fix
+wants one, per this project's own discipline.
 
 ## Needs hardware or a human eye — cannot be done from here
 
-1. **Re-upload the setup bundle — now a SECURITY item, not hygiene** (2026-09-15). All three
-   scripts changed: they refused your own `$HOME/.ssh` and **allowed `/home/someone-else/.ssh`**,
-   because every dot-directory entry is keyed to your own home. The published bundle still has
-   that hole. `launch.bat` was already stale (audit item 45); `dist-setup/` needs rebuilding and
-   `CHECKSUMS.txt` regenerating — both are generated, never typed. Downloads editor, existing ids,
-   password at each finish. `docs/DOWNLOADS.md`.
+1. **Re-upload the setup bundle — a SECURITY item, not hygiene** (2026-09-15). All three scripts
+   changed: they refused your own `$HOME/.ssh` and **allowed `/home/someone-else/.ssh`**, because
+   every dot-directory entry is keyed to your own home. The published bundle still has that hole;
+   `launch.bat` was already stale (audit item 45). **`dist-setup/` is rebuilt and current as of
+   2026-09-17** — all four files byte-identical to the gated sources, `CHECKSUMS.txt` regenerated
+   (both are generated, never typed). **What is left is the upload itself**, which needs a signed-in
+   session: downloads editor, existing ids, password at each finish. `docs/DOWNLOADS.md`.
 2. **On a real Pi**: does Raspberry Pi OS add its own archive to unattended-upgrades' origins? If
    so Chromium is replaced under the running kiosk, which `pi-setup.sh` says cannot happen.
 3. **`scripts/macos-share-setup.sh` has never run on a Mac.** `choose_folders` exists now; only the

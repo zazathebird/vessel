@@ -330,6 +330,19 @@ parse_args() {
 #
 # `..` is REFUSED rather than resolved. A repaired path is a path nobody typed, and this one gets
 # chowned.
+#
+# THE RESOLUTION IS OF THE LONGEST EXISTING PREFIX, NOT OF THE WHOLE PATH (2026-09-17, audit item
+# 28). It used to resolve only when the *full* target already existed — `if [ -d "${out}" ]` — and
+# the normal first-run shape is a store that does not exist yet, which is precisely when that test
+# is false. So `--store /srv/data/vessel` with `/srv/data` a symlink to `/etc` was compared as the
+# plain string it was typed as, matched none of the blocked prefixes, and `prepare_store` then
+# followed the link for real: `sudo mkdir -p` created `/etc/vessel` and `sudo chown` handed it to
+# the autologin desktop user at 0750. The comparison has to be done on the path the *kernel* will
+# use, and the existing-prefix walk is how you get that for a path whose tail is not there yet.
+#
+# The same shape the share scripts record twice over: a barrier that compares something other than
+# what the next command acts on is not a barrier. It is also remembered in a user-writable file
+# that later runs re-read, so one bad value is permanent.
 canon_store() {
     local raw="$1" out="" part
     case "${raw}" in /*) ;; *) return 1 ;; esac
@@ -347,11 +360,35 @@ canon_store() {
 
     [ -n "${out}" ] || out="/"
 
-    if [ -d "${out}" ]; then
-        out="$(cd -P "${out}" 2>/dev/null && pwd -P)" || return 1
-        # bash's `pwd -P` PRESERVES a leading `//`, which POSIX lets an implementation treat as
-        # special — so `//etc` came back as `//etc` and compared unequal to `/etc`.
-        while [ "${out#//}" != "${out}" ]; do out="${out#/}"; done
+    # Walk back to the longest prefix that exists as a directory, keeping what we stepped over.
+    #
+    # A component that EXISTS but is not a directory is refused rather than carried into the tail:
+    # a dangling symlink is the case that matters, since it names a target that is not there yet
+    # and `mkdir -p` follows it. `-L` is tested beside `-e` because `-e` is false for a dangling
+    # link — the one shape this whole function exists to catch.
+    local head="${out}" tail=""
+    while [ "${head}" != "/" ] && [ ! -d "${head}" ]; do
+        if [ -e "${head}" ] || [ -L "${head}" ]; then return 1; fi
+        tail="${head##*/}${tail:+/}${tail}"
+        head="${head%/*}"
+        [ -n "${head}" ] || head="/"
+    done
+    # Fail closed. Reaching here with `/` not a directory should be impossible; behaving as though
+    # the path were fine would be the one outcome worth avoiding.
+    [ -d "${head}" ] || return 1
+
+    head="$(cd -P "${head}" 2>/dev/null && pwd -P)" || return 1
+    # bash's `pwd -P` PRESERVES a leading `//`, which POSIX lets an implementation treat as
+    # special — so `//etc` came back as `//etc` and compared unequal to `/etc`.
+    while [ "${head#//}" != "${head}" ]; do head="${head#/}"; done
+
+    if [ -n "${tail}" ]; then
+        case "${head}" in
+            /) out="/${tail}" ;;
+            *) out="${head}/${tail}" ;;
+        esac
+    else
+        out="${head}"
     fi
 
     printf '%s' "${out}"

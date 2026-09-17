@@ -165,6 +165,174 @@ function ConvertTo-JsonString {
     return $builder.ToString()
 }
 
+<#
+    WHAT THE SITE WILL REFUSE, ASKED HERE INSTEAD OF AT THE PASTE BOX.
+
+    `decodeSetupCode` refuses a label or path carrying a character that can lie
+    about what it says — every format character, private use, a lone surrogate,
+    the default-ignorables and variation selectors, and every space that is not
+    U+0020 — and it refuses the WHOLE code, not the row. This script checked for
+    C0 and DEL and nothing else, which is not the same set at all: measured, a
+    folder called "Family <emoji ZWJ sequence>" (the joiner is a format
+    character) and one called "Photos<NBSP>2024" each produced a code that the
+    site refused outright, with every junction already made.
+
+    The decoder's own comment is the argument for doing it here: refusing a
+    presentation selector "would refuse the WHOLE code over one honest folder,
+    on the happy path". Both of those folders were exactly that. So the folder
+    is named and refused BEFORE anything is linked, and the customer is told to
+    rename it — which is the only fix there is.
+
+    WALKED BY CODE POINT, NEVER MATCHED WITH \p{Cs}. .NET regular expressions
+    run over UTF-16 code units, so `\p{Cs}` matches BOTH HALVES of every astral
+    character — one `[\p{Cs}]` would refuse every folder with an emoji in its
+    name, which is the outage this exists to prevent rather than a version of
+    it. `\p{Cn}` is left out for the matching reason: .NET's Unicode tables and
+    the browser's move independently, and an unassigned code point in one and
+    not the other would refuse an honest folder. Those still land at the paste
+    box. Everything else here is the shell scripts' list, code point for code
+    point, including the U+FE0E / U+FE0F carve-out for emoji presentation.
+#>
+function Test-Ignorable {
+    param([int] $Cp)
+    return ($Cp -eq 173 -or $Cp -eq 847 -or $Cp -eq 1564 -or $Cp -eq 1757 -or $Cp -eq 1807 -or
+            $Cp -eq 2274 -or ($Cp -ge 1536 -and $Cp -le 1541) -or ($Cp -ge 2192 -and $Cp -le 2193) -or
+            ($Cp -ge 4447 -and $Cp -le 4448) -or ($Cp -ge 6068 -and $Cp -le 6069) -or
+            ($Cp -ge 6155 -and $Cp -le 6159) -or ($Cp -ge 8203 -and $Cp -le 8207) -or
+            ($Cp -ge 8234 -and $Cp -le 8238) -or ($Cp -ge 8288 -and $Cp -le 8292) -or
+            ($Cp -ge 8294 -and $Cp -le 8303) -or $Cp -eq 10240 -or $Cp -eq 12644 -or
+            ($Cp -ge 65024 -and $Cp -le 65039) -or $Cp -eq 65279 -or $Cp -eq 65440 -or
+            ($Cp -ge 65520 -and $Cp -le 65531) -or $Cp -eq 69821 -or $Cp -eq 69837 -or
+            ($Cp -ge 78896 -and $Cp -le 78911) -or ($Cp -ge 113824 -and $Cp -le 113827) -or
+            ($Cp -ge 119155 -and $Cp -le 119162) -or ($Cp -ge 917504 -and $Cp -le 921599))
+}
+
+# Cut to the site's ceiling without ending on half a character. A .NET string
+# length is UTF-16 units, which is what the decoder counts — but `Substring`
+# will happily cut BETWEEN the two halves of an astral character, and a lone
+# surrogate is refused, so a 40-character truncation could itself be what made
+# the code unusable.
+function Limit-Text {
+    param([string] $Value, [int] $Max)
+
+    if ($Value.Length -le $Max) { return $Value }
+    $cut = $Value.Substring(0, $Max)
+    if ([char]::IsHighSurrogate($cut[$cut.Length - 1])) { $cut = $cut.Substring(0, $cut.Length - 1) }
+    return $cut
+}
+
+function Get-TextOffense {
+    param([string] $Value)
+
+    for ($i = 0; $i -lt $Value.Length; $i++) {
+        $ch = $Value[$i]
+        if ([char]::IsHighSurrogate($ch)) {
+            if (($i + 1) -lt $Value.Length -and [char]::IsLowSurrogate($Value[$i + 1])) {
+                $cp = [char]::ConvertToUtf32($ch, $Value[$i + 1])
+                $i++
+            } else {
+                return "a character no font can be relied on to draw (character $($i + 1))"
+            }
+        } elseif ([char]::IsLowSurrogate($ch)) {
+            return "a character no font can be relied on to draw (character $($i + 1))"
+        } else {
+            $cp = [int] $ch
+        }
+
+        $why = ''
+        if ($cp -lt 32 -or $cp -eq 127 -or ($cp -ge 128 -and $cp -le 159) -or
+            $cp -eq 8232 -or $cp -eq 8233) {
+            $why = 'a line break or control character'
+        } elseif ($cp -eq 160 -or $cp -eq 5760 -or ($cp -ge 8192 -and $cp -le 8202) -or
+                  $cp -eq 8239 -or $cp -eq 8287 -or $cp -eq 12288) {
+            $why = 'a space that is not the ordinary space'
+        } elseif (($cp -ge 57344 -and $cp -le 63743) -or ($cp -ge 983040 -and $cp -le 1048573) -or
+                  ($cp -ge 1048576 -and $cp -le 1114109)) {
+            $why = 'a character no font can be relied on to draw'
+        } elseif ((Test-Ignorable $cp) -and $cp -ne 65038 -and $cp -ne 65039) {
+            $why = 'an invisible character'
+        }
+        if ($why) { return "$why (character $($i + 1))" }
+    }
+    return ''
+}
+
+<#
+    `foldLabel`, for the duplicate test and ONLY for it.
+
+    The site compares two labels through that fold — invisibles stripped, NFKC,
+    the visible look-alikes, case, `l/I/1/|`, `O/0`, runs of whitespace — and
+    refuses the whole code when two collide. This compared with a hashtable,
+    which is case-insensitive and nothing else, so `Documents\photos` and
+    `Pictures\Photos` produced two junctions, a code, and a refusal at the paste
+    box. Disambiguating here is what the exact-match version already did for an
+    exact collision; this makes it the same question the site asks.
+
+    The label is STORED as it was found. Only the comparison folds — a
+    normalised label is a label this script did not write.
+#>
+#
+# A Dictionary[char,char] and NOT a `@{}` hashtable, for two reasons that are
+# both faults rather than preferences: PowerShell's hash literal uses a STRING
+# comparer, which cannot hash a [char] key at all, and that comparer is
+# case-insensitive — so U+0430 and U+0410, which are the lower and upper case
+# of the same Cyrillic letter, would be one key and the literal would refuse to
+# build. The table maps straight to lower case because the fold lowers anyway.
+$Script:Confusables = New-Object 'System.Collections.Generic.Dictionary[char,char]'
+$Script:ConfusablePairs = @(
+    0x0430,'a', 0x0435,'e', 0x043e,'o', 0x0440,'p', 0x0441,'c',
+    0x0443,'y', 0x0445,'x', 0x0456,'i', 0x0458,'j', 0x0455,'s',
+    0x04bb,'h', 0x0501,'d', 0x051b,'q', 0x051d,'w', 0x0475,'v',
+    0x0410,'a', 0x0412,'b', 0x0415,'e', 0x041a,'k', 0x041c,'m',
+    0x041d,'h', 0x041e,'o', 0x0420,'p', 0x0421,'c', 0x0422,'t',
+    0x0425,'x', 0x0405,'s', 0x0406,'i', 0x0408,'j', 0x04ae,'y',
+    0x0474,'v',
+    0x03bf,'o', 0x03b9,'i', 0x03bd,'v', 0x03c1,'p', 0x03c5,'u',
+    0x0391,'a', 0x0392,'b', 0x0395,'e', 0x0396,'z', 0x0397,'h',
+    0x0399,'i', 0x039a,'k', 0x039c,'m', 0x039d,'n', 0x039f,'o',
+    0x03a1,'p', 0x03a4,'t', 0x03a5,'y', 0x03a7,'x',
+    0x0131,'i', 0x0237,'j', 0x0261,'g', 0x0251,'a',
+    0x1d00,'a', 0x0274,'n', 0x026a,'i', 0x0299,'b',
+    0x1d04,'c', 0x1d05,'d', 0x1d07,'e', 0x029c,'h', 0x1d0a,'j',
+    0x1d0b,'k', 0x029f,'l', 0x1d0d,'m', 0x1d0f,'o', 0x1d18,'p',
+    0x0280,'r', 0x1d1b,'t', 0x1d1c,'u', 0x1d20,'v', 0x1d21,'w',
+    0x028f,'y', 0x1d22,'z'
+)
+for ($i = 0; $i -lt $Script:ConfusablePairs.Count; $i += 2) {
+    $Script:Confusables[[char][int] $Script:ConfusablePairs[$i]] = [char][string] $Script:ConfusablePairs[$i + 1]
+}
+
+function Get-FoldedLabel {
+    param([string] $Value)
+
+    $stripped = New-Object System.Text.StringBuilder
+    for ($i = 0; $i -lt $Value.Length; $i++) {
+        $ch = $Value[$i]
+        if ([char]::IsHighSurrogate($ch) -and ($i + 1) -lt $Value.Length -and
+            [char]::IsLowSurrogate($Value[$i + 1])) {
+            $cp = [char]::ConvertToUtf32($ch, $Value[$i + 1])
+            if (-not (Test-Ignorable $cp)) { [void] $stripped.Append($ch).Append($Value[$i + 1]) }
+            $i++
+            continue
+        }
+        if (-not (Test-Ignorable ([int] $ch))) { [void] $stripped.Append($ch) }
+    }
+
+    $folded = $stripped.ToString().Normalize([System.Text.NormalizationForm]::FormKC)
+
+    $out = New-Object System.Text.StringBuilder
+    foreach ($ch in $folded.ToCharArray()) {
+        if ($Script:Confusables.ContainsKey($ch)) { [void] $out.Append($Script:Confusables[$ch]) }
+        else { [void] $out.Append($ch) }
+    }
+
+    $result = $out.ToString().ToLowerInvariant()
+    $result = $result -replace '[il|]', '1'
+    $result = $result -replace 'o', '0'
+    $result = $result -replace '\s+', ' '
+    return $result.Trim()
+}
+
 function New-SetupCode {
     param(
         [string] $MachineName,
@@ -251,10 +419,6 @@ function Test-ShareableFolder {
 
     if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
         return "That folder does not exist (or is not a folder): $Path"
-    }
-
-    if ($Path.Length -gt 400) {
-        return "That folder's path is too long to share ($($Path.Length) characters, limit 400): $Path"
     }
 
     # Refuse UNC and device paths outright. `\\localhost\C$\Users\me` and
@@ -379,6 +543,25 @@ function Test-ShareableFolder {
         return "That looks like a shortened (8.3) path, which this script will not resolve safely: $full`n      Open the folder in Explorer and copy its full name from the address bar."
     }
 
+    # THE LENGTH IS MEASURED ON THE RESOLVED PATH, WHICH IS THE ONE THAT GOES IN
+    # THE CODE. It used to be measured on $Path as typed, at the top of this
+    # function — so a short path through a junction passed at its typed length
+    # and was emitted at its real one, over the decoder's ceiling of 400, which
+    # refuses the WHOLE code after every junction has been made. Check the
+    # identity that is actually shared, the same rule that makes this function
+    # hand $full back rather than let the caller re-derive it. A .NET string
+    # length is UTF-16 units, which is exactly what the site counts.
+    if ($full.Length -gt 400) {
+        return "That folder's real path is too long to share ($($full.Length) characters, limit 400): $full"
+    }
+
+    # And what the site will refuse to render. Refusing the folder by name here
+    # costs one folder; the site refuses the whole code. See Get-TextOffense.
+    $offense = Get-TextOffense $full
+    if ($offense) {
+        return "That folder's path contains $offense, which the website will not accept: $full`n      Rename the folder and run this again."
+    }
+
     # Blocked outright, but their children are fine — you may share Documents,
     # you may not share the profile that contains it.
     $blockExact = @(
@@ -439,14 +622,57 @@ function Test-ShareableFolder {
         (Join-Path $env:LOCALAPPDATA 'Mozilla')
     ) | Where-Object { $_ } | ForEach-Object { $_.TrimEnd('\') }
 
+    # A PROFILE FOLDER IS NEVER SHAREABLE, WHOEVER OWNS IT (2026-09-15).
+    #
+    # %USERPROFILE% is in $blockExact and so is its parent, and that pair looks
+    # complete until you notice what sits BETWEEN them. `C:\Users\dad` matches
+    # neither: it is not `C:\Users`, it is not this account's %USERPROFILE%, and
+    # no prefix entry names it. Driven under pwsh against the real function, it
+    # was ALLOWED — and so was `C:\Users\dad\.ssh`, which is the sharper half,
+    # because every dot-directory in $blockPrefix is written
+    # `(Join-Path $env:USERPROFILE '.ssh')` and is therefore keyed to YOUR
+    # profile. The list refuses your own SSH keys and hands over your
+    # housemate's.
+    #
+    # Same shape as the failures recorded above, one level over: there it was a
+    # blocked leaf under a shareable ancestor, here a blocked parent with
+    # shareable children. The rule covering both is that a blocked thing must
+    # have no shareable neighbour holding the same secrets.
+    #
+    # The test is CONTAINMENT rather than "is it a direct child", so the `.ssh`
+    # case is caught too, and it deliberately lets the container ITSELF fall
+    # through to $blockExact, which names it and has a message written for it.
+    $profileRoot = $env:USERPROFILE.TrimEnd('\')
+    $profileParent = (Split-Path -Parent $env:USERPROFILE)
+    if ($profileParent) {
+        $profileParent = $profileParent.TrimEnd('\')
+        if ($full.StartsWith($profileParent + '\', [System.StringComparison]::OrdinalIgnoreCase) -and
+            -not ($full -ieq $profileRoot) -and
+            -not $full.StartsWith($profileRoot + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+            return "That is inside somebody else's account folder, so it will not be shared: $full`n      Share the folders inside your own — Documents, or Pictures."
+        }
+    }
+
     foreach ($bad in $blockExact) {
         if ($full -ieq $bad) {
             return "That folder holds far more than you mean to share, so it will not be linked: $full`n      Share the folders inside it instead — Documents, or Pictures, rather than the whole profile."
         }
     }
 
+    # A PREFIX ENTRY BLOCKS THE DIRECTORY ITSELF AS WELL AS ITS CHILDREN, and
+    # the `-ieq` half of this test is why (2026-09-14). `StartsWith($bad + '\')`
+    # is FALSE when the path IS the entry, so any entry that appears here and
+    # not in $blockExact blocked everything underneath it and not the thing
+    # itself. Five were in exactly that shape — %USERPROFILE%\.ssh, .aws,
+    # .gnupg, .docker, .kube — and measured against a fake profile, `...\.ssh`
+    # was ALLOWED while `...\.ssh\sub` was refused. That is the customer's
+    # private keys junctioned into the share root, on a page that tells them to
+    # pick the share root as one folder. The Unix scripts never had it: their
+    # `case "$f/" in "$b"/*` matches the empty tail. Do not "simplify" this
+    # back to a prefix test; an entry here means the folder and its contents.
     foreach ($bad in $blockPrefix) {
-        if ($full.StartsWith($bad + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+        if ($full -ieq $bad -or
+            $full.StartsWith($bad + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
             return "That folder is inside somewhere private and will not be shared: $full`n      It holds credentials or system files, not documents."
         }
     }
@@ -599,7 +825,16 @@ function Set-BrowserPolicy {
         }
 
         # The list is numbered from 1, and re-running must not add a duplicate.
+        #
+        # THE UNNAMED DEFAULT VALUE IS FILTERED HERE TOO. The fix recorded below
+        # was applied to $names and not to this line two lines above it, which
+        # still asked `Get-ItemProperty -Name ''` for every name it was handed —
+        # and with $ErrorActionPreference = 'Stop' that THROWS. A registry key
+        # carrying a default value therefore killed the run AFTER the junctions
+        # were made and BEFORE the setup code was printed: every link on the
+        # disk, nothing on the screen to paste.
         $existing = (Get-Item -Path $listKey).GetValueNames() |
+            Where-Object { $_ } |
             ForEach-Object { (Get-ItemProperty -Path $listKey -Name $_).$_ }
 
         if ($existing -contains $Script:SiteOrigin) {
@@ -813,7 +1048,19 @@ function Main {
     # — the same shape as the kiosk URL finding in the host scripts
     # (docs/SECURITY-AUDIT.md item 20), delivered by "type this in the box".
     # A profile directory is "Default" or "Profile N"; that is the closed set.
-    if ($BrowserProfile -and $BrowserProfile -notmatch '^[A-Za-z0-9][A-Za-z0-9 _.-]{0,63}$') {
+    # AND THE NEWLINE IS REFUSED SEPARATELY, because `$` is not the end of the
+    # string. In .NET `$` matches before a TRAILING NEWLINE as well as at the
+    # end, so "Default`n" satisfied a regex whose whole job is to be a closed
+    # set — verified under pwsh. Nothing exploitable followed from it here (the
+    # value stays inside its quoted token), but this is the same anchor fault
+    # that let a two-line kiosk URL past the host scripts' host check, and a
+    # control that does not enforce what its comment says is not a control.
+    # `\z` would say it in one regex; `scripts/check.ts` greps for this line as
+    # written, so the second test says it instead rather than the gate being
+    # weakened to suit the fix.
+    # (`-and` binds tighter than `-or`, so this is "non-empty and off the
+    # charset" OR "carries a line break" — an empty value still passes.)
+    if ($BrowserProfile -and $BrowserProfile -notmatch '^[A-Za-z0-9][A-Za-z0-9 _.-]{0,63}$' -or $BrowserProfile -match '[\r\n]') {
         Write-Fail "-BrowserProfile can only be a profile folder name such as Default or ""Profile 1""."
         exit 1
     }
@@ -869,11 +1116,20 @@ function Main {
         # names the folder that is actually shared rather than the alias typed.
         $label = Split-Path -Leaf $full
         if ([string]::IsNullOrWhiteSpace($label)) { $label = 'Folder' }
-        if ($label.Length -gt 40) { $label = $label.Substring(0, 40) }
+        $label = Limit-Text $label 40
 
+        # De-duplicated through the DECODER'S fold, not by hashtable identity —
+        # see Get-FoldedLabel. The suffix must not push the label past the
+        # site's 40-unit ceiling either, so the base is cut to make room for it
+        # rather than the sum being truncated afterwards.
         $base = $label; $n = 2
-        while ($usedLabels.ContainsKey($label)) { $label = "$base $n"; $n++ }
-        $usedLabels[$label] = $true
+        $folded = Get-FoldedLabel $label
+        while ($usedLabels.ContainsKey($folded)) {
+            $label = (Limit-Text $base (40 - ("$n".Length + 1))) + " $n"
+            $n++
+            $folded = Get-FoldedLabel $label
+        }
+        $usedLabels[$folded] = $true
 
         [void] $entries.Add(@{ Label = $label; Path = $full })
     }
@@ -898,7 +1154,41 @@ function Main {
     $machineName = ''
     if (-not $Folders) {
         $machineName = (Read-Host "  A name for this machine (Enter to decide on the website)").Trim()
-        if ($machineName.Length -gt 40) { $machineName = $machineName.Substring(0, 40) }
+        $machineName = Limit-Text $machineName 40
+
+        # Typed rather than read off the disk, so it is the one field here that
+        # can hold anything at all — and the site refuses the whole code over
+        # it. An empty name is exactly what "decide on the website" means, so
+        # the name is dropped and said out loud: that costs a suggestion, where
+        # keeping it would cost the code.
+        $nameOffense = Get-TextOffense $machineName
+        if ($nameOffense) {
+            Write-Warn "That name contains $nameOffense, which the website will not accept."
+            Write-Warn "Leaving it blank; you can name this machine on the website instead."
+            $machineName = ''
+        }
+    }
+
+    # ---- 2b. the code is built BEFORE the links, because it can be too long --
+    #
+    # `decodeSetupCode` refuses a code over 4,096 characters outright, and
+    # nothing here had ever looked: measured with 24 real folders under a deep
+    # tree, this printed an 8,279-character code that the site refused whole,
+    # with every junction already made. The 24-folder cap above is not the same
+    # bound — 24 long paths are nearly twice the ceiling.
+    #
+    # Folders come off the END, one at a time, and each one is NAMED, on screen
+    # and on the manual list. That is the 24-folder cap's own shape, and it
+    # keeps the promise the decoder's refusal is about: a folder is on the
+    # checklist and linked, or on neither and said out loud.
+    $code = New-SetupCode -MachineName $machineName -Entries $entries.ToArray()
+    while ($code.Length -gt 4096 -and $entries.Count -gt 1) {
+        $dropped = $entries[$entries.Count - 1]
+        Write-Warn "Dropped '$($dropped.Label)' ($($dropped.Path)) — one setup code carries about"
+        Write-Warn "4,000 characters and these paths are long ones."
+        Add-Manual "'$($dropped.Label)' ($($dropped.Path)) is NOT on the checklist and was not linked: the setup code ran out of room. Run this script again with just that folder, or add it in the browser directly."
+        $entries.RemoveAt($entries.Count - 1)
+        $code = New-SetupCode -MachineName $machineName -Entries $entries.ToArray()
     }
 
     # ---- 3. the links ------------------------------------------------------
@@ -928,8 +1218,9 @@ function Main {
     # ---- 5. the setup code -------------------------------------------------
     Write-Step "Your setup code"
 
-    $code = New-SetupCode -MachineName $machineName -Entries $entries.ToArray()
-
+    # $code was built above, before the junctions, so that a code too long for
+    # the site could cost a folder rather than the whole run. Do not rebuild it
+    # here: the list it was measured against is the list that was linked.
     $codeFile = Join-Path $ShareRoot 'setup-code.txt'
     try {
         if ($PSCmdlet.ShouldProcess($codeFile, "Write the setup code")) {

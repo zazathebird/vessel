@@ -13,6 +13,50 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-09-17 — the host's store blocklist canonicalises a path that does not exist yet
+
+Audit item 28, and the fourth instance of one shape: **a barrier that compares something other than
+what the next command acts on is not a barrier.**
+
+`thinkcentre-setup.sh --store` reaches `sudo mkdir -p`, `sudo chown "${USER}:${grp}"` and
+`sudo chmod 0750`, and the accepted value is written to a user-writable file that every later run
+re-reads — so one bad value is permanent. `parse_args` refuses `/etc`, `/usr`, `/var`, `/root`,
+`/home` and the rest, outright or by prefix, and it refuses them against `canon_store`'s output.
+
+`canon_store` resolved symlinks only inside `if [ -d "${out}" ]` — **only when the full target
+already existed.** A store that does not exist yet is the normal first-run shape, and that is
+precisely when the test is false. So:
+
+```
+                                   pre-fix            fixed
+  <tmp>/link-to-etc/vessel         ACCEPTED           REFUSED     (link-to-etc -> /etc)
+  <tmp>/link-to-etc                refused            refused     (existed, so it resolved)
+```
+
+The second line is why this survived review: the case everyone reaches for when testing — point
+`--store` *at* a symlink — was always handled, because `[ -d ]` follows links. Only a **tail that
+is not there yet** slipped past, and that is the shape the runbook tells people to type.
+`prepare_store` then follows the link for real: `/etc/vessel`, created and handed to the autologin
+desktop user at 0750.
+
+The fix walks back to the longest prefix that exists as a directory, resolves *that* with `cd -P`,
+and re-appends the tail. A component that exists but is not a directory is **refused, not carried
+into the tail** — `-L` is tested beside `-e` because `-e` is false for a dangling symlink, which
+names a target that is not there yet and which `mkdir -p` follows. The `//` collapse and the
+refusal of `..` are unchanged.
+
+**The gate drives `parse_args`, not `canon_store`.** Driving the resolver alone is the mistake the
+duel camera gate records: it stays green when the caller stops consulting it, and the caller is the
+barrier. `die` is stubbed to a refusal, the globals the function reads are supplied, and the real
+comparison runs against a real symlinked throwaway tree — seven verdicts, five refusals and two
+ordinary paths that must still be accepted, because a blocklist that has become a wall is its own
+failure. **Break-verified**: against the pre-fix script it fails, naming
+`TMP/link-to-etc/vessel` as ACCEPTED.
+
+`npm run check` 90, `npm run typecheck` clean across three projects.
+
+---
+
 ## 2026-09-15 — the Windows blocklist is driven, and it found a hole on its first run
 
 The last security-shaped gap of the three `docs/AUDIT-2026-09-14.md` names. Two gates already

@@ -1342,6 +1342,20 @@ wrong machine is worse than not running. `docs/pi-sharing-host.md` and
   work it out. **In `sshd_config` the first value wins**, so a drop-in below an earlier setting is
   written, reloaded and silently ignored — the script asks `sshd -T` whether its settings actually
   took rather than trusting that writing the file was enough.
+- **`canon_store` resolves the LONGEST EXISTING PREFIX, not the whole path** (2026-09-17, audit
+  item 28). `--store` reaches `sudo chown` and `sudo chmod 0750` and is remembered in a
+  user-writable file later runs re-read, so one accepted value is permanent. It used to resolve
+  only when the *full* target already existed — and a store that does not exist yet is the normal
+  first-run shape, which is exactly when that test is false. So `--store /srv/data/vessel` with
+  `/srv/data` a symlink to `/etc` was compared as typed, matched no blocked prefix, and
+  `prepare_store` then followed the link for real and handed `/etc/vessel` to the autologin desktop
+  user. **A component that exists but is not a directory is refused, never carried into the tail** —
+  a dangling symlink names a target that is not there yet and `mkdir -p` follows it, so `-L` is
+  tested beside `-e`. **The gate drives `parse_args`, not `canon_store`**: driving the resolver
+  alone stays green when the caller stops consulting it, and the caller is the barrier. This is the
+  share scripts' *canonicalise first, and fail closed* rule arriving on the host script, which never
+  had it — same shape as the three the blocklists record: **a barrier that compares something other
+  than what the next command acts on is not a barrier.**
 
 ## The setup scripts — the invariants
 

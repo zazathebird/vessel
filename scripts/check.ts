@@ -6778,6 +6778,110 @@ check("both host scripts write the Chromium managed policy, and parse", () => {
 });
 
 /*
+ * The store blocklist, EXECUTED — canonicalisation and the two refusal loops
+ * together, out of the real script (2026-09-17, audit item 28).
+ *
+ * `--store` ends up in `sudo chown ${USER}:${grp}` and `sudo chmod 0750`, and it
+ * is remembered in a user-writable file that later runs re-read, so one accepted
+ * value is permanent. `parse_args` refuses `/etc`, `/usr`, `/var`, `/root` and
+ * the rest — but it compared a path `canon_store` had only *lexically* cleaned
+ * whenever the target did not exist yet, which is the normal first-run shape.
+ * So `--store /srv/data/vessel` with `/srv/data` a symlink to `/etc` matched no
+ * blocked prefix, and `prepare_store` then followed the link for real and handed
+ * `/etc/vessel` to the autologin desktop user.
+ *
+ * This drives `parse_args` itself rather than `canon_store` alone, for the
+ * reason the duel camera gate records: driving the resolver alone stays green
+ * when the caller stops consulting it, and the caller is the barrier. `die` is
+ * stubbed to a refusal and the globals the function reads are supplied, so the
+ * real comparison runs against a real symlinked tree.
+ *
+ * It fails against the pre-fix script — `link-to-etc/vessel` is ACCEPTED there —
+ * which is the only thing that makes it a gate rather than a description.
+ */
+check("the store blocklist refuses a symlinked ancestor, driven", () => {
+  const probe = String.raw`
+set -uo pipefail
+SRC="$1"; TMPROOT="$2"; shift 2
+DEFS="$(awk '/^(canon_store|parse_args)\(\)/{i=1} i{print} i&&/^}/{i=0}' "$SRC")"
+die()  { printf 'REFUSED\n'; exit 7; }
+warn() { :; }
+info() { :; }
+eval "$DEFS"
+for p in "$@"; do
+  out="$(
+    DO_VERIFY_ONLY=0; DO_SSH_KEY_ONLY=0; DO_FIREWALL=1; FIREWALL_EXPLICIT=0
+    DO_CHROMIUM_POLICY=1; POLICY_EXPLICIT=0; DO_AUTO_CHROMIUM=1; AUTOCHROME_EXPLICIT=0
+    DO_ALLOW_SSH_PASSWORDS=0; DO_PIHOLE=0; PIHOLE_ADMIN_LAN=0
+    STORE_DIR=""; STORE_EXPLICIT=0; KIOSK_URL=""; DEFAULT_URL="about:blank"
+    DEFAULT_STORE="/srv/vessel"; STORE_FILE="$TMPROOT/none"; OPTIONS_FILE="$TMPROOT/none2"
+    parse_args --store "$p" about:blank && printf 'ACCEPTED %s\n' "$STORE_DIR"
+  )"
+  # No braced shell expansions anywhere in this probe, deliberately: it is a
+  # template literal on the TypeScript side, and String.raw suppresses backslash
+  # escapes but NOT substitution — so a braced shell default is parsed as
+  # JavaScript and the file stops compiling. Plain "$name" only.
+  [ -n "$out" ] || out=BROKEN
+  printf '%s\t%s\n' "$out" "$p"
+done
+`;
+
+  const root = mkdtempSync(join(tmpdir(), "vessel-store-"));
+  let driven = 0;
+  try {
+    mkdirSync(join(root, "plain"), { recursive: true });
+    // The two shapes that matter: a link whose target is blocked outright, and
+    // one whose target is blocked by prefix. Both are given a tail that does NOT
+    // exist, because an existing tail was resolved correctly even before the fix
+    // — the hole was only ever reachable through a path not yet created.
+    symlinkSync("/etc", join(root, "link-to-etc"));
+    symlinkSync("/var", join(root, "link-to-var"));
+
+    const out = execFileSync(
+      "bash",
+      ["-c", probe, "probe", "scripts/thinkcentre-setup.sh", root,
+       join(root, "link-to-etc", "vessel"),
+       join(root, "link-to-var", "newlib"),
+       join(root, "plain", "store"),
+       "/srv/vessel", "/etc", "//etc/x", "/home"],
+      { encoding: "utf8" },
+    );
+    const verdict = new Map<string, string>();
+    for (const line of out.trim().split("\n")) {
+      const [v, ...rest] = line.split("\t");
+      verdict.set(rest.join("\t"), v);
+    }
+
+    for (const [p, why] of [
+      [join(root, "link-to-etc", "vessel"), "a symlinked ancestor pointing at /etc — this is the shape the fix is for, and it gets chowned"],
+      [join(root, "link-to-var", "newlib"), "a symlinked ancestor pointing at /var"],
+      ["/etc", "a blocked directory named outright"],
+      ["//etc/x", "a leading // must collapse before the comparison"],
+      ["/home", "a directory refused outright"],
+    ] as const) {
+      must(
+        verdict.get(p) === "REFUSED",
+        `thinkcentre-setup.sh ACCEPTED ${p.replace(root, "TMP")} as a data store (${verdict.get(p) ?? "unresolved"}) — ${why}`,
+      );
+      driven += 1;
+    }
+
+    // And it must stay usable, or the safe answer is "refuse everything" and the
+    // script cannot set up the host it exists to set up.
+    for (const p of [join(root, "plain", "store"), "/srv/vessel"]) {
+      must(
+        verdict.get(p)?.startsWith("ACCEPTED") === true,
+        `thinkcentre-setup.sh refused ${p.replace(root, "TMP")}, an ordinary store path — the blocklist has become a wall`,
+      );
+      driven += 1;
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+  return `${driven} verdicts from the real parse_args, against a symlinked throwaway tree`;
+});
+
+/*
  * The desktop-looks project is a SEPARATE repository (2026-09-14), checked out
  * beside this one as `../debian-desktop`. The split is by authority: every script that can
  * take the file host offline — `plasma-dark-setup.sh` above all, which pins the X11
