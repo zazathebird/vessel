@@ -25,7 +25,7 @@ import { useEffect, useState } from "react";
  * Written straight to the DOM rather than held in React state: this fires on
  * every scroll frame of a flick, and re-rendering the header for it would be
  * the one thing on this site that makes a decade-old machine stutter while you
- * drag. It is the same reasoning `useMotionSystems` uses for the cursor lean.
+ * drag. It is the same reasoning `useMotionSystems` uses for its pointer writes.
  */
 /**
  * Which edges are hiding content, from three numbers. `null` means the element

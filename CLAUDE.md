@@ -201,8 +201,9 @@ colour to cross-fade over 0.9s, and pointer feedback needs to land in ~140ms.
 palette never animates a position. `box-shadow` is the one property both want, given the fast timing
 deliberately. Two consequences:
 
-- **Use `translate` / `scale`, never `transform`** — they compose independently, and `transform` is
-  reserved for the cursor-lean `useMotionSystems` writes to `.v-block`'s style attribute.
+- **Use `translate` / `scale`, never `transform`** — they compose independently, and `transform` on
+  `.v-block` stays reserved. It was for the cursor-lean tilt, **which is deleted and must stay
+  deleted** (client, 2026-09-22 — it read as the page twitching; deviation 15, gated).
 - **Selectors are prefixed `.vessel` to reach 0-2-0**, beating `chrome.css` and `overlays.css` on
   specificity rather than import order. Dropping the prefix silently reinstates the 0.9s hover.
 
@@ -412,7 +413,7 @@ about making a trace legible. Read them before writing or editing an effect.
 
 ## Known deviations from the prototype
 
-**The fourteen are listed in full in `docs/INVARIANTS.md`** — all deliberate, each with its reason.
+**The fifteen are listed in full in `docs/INVARIANTS.md`** — all deliberate, each with its reason.
 **Add to that list rather than silently diverging.** In brief: guardrail evaluation is all-clauses
 and must reach the page as well as the dice (1); focus-visible styles exist (2); Magazine's h1
 minimum is the spec's `46px` (3); Matrix rain is rebuilt per column (4); "breathing" drives the
@@ -422,7 +423,7 @@ are literal colours (9); visible "vessel" branding is gone while **internal iden
 keep the old name** (10); photo slots hold EXIF-stripped placeholders (11); the contact sheet
 duotones them in every mode including calm (12); **fourteen layouts, twenty-five palettes, sixteen
 effects, all appended and never inserted** (13); six self-hosted variable webfonts, each paired with
-a platform-picked system fallback (14).
+a platform-picked system fallback (14); **the cursor-lean card tilt is deleted** (15).
 
 ## The duel
 

@@ -5064,6 +5064,33 @@ check("a page's look override reaches the page, and only that page", () => {
   return "override merges, guards resolve on the merge, all three call sites go through the seam";
 });
 
+check("the cursor-lean card tilt stays deleted", () => {
+  /*
+   * Client, 2026-09-22: "this page jiggle/jitter/twitch needs to be killed and
+   * nuked". It was `useMotionSystems` writing a perspective rotate to every
+   * `.v-block`'s style attribute on every pointermove. Deviation 15. Scans the
+   * script side of the app, comments stripped, for the shape of a 3D lean
+   * written from code — CSS keeps its own perspective (the door's theatre).
+   */
+  const offenders: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (path !== join("src", "fx")) walk(path);
+      } else if (/\.(ts|tsx)$/.test(entry.name)) {
+        const src = readFileSync(path, "utf8")
+          .replace(/\/\*[\s\S]*?\*\//g, "")
+          .replace(/\/\/[^\n]*/g, "");
+        if (/perspective\(|rotate[XYZ3]\w*\(/.test(src)) offenders.push(path);
+      }
+    }
+  };
+  walk("src");
+  must(offenders.length === 0, `a 3D lean is written from script again: ${offenders.join(", ")}`);
+  return "no script under src/ (canvas effects aside) writes a perspective or rotate transform";
+});
+
 check("a page look override refuses rubbish and never repairs it", () => {
   // Identity with what came in: a valid partial survives exactly as sent.
   const good = { work: { pal: 3, layout: "ledger", grain: false }, about: { fx: "plasma" } };

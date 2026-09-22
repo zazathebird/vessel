@@ -937,6 +937,14 @@ All deliberate. Add to this list rather than silently diverging.
     re-fatten them. **Each typeset pairs its webfont with a platform-picked system fallback** rather
     than one macOS-first list, because that tail renders during `swap` and permanently if a file
     404s. `TypeSet` also gained `displayWeight`, `bodyWeight` and `tracking`.
+15. **The cursor-lean card tilt is deleted** (client, 2026-09-22: "this page jiggle/jitter/twitch
+    needs to be killed and nuked immediately"). SPEC § Motion systems had every `.v-block` lean toward
+    the pointer — `perspective(1100px) rotateX/Y(±3.4°) translateZ` from `useMotionSystems` on every
+    pointermove — and on the desk it read as the whole page twitching. **Removed, not switched off**:
+    no setting, no flag, `SUPPORTS_TILT` gone. The pointer light (`--mx` / `--my`), the cursor glow
+    and the scroll-velocity boost are untouched. **`transform` on `.v-block` stays reserved** — the
+    CSS rules that keep entrances and layouts off it cost nothing and keep the property free. Gated:
+    no script under `src/` outside the canvas effects may write a perspective or rotate.
 
 ## FX and canvas internals
 
