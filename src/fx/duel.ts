@@ -4320,7 +4320,7 @@ function stepSparks(st: DuelState): void {
  * `NaN > 0` is false, and `st.acc -= NaN` keeps it `NaN`. Every later call is a
  * silent no-op — the fight stops mid-stride and never restarts short of a
  * remount, with nothing logged. The callers' own clamps do not catch it either,
- * because `Math.min(3, Math.max(0.2, NaN))` is also `NaN`; every host of this
+ * because `Math.min(3, Math.max(0, NaN))` is also `NaN`; every host of this
  * engine writes that same line against a `performance.now()` delta. It takes a
  * non-finite delta to reach, which is rare — and the cost of being wrong about
  * how rare is a duel that is permanently dead on somebody's machine.

@@ -70,8 +70,10 @@ export interface FxEntry {
    * array is a wire format; the picker is a product decision, and the two
    * stopped being the same list when the duels were withdrawn.
    *
-   * **No entry carries it today** (the duels were re-listed 2026-08-14), so
-   * `PICKABLE_FX` currently equals `FX`. Keep the flag and keep the two lists
+   * **`duelholy` carries it** (withdrawn from the picker 2026-08-27, because
+   * both duels now draw from the whole roster and two identical menu rows is
+   * worse than one), so `PICKABLE_FX` is fifteen entries against `FX`'s
+   * sixteen. Keep the flag and keep the two lists
    * distinct anyway: this is the mechanism for withdrawing an effect without
    * moving anyone's share code, and collapsing them back into one array is
    * exactly the "tidy-up" that would force the next withdrawal to delete an

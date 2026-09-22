@@ -289,7 +289,12 @@ if [ "${DO_INSTALL}" -eq 1 ]; then
 
     # Theming. kde-config-gtk-style is the load-bearing one: without it Plasma has
     # no way to tell GTK apps what theme to use, and half the desktop stays light.
-    THEME=(kde-config-gtk-style breeze-gtk-theme qt5-style-kvantum qt5-style-kvantum-themes
+    # qt-style-kvantum, NOT qt5-style-kvantum: in trixie both qt5- and qt6- are
+    # transitional packages that depend on this one, which links against Qt5 AND
+    # Qt6 and is the only one that can theme a Qt6 application. The themes arrive
+    # as its dependency. There has never been a qt5-style-kvantum-themes in this
+    # release — naming it is what used to abort the whole batch below.
+    THEME=(kde-config-gtk-style breeze-gtk-theme qt-style-kvantum
            papirus-icon-theme plasma-workspace-wallpapers
            fonts-noto fonts-noto-color-emoji fonts-jetbrains-mono)
 
@@ -304,7 +309,18 @@ if [ "${DO_INSTALL}" -eq 1 ]; then
     DEEPINISH=(deepin-icon-theme imagemagick)
 
     sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q "${CORE[@]}" || die "The core desktop install failed. Fix the apt error above and re-run."
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q "${THEME[@]}" || info "some theming packages failed; continuing"
+    # One package at a time, NOT one batch. apt-get installs NOTHING AT ALL when
+    # any name in the batch is unknown, so a single wrong or renamed package
+    # takes the whole of the theming down with it and the only trace is the
+    # "continuing" line below. That is exactly how this machine ended up with no
+    # Kvantum, no JetBrains Mono and no plasma-workspace-wallpapers, measured
+    # 2026-09-17: qt5-style-kvantum-themes does not exist in trixie, and it was in
+    # the same batch as all three.
+    theme_missing=()
+    for p in "${THEME[@]}"; do
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q "$p" >/dev/null 2>&1 || theme_missing+=("$p")
+    done
+    [ "${#theme_missing[@]}" -eq 0 ] || info "theming packages that would not install: ${theme_missing[*]}"
     OPTIONAL=("${UBUNTUISH[@]}")
     [ "${LOOK}" = "deepin" ] && OPTIONAL+=("${DEEPINISH[@]}")
     missing=()
@@ -430,7 +446,25 @@ set_key kdeglobals KDE SingleClick "false"      # Ubuntu opens on double-click
 set_key kdeglobals KDE widgetStyle "Breeze"
 set_key plasmarc Theme name "${PLASMA_THEME}"
 set_key kwinrc org.kde.kdecoration2 theme "Breeze"
-set_key kdeglobals General fixed "JetBrains Mono,10,-1,5,50,0,0,0,0,0"
+# The monospace font, guarded exactly like the Ubuntu font below, and for a
+# worse failure than that one. Named unguarded, "JetBrains Mono" is handed to
+# fontconfig whether or not it is installed, and fontconfig does not answer with
+# another monospace — `fc-match "JetBrains Mono"` on this box returns Noto Sans.
+# So the desktop's fixed-width font silently stops being fixed width, columns
+# stop lining up in every Qt app, and nothing anywhere reports it.
+# Same pipe rule as below: NO `grep -q`, or pipefail reads a match as a failure.
+if fc-list 2>/dev/null | grep -i 'JetBrains Mono' >/dev/null; then
+    set_key kdeglobals General fixed "JetBrains Mono,10,-1,5,50,0,0,0,0,0"
+    info "monospace: JetBrains Mono"
+else
+    for mono in "Noto Sans Mono" "DejaVu Sans Mono" "Liberation Mono"; do
+        if fc-list 2>/dev/null | grep -i "${mono}" >/dev/null; then
+            set_key kdeglobals General fixed "${mono},10,-1,5,50,0,0,0,0,0"
+            info "monospace: ${mono} (JetBrains Mono not installed)"
+            break
+        fi
+    done
+fi
 
 # The font, only if it is actually installed — a named-but-absent font is how a
 # desktop ends up rendering in the toolkit's last-resort fallback.
@@ -1165,8 +1199,12 @@ After the reboot:
         cp ~/.config/plasma-org.kde.plasma.desktop-appletsrc.before-deepin \
            ~/.config/plasma-org.kde.plasma.desktop-appletsrc
         systemctl --user restart plasma-plasmashell
-  - Kvantum (installed) is the theme engine for anything Breeze cannot reach:
-    run 'kvantummanager' if you want a look Plasma's own themes do not offer.
+  - Kvantum (qt-style-kvantum) is the theme engine for anything Breeze cannot
+    reach. Check it is actually on before relying on it -- the batch it used to
+    be installed in could fail as a whole:
+        dpkg -l qt-style-kvantum | tail -1
+    Then run 'kvantummanager', or set Application Style to Kvantum in System
+    Settings, if you want a look Plasma's own themes do not offer.
   - Remoting in: use krfb, which shares the session already running. An RDP
     server would start a SECOND session and you would never see the kiosk.
         sudo apt install krfb
