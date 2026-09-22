@@ -3195,6 +3195,37 @@ async function main(): Promise<void> {
       days: 0,
     });
 
+    /*
+     * **A page code for a page no code can open is refused, and spends nothing.**
+     * The file branch of `opened()` had this rule; the page branch only checked
+     * the page existed, so a code minted on a draft (allowed, on purpose) or a
+     * page narrowed to `granted` after minting answered 200 with the slug, spent
+     * a use, and handed back a ticket that 404s. Retried, it burns every use.
+     */
+    for (const [visibility, status] of [
+      ["code", "draft"],
+      ["granted", "live"],
+    ] as const) {
+      asBrowser(opSession);
+      await api.adminPageSave({ slug, title: "Harness downloads", layout: "list", visibility, status, authSecret: opProof });
+      asBrowser(stranger);
+      const inert = await api.downloadClaim(orphan.code).then(
+        () => null,
+        (thrown: unknown) => thrown as { status?: number },
+      );
+      check(`a page code for a ${visibility}/${status} page is refused`, inert?.status === 403, `status ${inert?.status}`);
+    }
+    asBrowser(opSession);
+    await api.adminPageSave({ slug, title: "Harness downloads", layout: "list", visibility: "code", status: "live", authSecret: opProof });
+    asBrowser(stranger);
+    const reopened = await api.downloadClaim(orphan.code);
+    check(
+      "and neither refusal spent a use",
+      reopened.pages.includes(slug) && reopened.usesLeft === 4,
+      `usesLeft ${reopened.usesLeft}`,
+    );
+
+    asBrowser(opSession);
     await api.adminPageDelete(slug, opProof);
     asBrowser(stranger);
     const gone = await refusal(() => api.downloadPage(slug));

@@ -127,9 +127,11 @@ import type { Band } from "../src/config/bands";
 import { PRESETS } from "../src/data/presets";
 
 /**
- * `--fast` skips only the duel simulation, which is 360,000 stepped frames and
- * the one gate that takes tens of seconds. Everything else is milliseconds, so
- * the fast pass is what runs after every edit; the full pass gates the deploy.
+ * `--fast` skips only the duel simulation, which is 1.44M stepped frames and
+ * the single most expensive gate. It is not the only slow one, though: measured
+ * 2026-09-17, the full pass is ~55s and the fast pass ~42s, so skipping the duel
+ * buys about twelve seconds rather than the bulk of the run. The fast pass is
+ * what runs after every edit; the full pass gates the deploy.
  */
 const FAST = process.argv.includes("--fast");
 
@@ -1582,9 +1584,10 @@ if (!FAST) check("duel: fairness, reachability, stability", () => {
    *   wins  new  p >= 0.592         ~1 run in 16,000
    *   coin  new  p >= 0.524         ~1 run in 16,000
    *
-   * The cost is 1.44M stepped frames instead of 360k, which measured at about
-   * 20 seconds — the whole suite still finishes in ~42. It is `!FAST`, so it is
-   * paid on `predeploy` and never on the edit hook.
+   * The cost is 1.44M stepped frames instead of 360k, which measured 2026-09-17
+   * at about twelve seconds — the whole suite finishes in ~55, against ~42 with
+   * this gate skipped. It is `!FAST`, so it is paid on `predeploy` and never on
+   * the edit hook.
    */
   const ROUNDS = 12;
   for (let r = 0; r < ROUNDS; r += 1) {
@@ -2397,7 +2400,7 @@ check("duel: the health bar clears every costume, and stays in frame", () => {
  * `Math.max(0, NaN)` is `NaN`, so one bad frame count makes `st.acc` `NaN`
  * permanently: `Math.floor(NaN)` is `NaN`, `NaN > 0` is false, and `acc -= NaN`
  * keeps it `NaN`. Every later call is a silent no-op. The hosts' own clamps do
- * not help — `Math.min(3, Math.max(0.2, NaN))` is also `NaN`, and every host of
+ * not help — `Math.min(3, Math.max(0, NaN))` is also `NaN`, and every host of
  * this engine writes that same line against a `performance.now()` delta.
  */
 /*
@@ -5949,7 +5952,10 @@ check("the setup scripts REFUSE, driven against a real home directory", () => {
   // fails, DEFS comes back empty and every verdict reads BROKEN.
   const probeScript = String.raw`
 set -uo pipefail
-SRC="$1"; FIX="$2"; SIB="$3"
+SRC="$1"; FIX="$2"; SIB="$3"; OS="$4"
+# fold_case asks uname, so a Linux run never folds and a folding bug is
+# invisible to it. The Darwin run answers for the Mac.
+[ "$OS" = Darwin ] && uname() { echo Darwin; }
 DEFS="$(awk '
   /^(canon|fold_case|check_folder)\(\)/ { infn=1 }
   /^(BLOCK_EXACT|BLOCK_PREFIX)=\(/ { inarr=1 }
@@ -5971,20 +5977,32 @@ done
   const root = mkdtempSync(join(tmpdir(), "vessel-blocklist-"));
   let driven = 0;
   try {
+    /*
+     * AND ONCE AS A MAC. `fold_case` lowercases on Darwin only, so every run on
+     * this Linux box compared unfolded strings — and the other-account rule
+     * folded the input but not `/Users` or `$HOME`, so on a real Mac it matched
+     * nothing and `/Users/other/.ssh` was shareable, with this gate green. The
+     * fixture sits under a capitalised `Users` so the fold has something to do.
+     */
+    const runs = [
+      { os: "Linux", base: root, files: ["scripts/linux-share-setup.sh", "scripts/macos-share-setup.sh"] },
+      { os: "Darwin", base: join(root, "Users"), files: ["scripts/macos-share-setup.sh"] },
+    ];
+    for (const { os, base, files } of runs)
     // "bob smith" is the whole point: an ordinary macOS account name, and the
     // shape that shattered the list.
     for (const home of ["plain", "bob smith"]) {
-      const fix = join(root, home);
+      const fix = join(base, home);
       for (const d of [".ssh", ".gnupg", ".config", ".local/share/keyrings", "Documents", "Shared"]) {
         mkdirSync(join(fix, d), { recursive: true });
       }
       // A second account beside it, in the same container — which is what
       // `dirname "$HOME"` resolves to here, so the containment rule can be
       // driven in a throwaway tree instead of only on a real /home.
-      const sibling = join(root, `${home}-neighbour`);
+      const sibling = join(base, `${home}-neighbour`);
       for (const d of [".ssh", "Documents"]) mkdirSync(join(sibling, d), { recursive: true });
-      for (const file of ["scripts/linux-share-setup.sh", "scripts/macos-share-setup.sh"]) {
-        const out = execFileSync("bash", ["-c", probeScript, "probe", file, fix, sibling], {
+      for (const file of files) {
+        const out = execFileSync("bash", ["-c", probeScript, "probe", file, fix, sibling, os], {
           encoding: "utf8",
         });
         const verdict = new Map<string, string>();
@@ -6001,7 +6019,7 @@ done
                          `${fix}/.local`, `${fix}/.local/share`, "/etc", "/"]) {
           must(
             verdict.get(p) === "refused",
-            `${file}: ${p.replace(fix, "~")} is ${verdict.get(p) ?? "unresolved"} with HOME="${home}" — that list is the only barrier there is`,
+            `${file} (${os}): ${p.replace(fix, "~")} is ${verdict.get(p) ?? "unresolved"} with HOME="${home}" — that list is the only barrier there is`,
           );
           driven += 1;
         }
@@ -6018,7 +6036,7 @@ done
         for (const p of [sibling, `${sibling}/.ssh`, `${sibling}/Documents`]) {
           must(
             verdict.get(p) === "refused",
-            `${file}: ${p.replace(sibling, "~other")} is ${verdict.get(p) ?? "unresolved"} with HOME="${home}" — that is another account's files, and the dot-directory entries are keyed to THIS home so nothing else refuses them`,
+            `${file} (${os}): ${p.replace(sibling, "~other")} is ${verdict.get(p) ?? "unresolved"} with HOME="${home}" — that is another account's files, and the dot-directory entries are keyed to THIS home so nothing else refuses them`,
           );
           driven += 1;
         }
@@ -6027,7 +6045,7 @@ done
         // safe answer is "refuse everything" and nobody can share anything.
         must(
           verdict.get(`${fix}/Documents`) === "ALLOWED",
-          `${file}: an ordinary folder is refused with HOME="${home}" — the blocklist has become a wall`,
+          `${file} (${os}): an ordinary folder is refused with HOME="${home}" — the blocklist has become a wall`,
         );
         driven += 1;
       }
@@ -6035,7 +6053,7 @@ done
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-  return `${driven} verdicts from the real check_folder, over 2 scripts x 2 home directories (one with a space)`;
+  return `${driven} verdicts from the real check_folder, over 2 scripts x 2 home directories (one with a space), and the macOS script again as Darwin`;
 });
 
 /*
@@ -6887,7 +6905,7 @@ done
  * take the file host offline — `plasma-dark-setup.sh` above all, which pins the X11
  * session the kiosk silently depends on — stays HERE, gated; the switcher, the
  * screenshots and the looks' documentation, none of which touch anything outside
- * `$HOME`, live there. `../debian/CLAUDE.md` carries the boundary.
+ * `$HOME`, live there. `../debian-desktop/BLUEPRINT.md` §3 carries the boundary.
  *
  * These two gates stay on this side because the thing that breaks them is an edit
  * to the BUILDER, which lives here and fires the check hook on every change. When

@@ -197,9 +197,9 @@ eye.** `112416a` **#5, #4, #7, #6, #50**. `b2a1269` the seven stale comments (**
 
 **Left in the mechanical group deliberately:**
 
-- **#14** — `fileId()` on `addGrant`/`mintCode`'s id reads. One line each, but it is in `worker/`,
-  which the rule above puts on the judgment side however small the fix is. Do it in the same pass
-  as #13, which is in the same file.
+- ~~**#14** — `fileId()` on `addGrant`/`mintCode`'s id reads.~~ **Stale: already fixed**
+  (`downloads.ts` `addGrant`, `downloadPages.ts` `mintCode`; recorded in `docs/AUDIT-2026-09-14.md`
+  item 7). Confirmed by the 2026-09-22 sweep.
 - **#32/#33/#34** — `deepin-exact` excluded from its own package gate, `--accent` checking digit
   count rather than range, the `fc-list` guard applied to the display font but not the mono one a
   line above the comment explaining why. All three are in `plasma-dark-setup.sh`, which carries the
@@ -281,8 +281,11 @@ wants one, per this project's own discipline.
    changed: they refused your own `$HOME/.ssh` and **allowed `/home/someone-else/.ssh`**, because
    every dot-directory entry is keyed to your own home. The published bundle still has that hole;
    `launch.bat` was already stale (audit item 45). **`dist-setup/` is rebuilt and current as of
-   2026-09-17** — all four files byte-identical to the gated sources, `CHECKSUMS.txt` regenerated
-   (both are generated, never typed). **What is left is the upload itself**, which needs a signed-in
+   2026-09-22** — all four files byte-identical to the gated sources, `CHECKSUMS.txt` regenerated
+   (both are generated, never typed). **2026-09-22 adds a second reason**: on a real Mac the
+   other-account rule was inert (it folded the input's case but not `/Users` or `$HOME`), so the
+   macOS script was still allowing `/Users/someone-else/.ssh` even after the 09-15 fix. The rebuilt
+   bundle carries the fix. **What is left is the upload itself**, which needs a signed-in
    session: downloads editor, existing ids, password at each finish. `docs/DOWNLOADS.md`.
 2. **On a real Pi**: does Raspberry Pi OS add its own archive to unattended-upgrades' origins? If
    so Chromium is replaced under the running kiosk, which `pi-setup.sh` says cannot happen.

@@ -254,11 +254,19 @@ async function opened(
      * still exists does not fix that on its own — `deletePage` now deletes the
      * codes too — but it is the half that cannot be forgotten by a future
      * delete path.
+     *
+     * **And it must be a page a code can open — the file branch's `quiet` rule,
+     * which this branch went without for two days after that one was fixed.**
+     * `mintCode` allows a page code on a draft on purpose, and a page can be
+     * switched to `granted` after its codes are out; `canRead` refuses both to a
+     * ticket, so answering them with the slug spent a use on a ticket that 404s,
+     * once per retry.
      */
-    const page = await env.DB.prepare("SELECT slug FROM download_pages WHERE slug = ?")
+    const page = await env.DB.prepare("SELECT visibility, status FROM download_pages WHERE slug = ?")
       .bind(row.slug)
-      .first<{ slug: string }>();
-    return page ? { open: [row.slug], visible: [], items: [] } : { open: [], visible: [], items: [] };
+      .first<{ visibility: string; status: string }>();
+    const quiet = !page || page.visibility === "granted" || page.status !== "live";
+    return quiet ? { open: [], visible: [], items: [] } : { open: [row.slug], visible: [], items: [] };
   }
 
   /*

@@ -510,15 +510,23 @@ check_folder() {
     # loops below give: `$f` arrives resolved, `$HOME` is as the shell found it,
     # and the moment any ancestor of `$HOME` is a symlink the two spellings
     # differ — which would make this refuse the user's OWN files.
+    #
+    # AND BOTH SIDES ARE FOLDED, like every other comparison against `$f`. `$f`
+    # is lowercased on Darwin, so an unfolded `/Users` or `$HOME` never matched
+    # it: this whole rule was inert on the one platform this script is for, and
+    # `/Users/other/.ssh` was shareable. The gate runs on Linux, where folding is
+    # the identity, so it stayed green; it now stubs `uname` to Darwin.
     ch="$(canon "$HOME" 2>/dev/null)" || ch="$HOME"
     hp="$(dirname "$ch")"
+    fch="$(fold_case "$ch")"
     for parent in /home /Users /export/home /var/home "$hp"; do
         case "$parent" in ""|/) continue ;; esac
+        parent="$(fold_case "$parent")"
         # The container itself is named in BLOCK_EXACT; let it answer, so the
         # message a person sees is the one written for that case.
         [ "$f" = "$parent" ] && continue
         case "$f/" in "$parent"/*) ;; *) continue ;; esac
-        case "$f/" in "$ch"/*) continue ;; esac
+        case "$f/" in "$fch"/*) continue ;; esac
         echo "NO That is inside somebody else's account folder, so it will not be shared: $c"
         echo "      Share the folders inside your own — Documents, or Pictures."
         return

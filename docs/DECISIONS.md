@@ -13,6 +13,115 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-09-22 — a sixth security pass: two fixes that each finished an earlier one
+
+Five parallel read-only reviews (auth and sessions, downloads, the Worker's front door and admin,
+phase-2 sharing, the client plus the setup scripts), each finding checked against the code before
+anything was changed. Three slices came back clean. The two real findings are both **a fix applied
+to one branch and not its twin**, which is the shape this codebase keeps producing.
+
+- **Downloads: a page code for a draft or `granted` page redeemed.** `opened()`'s file branch got
+  the `quiet` rule on 2026-09-14 (draft, `granted` or not uploaded opens nothing, so `claim`
+  refuses before spending a use); the page branch only checked that the page existed. `mintCode`
+  allows page codes on drafts on purpose, and a page can be narrowed to `granted` after its codes
+  are out, so the holder got a 200, lost a use, and got a ticket that 404s, once per retry. Low
+  severity: nothing leaked beyond a slug the code was minted for. Fixed with the same rule; three
+  `auth-e2e.ts` checks, **break-verified** (all three fail against the old branch).
+- **macOS setup script: the other-account rule never ran on a Mac.** The 2026-09-15 containment
+  test folded `$f` with `fold_case` but compared it to unfolded `/Users`, `dirname "$HOME"` and
+  `$HOME`, so on Darwin it matched nothing and `/Users/other` and `/Users/other/.ssh` were
+  shareable again. Medium: macOS homes are `drwxr-x---` group `staff`, so world- and group-readable
+  dotfiles (`.docker/config.json`, `.npmrc`, `~/.config`) were reachable. The driven gate stayed
+  green because it runs on Linux, where `fold_case` does nothing; it now also runs the macOS script
+  with `uname` stubbed to Darwin under a capitalised `Users/` fixture, and **fails against the old
+  script**. `linux-share-setup.sh` has no fold and was never affected. `dist-setup/` rebuilt;
+  the upload is still owed (TODO, *Needs hardware or a human eye* item 1).
+
+Below the bar and not changed: signalling sockets outlive a password change (relay/DoS only, the
+signature checks still hold); the agent serves a drive handle still in its IndexedDB after the
+drive row is removed elsewhere (same account only); the byte route reads `item` without `fileId`
+(fails closed); a ticket is not re-bound to a page or file id reused within its 30 minutes.
+
+## 2026-09-17 (later) — CLAUDE.md holds invariants again, and three things were rescued on the way
+
+`CLAUDE.md` had regrown to 1,873 lines — 25,337 words, and roughly 38,000 tokens loaded into every
+session before any work begins. This is the second time: it hit 1,970 lines on 2026-08-20 and was cut
+to 1,163 on 2026-08-24 by the commit whose message was *"CLAUDE.md holds invariants, and history moves
+to DECISIONS.md"*. It regrew because every fix since was recorded **beside** the rule it corrected
+rather than replacing it, which is also how it came to contradict itself in six places.
+
+The same operation, with the same contract: **every invariant survives; only the story of how each was
+found is cut.** Before cutting, the three passages below were checked against every other document in
+the estate and found to exist **nowhere else**. They are moved here rather than deleted.
+
+### 1. The dead `ceiling` / `sincePromotion` locals in the resolution-tier detector
+
+`CLAUDE.md` claimed until 2026-09-14 that a promotion undone within ~900 frames also set a *session
+ceiling*. It did not. The `ceiling` and `sincePromotion` locals existed and were **provably dead** —
+`ceiling` was read only under `mayPromote`, and written only where `mayPromote` is cleared on the very
+next line, so it was 0 at every read.
+
+They were deleted rather than wired up, and the reason is the part worth keeping: **`mayPromote`
+already forbids the retry a ceiling exists to forbid.** There is exactly one promotion attempt per
+load, spent whether it is taken or never earned, and the first demotion spends it too. A ceiling would
+be a second mechanism guarding the same thing.
+
+*Do not re-add a session ceiling on the reasoning that the detector might oscillate.* It cannot; that
+is what the single-attempt rule buys. A comment in `src/fx/FxCanvas.tsx` is the only other surviving
+trace of this.
+
+### 2. The effect-visibility baseline, on Xerox, 2026-08-28
+
+**These thirteen figures exist in no other document, and the tool that produced them was never
+committed.** `scripts/check.ts` refers to *"`scripts/fx-shot.mjs` plus a peak/coverage script"*; no
+such script is in `scripts/` or anywhere in git history. So the baseline cannot be re-derived without
+first rebuilding the instrument — which makes this table the only surviving yardstick for judging
+whether a new or altered effect is actually visible.
+
+Peak is the 99th-percentile channel distance from `bg`; the companion measure is % coverage. Scored on
+peak **and** coverage, never on mean difference from the background — the mean conflates a large area
+slightly different with a small area very bright.
+
+| effect | peak | | effect | peak |
+|---|---|---|---|---|
+| aurora | 108 | | tunnel | 25 |
+| vessels | 71 | | telemetry | 23 (was 16) |
+| bokeh | 54 | | orbits | 17 (was 14) |
+| flow | 50 | | stars | 7 |
+| rain | 42 | | constellation | 3 |
+| plasma | 42 (was 22) | | | |
+| scan | 38 | | | |
+| pressure | 27 (was 16) | | | |
+
+`stars` and `constellation` are **sparse-but-bright by design, not weak** — which is the whole reason
+the score is peak plus coverage rather than a mean. `plasma` and `pressure` were raised that day;
+`telemetry` was the weakest thing in the set until 2026-08-29. An effect must stay short of the loud
+end deliberately: it sits behind body copy on palettes already near the contrast floor.
+
+### 3. The `Boot-Repair` symptom
+
+The rule — every downloads route normalises its id through `fileId` — is recorded in
+`docs/AUDIT-2026-09-14.md`, `AUDIT-FINDINGS.md` item 14 and `TODO.md`. What is only here is **what it
+looked like from the outside**, which is what makes it recognisable if it recurs by another route:
+typing `Boot-Repair` saved the row as `boot-repair`, and then the very next call of the *same submit*
+answered *"Save the file's details first."* — leaving an invisible draft behind.
+
+### What was cut, and what was not
+
+Cut: dated discovery stories, "this entry said X until \<date\>", measurement anecdotes, accounts of
+who noticed what, and the exploit walkthroughs — all of which are carried in this file, in
+`docs/SECURITY-AUDIT.md`, or in the audit documents, usually in more detail than `CLAUDE.md` had them.
+
+Kept: every rule, and the shortest reason each exists. A rule without its reason is a rule the next
+reader will "fix".
+
+Also noted while doing it: `.audit/` (13 pass files) is an undeclared home for history and is not in
+`CLAUDE.md`'s *Where the rest lives* table. `docs/DECISIONS.md` has no 2026-09-14 entry — that
+session's history lives in `AUDIT-FINDINGS.md`, `docs/AUDIT-2026-09-14.md` and
+`docs/SESSION-HANDOFF-2026-09-14.md` — which is exactly why the two orphans above were from that date.
+
+---
+
 ## 2026-09-17 — the host's store blocklist canonicalises a path that does not exist yet
 
 Audit item 28, and the fourth instance of one shape: **a barrier that compares something other than

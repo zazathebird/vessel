@@ -11,5 +11,5 @@
 #
 40d5d4ff0ea3f02129e77dcd64c6faab503eb00af7102f9efbb68197fd29698d  windows-share-setup.ps1
 b9eed399629aaddb0effd21d721e7947826650aa89bc9bd64b3dd898059ec1d9  launch.bat
-d524df31fe131e136c279c4fed7628f423dfd9b08dd91e5fd3c16e36fda8c01f  macos-share-setup.sh
+f0b5e6ac17bb0905cbe76c48a1d162b0c7e1db3fdbf5081460ff966e22efe21e  macos-share-setup.sh
 8d09d584ce9c3f90b9072e448cedd87283a8bed842f925db5ff57b721d3efe93  linux-share-setup.sh
