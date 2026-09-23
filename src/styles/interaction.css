@@ -203,8 +203,22 @@
 }
 
 /* The explorer's tiles, column rows and sort headers. Same split as ever:
-   lift/press here at the fast timing, every colour stays the palette's. */
+   lift/press here at the fast timing, every colour stays the palette's.
+
+   **`.v-ftile` is the explorer's tile; `.v-tile` is the content pages' photo
+   tile and is a `<div>`, not a control** (2026-09-14). The hover lift and press
+   scale named `.v-tile` for months, which is the same confusion chrome.css's
+   `.v-files-grid` comment was written to prevent, arriving from the other
+   direction: every photograph on /work and /gallery advertised itself as a
+   button that does nothing, and the explorer's real `<button>` tiles — the ones
+   that open a folder — got no pointer feedback at all.
+
+   `.v-tile` keeps its place in the transition list and only there: it carries a
+   `box-shadow` rim on Sheet (layouts.css), and this file owns that property's
+   140ms timing, so dropping it here would put the rim back on the 0.9s palette
+   layer. A transition on a property nothing changes costs nothing. */
 .vessel .v-tile,
+.vessel .v-ftile,
 .vessel .v-col-row,
 .vessel .v-files-sort {
   transition: background-color 0.9s ease, color 0.9s ease, border-color 0.9s ease,
@@ -212,13 +226,13 @@
     translate var(--t-hover) var(--ease-ui), scale var(--t-press) var(--ease-ui);
 }
 
-.vessel .v-tile:hover:not(:disabled),
+.vessel .v-ftile:hover:not(:disabled),
 .vessel .v-col-row:hover:not(:disabled),
 .vessel .v-files-sort:hover:not(:disabled) {
   translate: 0 -1px;
 }
 
-.vessel .v-tile:active:not(:disabled),
+.vessel .v-ftile:active:not(:disabled),
 .vessel .v-col-row:active:not(:disabled),
 .vessel .v-files-sort:active:not(:disabled) {
   translate: 0 0;

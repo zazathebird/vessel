@@ -84,12 +84,40 @@ const KEY = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
  * feature has accepted since it shipped. **The two must agree — a route that
  * reads `str(b.id, 64)` directly is this bug again.**
  */
-function fileId(v: unknown): string {
+export function fileId(v: unknown): string {
   return str(v, 64).toLowerCase();
 }
 
 /** Free text, bounded. Long enough for real prose, short enough not to be a store. */
 const LIMITS = { title: 120, summary: 200, intro: 4000, notice: 1200, body: 4000, label: 120 };
+
+/**
+ * How many rows one reorder may carry, and how many parts one upload may
+ * finish. Both are far above any catalogue this operator will ever have and far
+ * below the point where D1's batch limit or R2's part ceiling throws — the
+ * throw being the problem, since it leaves the route answering 500 where it
+ * means "no". Every other user-writable quantity on the site is bounded on
+ * principle; these were the ones that were not.
+ */
+const REORDER_MAX = 500;
+const PARTS_MAX = 10_000;
+
+/**
+ * How many page rows one `listPages` may read.
+ *
+ * `listPages` is **unauthenticated** — `/downloads` serves it to a signed-out
+ * visitor — and it was the one such read on the site with no `LIMIT` at all,
+ * running a correlated `COUNT(*)` over `download_files` for every row in
+ * `download_pages` before `canList` had discarded any of them. `listCodes` and
+ * `listGrants` are both bounded; this was not, and it is the one a stranger can
+ * ask for.
+ *
+ * Deliberately the same figure as `REORDER_MAX`, so the cliff lands where the
+ * operator's own reorder already stops working rather than at some second
+ * unrelated number — and the ordering is `position`, the operator's hand order,
+ * so what falls off the end is their own tail rather than an arbitrary slice.
+ */
+const PAGE_LIST_MAX = 500;
 
 function str(v: unknown, max: number): string {
   return typeof v === "string" ? v.slice(0, max).trim() : "";
@@ -137,7 +165,24 @@ async function operator(request: Request, env: Env) {
  * value does.
  */
 const REACH: Record<string, number> = { granted: 0, code: 1, unlisted: 2, public: 3 };
-const reach = (visibility: string | undefined): number => REACH[visibility ?? ""] ?? -1;
+/*
+ * **`hasOwn`, not a bare index — the `?? -1` fallback cannot fire on an
+ * inherited key** (2026-09-14). `REACH["constructor"]`, `["__proto__"]` and
+ * `["toString"]` all return something truthy from `Object.prototype`, so the
+ * fallback is skipped and `reach()` yields a function rather than a number.
+ * `reach(next) > reach(before)` then compares against `NaN`, which is `false`,
+ * so `widens` collapses and the **release password is silently not asked for**
+ * on a live page moving to `public`.
+ *
+ * Not reachable through `savePage` today, which whitelists against
+ * `PAGE_VISIBILITY` and is the only writer — it needs a row this Worker did not
+ * write, a restored backup or a hand-written INSERT. That is exactly the class
+ * `opened()`'s pin was hardened for, and the same prototype walk that took the
+ * site down in `validDuelPages` (audit item 40), so it is closed the same way
+ * rather than left to the next person to find.
+ */
+const reach = (visibility: string | undefined): number =>
+  Object.hasOwn(REACH, visibility ?? "") ? REACH[visibility ?? ""] : -1;
 
 async function proven(request: Request, env: Env, wording: string) {
   const account = await operator(request, env);
@@ -498,14 +543,24 @@ export async function listPages(request: Request, env: Env, url: URL): Promise<R
    * say. Counting only rows whose bytes arrived, because an unfinished upload is
    * not something anybody but the operator can have — a card promising four
    * files that opens onto three is worse than a card promising nothing.
+   *
+   * **The bound is applied in the inner select, not tacked onto the outer
+   * one**, and that is the whole reason this is written as a subquery
+   * (2026-09-14). `ORDER BY … LIMIT` on the outer statement bounds what comes
+   * back and not what is computed — SQLite still evaluates the correlated count
+   * for every row it sorts. Bounding the rows first means the count runs
+   * `PAGE_LIST_MAX` times at worst, on the one download route a signed-out
+   * stranger can call.
    */
   const { results } = await env.DB.prepare(
     `SELECT p.*,
             (SELECT COUNT(*) FROM download_files f
               WHERE f.slug = p.slug AND f.uploaded_at IS NOT NULL) AS file_count
-       FROM download_pages p
+       FROM (SELECT * FROM download_pages ORDER BY position, created_at LIMIT ?) p
       ORDER BY p.position, p.created_at`,
-  ).all<PageRow & { file_count: number }>();
+  )
+    .bind(PAGE_LIST_MAX)
+    .all<PageRow & { file_count: number }>();
 
   /*
    * `locked` is "you cannot walk straight in", asked of this caller rather than
@@ -609,9 +664,30 @@ export async function savePage(request: Request, env: Env): Promise<Response> {
   if (!title) throw new BadRequest("A page needs a title.");
 
   const layout = PAGE_LAYOUTS.includes(b.layout as never) ? (b.layout as string) : "list";
+  /*
+   * **An unrecognised visibility falls to the NARROWEST, not the widest**
+   * (2026-09-14). `PAGE_VISIBILITY` is `["public", "unlisted", "code",
+   * "granted"]` and this fell back to index 0, so the answer to "I do not
+   * understand what you asked for" was to publish the page to everybody — while
+   * `canRead`, forty lines up, answers the identical question by refusing
+   * outright, with the reason written out: *the failure of a hidden page
+   * becoming public is much worse than the reverse*. Two halves of one rule
+   * disagreeing about which way to fail is how the wrong half gets copied next.
+   *
+   * Refusing is not available here the way it is on the read side — a save has
+   * to write something — so the fallback is `granted`, which without a matching
+   * grant shows the page to nobody but the operator. It is also visible: the
+   * operator opens the page and finds it dark, rather than finding out from
+   * whoever the page was named after. A widest-value fallback fails the other
+   * way round, silently and to everyone at once.
+   *
+   * Narrowest also keeps the release gate honest: `reach("granted")` is 0, so a
+   * malformed field can never be the thing that makes `widens` true, and can
+   * never trigger a password prompt for a change nobody asked for.
+   */
   const visibility = PAGE_VISIBILITY.includes(b.visibility as never)
     ? (b.visibility as string)
-    : "public";
+    : "granted";
   const status = b.status === "live" ? "live" : "draft";
 
   /*
@@ -765,8 +841,18 @@ export async function deletePage(request: Request, env: Env): Promise<Response> 
 export async function reorderPages(request: Request, env: Env): Promise<Response> {
   await operator(request, env);
   const b = await body(request);
+  /*
+   * **Bounded, like `saveBlocks` three functions down** (2026-09-14). The body
+   * cap admits thousands of strings, and every one became a statement in a
+   * single `env.DB.batch` — past D1's batch limit that is a throw, which
+   * `index.ts` renders as a generic 500 rather than the refusal it is. The
+   * sibling route caps at 40 with a comment saying why; these two capped at
+   * nothing. `REORDER_MAX` is far above any real catalogue, so it refuses only
+   * a caller who is not the editor.
+   */
   const order = Array.isArray(b.slugs) ? b.slugs.filter((s): s is string => typeof s === "string") : [];
   if (!order.length) throw new BadRequest("Nothing to reorder.");
+  if (order.length > REORDER_MAX) throw new BadRequest("Too many pages to reorder at once.");
 
   await env.DB.batch(
     order.map((slug, i) =>
@@ -796,6 +882,8 @@ export async function reorderFiles(request: Request, env: Env): Promise<Response
   const slug = str(b.slug, 64);
   const order = Array.isArray(b.ids) ? b.ids.filter((s): s is string => typeof s === "string") : [];
   if (!slug || !order.length) throw new BadRequest("Nothing to reorder.");
+  // Bounded for the reason given on `reorderPages`.
+  if (order.length > REORDER_MAX) throw new BadRequest("Too many files to reorder at once.");
 
   await env.DB.batch(
     order.map((id, i) =>
@@ -906,6 +994,34 @@ export async function saveFile(request: Request, env: Env): Promise<Response> {
    */
   // eslint-disable-next-line no-control-regex
   if (/["\\/\u0000-\u001F\u007F]/.test(filename)) {
+    throw new BadRequest("That filename has characters it cannot have.");
+  }
+
+  /*
+   * **A lone surrogate is refused here, because the only other place it can be
+   * caught is a 500 on every click, for ever** (2026-09-14).
+   *
+   * Neither guard above rejects an unpaired surrogate — `"\ud83d.exe"` passes
+   * both — and `extValue`'s `encodeURIComponent` throws `URIError: URI
+   * malformed` on one. A `URIError` is not a `BadRequest`, so `index.ts`
+   * renders it as a generic 500: on `GET /api/downloads/file` for that row, on
+   * every click, on a row that saved cleanly and lists normally with a working
+   * button. That is verbatim the failure the note above says was closed for the
+   * `ByteString` case, arriving through the `filename*` half instead — the
+   * ASCII `filename=` fallback survives, which is why nothing else notices.
+   *
+   * It reaches here without anything exotic: the editor sends `file.name`
+   * straight from the `File` object, and a Windows filename whose UTF-16 has
+   * been damaged carries an unpaired surrogate through verbatim.
+   *
+   * The test is written out rather than using `String.isWellFormed`, which is
+   * ES2024 and above the lib this Worker compiles against — a high surrogate
+   * not followed by a low one, or a low one not preceded by a high one, which
+   * is exactly the set `encodeURIComponent` throws on. **Refuse, never
+   * repair**: `toWellFormed` would save a different name from the one on the
+   * operator's disk, which is the thing they are about to hand somebody.
+   */
+  if (/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(filename)) {
     throw new BadRequest("That filename has characters it cannot have.");
   }
 
@@ -1056,7 +1172,12 @@ export async function uploadPart(request: Request, env: Env, url: URL): Promise<
   const id = fileId(url.searchParams.get("id"));
   const uploadId = url.searchParams.get("upload") ?? "";
   const part = Number(url.searchParams.get("part") ?? "0");
-  if (!id || !uploadId || !Number.isInteger(part) || part < 1) throw new BadRequest("Bad part.");
+  // The ceiling is R2's own (10,000 parts). Without it an out-of-range number
+  // is an R2 throw rendered as a 500, where the line above already knows how to
+  // say "no" properly.
+  if (!id || !uploadId || !Number.isInteger(part) || part < 1 || part > PARTS_MAX) {
+    throw new BadRequest("Bad part.");
+  }
 
   const upload = env.DOWNLOADS.resumeMultipartUpload(id, uploadId);
   const bytes = await request.arrayBuffer();
@@ -1075,14 +1196,31 @@ export async function finishUpload(request: Request, env: Env): Promise<Response
   const uploadId = str(b.uploadId, 200);
   const parts = Array.isArray(b.parts) ? b.parts : [];
   if (!id || !uploadId || !parts.length) throw new BadRequest("Nothing to finish.");
+  if (parts.length > PARTS_MAX) throw new BadRequest("Too many parts.");
+
+  /*
+   * **Each entry is shaped before it is handed to R2** (2026-09-14). This
+   * mapped straight through with `Number(x.part)` and `String(x.etag)`, so a
+   * missing field became `NaN` and an object became the string
+   * `"[object Object]"` — both of which R2 answers with a throw, which
+   * `index.ts` renders as a generic 500 on the most consequential write on the
+   * site. It is the operator's own editor that calls this, so the shape is not
+   * in doubt; what was missing was the refusal when it is.
+   */
+  const completed = parts.map((p) => {
+    const x = p as { part?: unknown; etag?: unknown };
+    const partNumber = Number(x.part);
+    if (!Number.isInteger(partNumber) || partNumber < 1 || partNumber > PARTS_MAX) {
+      throw new BadRequest("That upload's parts are not in a shape R2 can finish.");
+    }
+    if (typeof x.etag !== "string" || !x.etag) {
+      throw new BadRequest("That upload's parts are not in a shape R2 can finish.");
+    }
+    return { partNumber, etag: x.etag };
+  });
 
   const upload = env.DOWNLOADS.resumeMultipartUpload(id, uploadId);
-  await upload.complete(
-    parts.map((p) => {
-      const x = p as { part?: number; etag?: string };
-      return { partNumber: Number(x.part), etag: String(x.etag) };
-    }),
-  );
+  await upload.complete(completed);
 
   /*
    * The size comes from R2 rather than from the browser, and that is not
@@ -1104,9 +1242,26 @@ export async function finishUpload(request: Request, env: Env): Promise<Response
     throw new BadRequest("The upload completed but the file isn't in the bucket. Try it again.", 502);
   }
 
-  await env.DB.prepare("UPDATE download_files SET size_bytes = ?, uploaded_at = ? WHERE id = ?")
+  /*
+   * **Zero changes means the row went away while the bytes were going up**
+   * (2026-09-14). This never read `meta.changes`, so a `deleteFile` landing
+   * between `beginUpload` and here left `upload.complete()` having written the
+   * object *after* the delete removed it — orphan bytes sitting under an id
+   * that `suggestFromFilename` will hand out again the next time the same
+   * program is added, which is the id-reuse hazard `deleteFile`'s own comment
+   * says the code deletions exist to close. The handler answered `{ok: true}`
+   * either way. The bytes are cleaned up here rather than left for somebody to
+   * notice, and the operator is told the truth: the row is gone.
+   */
+  const written = await env.DB.prepare(
+    "UPDATE download_files SET size_bytes = ?, uploaded_at = ? WHERE id = ?",
+  )
     .bind(head.size, Date.now(), id)
     .run();
+  if (!written.meta.changes) {
+    await env.DOWNLOADS.delete(id);
+    throw new BadRequest("That file was deleted while it was uploading. Add it again.", 409);
+  }
 
   return noStore(json({ ok: true, size: head.size }));
 }
@@ -1128,11 +1283,21 @@ export async function abortUpload(request: Request, env: Env): Promise<Response>
 
 export async function listGrants(request: Request, env: Env): Promise<Response> {
   await operator(request, env);
+  /*
+   * Unexpired grants first, for the reason `listCodes` gives at length:
+   * `removeGrant` needs the row's numeric id, which the operator can only read
+   * off this list, so a live grant pushed past the 200 by newer history becomes
+   * one nobody can take away. A lapsed grant already opens nothing, so it is
+   * the one that may fall off the end.
+   */
   const { results } = await env.DB.prepare(
     `SELECT g.id, g.account_id, a.handle, g.slug, g.item_id, g.label, g.created_at, g.expires_at
        FROM download_grants g JOIN accounts a ON a.id = g.account_id
-      ORDER BY g.created_at DESC LIMIT 200`,
-  ).all();
+      ORDER BY (g.expires_at IS NULL OR g.expires_at > ?) DESC, g.created_at DESC
+      LIMIT 200`,
+  )
+    .bind(Date.now())
+    .all();
   return noStore(json({ grants: results }));
 }
 
@@ -1154,8 +1319,17 @@ export async function addGrant(request: Request, env: Env): Promise<Response> {
     .first<{ id: string }>();
   if (!account) throw new BadRequest("No account with that name.", 404);
 
-  const slug = str(b.slug, 64) || null;
-  const itemId = str(b.item, 64) || null;
+  /*
+   * **Both are normalised the way their writers normalise them** (2026-09-14,
+   * audit item 14). `savePage` lowercases the slug and `saveFile` lowercases
+   * the id before either is stored, so reading `str(b.…, 64)` raw here looks up
+   * a key that was never written: a grant typed as `Boot-Repair` found no row
+   * and answered *"No such file."* for a file plainly in the list. `fileId` is
+   * the shared normaliser and its own comment says it: a route that reads
+   * `str(b.id, 64)` directly is that bug again.
+   */
+  const slug = str(b.slug, 64).toLowerCase() || null;
+  const itemId = fileId(b.item) || null;
   /** Filled in below when a file is named without its page — see the note there. */
   let scope = slug;
 

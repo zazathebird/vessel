@@ -13,6 +13,328 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-09-22 — a sixth security pass: two fixes that each finished an earlier one
+
+Five parallel read-only reviews (auth and sessions, downloads, the Worker's front door and admin,
+phase-2 sharing, the client plus the setup scripts), each finding checked against the code before
+anything was changed. Three slices came back clean. The two real findings are both **a fix applied
+to one branch and not its twin**, which is the shape this codebase keeps producing.
+
+- **Downloads: a page code for a draft or `granted` page redeemed.** `opened()`'s file branch got
+  the `quiet` rule on 2026-09-14 (draft, `granted` or not uploaded opens nothing, so `claim`
+  refuses before spending a use); the page branch only checked that the page existed. `mintCode`
+  allows page codes on drafts on purpose, and a page can be narrowed to `granted` after its codes
+  are out, so the holder got a 200, lost a use, and got a ticket that 404s, once per retry. Low
+  severity: nothing leaked beyond a slug the code was minted for. Fixed with the same rule; three
+  `auth-e2e.ts` checks, **break-verified** (all three fail against the old branch).
+- **macOS setup script: the other-account rule never ran on a Mac.** The 2026-09-15 containment
+  test folded `$f` with `fold_case` but compared it to unfolded `/Users`, `dirname "$HOME"` and
+  `$HOME`, so on Darwin it matched nothing and `/Users/other` and `/Users/other/.ssh` were
+  shareable again. Medium: macOS homes are `drwxr-x---` group `staff`, so world- and group-readable
+  dotfiles (`.docker/config.json`, `.npmrc`, `~/.config`) were reachable. The driven gate stayed
+  green because it runs on Linux, where `fold_case` does nothing; it now also runs the macOS script
+  with `uname` stubbed to Darwin under a capitalised `Users/` fixture, and **fails against the old
+  script**. `linux-share-setup.sh` has no fold and was never affected. `dist-setup/` rebuilt;
+  the upload is still owed (TODO, *Needs hardware or a human eye* item 1).
+
+Below the bar and not changed: signalling sockets outlive a password change (relay/DoS only, the
+signature checks still hold); the agent serves a drive handle still in its IndexedDB after the
+drive row is removed elsewhere (same account only); the byte route reads `item` without `fileId`
+(fails closed); a ticket is not re-bound to a page or file id reused within its 30 minutes.
+
+## 2026-09-17 (later) — CLAUDE.md holds invariants again, and three things were rescued on the way
+
+`CLAUDE.md` had regrown to 1,873 lines — 25,337 words, and roughly 38,000 tokens loaded into every
+session before any work begins. This is the second time: it hit 1,970 lines on 2026-08-20 and was cut
+to 1,163 on 2026-08-24 by the commit whose message was *"CLAUDE.md holds invariants, and history moves
+to DECISIONS.md"*. It regrew because every fix since was recorded **beside** the rule it corrected
+rather than replacing it, which is also how it came to contradict itself in six places.
+
+The same operation, with the same contract: **every invariant survives; only the story of how each was
+found is cut.** Before cutting, the three passages below were checked against every other document in
+the estate and found to exist **nowhere else**. They are moved here rather than deleted.
+
+### 1. The dead `ceiling` / `sincePromotion` locals in the resolution-tier detector
+
+`CLAUDE.md` claimed until 2026-09-14 that a promotion undone within ~900 frames also set a *session
+ceiling*. It did not. The `ceiling` and `sincePromotion` locals existed and were **provably dead** —
+`ceiling` was read only under `mayPromote`, and written only where `mayPromote` is cleared on the very
+next line, so it was 0 at every read.
+
+They were deleted rather than wired up, and the reason is the part worth keeping: **`mayPromote`
+already forbids the retry a ceiling exists to forbid.** There is exactly one promotion attempt per
+load, spent whether it is taken or never earned, and the first demotion spends it too. A ceiling would
+be a second mechanism guarding the same thing.
+
+*Do not re-add a session ceiling on the reasoning that the detector might oscillate.* It cannot; that
+is what the single-attempt rule buys. A comment in `src/fx/FxCanvas.tsx` is the only other surviving
+trace of this.
+
+### 2. The effect-visibility baseline, on Xerox, 2026-08-28
+
+**These thirteen figures exist in no other document, and the tool that produced them was never
+committed.** `scripts/check.ts` refers to *"`scripts/fx-shot.mjs` plus a peak/coverage script"*; no
+such script is in `scripts/` or anywhere in git history. So the baseline cannot be re-derived without
+first rebuilding the instrument — which makes this table the only surviving yardstick for judging
+whether a new or altered effect is actually visible.
+
+Peak is the 99th-percentile channel distance from `bg`; the companion measure is % coverage. Scored on
+peak **and** coverage, never on mean difference from the background — the mean conflates a large area
+slightly different with a small area very bright.
+
+| effect | peak | | effect | peak |
+|---|---|---|---|---|
+| aurora | 108 | | tunnel | 25 |
+| vessels | 71 | | telemetry | 23 (was 16) |
+| bokeh | 54 | | orbits | 17 (was 14) |
+| flow | 50 | | stars | 7 |
+| rain | 42 | | constellation | 3 |
+| plasma | 42 (was 22) | | | |
+| scan | 38 | | | |
+| pressure | 27 (was 16) | | | |
+
+`stars` and `constellation` are **sparse-but-bright by design, not weak** — which is the whole reason
+the score is peak plus coverage rather than a mean. `plasma` and `pressure` were raised that day;
+`telemetry` was the weakest thing in the set until 2026-08-29. An effect must stay short of the loud
+end deliberately: it sits behind body copy on palettes already near the contrast floor.
+
+### 3. The `Boot-Repair` symptom
+
+The rule — every downloads route normalises its id through `fileId` — is recorded in
+`docs/AUDIT-2026-09-14.md`, `AUDIT-FINDINGS.md` item 14 and `TODO.md`. What is only here is **what it
+looked like from the outside**, which is what makes it recognisable if it recurs by another route:
+typing `Boot-Repair` saved the row as `boot-repair`, and then the very next call of the *same submit*
+answered *"Save the file's details first."* — leaving an invisible draft behind.
+
+### What was cut, and what was not
+
+Cut: dated discovery stories, "this entry said X until \<date\>", measurement anecdotes, accounts of
+who noticed what, and the exploit walkthroughs — all of which are carried in this file, in
+`docs/SECURITY-AUDIT.md`, or in the audit documents, usually in more detail than `CLAUDE.md` had them.
+
+Kept: every rule, and the shortest reason each exists. A rule without its reason is a rule the next
+reader will "fix".
+
+Also noted while doing it: `.audit/` (13 pass files) is an undeclared home for history and is not in
+`CLAUDE.md`'s *Where the rest lives* table. `docs/DECISIONS.md` has no 2026-09-14 entry — that
+session's history lives in `AUDIT-FINDINGS.md`, `docs/AUDIT-2026-09-14.md` and
+`docs/SESSION-HANDOFF-2026-09-14.md` — which is exactly why the two orphans above were from that date.
+
+---
+
+## 2026-09-17 — the host's store blocklist canonicalises a path that does not exist yet
+
+Audit item 28, and the fourth instance of one shape: **a barrier that compares something other than
+what the next command acts on is not a barrier.**
+
+`thinkcentre-setup.sh --store` reaches `sudo mkdir -p`, `sudo chown "${USER}:${grp}"` and
+`sudo chmod 0750`, and the accepted value is written to a user-writable file that every later run
+re-reads — so one bad value is permanent. `parse_args` refuses `/etc`, `/usr`, `/var`, `/root`,
+`/home` and the rest, outright or by prefix, and it refuses them against `canon_store`'s output.
+
+`canon_store` resolved symlinks only inside `if [ -d "${out}" ]` — **only when the full target
+already existed.** A store that does not exist yet is the normal first-run shape, and that is
+precisely when the test is false. So:
+
+```
+                                   pre-fix            fixed
+  <tmp>/link-to-etc/vessel         ACCEPTED           REFUSED     (link-to-etc -> /etc)
+  <tmp>/link-to-etc                refused            refused     (existed, so it resolved)
+```
+
+The second line is why this survived review: the case everyone reaches for when testing — point
+`--store` *at* a symlink — was always handled, because `[ -d ]` follows links. Only a **tail that
+is not there yet** slipped past, and that is the shape the runbook tells people to type.
+`prepare_store` then follows the link for real: `/etc/vessel`, created and handed to the autologin
+desktop user at 0750.
+
+The fix walks back to the longest prefix that exists as a directory, resolves *that* with `cd -P`,
+and re-appends the tail. A component that exists but is not a directory is **refused, not carried
+into the tail** — `-L` is tested beside `-e` because `-e` is false for a dangling symlink, which
+names a target that is not there yet and which `mkdir -p` follows. The `//` collapse and the
+refusal of `..` are unchanged.
+
+**The gate drives `parse_args`, not `canon_store`.** Driving the resolver alone is the mistake the
+duel camera gate records: it stays green when the caller stops consulting it, and the caller is the
+barrier. `die` is stubbed to a refusal, the globals the function reads are supplied, and the real
+comparison runs against a real symlinked throwaway tree — seven verdicts, five refusals and two
+ordinary paths that must still be accepted, because a blocklist that has become a wall is its own
+failure. **Break-verified**: against the pre-fix script it fails, naming
+`TMP/link-to-etc/vessel` as ACCEPTED.
+
+`npm run check` 90, `npm run typecheck` clean across three projects.
+
+---
+
+## 2026-09-15 — the Windows blocklist is driven, and it found a hole on its first run
+
+The last security-shaped gap of the three `docs/AUDIT-2026-09-14.md` names. Two gates already
+touched `windows-share-setup.ps1` and **neither called `Test-ShareableFolder`**: one parsed the
+entry arrays as text, the other drove only the reparse resolver. The arrays were checked for
+membership and the code consuming them was checked not at all — which is how the 2026-09-14
+`.ssh`-blocks-its-children-but-not-itself finding sat here with both of them green. The Unix half
+has been executed since 2026-09-03; only Windows was unexecuted, which is why that finding was
+Windows-only.
+
+**The new gate found a live hole on its first run, and it is not Windows-only.** `$HOME` is blocked
+exactly and so is `/home`, and that pair looks complete until you ask what sits between them.
+Driven against the real functions on all three scripts:
+
+```
+own home        refused        /home            refused
+/home/other     ALLOWED        /home/other/.ssh ALLOWED
+```
+
+The second is the sharp one. Every dot-directory in the prefix list is written `$HOME/.ssh`, keyed
+to *your* home — **so the list refuses your own SSH keys and hands over your housemate's.** On
+Debian a home directory is mode 0755 by default, so it needs no privilege at all; on Windows the
+same gap sat between `C:\Users` and `%USERPROFILE%`, reachable by any account that can read the
+other profile. The threat model is the one the scripts already assume: somebody on the phone saying
+"type this in the box". `C:\Users` was blocked as *"the cheapest exploit of the lot"*;
+`C:\Users\Dad` was not.
+
+**This is the third instance of one shape** — a blocked leaf under a shareable ancestor
+(2026-08-27), a blocked ancestor that did not block itself (2026-09-14), and now a blocked parent
+with shareable siblings. The rule that covers all three is written into `CLAUDE.md`: *a blocked
+thing must have no shareable neighbour holding the same secrets.*
+
+The fix tests **containment, not "is it a direct child"** — refusing only the account folder still
+leaves `.ssh` inside it — and names the *containers* (`/home`, `/Users`, `/export/home`,
+`/var/home`, plus `dirname $HOME`, never `/`), because a root account's home is `/root` and refusing
+everything under `/` would refuse `/mnt` and `/media`. `$HOME` is canonicalised first for the same
+reason the entry loops are, or a symlinked ancestor makes it refuse the user's own files. Verified
+not to over-refuse: `~/Documents` and `/mnt/media` still pass.
+
+Break-verified on all three, **behaviourally rather than only structurally**: narrowed to
+direct-children-only with both substitution tokens left intact, the Windows gate fails naming
+`Users/other/.ssh` and the Unix gate fails naming `~other/.ssh`. 22 Windows verdicts, 48 Unix.
+
+**The published setup bundle is now a version behind on all three scripts** — it already was, for
+`launch.bat` (audit item 45). `TODO.md`'s *Needs hardware or a human eye* item 1 covers re-cutting
+it, and this raises its priority from hygiene to security.
+
+## 2026-09-15 — deployed: Worker `eae7958a`, migration 0009 applied
+
+The find-and-fix audit finally reaches production. Rollback is Worker `38ceae8d`; `main` is
+`57f76cd`. Both required reviews ran first, as `CLAUDE.md` demands for anything touching `worker/`:
+**security-review returned zero findings** (having executed migration 0009 against a seeded scratch
+DB and driven the setup-script blocklists over a 50-path corpus in four home layouts, with a
+directed weakening scan returning no hits), and **code-review returned six, four of them real** —
+they are in the entry below, including one where I had made a gate *worse*.
+
+**Migration 0009 was applied to production before the deploy, and it was checked against the real
+table first rather than assumed.** The migration's own comment says *"this cannot check production
+from here"*; it can now, and the answer was 1 machine and 0 setups, so its two `UPDATE`s matched
+nothing and no row was renamed. 8 commands, both indexes rebuilt as `UNIQUE … COLLATE NOCASE`, row
+counts unchanged after. The two changes on this branch that can *refuse* data which already exists —
+the handle pattern's trailing-hyphen rule and `expectDisplayName` — were checked against the live
+rows too: handles are `piratelife` and `fable-check`, the one machine is `machine1`, so nothing
+existing is locked out.
+
+Verified live afterwards rather than assumed: twelve content routes rendering their real `h1` with
+zero overflow and zero console errors, an anonymous visit fetching **two** JS chunks and no operator
+code, all eight lazy chunks serving 200, `/api/health` reporting 8 tables, and all five icon probes
+answering `404 text/plain` where production had been handing out the app shell.
+
+## 2026-09-15 — the fairness gate measures the coin, and `scripts/` is typechecked at last
+
+Picking up the paused find-and-fix sweep (`docs/SESSION-HANDOFF-2026-09-14.md`).
+
+**The fairness gate was blind, and separately it did cry wolf.** It counted match wins — ~119
+samples over 360,000 frames — and at 3σ that only rejects a bias of p ≥ 0.638, so a director
+favouring one side 60/40 sailed through. It measures the **role coin** now, which is the invariant
+`CLAUDE.md` actually states ("no sequence names a side"), and it counts **throws rather than
+sequence starts**: `chooseSequence` throws the coin only when `chain` has reached 0, because a
+chained phrase deliberately reuses its aggressor, and counting those repeats as independent
+samples would be the same modelling error the win statistic made one level down.
+
+Calibrated before the threshold was chosen, over 200 passes: pooled p(att="a") = **0.49983 over
+329,113 throws** (z = 0.19), lag-1 agreement 0.49931. So the engine is fair and the throws are
+independent.
+
+**The first version of this rewrite then got the other half wrong, and `/code-review` caught it
+before the deploy.** It moved the coin to 4σ — right, it had gained 13.8× the samples — and moved
+the *win* count from 3σ to 6σ in the same edit. The win estimator had not changed and neither had
+its ~119 matches, so only the bar moved: detection went from p ≥ 0.638 to p ≥ 0.775 for the one
+property the coin gate cannot see. That is precisely the "raise the threshold until it stops
+failing" this repo warns against, applied to the half that got no new evidence. **The rule it
+sharpens: a threshold may only rise when the evidence does.**
+
+The fix is samples, not threshold. The gate runs **twelve rounds** now — ~478 matches and ~6,690
+coins a pass — with both halves at 4σ, re-measured at that shape rather than assumed to transfer
+(60 passes): p(coin) = **0.49999 over 401,208 throws**, p(wins) = **0.49887 over 28,657 matches**,
+σ max 2.40 / 2.74, **0 at ≥4σ**. Both now detect better than the 3σ they replace *and* false-fail
+~1 run in 16,000 instead of ~1 in 175. The detector was also corrected to count the opening throw
+of each match, which the first version missed because the reset clears `chain` and `runDirector`
+fires in the same frame — 1.70% of throws, unbiased, but a sample count every threshold rests on
+should be exact. Cost: 1.44M stepped frames, ~20s, and the suite still finishes in ~42.
+
+Break-verified in both directions, which is the only evidence that matters here: with the coin
+forced to 0.57 the new gate fails **11 of 12** passes at ≥4σ (median 5.74σ) while **the old win
+statistic saw nothing at all — 0 of 12, median 0.74σ.**
+
+**One correction to the 2026-09-14 record.** It reported the win statistic as "not reproducible
+standalone" on the strength of 0 in 150 passes. It is reproducible: **2 of 200** here, max 3.29,
+and the two runs pool to 2/350 ≈ 0.57%. The separate 2-failures-in-5 *in-suite* observation is
+still unexplained and stays recorded as unexplained rather than as noise.
+
+**`scripts/` had never been typechecked by anything** — ~274KB including `check.ts`, the only thing
+between this repository and a bad deploy, and `auth-e2e.ts`. esbuild bundles both and strips types
+without checking them, so whatever they said, compiled. `tsconfig.scripts.json` is the third config
+(the app's cannot absorb them: Node programs need `@types/node` and a lib set it does not carry).
+Turning it on found, immediately: two **duplicate imports** in `check.ts`; four assertions in
+`auth-e2e.ts` that TypeScript read as **always false**, because the reachability guard
+`if (client.lastStatus !== 200)` narrows the property for the rest of `main()` and TS does not model
+`client.call()` reassigning it; a **missing type import**; and `SoftwareAuthenticator.create` having
+silently **drifted from the `Authenticator` interface it implements** — TS checks method parameters
+bivariantly, so the narrower signature satisfied the `implements` clause and the mismatch surfaced
+only at the call site, where two of three arguments were being discarded. That last one matters
+beyond its runtime effect (none): `CLAUDE.md` justifies `webauthn-sim.ts` as an *independent second
+opinion*, and one that has quietly stopped matching the shape of what it stands in for is worth less
+than it looks. Its parameter type is taken **from** the interface now, so it cannot drift again.
+
+**Three more from the same review, all pre-deploy:**
+
+- **The `crawlerFile` gate drove the function and never asserted it was called.** Delete the call in
+  `worker/index.ts`, or move it below the asset fetch, and every icon address goes back to `200
+  text/html` while the suite reports 88 green and that gate prints its cheerful summary. Structurally
+  identical to audit item 39 — *a fix that existed only as a comment*. It now checks the call site
+  exists and sits textually above `await asset(request, env)`. **Driving a pure function proves it is
+  right, never that it runs; those are two assertions.**
+- **`/apple-touch-icon-precomposed.png` was still serving the shell.** `index.html` declares no
+  `rel="apple-touch-icon"`, and when no such link exists iOS probes the root itself — asking for
+  `-precomposed` **first**, with sized variants before either on some versions. Matching two exact
+  strings left the name actually requested first wide open, so the fix closed the case it was written
+  for only by accident. It is an anchored pattern now, and the gate drives five probe names.
+- **Nothing on the deploy path ran `npm run typecheck`.** `predeploy` was `check && build`, and
+  `build` is `tsc -b` over the app config alone; `wrangler deploy` esbuilds `worker/` without checking
+  it. So the Worker *and* the newly-typechecked `scripts/` were both unchecked **at deploy time** —
+  asserting the `typecheck` script named all three projects proved only that a command nobody on the
+  deploy path ran was spelled correctly. `predeploy` runs it now, and the gate asserts that too.
+
+**`/favicon.ico` and `/apple-touch-icon.png` answered `200 text/html`** — the whole app shell, with
+the published config inlined into its head — to anything that asked. `index.html` carried a comment
+asserting that the inline `data:` icon prevented exactly this; measured, it does not, because a
+declared icon stops most *browsers* asking and does nothing about crawlers, unfurlers or iOS, which
+fetches `/apple-touch-icon.png` when the site is saved to a home screen. Same fault as audit item 39
+and the trailing-slash pages: the SPA fallback claiming success at an address that is not a page.
+`crawlerFile` 404s both now, in the same shape as its `/robots.txt` and `/sitemap.xml` entries. 404
+rather than a generated image, because *Assets* forbids adding one and a browser handed a 404 falls
+back to the icon `index.html` already declares.
+
+**A `code`-visibility downloads page is publicly enumerable, and the runbook now says so.** `canList`
+returns true for any *live* `code` page before `canRead` is consulted — by design, since somebody
+holding a code must be able to find where to type it. Proved on the wire rather than from the code: a
+page inserted as *Rebuild for Jane Smith* came back in full to an anonymous request with no cookie and
+no code, name in both slug and title. The operator-facing consequence had never been written down, so
+`docs/DOWNLOADS.md` now says to name such pages after **the work, not the person**, with `granted` and
+its cost as the fallback when the name itself is the secret.
+
+Also: the **operator surfaces after the bundle split** were driven in a real browser against the
+production chunks with a signed-in operator — all eight lazy chunks mount, zero console errors, zero
+overflow, both overlays opened for the first time. And `scripts/local-operator.ts` defaulted to the
+handle `operator`, which is in `RESERVED_HANDLES`, so the dev scaffolding failed on its first call.
+
 ## 2026-09-08 — The host's screen was never told not to blank, and `xset` was the wrong lever
 
 **The fault.** `thinkcentre-setup.sh`'s kiosk launcher runs `xset s off`, `xset s noblank` and

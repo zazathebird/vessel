@@ -17,7 +17,7 @@
 // Setups are deliberately unaudited: the audit table records what §3 needs to
 // catch a compromised frontend, and burying credential events under wallpaper
 // changes would cost it that job.
-import { json, noStore, readJson, requireAccount } from "./accounts";
+import { expectDisplayName, json, noStore, readJson, requireAccount } from "./accounts";
 import { newId } from "./crypto";
 import { BadRequest } from "./encoding";
 import type { Env } from "./env";
@@ -69,19 +69,27 @@ export async function save(request: Request, env: Env): Promise<Response> {
   const account = await requireAccount(request, env);
   const body = await readJson(request);
 
-  const name = typeof body.name === "string" ? body.name.trim() : "";
-  if (!name || name.length > NAME_MAX) {
-    throw new BadRequest(`Give the setup a name, up to ${NAME_MAX} characters.`);
-  }
+  // The same filter the machine names and drive labels get, for the same reason
+  // one surface along: this name is typed by a person, stored verbatim, and
+  // rendered back in a list where two rows reading identically means picking the
+  // wrong one. See `expectDisplayName` in `accounts.ts` — it is
+  // `decodeSetupCode`'s refusals, on this side of the wire.
+  const name = expectDisplayName(body.name, "setup", NAME_MAX);
   const shareCode = typeof body.shareCode === "string" ? body.shareCode.trim().toUpperCase() : "";
   if (!CODE_PATTERN.test(shareCode)) {
     throw new BadRequest("That is not a setup code.");
   }
 
-  // Case-insensitive, unlike the unique index, which collates binary: a person
-  // saving "workshop mode" over "Workshop Mode" means the same setup, and two
-  // rows differing by case would be a list that looks like a bug. The new
-  // casing wins — renaming the capitalisation is what they just typed.
+  // Case-insensitive: a person saving "workshop mode" over "Workshop Mode"
+  // means the same setup, and two rows differing by case would be a list that
+  // looks like a bug. The new casing wins — renaming the capitalisation is what
+  // they just typed.
+  //
+  // The unique index agrees with this check since migration 0009. It collated
+  // **binary** before, which meant it backstopped a different race than the one
+  // this pre-check describes: two concurrent saves of the identical string were
+  // refused and `Study` racing `study` both landed, producing exactly the list
+  // this branch exists to prevent.
   const existing = await env.DB.prepare(
     "SELECT id, created_at FROM setups WHERE account_id = ? AND name = ? COLLATE NOCASE",
   )
@@ -110,8 +118,17 @@ export async function save(request: Request, env: Env): Promise<Response> {
   await env.DB.prepare(
     // The ON CONFLICT covers the race this check-then-insert leaves open: two
     // concurrent saves of a genuinely new name both pass the SELECT above.
+    //
+    // **The `COLLATE NOCASE` names what migration 0009 made the index, and it
+    // is documentation rather than repair.** Measured: SQLite matches a
+    // conflict target that omits a collation to an index that has one, so the
+    // bare `(account_id, name)` this replaced kept working. Spelling it out
+    // means the clause says what the index is instead of leaning on a matching
+    // rule that ignores part of the index definition — a target naming a column
+    // the index does not have throws, and that throw is a 500 on the one race
+    // this upsert exists to absorb. The two must stay in step.
     `INSERT INTO setups (id, account_id, name, share_code, created_at) VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT (account_id, name) DO UPDATE SET share_code = excluded.share_code`,
+       ON CONFLICT (account_id, name COLLATE NOCASE) DO UPDATE SET share_code = excluded.share_code`,
   )
     .bind(id, account.id, name, shareCode, now)
     .run();

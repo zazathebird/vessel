@@ -64,6 +64,15 @@ export function loadConfig(): Config {
     // Found 2026-08-14 while adding `sound`, which had inherited the same bug.
     return {
       ...DEFAULT_CONFIG,
+      // The spread is shallow, so without these three the returned config's
+      // scope switches and both per-page maps would *be* `DEFAULT_CONFIG`'s —
+      // the same objects handed to every later reader, in the branch that runs
+      // whenever D1 is unreachable. They are frozen at the source now, so a
+      // write would throw rather than travel; copying here is the other half,
+      // and it is what keeps the returned config an ordinary editable one.
+      scope: { ...DEFAULT_CONFIG.scope },
+      duelPages: { ...DEFAULT_CONFIG.duelPages },
+      lookPages: { ...DEFAULT_CONFIG.lookPages },
       calm: storedCalm() ?? DEFAULT_CONFIG.calm,
       sound: storedSound() ?? DEFAULT_CONFIG.sound,
       slots: DEFAULT_CONFIG.slots,

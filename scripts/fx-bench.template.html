@@ -353,7 +353,7 @@ figcaption .ms { margin-left: auto; }
       // Clamped exactly as FxCanvas clamps it, so a stall cannot jump the
       // world forward and a 120Hz display does not run the fields at double
       // speed.
-      var dt = Math.min(3, Math.max(0.2, (now - last) / (1000 / 60)));
+      var dt = Math.min(3, Math.max(0, (now - last) / (1000 / 60)));
       last = now;
       frame(dt);
       report("playing");

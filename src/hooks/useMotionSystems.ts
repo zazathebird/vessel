@@ -2,7 +2,6 @@ import { useEffect, useRef } from "react";
 import type { RefObject } from "react";
 
 import { useConfig } from "../config/ConfigContext";
-import { SUPPORTS_TILT } from "../config/bands";
 import { motion } from "../fx/motion";
 
 /**
@@ -10,7 +9,12 @@ import { motion } from "../fx/motion";
  *
  * Everything here runs at pointer or scroll rate and writes straight to the DOM
  * and to `motion`, never to React state — a re-render per pointermove would
- * make the tilt jitter and cost far more than the transform it applies.
+ * cost far more than the property writes it makes.
+ *
+ * **The cursor-lean card tilt is gone, deliberately** (client, 2026-09-22: "this
+ * page jiggle needs to be killed"). Every card leaned toward the pointer on
+ * every pointermove, and it read as the page twitching. Do not restore it; see
+ * deviation 15 in docs/INVARIANTS.md.
  */
 export function useMotionSystems({
   hostRef,
@@ -23,7 +27,7 @@ export function useMotionSystems({
   glowRef: RefObject<HTMLElement | null>;
   /** The scrolling stage, which owns scroll velocity. */
   stageRef: RefObject<HTMLElement | null>;
-  /** Changes whenever the card list does, so the tilt targets are re-collected. */
+  /** Changes whenever the card list does, so the card targets are re-collected. */
   gridKey: string;
 }): void {
   const { config, look, band, layout, saver } = useConfig();
@@ -31,38 +35,17 @@ export function useMotionSystems({
 
   // `look.cursor` (2026-09-02): the glow is appearance, so a page override
   // reaches it. Calm has no per-page form and stays on `config`.
-  const live = useRef({ calm: config.calm, cursor: look.cursor, saver, tilt: SUPPORTS_TILT[band] });
+  const live = useRef({ calm: config.calm, cursor: look.cursor, saver });
   useEffect(() => {
-    live.current = { calm: config.calm, cursor: look.cursor, saver, tilt: SUPPORTS_TILT[band] };
+    live.current = { calm: config.calm, cursor: look.cursor, saver };
   });
 
-  // Re-collect the cards after every page, layout or band change. Holding the
-  // list beats querying the DOM on every pointermove.
+  // Re-collect the cards after every page, layout or band change, for Stack's
+  // on-stage observer below.
   useEffect(() => {
     cardsRef.current = Array.from(stageRef.current?.querySelectorAll<HTMLElement>(".v-block") ?? []);
   }, [stageRef, gridKey]);
 
-  // Flatten every card the moment tilt stops applying, so a card can never be
-  // left frozen mid-lean by switching to calm or resizing down to a touch band.
-  useEffect(() => {
-    if (SUPPORTS_TILT[band] && !config.calm) return;
-    for (const card of cardsRef.current) card.style.transform = "";
-  }, [band, config.calm, gridKey]);
-
-  /*
-   * Stack's snap arrival: each block's kicker rule draws itself as the block
-   * reaches its snap point.
-   *
-   * An IntersectionObserver rather than a scroll handler, and the one thing in
-   * this file that legitimately owns a class instead of a ref. The spec's
-   * refs-not-state rule is about values that change at frame rate; this is a
-   * discrete state change a handful of times per page, and the observer already
-   * batches it off the main scroll path.
-   *
-   * Desk only, and never in calm: on phones Stack is the collapse target for
-   * almost everything and renders as ordinary cards, where a rule drawing on
-   * scroll would be noise rather than arrival.
-   */
   useEffect(() => {
     if (layout !== "stack" || band !== "desk" || config.calm) return;
     if (typeof IntersectionObserver === "undefined") return;
@@ -106,7 +89,7 @@ export function useMotionSystems({
       const y = event.clientY - rect.top;
       motion.mouse = { x: x / rect.width, y: y / rect.height };
 
-      const { calm, cursor, saver: sleeping, tilt } = live.current;
+      const { calm, cursor, saver: sleeping } = live.current;
 
       // The shared pointer light. Split, Mosaic and the HUD hang a single
       // light source off these two numbers, and the HUD's planes parallax
@@ -129,21 +112,6 @@ export function useMotionSystems({
         const visible = cursor && !calm && !sleeping;
         glow.classList.toggle("is-visible", visible);
         if (visible) glow.style.transform = `translate3d(${x}px,${y}px,0)`;
-      }
-
-      // Cursor-lean cards. Off-screen cards are skipped, and the lean is scaled
-      // by a proximity falloff so distant cards stay flat.
-      if (calm || !tilt) return;
-      for (const card of cardsRef.current) {
-        if (!card.isConnected) continue;
-        const r = card.getBoundingClientRect();
-        if (r.bottom < -200 || r.top > window.innerHeight + 200) continue;
-        const dx = (event.clientX - (r.left + r.width / 2)) / (r.width / 2);
-        const dy = (event.clientY - (r.top + r.height / 2)) / (r.height / 2);
-        const near = Math.max(0, 1 - Math.hypot(dx, dy) / 2.6);
-        card.style.transform = `perspective(1100px) rotateY(${dx * 3.4 * near}deg) rotateX(${
-          -dy * 3.4 * near
-        }deg) translateZ(${near * 10}px)`;
       }
     };
 

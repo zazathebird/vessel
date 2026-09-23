@@ -296,6 +296,27 @@ export async function resetPassword(request: Request, env: Env): Promise<Respons
  * Credentials, key slots and TOTP go with it by foreign key. The account's grant
  * key dies with its slots, which is the intended and irreversible meaning of
  * deleting an account.
+ *
+ * **And every live signalling socket is hung up, which it was not** (2026-09-14).
+ * `machines` cascades away with the account, but a signalling socket is
+ * authenticated once at the upgrade and never again — so deleting the account
+ * left every open agent and browsing socket relaying, exactly as before. A
+ * stolen cookie used once to open `wss://…/api/signal/<machineId>` therefore
+ * outlived the session's thirty minutes, a sign-out, an operator password reset
+ * *and* the deletion of the account it belonged to, which is the one control
+ * left when everything else has failed. `machines.remove()` has always told the
+ * Durable Object to hang up for the machine it removes; this is the same call
+ * for every machine the account owned. §12 K bounds what survives to relay and
+ * presence rather than files — the agent still verifies the peer's grant-key
+ * signature — but "the account is gone and its sockets are still up" is not a
+ * sentence an administration screen should be able to produce.
+ *
+ * The ids are read **before** the delete because the cascade takes the rows
+ * with it; the hang-up happens **after**, on `remove()`'s reasoning — with the
+ * rows gone no new socket can be authorised, so a shutdown that raced the
+ * delete could otherwise be reconnected around. Best-effort, and bounded by
+ * `MACHINES_MAX`: a Durable Object hiccup must not fail a deletion that has
+ * already committed.
  */
 export async function deleteAccount(request: Request, env: Env): Promise<Response> {
   const { caller, body } = await proven(request, env);
@@ -305,10 +326,21 @@ export async function deleteAccount(request: Request, env: Env): Promise<Respons
     throw new BadRequest("You cannot delete the account you are signed in with.");
   }
 
+  const { results: owned } = await env.DB.prepare("SELECT id FROM machines WHERE owner_id = ?")
+    .bind(account.id)
+    .all<{ id: string }>();
+
   await env.DB.batch([
     auditStatement(env, caller.id, "admin.account.deleted", account.handle),
     env.DB.prepare("DELETE FROM accounts WHERE id = ?").bind(account.id),
   ]);
+
+  await Promise.allSettled(
+    owned.map(async (machine) => {
+      const stub = env.SIGNAL.get(env.SIGNAL.idFromName(machine.id));
+      await stub.fetch("https://signal/shutdown", { method: "POST" });
+    }),
+  );
 
   return json({ status: "ok", handle: account.handle });
 }

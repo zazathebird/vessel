@@ -46,7 +46,7 @@ import { hmac, timingSafeEqual } from "./crypto";
 import { BadRequest, fromBlob, toBlob } from "./encoding";
 import type { Env } from "./env";
 import { mint } from "./session";
-import { canDownload, resolveAccess, ticketSubject } from "./downloadPages";
+import { canDownload, fileId, resolveAccess, ticketSubject } from "./downloadPages";
 import type { FileRow, PageRow } from "./downloadPages";
 
 /**
@@ -175,12 +175,17 @@ async function opened(
      * ticket ends up naming a page nobody agreed to hand over.
      */
     const item = await env.DB.prepare(
-      `SELECT f.slug, p.visibility, p.status
+      `SELECT f.slug, f.uploaded_at, p.visibility, p.status
          FROM download_files f LEFT JOIN download_pages p ON p.slug = f.slug
         WHERE f.id = ?`,
     )
       .bind(row.item_id)
-      .first<{ slug: string; visibility: string | null; status: string | null }>();
+      .first<{
+        slug: string;
+        uploaded_at: number | null;
+        visibility: string | null;
+        status: string | null;
+      }>();
     // A scope naming a file that has since been deleted opens nothing. That is
     // the honest outcome; falling back to "everything" is how a withdrawn item
     // gets handed out.
@@ -212,12 +217,28 @@ async function opened(
      * could not open — the same fault the unscoped branch was fixed for, in the
      * one branch nobody re-checked.
      *
-     * `items` deliberately stays. `canDownload` starts with `canRead`, which
-     * refuses both of these for a ticket holder, so the entry is already inert;
-     * what was leaking was the name, and the name is what is withheld.
+     * **The inert entry is dropped too, and the reason `items` used to stay was
+     * the bug** (2026-09-14). The note here argued that `canDownload` starts
+     * with `canRead`, which refuses both of these for a ticket holder, so the
+     * entry is "already inert" and only the *name* needed withholding. Inert is
+     * exactly what makes keeping it wrong: `claim`'s emptiness guard is
+     * satisfied by `items` alone, so a non-empty `items` carrying an entry that
+     * can never open turns a refusal into a 200, spends one of a handful of
+     * uses, and hands back a ticket that 403s at the first byte. The customer
+     * gets no message saying why, and burns all five uses one empty success at
+     * a time — the same complaint the guard above was written to end, arriving
+     * through the one branch that defeats it.
+     *
+     * **A file whose bytes never finished uploading is the same case.**
+     * `uploaded_at` is null between `beginUpload` and `finishUpload`, `readPage`
+     * hides those rows and `canDownload` refuses them, so a code minted for one
+     * is inert in precisely the same way. It is not an error state — minting
+     * before uploading is a normal order of work — it is simply not yet
+     * something a code can open.
      */
-    const quiet = item.visibility === "granted" || item.status !== "live";
-    return { open: [], visible: quiet ? [] : [item.slug], items: [row.item_id] };
+    const quiet =
+      item.visibility === "granted" || item.status !== "live" || item.uploaded_at === null;
+    return quiet ? { open: [], visible: [], items: [] } : { open: [], visible: [item.slug], items: [row.item_id] };
   }
   if (row.slug) {
     /*
@@ -233,11 +254,19 @@ async function opened(
      * still exists does not fix that on its own — `deletePage` now deletes the
      * codes too — but it is the half that cannot be forgotten by a future
      * delete path.
+     *
+     * **And it must be a page a code can open — the file branch's `quiet` rule,
+     * which this branch went without for two days after that one was fixed.**
+     * `mintCode` allows a page code on a draft on purpose, and a page can be
+     * switched to `granted` after its codes are out; `canRead` refuses both to a
+     * ticket, so answering them with the slug spent a use on a ticket that 404s,
+     * once per retry.
      */
-    const page = await env.DB.prepare("SELECT slug FROM download_pages WHERE slug = ?")
+    const page = await env.DB.prepare("SELECT visibility, status FROM download_pages WHERE slug = ?")
       .bind(row.slug)
-      .first<{ slug: string }>();
-    return page ? { open: [row.slug], visible: [], items: [] } : { open: [], visible: [], items: [] };
+      .first<{ visibility: string; status: string }>();
+    const quiet = !page || page.visibility === "granted" || page.status !== "live";
+    return quiet ? { open: [], visible: [], items: [] } : { open: [row.slug], visible: [], items: [] };
   }
 
   /*
@@ -679,7 +708,14 @@ export async function mintCode(request: Request, env: Env): Promise<Response> {
    */
   await assertPassword(request, env, account, body.authSecret, "Enter your password to mint a code.");
   const label = typeof body.label === "string" ? body.label.slice(0, 120) : "";
-  const itemId = typeof body.item === "string" && body.item ? body.item : null;
+  /*
+   * **Normalised the way `saveFile` and `savePage` normalise on the way in**
+   * (2026-09-14, audit item 14): both lowercase before writing, so reading the
+   * raw string here looks up a key that was never stored and mints a refusal
+   * for a file that is plainly in the list. `fileId` is the one normaliser, and
+   * its own comment names a route reading the value raw as this bug again.
+   */
+  const itemId = fileId(body.item) || null;
   /*
    * A code may now be scoped to a whole **page** as well as to one file
    * (2026-08-20), which is what makes a `code`-gated page usable: one code opens
@@ -688,7 +724,7 @@ export async function mintCode(request: Request, env: Env): Promise<Response> {
    * accepted, so a typo in the admin screen is a refusal now instead of a code
    * that opens nothing and is discovered by the customer.
    */
-  const slug = typeof body.slug === "string" && body.slug ? body.slug : null;
+  const slug = (typeof body.slug === "string" ? body.slug.toLowerCase() : "") || null;
   if (itemId && slug) throw new BadRequest("Scope a code to a page or to one file, not both.");
 
   /*
@@ -807,19 +843,45 @@ export async function listCodes(request: Request, env: Env): Promise<Response> {
 
   // Everything except the hash. There is nothing here that identifies a person
   // — that is the design — so the operator sees the whole row.
+  /*
+   * **Live codes sort first, and that is what keeps them revocable**
+   * (2026-09-14). This was `ORDER BY created_at DESC LIMIT 200` with no paging
+   * in the list and none in `DownloadCodes.tsx`, while `revokeCode` matches on
+   * a `ref` the operator can only read *off this list*. Codes default to
+   * `max_uses` 5 and `expires_at` NULL — never expiring — so once 200 newer
+   * codes existed, every older live code fell off the end and became
+   * permanently unrevokable, silently, through the only withdraw control this
+   * feature has. The customer whose code stops working is who finds out, and
+   * here the failure is the opposite: the code that should have stopped cannot
+   * be stopped.
+   *
+   * Sorting by liveness rather than raising the number is the fix that does not
+   * simply move the cliff: a dead code — revoked, expired or exhausted — needs
+   * no withdrawing, so it may fall off the end harmlessly, and the window is
+   * spent on the rows that can still open something. The cliff only returns
+   * past 200 *simultaneously live* codes, which is a different and far more
+   * visible situation than 200 rows of history.
+   */
   const { results } = await env.DB.prepare(
     `SELECT label, item_id, slug, created_at, expires_at, max_uses, uses, revoked_at, last_used_at,
             substr(hex(code_hash), 1, ${REF_LENGTH}) AS ref
-       FROM download_codes ORDER BY created_at DESC LIMIT 200`,
-  ).all();
+       FROM download_codes
+      ORDER BY (revoked_at IS NULL
+                AND (expires_at IS NULL OR expires_at > ?)
+                AND uses < max_uses) DESC,
+               created_at DESC
+      LIMIT 200`,
+  )
+    .bind(Date.now())
+    .all();
 
   return noStore(json({ codes: results }));
 }
 
 /**
- * Revoke by reference — the first eight hex characters of the hash, which is
- * what the list shows. The operator cannot revoke by code because they no
- * longer have it, which is the point of not storing it.
+ * Revoke by reference — the first `REF_LENGTH` (sixteen) hex characters of the
+ * hash, which is what the list shows. The operator cannot revoke by code
+ * because they no longer have it, which is the point of not storing it.
  */
 export async function revokeCode(request: Request, env: Env): Promise<Response> {
   await operator(request, env);

@@ -3,12 +3,31 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- In the shell, not only in base.css. `color-scheme: dark` is set in the
+         stylesheet, which is render-blocking but still arrives *after* the
+         first paint of the UA's own canvas — so every cold load flashed white
+         before a palette whose brightest background measures 0.0104 relative
+         luminance. The meta is read by the parser before any CSS, and
+         `theme-color` does the same job for the browser chrome on a phone,
+         which otherwise stays light against the same palettes. Neither is a
+         colour the site themes from: they are the *absence* of a flash, and
+         both are deliberately fixed rather than palette-derived, since the
+         palette is not known until the bundle runs. -->
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0b0b0c" />
     <title>mcclevarty.ca</title>
     <!-- An inline data: icon, not a file: no image files and no third-party
          assets (SPEC.md § Assets). The drawing is the client's own choice
-         (2026-08-13): the finger, offered to a small four-pane window. Having
-         *an* icon also keeps /favicon.ico from falling through to the Worker
-         and being answered with the app shell, once per visitor. -->
+         (2026-08-13): the finger, offered to a small four-pane window.
+
+         This used to claim that having *an* icon "keeps /favicon.ico from
+         falling through to the Worker and being answered with the app shell".
+         Measured 2026-09-15: it does not. Both /favicon.ico and
+         /apple-touch-icon.png answered 200 text/html — the whole shell — to
+         anything that asked, because a declared icon only stops most BROWSERS
+         asking, while crawlers, unfurlers and iOS fetch those addresses
+         regardless. `crawlerFile` in worker/page-meta.ts 404s them now, and
+         carries the reasoning. -->
     <link
       rel="icon"
       href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%3E%3Ctext%20x='26'%20y='54'%20font-size='50'%20text-anchor='middle'%3E🖕%3C/text%3E%3Cg%20fill='none'%20stroke='%23888888'%20stroke-width='4'%3E%3Crect%20x='40'%20y='4'%20width='20'%20height='20'%20rx='2'/%3E%3Cpath%20d='M50%204v20M40%2014h20'/%3E%3C/g%3E%3C/svg%3E"

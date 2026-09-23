@@ -1,0 +1,60 @@
+{
+  /*
+   * The third config, and it exists because the two above it left the gate
+   * suite itself typechecked by NOTHING.
+   *
+   * `scripts/` is ~274KB of TypeScript, and it includes `check.ts` — the one
+   * thing standing between this repository and a bad deploy — plus
+   * `auth-e2e.ts`, which drives the real browser auth modules against the real
+   * Worker. Both are bundled by esbuild at the point of use, and **esbuild
+   * strips types without checking them**, so every one of them compiled
+   * whatever it said.
+   *
+   * They could not simply be added to `tsconfig.json`'s `include`. These are
+   * Node programs: they need `@types/node`, which the app config deliberately
+   * does not carry, and the app's `lib` set has no `process`. They also import
+   * from `src/`, which is why `DOM` is here as well — `check.ts` drives the
+   * canvas effects through a recording context, so it needs both halves.
+   *
+   * `noUnusedLocals` / `noUnusedParameters` are deliberately OFF here, unlike
+   * the other two configs. A gate that measures a quantity and then asserts on
+   * a different one is a real defect this project has shipped before, but it is
+   * caught by reading the gate, not by the compiler — whereas a probe variable
+   * kept deliberately beside the assertion it documents is normal in this file
+   * and should not fail the build.
+   *
+   * **KNOWN HOLE, and it is in this config rather than in the code it checks:
+   * the global `Buffer` is `any` here.** `@cloudflare/workers-types` declares
+   * `declare const Buffer: any` in the global scope, and that clobbers
+   * `@types/node`'s. Both have to be in scope — `check.ts` imports from `src/`
+   * (DOM) and from `worker/` (workers-types) in the same file — so anything in
+   * `scripts/` that touches the global `Buffer` is unchecked, and it fails in a
+   * confusing direction: the *interface* is lost rather than the inference, so
+   * annotating a binding as `Buffer` does not recover it and the value falls
+   * back to `Uint8Array`'s no-argument `toString`. Reduced to a one-line `.d.ts`
+   * repro on 2026-09-15. Prefer `Uint8Array` and explicit decoding in new
+   * `scripts/` code; do not read a `Buffer`-typed expression here and assume the
+   * compiler checked it.
+   *
+   * Requiring the DOM/workers-types pair is also why five `as BufferSource`
+   * casts exist in `worker/totp.ts` and `worker/accounts.ts` — DOM declares the
+   * stricter of two `BufferSource` definitions and wins. That file carries the
+   * argument.
+   */
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["node", "@cloudflare/workers-types"],
+    "jsx": "react-jsx",
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "strict": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["scripts/**/*.ts"]
+}

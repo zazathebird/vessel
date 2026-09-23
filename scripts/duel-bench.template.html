@@ -644,9 +644,14 @@ button[aria-pressed="true"] {
   function tick(now) {
     requestAnimationFrame(tick);
 
-    var elapsed = Math.min(3, Math.max(0.2, (now - last) / (1000 / 60)));
+    var elapsed = Math.min(3, Math.max(0, (now - last) / (1000 / 60)));
     last = now;
-    fps = fps * 0.9 + (60 / elapsed) * 0.1;
+    // A zero elapsed is now reachable — `last` is seeded from `performance.now()`
+    // at load and rAF can hand `now` over earlier than that, which the old 0.2
+    // floor masked as a harmless 300fps sample. `60 / 0` is Infinity and this
+    // average is sticky, so one such frame left the readout at Infinity for the
+    // rest of the session. The engine is right either way; only the telemetry lied.
+    if (elapsed > 0) fps = fps * 0.9 + (60 / elapsed) * 0.1;
 
     if (playing) {
       /*

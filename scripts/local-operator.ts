@@ -31,6 +31,7 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
 
 const execAsync = promisify(exec);
 async function d1(sql: string): Promise<void> {
+  if (sql.includes('"')) throw new Error("keep double quotes out of harness SQL");
   await execAsync(`npx wrangler d1 execute vessel --local --command "${sql}"`);
 }
 
@@ -63,7 +64,14 @@ async function totpCode(secretBase32: string, atMs = Date.now()): Promise<string
   return String(binary % 1_000_000).padStart(6, "0");
 }
 
-const HANDLE = process.env.OP_HANDLE ?? "operator";
+/*
+ * **Not `operator`.** That is in `RESERVED_HANDLES` in `worker/accounts.ts`, so
+ * the obvious default made this script fail on its very first call with *"That
+ * handle is reserved. Pick another."* — dev scaffolding that cannot be run
+ * without first reading the Worker to find out why. Found 2026-09-15, while
+ * verifying the operator surfaces after the bundle split.
+ */
+const HANDLE = process.env.OP_HANDLE ?? "local-operator";
 const PASSWORD = process.env.OP_PASSWORD ?? "correct-horse-battery-staple";
 
 async function main() {

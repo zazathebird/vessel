@@ -14,7 +14,22 @@
  * **Authentication happens in the Worker, not here.** By the time a request
  * reaches this object it has passed `requireAccount` and the machine-ownership
  * check (`worker/index.ts`); the object is unreachable except through that
- * gate. Phase 3 widens the gate to grantees; nothing in this file changes.
+ * gate.
+ *
+ * **What phase 3 may widen is the BROWSER role, and not the agent role** — this
+ * comment used to say the gate widens to grantees and "nothing in this file
+ * changes", which is false of `?role=agent` and would have been read as
+ * permission (2026-09-14). `/connect?role=agent` below **evicts the incumbent
+ * agent unconditionally** and makes the newcomer the one socket every browsing
+ * tab's offers are routed to. A grantee who passed a widened ownership check
+ * could therefore take over the machine's agent position, and then what a
+ * browsing tab is introduced to is the grantee. It is not reachable today —
+ * `signalUpgrade` refuses `role=agent` to anybody who is not the owner, in its
+ * own statement, separate from the ownership query precisely so that widening
+ * the query cannot inherit it — and the agent's own grant-key verification
+ * bounds what a takeover would yield. But a comment is what the next person
+ * trusts when they widen the gate, and this one was telling them the object had
+ * no opinion about who connects as what.
  *
  * Uses the WebSocket hibernation API so an idle agent tab costs nothing: all
  * state is derivable from `getWebSockets()` tags and attachments.
@@ -24,6 +39,25 @@ import type { Env } from "./env";
 
 /** Nothing legitimate here is large — an SDP with candidates is a few KB. */
 const MAX_FRAME_BYTES = 64 * 1024;
+
+/**
+ * How many browsing tabs may hold a socket to one machine at once.
+ *
+ * The agent role is capped at one by replacement; the browser role was capped
+ * by nothing (2026-09-14), while every other user-writable quantity on the site
+ * is bounded on principle — `MAX_PASSKEYS`, `MACHINES_MAX`, `DRIVES_MAX`,
+ * `SETUPS_MAX`, `MAX_FRAME_BYTES`, `MAX_CONFIG_BYTES`. A socket is cheap under
+ * hibernation and this is an owner-authenticated channel, so it is a bound
+ * rather than a boundary; a bound that is absent is still absent.
+ *
+ * Eight is a person with a laptop, a phone and some forgotten tabs, and it is
+ * nobody's script. **The newcomer is refused rather than the incumbent evicted**
+ * — the opposite of the agent rule, deliberately: the agent is replaced because
+ * the newest tab is authoritative for the machine, whereas evicting a browsing
+ * tab would turn the bound into a way to knock somebody off a browse they were
+ * in the middle of.
+ */
+const MAX_BROWSER_SOCKETS = 8;
 
 /** Measures the frame the way the wire does — see `webSocketMessage`. */
 const encoder = new TextEncoder();
@@ -75,6 +109,16 @@ export class MachineSignal {
       const role = url.searchParams.get("role");
       if (role !== "agent" && role !== "browser") {
         return new Response("Unknown role.", { status: 400 });
+      }
+
+      // Counted before the pair is minted, and counted as an ordinary response
+      // rather than an accepted-then-closed socket: the client cannot read a
+      // close code off a handshake it never completed either way, and refusing
+      // at the upgrade keeps the object from having to hold a socket it has
+      // already decided against. `signalUpgrade` hardens every non-101 the
+      // object returns.
+      if (role === "browser" && this.browsers().length >= MAX_BROWSER_SOCKETS) {
+        return new Response("Too many open connections to this machine.", { status: 429 });
       }
 
       const pair = new WebSocketPair();
@@ -185,6 +229,17 @@ export class MachineSignal {
       if (ws !== closing && ws.readyState === WebSocket.READY_STATE_OPEN) return ws;
     }
     return null;
+  }
+
+  /**
+   * The live browsing sockets — `readyState` filtered like `agent()`, because
+   * `getWebSockets` also returns one that is mid-close, and a cap that counted
+   * those would refuse an honest reconnect after a tab was shut.
+   */
+  private browsers(): WebSocket[] {
+    return this.ctx
+      .getWebSockets("browser")
+      .filter((ws) => ws.readyState === WebSocket.READY_STATE_OPEN);
   }
 
   private broadcastToBrowsers(frame: Record<string, unknown>): void {

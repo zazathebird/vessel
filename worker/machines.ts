@@ -18,6 +18,7 @@ import {
   type AccountRow,
   assertPassword,
   auditStatement,
+  expectDisplayName,
   json,
   noStore,
   readJson,
@@ -53,12 +54,24 @@ interface DriveRow {
   created_at: number;
 }
 
+/**
+ * A machine name or a drive label.
+ *
+ * **Both fields arrive by two routes and only one of them was filtered**
+ * (2026-09-14). `decodeSetupCode` refuses bidi overrides, zero-widths, lone
+ * surrogates, private-use and unassigned code points, and every space that is
+ * not U+0020, in exactly these two fields — because a person reads them while
+ * deciding which folder to hand to the picker, and two rows that render
+ * identically is the attack. The *other* route is somebody typing into the form
+ * on `/share` or `/machines`, and it reached a trim and a length check. So the
+ * machine-generated path was the strict one and the hand-typed path was the lax
+ * one, and the two sets of names then render side by side in one list on
+ * `MachinesPage`. `expectDisplayName` is the decoder's filter, on this side of
+ * the wire; the decoder stays the authority and must never be the looser of the
+ * two.
+ */
 function expectName(value: unknown, what: string): string {
-  const name = typeof value === "string" ? value.trim() : "";
-  if (!name || name.length > NAME_MAX) {
-    throw new BadRequest(`Give the ${what} a name, up to ${NAME_MAX} characters.`);
-  }
-  return name;
+  return expectDisplayName(value, what, NAME_MAX);
 }
 
 /**
@@ -168,7 +181,10 @@ export async function pair(request: Request, env: Env): Promise<Response> {
   }
 
   // Case-insensitive like setups: two machines whose names differ by case is a
-  // list that looks like a bug. The unique index backstops the race, binary.
+  // list that looks like a bug. The unique index backstops the race, and since
+  // migration 0009 it collates `NOCASE` too — it was binary, so it backstopped
+  // a *different* race than this check describes and `Study` beside `study`
+  // went through both.
   const dup = await env.DB.prepare(
     "SELECT 1 FROM machines WHERE owner_id = ? AND name = ? COLLATE NOCASE",
   )
@@ -264,7 +280,30 @@ export async function rename(request: Request, env: Env): Promise<Response> {
     .first();
   if (dup) throw new BadRequest("A machine already has that name. Pick another.", 409);
 
-  await env.DB.prepare("UPDATE machines SET name = ? WHERE id = ?").bind(name, machine.id).run();
+  /*
+   * **The same `try`/`catch` its sibling `pair()` has, seventy lines up**
+   * (2026-09-14). The `SELECT` above is a check-then-act: two renames racing
+   * each other each see no duplicate and both write. `pair()` answers that with
+   * the unique index and turns the violation into this same friendly 409;
+   * `rename()` had the pre-check and not the catch, so the identical race —
+   * and an exact-string collision, which the index catches even when the
+   * `COLLATE NOCASE` pre-check is raced — surfaced as an unhandled exception
+   * and a generic 500 on the owner's own screen.
+   *
+   * The index this leans on is `idx_machines_owner_name`, and **migration 0009
+   * recollated it `NOCASE`** — it was binary while the check above was
+   * `COLLATE NOCASE`, so it refused an exact-string collision and let `Study`
+   * race `study` through. The catch was right either way; now the thing it
+   * catches is the whole of what the pre-check promises.
+   */
+  try {
+    await env.DB.prepare("UPDATE machines SET name = ? WHERE id = ?").bind(name, machine.id).run();
+  } catch (error) {
+    if (String(error).includes("UNIQUE") || String(error).includes("constraint")) {
+      throw new BadRequest("A machine already has that name. Pick another.", 409);
+    }
+    throw error;
+  }
   return json({ status: "renamed" });
 }
 

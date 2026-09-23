@@ -130,7 +130,25 @@ export interface Config {
   lookPages: PageLooks;
 }
 
-export const DEFAULT_CONFIG: Config = {
+/**
+ * **Frozen, one level down as well, and the second half is the point.**
+ *
+ * `DEFAULT_CONFIG.duel` has been frozen since 2026-08-31 because it is handed
+ * out by reference; `scope`, `duelPages` and `lookPages` are handed out exactly
+ * the same way, by `loadConfig`'s no-published-config branch — the branch that
+ * runs before the first publish and **whenever D1 is unreachable**. A shallow
+ * spread copies the six top-level primitives and shares those three objects, so
+ * an in-place edit to any of them (`config.scope.pal = false`,
+ * `config.lookPages[page] = …`) would not be one visitor's mistake: it would
+ * rewrite the default every later reader is handed, for the life of the tab,
+ * in the degraded case nobody is watching.
+ *
+ * Nothing writes into them today — every caller spreads first, and the branch
+ * itself now copies all three. Frozen, the day something stops doing that is a
+ * `TypeError` at the write rather than a value quietly travelling sideways.
+ * Same reasoning, same shape and same wording as `DEFAULT_DUEL_SETTINGS`.
+ */
+export const DEFAULT_CONFIG: Config = Object.freeze({
   page: "home",
   pal: 0, // Nebula Drift — what a stranger gets on a first visit
   layout: "cinematic",
@@ -138,7 +156,14 @@ export const DEFAULT_CONFIG: Config = {
   ornament: DEFAULT_ORNAMENT,
   type: 0,
   mode: "tod",
-  scope: { pal: true, layout: true, fx: true, ornament: true, type: true, toggles: true },
+  scope: Object.freeze({
+    pal: true,
+    layout: true,
+    fx: true,
+    ornament: true,
+    type: true,
+    toggles: true,
+  }),
   calm: false,
   grain: true,
   breathe: true,
@@ -148,8 +173,10 @@ export const DEFAULT_CONFIG: Config = {
   entrances: true, // each layout announces its own structure on arrival
   station: DEFAULT_STATION, // centred, with the float the slot has always had
   duel: DEFAULT_DUEL_SETTINGS, // every knob at what the engine already does
-  duelPages: {}, // no page disagrees with the site until one is told to
-  lookPages: {}, // same rule for the look itself
+  // Frozen with the rest: these two and `scope` are the growable maps, and they
+  // are what a shallow spread of this object shares rather than copies.
+  duelPages: Object.freeze({}), // no page disagrees with the site until one is told to
+  lookPages: Object.freeze({}), // same rule for the look itself
 
   unlocked: false,
-};
+});

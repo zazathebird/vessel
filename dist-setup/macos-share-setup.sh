@@ -103,12 +103,14 @@ assert_macos() {
 # be talked through installing over the telephone.
 # ---------------------------------------------------------------------------
 json_string() {
-    # Control characters are STRIPPED, never escaped (2026-09-02). The site's
-    # decoder refuses a label or path carrying one either way, so escaping only
-    # moved the refusal to the paste box — after the links were already made.
-    # Unlike Windows, this filesystem genuinely allows a newline in a folder
-    # name, and the stripped form is the only one a person can recognise in the
-    # checklist the label exists for.
+    # Control characters are STRIPPED here, and since 2026-09-14 nothing can
+    # reach this with one: `text_offense` below refuses the folder — by name,
+    # before any link is made — and the machine name is screened the same way.
+    # The strip stays as a last ditch so a future caller cannot put a raw
+    # control byte into a wire format, NOT as the answer to one. The answer is
+    # to refuse, because a stripped PATH is a different path (see the
+    # `text_offense` comment) and a stripped label is a label the person's
+    # script did not write.
     LC_ALL=C awk 'BEGIN{
         s = ARGV[1]; out = "\""
         for (i = 1; i <= length(s); i++) {
@@ -127,6 +129,145 @@ base64url() {
     # -w0 is GNU; BSD base64 on macOS wraps only if asked, so neither flag.
     base64 | tr -d '\n' | tr '+/' '-_' | tr -d '='
 }
+
+# ---------------------------------------------------------------------------
+# WHAT THE SITE WILL REFUSE, ASKED HERE INSTEAD OF AT THE PASTE BOX.
+#
+# `decodeSetupCode` refuses a code whose label or path carries a character that
+# can lie about what it says — every format character, private use, the lone
+# surrogates, the default-ignorables and variation selectors, and every space
+# that is not U+0020 — and it refuses the WHOLE code, not the row. Until
+# 2026-09-14 these scripts checked for C0 and DEL and nothing else, so an
+# ordinary folder was enough to produce an unusable code: measured, `Family
+# <emoji ZWJ sequence>` (the joiner is a format character) and `Photos<NBSP>2024`
+# both made every link, printed a code, and were refused at the paste box with
+# the links already on the disk.
+#
+# The decoder's own comment is the argument for doing it here: refusing a
+# presentation selector "would refuse the WHOLE code over one honest folder, on
+# the happy path". That is exactly what these two were. So the folder is named
+# and refused BEFORE anything is linked, and the customer is told to rename it —
+# which is the only fix — rather than finding out on the website.
+#
+# `text_probe` is one awk program with four modes, and it decodes UTF-8 to code
+# points by hand under LC_ALL=C because a byte-counting `length()` cannot answer
+# any of these questions:
+#
+#   offense  the first character the site will refuse, or nothing. Swept
+#            against the real regex over all 1,114,112 code points: it refuses
+#            NOTHING the decoder accepts (an over-refusal here would be a folder
+#            somebody cannot share), and the only thing it misses is `\p{Cn}`,
+#            the unassigned and noncharacter code points, which no shell can
+#            know about. Those still land at the paste box; everything that
+#            comes off a real folder name lands here.
+#   len      the length the decoder measures, in UTF-16 units. `${#s}` counts
+#            characters, so 40 emoji is 40 to bash and 80 to the site — over the
+#            label ceiling, and refused whole.
+#   cut      truncate to N UTF-16 units without splitting a character.
+#   fold     `foldLabel`'s comparison form, for the duplicate test below.
+#
+# Two things the fold cannot do in a shell and the decoder does: NFKC, and
+# lower-casing outside ASCII. A composed and a decomposed spelling of the same
+# name therefore still collide at the paste box rather than here. Everything
+# else in that function — the invisibles, the Cyrillic and Greek look-alikes,
+# case, `l/I/1/|`, `O/0`, runs of whitespace — is reproduced.
+# ---------------------------------------------------------------------------
+text_probe() {
+    LC_ALL=C awk '
+    function ignorable(cp) {
+        # Default_Ignorable_Code_Point + Variation_Selector, as ranges. The
+        # decoder strips exactly these before its duplicate test.
+        return (cp == 173 || cp == 847 || cp == 1564 || cp == 1757 || cp == 1807 || cp == 2274 ||
+                (cp >= 1536 && cp <= 1541) || (cp >= 2192 && cp <= 2193) ||
+                (cp >= 4447 && cp <= 4448) || (cp >= 6068 && cp <= 6069) ||
+                (cp >= 6155 && cp <= 6159) || (cp >= 8203 && cp <= 8207) ||
+                (cp >= 8234 && cp <= 8238) || (cp >= 8288 && cp <= 8292) ||
+                (cp >= 8294 && cp <= 8303) || cp == 10240 || cp == 12644 ||
+                (cp >= 65024 && cp <= 65039) || cp == 65279 || cp == 65440 ||
+                (cp >= 65520 && cp <= 65531) || cp == 69821 || cp == 69837 ||
+                (cp >= 78896 && cp <= 78911) || (cp >= 113824 && cp <= 113827) ||
+                (cp >= 119155 && cp <= 119162) || (cp >= 917504 && cp <= 921599))
+    }
+    function why(cp) {
+        if (cp < 32 || cp == 127 || (cp >= 128 && cp <= 159) || cp == 8232 || cp == 8233)
+            return "a line break or control character"
+        if (cp == 160 || cp == 5760 || (cp >= 8192 && cp <= 8202) || cp == 8239 ||
+            cp == 8287 || cp == 12288)
+            return "a space that is not the ordinary space"
+        if ((cp >= 55296 && cp <= 57343) || (cp >= 57344 && cp <= 63743) ||
+            (cp >= 983040 && cp <= 1048573) || (cp >= 1048576 && cp <= 1114109))
+            return "a character no font can be relied on to draw"
+        # U+FE0E and U+FE0F are the carve-out the decoder makes and this must
+        # make too: they are the emoji presentation selectors, and "Photos
+        # <heart><FE0F>" is a folder somebody has, not an attack.
+        if (ignorable(cp) && cp != 65038 && cp != 65039)
+            return "an invisible character"
+        return ""
+    }
+    BEGIN {
+        for (i = 0; i < 256; i++) ord[sprintf("%c", i)] = i
+        # CONFUSABLES, mapped straight to lower case because the fold lowers
+        # afterwards anyway. Cyrillic, Greek and the small capitals whose glyph
+        # IS the Latin letter.
+        n = split("1072 a 1077 e 1086 o 1088 p 1089 c 1091 y 1093 x 1110 i 1112 j 1109 s \
+                   1211 h 1281 d 1307 q 1309 w 1141 v 1040 a 1042 b 1045 e 1050 k 1052 m \
+                   1053 h 1054 o 1056 p 1057 c 1058 t 1061 x 1029 s 1030 i 1032 j 1198 y \
+                   1140 v 959 o 953 i 957 v 961 p 965 u 913 a 914 b 917 e 918 z 919 h \
+                   921 i 922 k 924 m 925 n 927 o 929 p 932 t 933 y 935 x 305 i 567 j \
+                   609 g 593 a 7424 a 628 n 618 i 665 b 7428 c 7429 d 7431 e 668 h \
+                   7434 j 7435 k 671 l 7437 m 7439 o 7448 p 640 r 7451 t 7452 u 7456 v \
+                   7457 w 655 y 7458 z", t, /[ \t\n]+/)
+        for (i = 1; i < n; i += 2) same[t[i] + 0] = t[i + 1]
+
+        mode = ARGV[1]; max = ARGV[2] + 0; s = ARGV[3]
+        bytes = length(s); i = 1; u16 = 0; out = ""
+        while (i <= bytes) {
+            b = ord[substr(s, i, 1)]
+            if (b < 128) { cp = b; w = 1 }
+            else if (b >= 194 && b <= 223) { cp = b - 192; w = 2 }
+            else if (b >= 224 && b <= 239) { cp = b - 224; w = 3 }
+            else if (b >= 240 && b <= 244) { cp = b - 240; w = 4 }
+            else { if (mode == "offense") print "a byte that is not valid text"; exit }
+            for (k = 1; k < w; k++) {
+                c = ord[substr(s, i + k, 1)]
+                if (i + k > bytes || c < 128 || c > 191) {
+                    if (mode == "offense") print "a byte that is not valid text"
+                    exit
+                }
+                cp = cp * 64 + (c - 128)
+            }
+            wide = (cp > 65535) ? 2 : 1
+            if (mode == "cut" && u16 + wide > max) break
+            u16 += wide
+            if (mode == "offense") {
+                r = why(cp)
+                if (r != "") { printf "%s (character %d)\n", r, u16; exit }
+            } else if (mode == "cut") {
+                out = out substr(s, i, w)
+            } else if (mode == "fold" && !ignorable(cp)) {
+                if (cp in same) out = out same[cp]
+                else if (cp < 128) out = out tolower(sprintf("%c", cp))
+                # A code point with no Latin twin still has to stay ITSELF, and
+                # \001 cannot appear in anything that got past `offense`.
+                else out = out sprintf("\001%d\001", cp)
+            }
+            i += w
+        }
+        if (mode == "len") print u16
+        if (mode == "cut") printf "%s", out
+        if (mode == "fold") {
+            gsub(/[il|]/, "1", out); gsub(/o/, "0", out)
+            gsub(/[ \t\n\r\f\v]+/, " ", out)
+            sub(/^ /, "", out); sub(/ $/, "", out)
+            print out
+        }
+    }' "$1" "$2" "$3"
+}
+
+text_offense() { text_probe offense 0 "$1"; }
+text_len()     { text_probe len 0 "$1"; }
+text_cut()     { text_probe cut "$1" "$2"; }
+fold_label()   { text_probe fold 0 "$1"; }
 # ---------------------------------------------------------------------------
 # The folder picker.
 #
@@ -265,6 +406,14 @@ BLOCK_EXACT=(
     "$HOME"
     /Users /Volumes /System /Library /Applications /private /usr /bin /sbin /etc /var /tmp /opt
     /cores /Network /System/Volumes /System/Volumes/Data
+    # /tmp IS A SYMLINK TO private/tmp ON EVERY MAC, so the entry above could
+    # never match: `canon` resolves the input, and no resolved path is ever
+    # spelled `/tmp`. A world-writable directory somebody deliberately listed
+    # was shareable the whole time. `check_folder` canonicalises the entries
+    # too now, which fixes it in general; this names the resolved form as well,
+    # because an entry that depends on one `cd` succeeding is an entry that can
+    # fall out of the list on the day it does not.
+    /private/tmp
 )
 
 # Refused along with everything underneath them.
@@ -301,14 +450,9 @@ blocked_prefix() { printf '%s\n' "${BLOCK_PREFIX[@]}"; }
 # put id_rsa under the share root. The identity checked and the identity shared
 # were simply different, permanently; it was never a race.
 check_folder() {
-    local path="$1" c f b bad bf
+    local path="$1" c f b cb bp bad bf
 
     [ -d "$path" ] || { echo "NO That folder does not exist: $path"; return; }
-
-    if [ ${#path} -gt 400 ]; then
-        echo "NO That folder's path is too long to share (${#path} characters, limit 400): $path"
-        return
-    fi
 
     # Fail closed. An unresolvable path is refused, never compared raw.
     c="$(canon "$path")" || {
@@ -316,6 +460,77 @@ check_folder() {
         return
     }
     f="$(fold_case "$c")"
+
+    # THE LENGTH IS MEASURED ON THE CANONICAL PATH, WHICH IS THE ONE THAT GOES
+    # IN THE CODE. It used to be measured on the path as TYPED, before the line
+    # above — so a three-character path through a symlink measured 3, passed,
+    # and was emitted at its real 532 characters, over the decoder's ceiling of
+    # 400, refusing the whole code after every link had been made. Check the
+    # identity that is actually shared, the same rule that made this function
+    # return `c` rather than discard it.
+    if [ ${#c} -gt 400 ]; then
+        echo "NO That folder's real path is too long to share (${#c} characters, limit 400): $c"
+        return
+    fi
+
+    # A HOME DIRECTORY IS NEVER SHAREABLE, WHOEVER OWNS IT (2026-09-15).
+    #
+    # `$HOME` is blocked exactly and so is `/home`, and that pair looks complete
+    # until you notice what sits BETWEEN them. `/home/someone-else` matches
+    # neither: it is not `/home`, it is not this user's `$HOME`, and no prefix
+    # entry names it. Driven against the real function, on all three scripts:
+    # the account's own home was refused, `/home` was refused, and
+    # `/home/other` AND `/home/other/.ssh` were both ALLOWED.
+    #
+    # The second one is the sharp end. Every dot-directory in BLOCK_PREFIX is
+    # written `$HOME/.ssh`, keyed to YOUR home — so the list refuses your own
+    # SSH keys and hands over your housemate's. On Debian a home directory is
+    # mode 0755 by default, so this needs no privilege at all.
+    #
+    # This is the same shape as the three failures already recorded above, one
+    # level over: there it was a blocked leaf under a shareable ancestor, here
+    # it is a blocked parent with shareable children. The rule that covers both:
+    # a blocked thing must have no shareable neighbour that contains the same
+    # secrets.
+    #
+    # The test is CONTAINMENT, not "is it a direct child". Refusing only the
+    # account folder itself would still hand over `/home/dad/.ssh`, which is the
+    # sharper half of this: every dot-directory in BLOCK_PREFIX is written
+    # `$HOME/.ssh`, so the list refuses your own keys and not your housemate's.
+    # Inside a profile container and not inside your own home is the whole rule.
+    #
+    # It is written as the CONTAINERS rather than as "anything beside $HOME"
+    # because `dirname` of a root account's home is `/`, and refusing everything
+    # under `/` would refuse `/mnt`, `/media` and `/srv` — ordinary places to
+    # keep the files this script exists to share. `dirname "$HOME"` joins the
+    # fixed names for relocated and NAS-mounted homes, and is also what makes
+    # this testable in a throwaway tree rather than only on a real machine.
+    #
+    # `$HOME` is canonicalised before the comparison for the reason the entry
+    # loops below give: `$f` arrives resolved, `$HOME` is as the shell found it,
+    # and the moment any ancestor of `$HOME` is a symlink the two spellings
+    # differ — which would make this refuse the user's OWN files.
+    #
+    # AND BOTH SIDES ARE FOLDED, like every other comparison against `$f`. `$f`
+    # is lowercased on Darwin, so an unfolded `/Users` or `$HOME` never matched
+    # it: this whole rule was inert on the one platform this script is for, and
+    # `/Users/other/.ssh` was shareable. The gate runs on Linux, where folding is
+    # the identity, so it stayed green; it now stubs `uname` to Darwin.
+    ch="$(canon "$HOME" 2>/dev/null)" || ch="$HOME"
+    hp="$(dirname "$ch")"
+    fch="$(fold_case "$ch")"
+    for parent in /home /Users /export/home /var/home "$hp"; do
+        case "$parent" in ""|/) continue ;; esac
+        parent="$(fold_case "$parent")"
+        # The container itself is named in BLOCK_EXACT; let it answer, so the
+        # message a person sees is the one written for that case.
+        [ "$f" = "$parent" ] && continue
+        case "$f/" in "$parent"/*) ;; *) continue ;; esac
+        case "$f/" in "$fch"/*) continue ;; esac
+        echo "NO That is inside somebody else's account folder, so it will not be shared: $c"
+        echo "      Share the folders inside your own — Documents, or Pictures."
+        return
+    done
 
     for bad in "${BLOCK_EXACT[@]}"; do
         [ -n "$bad" ] || continue
@@ -325,7 +540,24 @@ check_folder() {
         # share-root containment test below builds `"$f"/*`, which for `f=/` is `//*` and needs
         # two leading slashes. Do not let the strip empty an entry.
         b="${bad%/}"; [ -n "$b" ] || b="/"
-        if [ "$f" = "$(fold_case "$b")" ]; then
+        # AND THE ENTRY IS CANONICALISED TOO, NOT ONLY THE INPUT (2026-09-14).
+        # Every $HOME-derived entry is written as the shell found $HOME, and the
+        # input arrives from `canon`, with symlinks resolved — so the moment any
+        # ancestor of $HOME is a symlink the two spellings differ and every one
+        # of those entries matches nothing. Measured with HOME=.../homes/h/user
+        # where `homes/h` is a link: both $HOME and $HOME/.ssh were ALLOWED,
+        # with a real $HOME both correctly refused. Relocated, NAS-mounted and
+        # /export/home layouts are all ordinary. On macOS it is the reason `/tmp`
+        # — an entry somebody deliberately put in this list — had never blocked
+        # anything: `/tmp` is a link to `private/tmp`, so no canonical input
+        # could ever equal it.
+        #
+        # BOTH SPELLINGS ARE COMPARED, never one. An entry that cannot be
+        # resolved — a directory that does not exist, or one this user may not
+        # enter — keeps its raw form rather than dropping out of the list, so
+        # this can only ever refuse more than it did, never less.
+        cb="$(canon "$b" 2>/dev/null)" || cb=""
+        if [ "$f" = "$(fold_case "$b")" ] || { [ -n "$cb" ] && [ "$f" = "$(fold_case "$cb")" ]; }; then
             echo "NO That folder holds far more than you mean to share, so it will not be linked: $c
       Share the folders inside it instead."
             return
@@ -335,13 +567,17 @@ check_folder() {
     for bf in "${BLOCK_PREFIX[@]}"; do
         [ -n "$bf" ] || continue
         b="${bf%/}"; [ -n "$b" ] || b="/"
-        case "$f/" in
-            "$(fold_case "$b")"/*)
-                echo "NO That folder is inside somewhere private and will not be shared: $c
+        cb="$(canon "$b" 2>/dev/null)" || cb=""
+        for bp in "$b" "$cb"; do
+            [ -n "$bp" ] || continue
+            case "$f/" in
+                "$(fold_case "$bp")"/*)
+                    echo "NO That folder is inside somewhere private and will not be shared: $c
       It holds credentials or system files, not documents."
-                return
-                ;;
-        esac
+                    return
+                    ;;
+            esac
+        done
     done
 
     # A folder that CONTAINS the share root makes the links recursive, and the
@@ -505,7 +741,14 @@ do_undo() {
     step "Removing what this script created"
 
     if [ -f "$SHARE_ROOT/$MARKER" ]; then
-        for entry in "$SHARE_ROOT"/*; do
+        # BOTH GLOBS. `*` does not match a dot-named entry, and the marker file
+        # was removed below regardless — so a link called `.plexmediaserver`
+        # survived --undo, the marker went with the run, and a second --undo
+        # then refused to touch the folder at all ("no marker file, so this
+        # script did not create it"). The link, and the sharing it enables, was
+        # permanent. `.` and `..` are not symlinks and the marker is not a
+        # symlink, so the test below already excludes all three.
+        for entry in "$SHARE_ROOT"/* "$SHARE_ROOT"/.*; do
             [ -L "$entry" ] || continue
             # Remove the link, never what it points at. `rm` on a symlink does
             # the right thing; `rm -r` on one with a trailing slash does not.
@@ -607,7 +850,13 @@ step "Choosing folders"
 
 SELECTED=()
 if [ -n "$FOLDERS_ARG" ]; then
-    OLDIFS="$IFS"; IFS=":"
+    # `set -f` is load-bearing, not tidiness. IFS stops WORD splitting and does
+    # nothing about PATHNAME expansion, so the unquoted expansion below globbed:
+    # measured, `--folders "$HOME/Notes[1]"` with a sibling `Notes1` present
+    # linked and advertised `$HOME/Notes1` — a different folder, with no warning
+    # — and `--folders "$HOME/*"` linked every folder in the home directory. A
+    # folder path is a name, never a pattern.
+    OLDIFS="$IFS"; IFS=":"; set -f
     for p in $FOLDERS_ARG; do
         [ -n "$p" ] || continue
         # Do not let the trailing-slash strip empty the entry. `/` became "" here
@@ -616,7 +865,7 @@ if [ -n "$FOLDERS_ARG" ]; then
         [ "$p" = "/" ] || p="${p%/}"
         SELECTED+=("$p")
     done
-    IFS="$OLDIFS"
+    IFS="$OLDIFS"; set +f
 else
     while IFS= read -r line; do
         [ -n "$line" ] && SELECTED+=("$line")
@@ -630,12 +879,38 @@ fi
 
 LABELS=()
 PATHS=()
+FOLDED=()
 for path in "${SELECTED[@]}"; do
     verdict="$(check_folder "$path")"
     case "$verdict" in
         "OK "*) path="${verdict#OK }" ;;
         *)      fail "${verdict#NO }"; continue ;;
     esac
+
+    # THE PATH IS REFUSED, NEVER REPAIRED. `json_string` strips control
+    # characters, and applying that to a PATH silently rewrote an identity:
+    # measured on a folder called "Doc<newline>uments", the links were made to
+    # the real folder and the code carried `p: ".../Documents"` — a path that
+    # does not exist, or worse one that does and is a different folder
+    # entirely. A path is not a label; it is the only thing telling the person
+    # which folder the checklist row means.
+    offense="$(text_offense "$path")"
+    if [ -n "$offense" ]; then
+        fail "That folder's path contains $offense, which the website will not accept: $path
+      Rename the folder and run this again. Nothing was linked for it."
+        manual "No link or checklist row was made for $path — its path contains $offense. Rename the folder and re-run, or add it in the browser directly."
+        continue
+    fi
+
+    # The site measures a path in UTF-16 units and `check_folder` counts
+    # characters, which agree until somebody has an emoji in a folder name.
+    # This is the exact test, and it is here rather than in `check_folder`
+    # because that function is sliced out and driven on its own by the check
+    # suite and may not depend on anything outside itself.
+    if [ "$(text_len "$path")" -gt 400 ]; then
+        fail "That folder's real path is too long for the website to carry: $path"
+        continue
+    fi
 
     # Two aliases of one folder canonicalise to the same place now, and two rows
     # for one folder is a row somebody ticks twice on the checklist.
@@ -649,23 +924,35 @@ for path in "${SELECTED[@]}"; do
     # actually shared rather than the alias that was typed.
     label="$(basename "$path")"
     [ -z "$label" ] && label="Folder"
-    # Bash substring, not `cut -c`: GNU cut counts BYTES and can sever a UTF-8
-    # pair mid-character, while BSD cut counts characters and can exceed the
-    # decoder's 40 UTF-16 units on astral characters. This is identical on both
-    # platforms and on bash 3.2.
-    label="${label:0:40}"
+    # Not `${label:0:40}` and not `cut -c`: GNU cut counts BYTES and can sever a
+    # UTF-8 character, bash's substring counts CHARACTERS, and the decoder
+    # counts UTF-16 units — so forty emoji measured 40 to bash and 80 to the
+    # site, over the ceiling, refusing the whole code. `text_cut` counts what
+    # the site counts and never splits a character.
+    label="$(text_cut 40 "$label")"
 
-    # De-duplicate labels; two folders called Documents is ordinary.
+    # DE-DUPLICATED THROUGH THE DECODER'S FOLD, NOT BY EXACT MATCH. This was
+    # `grep -Fxq`, while `decodeSetupCode` compares labels through `foldLabel` —
+    # lower case, visible look-alikes, invisible characters, runs of whitespace.
+    # Measured end to end: ~/Documents/photos and ~/Pictures/Photos made both
+    # links, wrote the file and printed a code that the real decoder then
+    # refused, so the refusal landed at the paste box with the links already on
+    # the disk. Disambiguating here rather than refusing is deliberate: the
+    # suffix is what the exact-match version already did, the person can rename
+    # the drive on the site, and a code that works beats a code that explains
+    # itself.
     base="$label"; n=2
-    # `-e` is required, not decoration: a folder called "-Photos" made grep read
-    # the label as an option, exit 2, and silently stop de-duplicating — so two
-    # folders shared one label, one link was skipped, and the code advertised
-    # both. The 2>/dev/null that used to be here hid exactly that.
-    while printf '%s\n' ${LABELS+"${LABELS[@]}"} | grep -Fxq -e "$label"; do
-        label="$base $n"; n=$((n + 1))
+    folded="$(fold_label "$label")"
+    while printf '%s\n' ${FOLDED+"${FOLDED[@]}"} | grep -Fxq -e "$folded"; do
+        # The suffix must not push the label past the site's ceiling, so the
+        # base is cut to make room for it rather than the sum being truncated.
+        label="$(text_cut $((40 - ${#n} - 1)) "$base") $n"
+        n=$((n + 1))
+        folded="$(fold_label "$label")"
     done
 
     LABELS+=("$label")
+    FOLDED+=("$folded")
     PATHS+=("$path")
 done
 
@@ -687,10 +974,61 @@ note "visible to anyone you later share a folder with, and computer names tend"
 note "to have people's names in them."
 MACHINE_NAME=""
 if [ -z "$FOLDERS_ARG" ] && [ -t 0 ]; then
-    printf '  A name for this Mac (Enter to decide on the website): '
+    # >&2 like every other human-facing line in this file. `[ -t 0 ]` tests
+    # STDIN, so `bash macos-share-setup.sh > code.txt` reaches here with a
+    # terminal to read from and no terminal to write to: the prompt went into
+    # the file, and the script looked like it had hung.
+    printf '  A name for this Mac (Enter to decide on the website): ' >&2
     read -r MACHINE_NAME || MACHINE_NAME=""
-    MACHINE_NAME="${MACHINE_NAME:0:40}"
+    MACHINE_NAME="$(text_cut 40 "$MACHINE_NAME")"
+    # Typed rather than read off the disk, so it is the one field here that can
+    # hold anything at all. The site refuses the whole code over it, and an
+    # empty name is what the code means by "decide on the website" — so the
+    # name is dropped and said so, which costs a suggestion, where keeping it
+    # would cost the code.
+    name_offense="$(text_offense "$MACHINE_NAME")"
+    if [ -n "$name_offense" ]; then
+        warn "That name contains $name_offense, which the website will not accept."
+        warn "Leaving it blank; you can name this Mac on the website instead."
+        MACHINE_NAME=""
+    fi
 fi
+
+# THE CODE IS BUILT BEFORE THE LINKS ARE MADE, because it can be too long.
+#
+# `decodeSetupCode` refuses a code over 4,096 characters outright, and nothing
+# here had ever looked: measured with 24 real folders under a deep tree, this
+# script printed an 8,279-character code, which the site refused whole — after
+# every link was on the disk. The 24-folder cap above is not the same bound; 24
+# long paths are nearly twice the ceiling.
+#
+# Folders come off the END, one at a time, and each one is named. That is the
+# same shape as the 24-folder cap, and it keeps the promise the decoder's own
+# refusal is about: what the checklist lists is what was prepared, so a folder
+# is either on both or on neither and said out loud.
+build_code() {
+    local json i
+    json='{"n":'"$(json_string "$MACHINE_NAME")"',"f":['
+    i=0
+    while [ $i -lt ${#LABELS[@]} ]; do
+        [ $i -gt 0 ] && json="${json},"
+        json="${json}{\"l\":$(json_string "${LABELS[$i]}"),\"p\":$(json_string "${PATHS[$i]}")}"
+        i=$((i + 1))
+    done
+    json="${json}]}"
+    printf 'VS1.%s' "$(printf '%s' "$json" | base64url)"
+}
+
+CODE="$(build_code)"
+while [ ${#CODE} -gt 4096 ] && [ ${#LABELS[@]} -gt 1 ]; do
+    drop=$(( ${#LABELS[@]} - 1 ))
+    warn "Dropped '${LABELS[$drop]}' (${PATHS[$drop]}) — one setup code carries about"
+    warn "4,000 characters and these paths are long ones."
+    manual "'${LABELS[$drop]}' (${PATHS[$drop]}) is NOT on the checklist and was not linked: the setup code ran out of room. Run this script again with just that folder, or add it in the browser directly."
+    LABELS=("${LABELS[@]:0:$drop}")
+    PATHS=("${PATHS[@]:0:$drop}")
+    CODE="$(build_code)"
+done
 
 if [ "$NO_LINKS" -eq 0 ]; then
     step "Putting links in one folder"
@@ -710,17 +1048,9 @@ fi
 
 step "Your setup code"
 
-JSON='{"n":'"$(json_string "$MACHINE_NAME")"',"f":['
-i=0
-while [ $i -lt ${#LABELS[@]} ]; do
-    [ $i -gt 0 ] && JSON="${JSON},"
-    JSON="${JSON}{\"l\":$(json_string "${LABELS[$i]}"),\"p\":$(json_string "${PATHS[$i]}")}"
-    i=$((i + 1))
-done
-JSON="${JSON}]}"
-
-CODE="VS1.$(printf '%s' "$JSON" | base64url)"
-
+# $CODE was built above, before the links, so that a code too long for the site
+# could cost a folder rather than the whole run. Do not rebuild it here: the
+# list it was measured against is the list that was linked.
 CODE_FILE="$SHARE_ROOT/setup-code.txt"
 if [ "$DRY_RUN" -eq 0 ]; then
     mkdir -p "$SHARE_ROOT"

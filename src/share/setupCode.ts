@@ -113,6 +113,12 @@ const CONTROL = /[\p{Cc}\u2028\u2029]/u;
  * `\p{Cc}` is the one `\p{C}` class not here; it is in `CONTROL` above, so
  * between the two every control-ish code point in Unicode is refused.
  *
+ * **`\p{M}` — the combining marks — is deliberately not here either, and the
+ * reasoning is in `foldLabel` below**, because the honest question about a mark
+ * is never "can this belong in a label" (it is somebody's vowel) but "does it
+ * read like the label without it". Measured: the only marks that render as
+ * nothing are the ones this regex already refuses as Default_Ignorable.
+ *
  * **U+FE0E and U+FE0F are the one carve-out, and `foldLabel` is what pays for
  * it.** They are the emoji presentation selectors and they are ordinary in a
  * real folder name — `Photos \u2764\uFE0F` is a name somebody has, not an
@@ -141,6 +147,42 @@ const DECEPTIVE =
  *
  * Folding the COMPARISON only. The label is stored exactly as sent, because a
  * normalised label is a label the person's script did not write.
+ *
+ * **Combining marks are in neither the filter nor this fold, and that is a
+ * measurement rather than an omission** (2026-09-14). They are the obvious next
+ * twin-row candidate and they look damning on paper: `\p{Mn}`, `\p{Mc}` and
+ * `\p{Me}` sit outside `\p{C*}`, outside Default_Ignorable and outside
+ * `\p{Zs}`, NFKC composes only the ones with a precomposed form, and so
+ * `Invoices` against `Invoices֑` decodes cleanly as two distinct rows —
+ * the U+034F shape again, one property over. What settles it is whether they
+ * RENDER alike, which is a question about a font and was answered in a browser
+ * rather than reasoned about:
+ *
+ *   All 2,543 code points matching `\p{M}`, each appended to a label rendered
+ *   in `.v-setup-name`'s real style (JetBrains Mono 13px, the live stack),
+ *   rasterised at 3x and diffed against the bare label.
+ *
+ * **263 of them are already Default_Ignorable or Variation_Selector, and those
+ * are the only ones that draw nothing at all.** Every one of the other 2,280
+ * draws ink — none invisible, none blank-but-widening — and repeating the
+ * faintest 387 against eleven different base strings (4,257 comparisons) found
+ * no invisible pair either. So the invisible case is closed already, and closed
+ * by property rather than by luck: "renders as nothing" is very nearly the
+ * definition of Default_Ignorable, which is why `DECEPTIVE` catching all seven
+ * of U+034F, U+180B-U+180D and U+E0100-U+E0102 is not a coincidence.
+ *
+ * **Folding them would be the outage, not the fix.** In Hebrew, Arabic, Thai
+ * and the Indic scripts the marks ARE the vowels and NFKC does not compose
+ * them, so stripping `\p{M}` collides Thai `ก` with `กั` and a pointed Hebrew
+ * spelling with its unpointed one — different words, two honest folders, and
+ * the whole code refused over the pair. That is the `Документы` mistake one
+ * level down: not refusing a script outright, just making every name in it
+ * collide with its own neighbour. Folding only the faint ones would be an
+ * enumeration, which this file has thrown out once already, and it would be an
+ * enumeration keyed on a fallback font — the faintest mark measured, U+0742,
+ * draws 1.0 CSS pixels of ink against a full stop's 4.9 in the font shipped
+ * here, and a reader whose fallback differs gets a different number. **Revisit
+ * if `--font-mono` changes**: the claim is about ink, and the ink is the font's.
  */
 function foldLabel(label: string): string {
   return label

@@ -16,6 +16,14 @@
  * already ships inside Vite and points it at a running `wrangler dev`.
  *
  * There is no assertion library, for the same reason there is no UI library.
+ *
+ * The `as BufferSource` casts on the WebCrypto calls below are the convention
+ * `src/auth/grantKey.ts` already uses, and they assert nothing about the bytes:
+ * a bare `Uint8Array` is typed as backed by `ArrayBufferLike`, which includes
+ * `SharedArrayBuffer`, and WebCrypto's signature takes only the `ArrayBuffer`
+ * case. Nothing here is ever shared memory. The alternative is to thread a type
+ * argument through every helper that returns bytes, which would put a compiler
+ * detail in the signature of code that exists to be read against the spec.
  */
 
 import { exec } from "node:child_process";
@@ -426,7 +434,18 @@ async function main(): Promise<void> {
   const health = await client.call("/api/health");
   check("the Worker answers /api/health", client.lastStatus === 200, `status ${client.lastStatus}`);
   check("D1 has all eight tables — phase 1 plus machines and drives", health.ok === true, `tables: ${health.tables}`);
-  if (client.lastStatus !== 200) {
+  /*
+   * Read the status into a local before testing it, rather than testing the
+   * property directly. TypeScript narrows a property access through a guard
+   * and does not model `client.call()` reassigning it, so an `if
+   * (client.lastStatus !== 200)` here pins `client.lastStatus` to the literal
+   * `200` for the whole of the rest of `main()` — which made the four later
+   * assertions that expect 201, 409, 400 and 401 read as comparisons that can
+   * never be true. They pass at runtime; it was the narrowing that was wrong.
+   * Found 2026-09-15, the first time `scripts/` was ever typechecked.
+   */
+  const healthStatus: number = client.lastStatus;
+  if (healthStatus !== 200) {
     console.log("\nThe Worker is not running. Start it with `npm run dev:worker`.");
     process.exit(1);
   }
@@ -489,7 +508,7 @@ async function main(): Promise<void> {
     const payload = new TextEncoder().encode("a grant document would go here");
     const publicKey = await crypto.subtle.importKey(
       "raw",
-      grant.publicKeyRaw,
+      grant.publicKeyRaw as BufferSource,
       { name: "ECDSA", namedCurve: "P-256" },
       false,
       ["verify"],
@@ -498,7 +517,7 @@ async function main(): Promise<void> {
       crypto.subtle.verify(
         { name: "ECDSA", hash: "SHA-256" },
         publicKey,
-        await signWithGrantKey(key, payload),
+        (await signWithGrantKey(key, payload)) as BufferSource,
         payload,
       );
 
@@ -636,7 +655,7 @@ async function main(): Promise<void> {
     const payload = new TextEncoder().encode("stored, retrieved, reopened");
     const publicKey = await crypto.subtle.importKey(
       "raw",
-      fromBase64Url(slot.grantPubkey),
+      fromBase64Url(slot.grantPubkey) as BufferSource,
       { name: "ECDSA", namedCurve: "P-256" },
       false,
       ["verify"],
@@ -646,7 +665,7 @@ async function main(): Promise<void> {
       await crypto.subtle.verify(
         { name: "ECDSA", hash: "SHA-256" },
         publicKey,
-        await signWithGrantKey(key, payload),
+        (await signWithGrantKey(key, payload)) as BufferSource,
         payload,
       ),
     );
@@ -893,7 +912,7 @@ async function main(): Promise<void> {
       const message = new TextEncoder().encode("recovered grant authority");
       const pub = await crypto.subtle.importKey(
         "raw",
-        fromBase64Url(redeemed.keySlot.grantPubkey),
+        fromBase64Url(redeemed.keySlot.grantPubkey) as BufferSource,
         { name: "ECDSA", namedCurve: "P-256" },
         false,
         ["verify"],
@@ -903,7 +922,7 @@ async function main(): Promise<void> {
         await crypto.subtle.verify(
           { name: "ECDSA", hash: "SHA-256" },
           pub,
-          await signWithGrantKey(opened, message),
+          (await signWithGrantKey(opened, message)) as BufferSource,
           message,
         ),
       );
@@ -1059,7 +1078,7 @@ async function main(): Promise<void> {
     const message = new TextEncoder().encode("still the same grant key");
     const pub = await crypto.subtle.importKey(
       "raw",
-      fromBase64Url(slot.grantPubkey),
+      fromBase64Url(slot.grantPubkey) as BufferSource,
       { name: "ECDSA", namedCurve: "P-256" },
       false,
       ["verify"],
@@ -1069,7 +1088,7 @@ async function main(): Promise<void> {
       await crypto.subtle.verify(
         { name: "ECDSA", hash: "SHA-256" },
         pub,
-        await signWithGrantKey(reopened, message),
+        (await signWithGrantKey(reopened, message)) as BufferSource,
         message,
       ),
     );
@@ -1182,7 +1201,7 @@ async function main(): Promise<void> {
     const message = new TextEncoder().encode("one signature, then the key dies");
     const pub = await crypto.subtle.importKey(
       "raw",
-      fromBase64Url(grantPubkeyAtSignup),
+      fromBase64Url(grantPubkeyAtSignup) as BufferSource,
       { name: "ECDSA", namedCurve: "P-256" },
       false,
       ["verify"],
@@ -1192,7 +1211,7 @@ async function main(): Promise<void> {
       await crypto.subtle.verify(
         { name: "ECDSA", hash: "SHA-256" },
         pub,
-        await signWithGrantKey(opened, message),
+        (await signWithGrantKey(opened, message)) as BufferSource,
         message,
       ),
     );
@@ -1429,7 +1448,7 @@ async function main(): Promise<void> {
     const message = new TextEncoder().encode("same key, four credentials later");
     const pub = await crypto.subtle.importKey(
       "raw",
-      fromBase64Url(slot.grantPubkey),
+      fromBase64Url(slot.grantPubkey) as BufferSource,
       { name: "ECDSA", namedCurve: "P-256" },
       false,
       ["verify"],
@@ -1439,7 +1458,7 @@ async function main(): Promise<void> {
       await crypto.subtle.verify(
         { name: "ECDSA", hash: "SHA-256" },
         pub,
-        await signWithGrantKey(reopened, message),
+        (await signWithGrantKey(reopened, message)) as BufferSource,
         message,
       ),
     );
@@ -1637,7 +1656,7 @@ async function main(): Promise<void> {
       const message = new TextEncoder().encode("a passkey opens the same key");
       const pub = await crypto.subtle.importKey(
         "raw",
-        fromBase64Url(grantPubkey),
+        fromBase64Url(grantPubkey) as BufferSource,
         { name: "ECDSA", namedCurve: "P-256" },
         false,
         ["verify"],
@@ -1647,7 +1666,7 @@ async function main(): Promise<void> {
         await crypto.subtle.verify(
           { name: "ECDSA", hash: "SHA-256" },
           pub,
-          await signWithGrantKey(opened, message),
+          (await signWithGrantKey(opened, message)) as BufferSource,
           message,
         ),
       );
@@ -2548,14 +2567,6 @@ async function main(): Promise<void> {
     );
   }
 
-  // Rate limiting ---------------------------------------------------------------
-  //
-  // **This runs last, and it has to.** §4's per-client bucket is keyed by
-  // `clientKey`, and in local development there is no edge in front of the
-  // Worker, so `cf-connecting-ip` is absent and every request in this harness
-  // shares the single bucket named "local". Tripping the backoff therefore
-  // blocks the whole run. That is the rate limiter working correctly rather than
-  // a flaw in it — but it does mean nothing can follow this section.
   /*
    * Downloads sub-pages (2026-08-20). The operator authors a page, uploads a
    * real file into local R2, and every one of the four visibilities is checked
@@ -3184,6 +3195,37 @@ async function main(): Promise<void> {
       days: 0,
     });
 
+    /*
+     * **A page code for a page no code can open is refused, and spends nothing.**
+     * The file branch of `opened()` had this rule; the page branch only checked
+     * the page existed, so a code minted on a draft (allowed, on purpose) or a
+     * page narrowed to `granted` after minting answered 200 with the slug, spent
+     * a use, and handed back a ticket that 404s. Retried, it burns every use.
+     */
+    for (const [visibility, status] of [
+      ["code", "draft"],
+      ["granted", "live"],
+    ] as const) {
+      asBrowser(opSession);
+      await api.adminPageSave({ slug, title: "Harness downloads", layout: "list", visibility, status, authSecret: opProof });
+      asBrowser(stranger);
+      const inert = await api.downloadClaim(orphan.code).then(
+        () => null,
+        (thrown: unknown) => thrown as { status?: number },
+      );
+      check(`a page code for a ${visibility}/${status} page is refused`, inert?.status === 403, `status ${inert?.status}`);
+    }
+    asBrowser(opSession);
+    await api.adminPageSave({ slug, title: "Harness downloads", layout: "list", visibility: "code", status: "live", authSecret: opProof });
+    asBrowser(stranger);
+    const reopened = await api.downloadClaim(orphan.code);
+    check(
+      "and neither refusal spent a use",
+      reopened.pages.includes(slug) && reopened.usesLeft === 4,
+      `usesLeft ${reopened.usesLeft}`,
+    );
+
+    asBrowser(opSession);
     await api.adminPageDelete(slug, opProof);
     asBrowser(stranger);
     const gone = await refusal(() => api.downloadPage(slug));
@@ -3269,6 +3311,25 @@ async function main(): Promise<void> {
       filename: "scoped.exe",
       free: true,
     });
+    /*
+     * **The bytes are actually uploaded, and that is load-bearing for what this
+     * block is testing** (2026-09-14). `opened()` now refuses a file whose
+     * `uploaded_at` is still null, because a code minted for one is inert:
+     * `readPage` hides the row and `canDownload` refuses it, so redeeming spent
+     * one of a handful of uses and handed back a ticket that 403s at the first
+     * byte, with nothing on screen that reads as a refusal.
+     *
+     * Without this upload the fixture was a file-scoped code for a file that
+     * had never arrived — so the assertion below read "a code for a
+     * half-finished upload opens it", which is the bug rather than the rule.
+     * The row has to be a real, downloadable file for the next three checks to
+     * be about the page's *status* at all.
+     */
+    {
+      const b = await api.adminUploadBegin(scopedId, "application/octet-stream");
+      const part = await uploadPart(scopedId, b.uploadId, 1, new Uint8Array(64).fill(3).buffer as ArrayBuffer);
+      await api.adminUploadFinish(scopedId, b.uploadId, [part], opProof);
+    }
     const fileScoped = await api.adminDownloadMint({ authSecret: opProof,
       label: "harness-file-scope",
       item: scopedId,
@@ -3286,6 +3347,59 @@ async function main(): Promise<void> {
       "a file-scoped code opens its own file while the page is live",
       scopedWorks?.items?.includes(scopedId) === true,
       JSON.stringify(scopedWorks?.items ?? null),
+    );
+
+    /*
+     * **A code for a file whose bytes never arrived is refused, and does not
+     * spend a use.** `readPage` hides an un-uploaded row and `canDownload`
+     * refuses it, so such a code opens nothing — but `opened()` used to return
+     * the id anyway, which satisfies `claim`'s emptiness guard, so the
+     * redemption succeeded, incremented `uses`, and handed back a ticket that
+     * 403s at the first byte. The customer sees a success and gets nothing, and
+     * burns all five uses one empty success at a time.
+     *
+     * The refusal has to be the shared `denied`/403, not a distinct status:
+     * anything else makes the code route an existence oracle over the table.
+     * Both halves are asserted — the refusal, and that the count did not move.
+     */
+    asBrowser(opSession);
+    const pendingId = `pending-${RUN}`;
+    await api.adminFileSave({
+      id: pendingId,
+      slug: scopedSlug,
+      name: "Not yet uploaded",
+      filename: "pending.exe",
+      free: true,
+    });
+    const pendingCode = await api.adminDownloadMint({
+      authSecret: opProof,
+      label: "harness-pending-upload",
+      item: pendingId,
+      slug: null,
+      maxUses: 5,
+      days: 0,
+    });
+
+    asBrowser(stranger);
+    const pendingRefused = await api.downloadClaim(pendingCode.code).then(
+      () => null,
+      (thrown: unknown) => thrown as { status?: number },
+    );
+    check(
+      "a code for a file that never finished uploading is refused",
+      pendingRefused?.status === 403,
+      `status ${pendingRefused?.status}`,
+    );
+
+    asBrowser(opSession);
+    const pendingList = await api.adminDownloadsList();
+    // Matched on the label rather than the ref: `listCodes` derives `ref` with
+    // SQL's `hex()`, which is uppercase, and the mint response is not.
+    const pendingRow = pendingList.codes.find((c) => c.label === "harness-pending-upload");
+    check(
+      "and that refusal does not spend one of its uses",
+      pendingRow?.uses === 0,
+      `uses ${pendingRow?.uses}`,
     );
 
     asBrowser(opSession);
@@ -3399,6 +3513,16 @@ async function main(): Promise<void> {
     ).catch(() => undefined);
   }
 
+  // Rate limiting ---------------------------------------------------------------
+  //
+  // **This runs last, and it has to.** §4's per-client bucket is keyed by
+  // `clientKey`, and in local development there is no edge in front of the
+  // Worker, so `cf-connecting-ip` is absent and every request in this harness
+  // shares the single bucket named "local". Tripping the backoff therefore
+  // blocks the whole run. That is the rate limiter working correctly rather than
+  // a flaw in it — but it does mean nothing can follow this section. (The banner
+  // sat above the Downloads section for a while, which was inserted beneath it
+  // and so contradicted it; it lives on the section it describes now.)
   section("Rate limiting (§4) — the RateLimiter's backoff path, exercised at last");
   {
     // A handle of its own, so tripping the backoff cannot lock out an account
