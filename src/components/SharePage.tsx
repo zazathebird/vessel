@@ -347,7 +347,6 @@ function AgentPanel({
     // Keyed on the machine id rather than the `stored` object: reloading the
     // store after a drive change makes a fresh object with the same key, and
     // restarting the agent on it would drop every connected peer for nothing.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [row.id, stored.machineId, rekeyedElsewhere, epoch]);
 
   // §12 N: warn on close only while somebody is actually connected.

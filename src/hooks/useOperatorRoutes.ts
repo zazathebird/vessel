@@ -66,6 +66,77 @@ export function isEditable(target: EventTarget | null): boolean {
   return tag === "input" || tag === "textarea" || tag === "select" || el.isContentEditable;
 }
 
+/** The slice of an element the sideways-scroll test reads — an `HTMLElement`
+ *  satisfies it, and so does a plain object, which is how the gate drives it. */
+export interface ScrollBox {
+  scrollWidth: number;
+  clientWidth: number;
+  parentElement: ScrollBox | null;
+}
+
+/**
+ * Is the keystroke landing inside something that scrolls sideways?
+ *
+ * An arrow key there already means something: the browser scrolls the nearest
+ * scrollable ancestor of the focused element. Deck's grid is exactly that
+ * (`overflow-x: auto`, one card after another), and so is Side-scroll's stage —
+ * so paging the whole site on the same keystroke both scrolled the deck and
+ * navigated away from it (2026-09-24 review, item 13).
+ *
+ * **Both halves are required, and each alone is wrong.** Overflowing content
+ * is not a scroller unless `overflow-x` lets it scroll (`visible` / `hidden` /
+ * `clip` do not take arrow keys). And `overflow-x: auto` is not a scroller
+ * unless something actually overflows — which matters here, because
+ * `.v-stage` scrolls vertically and so its `overflow-x` *computes* to `auto`
+ * on every layout (CLAUDE.md's CSS gotchas); testing the style alone would
+ * switch arrow paging off site-wide the moment focus entered the stage.
+ *
+ * With nothing focused the target is `<body>`, which is outside every one of
+ * these, so ordinary paging is untouched.
+ */
+export function insideSidewaysScroller(
+  target: EventTarget | ScrollBox | null,
+  overflowX: (el: ScrollBox) => string = (el) => getComputedStyle(el as unknown as Element).overflowX,
+): boolean {
+  let el = target as ScrollBox | null;
+  if (!el || typeof el.scrollWidth !== "number") return false;
+  for (; el; el = el.parentElement) {
+    if (el.scrollWidth > el.clientWidth) {
+      const o = overflowX(el);
+      if (o === "auto" || o === "scroll") return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Does this keystroke page the site? The one decision, pure, so the gate can
+ * drive it rather than read it; `onKey` below asks it and nothing else.
+ *
+ * **Not under the door, as well as not under the panel** (2026-09-24 review;
+ * audit finding 3). The two are deliberately non-modal — `sudo` with the
+ * panel open opens the door, and that stays — but non-modal is about which
+ * *commands* still reach them, not about the page moving underneath. Paging
+ * already stood down for the panel for that reason, and the door is the same
+ * case: arrow keys over the open door paged the site behind it. Escape and ⌘K
+ * are above this and unaffected.
+ */
+export function arrowPages(
+  key: string,
+  state: { panelOpen: boolean; doorOpen: boolean },
+  keys: string[],
+  target: EventTarget | ScrollBox | null,
+  overflowX?: (el: ScrollBox) => string,
+): boolean {
+  return (
+    (key === "arrowright" || key === "arrowleft") &&
+    !state.panelOpen &&
+    !state.doorOpen &&
+    !konamiStarted(keys) &&
+    !insideSidewaysScroller(target, overflowX)
+  );
+}
+
 export function useOperatorRoutes(): void {
   const { config, go, openDoor, closeDoor, closePanel, panelOpen, doorOpen, poke } = useConfig();
 
@@ -169,11 +240,7 @@ export function useOperatorRoutes(): void {
         return;
       }
 
-      if (
-        (key === "arrowright" || key === "arrowleft") &&
-        !live.current.panelOpen &&
-        !konamiStarted(keys)
-      ) {
+      if (arrowPages(key, live.current, keys, event.target)) {
         const i = NAV.findIndex((n) => n.id === live.current.page);
         if (i > -1) {
           go(NAV[(i + (key === "arrowright" ? 1 : NAV.length - 1)) % NAV.length].id);

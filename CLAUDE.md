@@ -41,7 +41,7 @@ indistinguishable from a skill skipped. `verify-site` for anything that must be 
 npm run dev          # Vite dev server on http://localhost:5173 — no API
 npm run dev:worker   # full stack: Worker + API + local D1, on http://127.0.0.1:8787
 npm run check        # THE GATE — every automatable invariant. Also runs as predeploy
-npm run check:fast   # the same without the duel simulation (~4s); runs after every edit via hook
+npm run check:fast   # the same without the duel simulation (~43s); runs after every edit via hook
 npm run build        # typecheck + production build to dist/
 npm run typecheck    # types only: app, worker, and scripts/
 npm run test:auth    # auth end-to-end suite; needs dev:worker running
@@ -461,6 +461,11 @@ covers how to *see* any of this. The load-bearing few:
   then runs 1.67× fast.
 - **The duels are operator-only, enforced where the thing is drawn, never at the storage end** — else
   the operator's own published config silently rewrites itself when he looks at his site logged out.
+- **The engine is a lazy chunk, never in the entry bundle** (2026-09-24) — `effects.ts` reaches it
+  only through `loadDuelEngine`, `Ornament.tsx` through `lazy()`, and the config validator reads
+  `src/fx/roster.ts` (ids, `SIDES`, pools — the one declaration of each fighter's side) rather than
+  `fighters.ts`. One static import of `./duel` anywhere in the entry undoes it silently. Gated on the
+  real bundle graph.
 - **Every default is 1 and 1 must stay arithmetic identity**, so 360,000 stepped frames and 280,000
   generated sequences pass unchanged.
 
@@ -552,7 +557,7 @@ database table, not TypeScript.** The load-bearing few:
 
 ## Checks — run them, and add to them
 
-`npm run check` is the gate (`scripts/check.ts`); `npm run check:fast` (~4s) is the same without the duel simulation and
+`npm run check` is the gate (`scripts/check.ts`); `npm run check:fast` (~43s, measured 2026-09-24) is the same without the duel simulation and
 runs automatically after every edit to `src/`, `worker/` or `scripts/` via the `PostToolUse` hook in
 `.claude/settings.json`. The full pass is `predeploy`, so **nothing reaches production without it.**
 
