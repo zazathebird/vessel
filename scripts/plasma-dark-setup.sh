@@ -371,7 +371,9 @@ case "${LOOK}" in
     osx)    CANDIDATES=(Papirus-Dark bloom-dark breeze-dark) ;;
     zorin)  CANDIDATES=(Papirus-Dark bloom-dark breeze-dark) ;;
     unity)  CANDIDATES=(Yaru-dark Yaru Papirus-Dark breeze-dark) ;;
-    gnome)  CANDIDATES=(Adwaita Papirus-Dark breeze-dark) ;;
+    # Not Adwaita, although it is GNOME's: it covers almost none of KDE, so the
+    # tray icons came out dark-on-dark and the dash had four entries with no icon.
+    gnome)  CANDIDATES=(Papirus-Dark breeze-dark) ;;
     win7)   CANDIDATES=(Papirus-Dark breeze-dark) ;;
     # The LIGHT Bloom, deliberately: the reference screenshot's dock is pale and
     # its icons are the light set. bloom-dark here would be the one wrong note.
@@ -712,8 +714,9 @@ if [ "${LOOK}" != "ubuntu" ]; then
     # showed: the panel layouts were genuinely different and the desktops still
     # read as one desktop fourteen times, because every one of them wore the same
     # Debian wallpaper. Colour is doing more of the identifying than layout is.
-    # A look with no entry here keeps the dark Debian swirl, which is the right
-    # default for the ones that are not imitating anybody (ubuntu, gnome, win7).
+    # A look with no entry here keeps the dark Debian swirl. Only ubuntu is left
+    # on it now: gnome and win7 ARE imitations, and six looks on one wallpaper
+    # read as one desktop six times in the contact sheet.
     GRAD_FROM=""; GRAD_TO=""; GRAD_ANGLE=135
     case "${LOOK}" in
         deepin-exact) GRAD_FROM="#F0468C"; GRAD_TO="#2FB6F0" ;;
@@ -724,7 +727,14 @@ if [ "${LOOK}" != "ubuntu" ]; then
         manjaro)      GRAD_FROM="#2B2B2B"; GRAD_TO="#16A085"; GRAD_ANGLE=115 ;;
         nitrux)       GRAD_FROM="#E8455F"; GRAD_TO="#2FBFA0"; GRAD_ANGLE=145 ;;
         xerolinux)    GRAD_FROM="#6B2D6B"; GRAD_TO="#E8A0C0"; GRAD_ANGLE=165 ;;
-        archcraft)    GRAD_FROM="#3A3A3A"; GRAD_TO="#8A8A8A"; GRAD_ANGLE=140 ;;
+        # Archcraft ships dark, saturated themes; mid-grey read as "no wallpaper".
+        archcraft)    GRAD_FROM="#1B1D24"; GRAD_TO="#3B4252"; GRAD_ANGLE=140 ;;
+        deepin)       GRAD_FROM="#0A1A3A"; GRAD_TO="#1E5A9E"; GRAD_ANGLE=135 ;;
+        osx)          GRAD_FROM="#1B1F4A"; GRAD_TO="#7A4FBF"; GRAD_ANGLE=150 ;;
+        zorin)        GRAD_FROM="#0C3A6B"; GRAD_TO="#1591E0"; GRAD_ANGLE=140 ;;
+        unity)        GRAD_FROM="#2C001E"; GRAD_TO="#77216F"; GRAD_ANGLE=135 ;;
+        gnome)        GRAD_FROM="#241F31"; GRAD_TO="#3D3846"; GRAD_ANGLE=160 ;;
+        win7)         GRAD_FROM="#0B3A6E"; GRAD_TO="#2E8BD8"; GRAD_ANGLE=130 ;;
         exodia)       GRAD_FROM="#1E1B2E"; GRAD_TO="#4A3D6B"; GRAD_ANGLE=150 ;;
         feren)        GRAD_FROM="#0E4A4A"; GRAD_TO="#2FA8A8"; GRAD_ANGLE=155 ;;
     esac
@@ -874,6 +884,12 @@ if [ "${LOOK}" != "ubuntu" ]; then
         fi
 
         # Every look starts from a clean slate, then builds its own panels.
+        # Deepin's own launcher glyph, which bloom ships. Named for the two deepin
+        # looks only when it is on disk; without it the launcher fell through the
+        # icon lookup to an unrelated back-arrow on 2026-09-24.
+        DDE_ICON=""
+        [ -f /usr/share/icons/bloom/places/48/deepin-launcher.svg ] && DDE_ICON="deepin-launcher"
+
         # opacity(panel, n) RECORDS the wish instead of assigning panel.opacity,
         # which is a silent no-op on Plasma 6.3.6 (CLAUDE.md, Plasma traps). The
         # list is printed at the end of the script and written into plasmashellrc
@@ -881,6 +897,8 @@ if [ "${LOOK}" != "ubuntu" ]; then
         JS_HEAD='var ps = panels(); for (var i = 0; i < ps.length; i++) { ps[i].remove(); }
 var OPQ = [];
 function opacity(p, n) { OPQ.push(p.id + "=" + n); }
+var DDE_ICON = "'"${DDE_ICON}"'";
+function ddeLauncher(w) { if (DDE_ICON.length > 0) { w.currentConfigGroup = ["General"]; w.writeConfig("icon", DDE_ICON); } return w; }
 function spacer(p) { var s = p.addWidget("org.kde.plasma.panelspacer");
   s.currentConfigGroup = ["Configuration", "General"]; s.writeConfig("expanding", true); return s; }'
 
@@ -894,7 +912,7 @@ try { p.lengthMode = "fill"; } catch (e) {}
 try { p.alignment = "center"; } catch (e) {}
 try { p.floating = false; } catch (e) {}
 opacity(p, 2);
-p.addWidget("org.kde.plasma.kickerdash");
+ddeLauncher(p.addWidget("org.kde.plasma.kickerdash"));
 spacer(p);
 p.addWidget("org.kde.plasma.icontasks");
 spacer(p);
@@ -909,7 +927,7 @@ p.addWidget("org.kde.plasma.showdesktop");'
             # than as any other dark Plasma. lengthMode "fit" is what keeps that
             # panel the width of its contents instead of the width of the screen.
             JS_BODY='var b = new Panel;
-b.location = "bottom"; b.height = 34;
+b.location = "bottom"; b.height = 42;
 try { b.lengthMode = "fill"; } catch (e) {}
 try { b.alignment = "center"; } catch (e) {}
 try { b.floating = false; } catch (e) {}
@@ -939,6 +957,10 @@ t.addWidget("org.kde.plasma.digitalclock");'
             [ -d /usr/share/plasma/plasmoids/org.kde.plasma.appmenu ] \
                 && APPMENU='m.addWidget("org.kde.plasma.appmenu");' \
                 || info "no global menu applet installed; the top bar gets tray and clock only"
+            # The Trash ends a macOS dock. Named only when on disk, like appmenu.
+            TRASH='d.addWidget("org.kde.plasma.showdesktop");'
+            [ -d /usr/share/plasma/plasmoids/org.kde.plasma.trash ] \
+                && TRASH='d.addWidget("org.kde.plasma.trash");'
             JS_BODY='var m = new Panel;
 m.location = "top"; m.height = 26;
 try { m.lengthMode = "fill"; } catch (e) {}
@@ -957,7 +979,7 @@ try { d.alignment = "center"; } catch (e) {}
 try { d.floating = true; } catch (e) {}
 opacity(d, 2);
 d.addWidget("org.kde.plasma.icontasks");
-d.addWidget("org.kde.plasma.showdesktop");'
+'"${TRASH}"
             ;;
         zorin)
             # Same two-panel skeleton as osx, and the differences are the whole
@@ -1062,7 +1084,7 @@ try { p.lengthMode = "fill"; } catch (e) {}
 try { p.alignment = "center"; } catch (e) {}
 try { p.floating = false; } catch (e) {}
 opacity(p, 2);
-p.addWidget("org.kde.plasma.kickerdash");
+ddeLauncher(p.addWidget("org.kde.plasma.kickerdash"));
 p.addWidget("org.kde.plasma.showdesktop");
 spacer(p);
 p.addWidget("org.kde.plasma.icontasks");
@@ -1081,7 +1103,7 @@ p.addWidget("org.kde.plasma.notifications");'
                 elementary) TOP_H=26; DOCK_H=64; TOP_CLOCK=centre; TOP_LAUNCH=1; DOCK_LAUNCH=0 ;;
                 popos)      TOP_H=28; DOCK_H=56; TOP_CLOCK=centre; TOP_LAUNCH=1; DOCK_LAUNCH=0 ;;
                 nitrux)     TOP_H=26; DOCK_H=60; TOP_CLOCK=right;  TOP_LAUNCH=0; DOCK_LAUNCH=1 ;;
-                xerolinux)  TOP_H=26; DOCK_H=56; TOP_CLOCK=right;  TOP_LAUNCH=0; DOCK_LAUNCH=0 ;;
+                xerolinux)  TOP_H=26; DOCK_H=56; TOP_CLOCK=right;  TOP_LAUNCH=0; DOCK_LAUNCH=1 ;;
                 archcraft)  TOP_H=24; DOCK_H=44; TOP_CLOCK=right;  TOP_LAUNCH=1; DOCK_LAUNCH=0 ;;
             esac
 
@@ -1183,6 +1205,7 @@ m.location = "top"; m.height = 26;
 try { m.lengthMode = "fill"; } catch (e) {}
 try { m.floating = false; } catch (e) {}
 opacity(m, 1);
+m.addWidget("org.kde.plasma.kickoff");
 m.addWidget("org.kde.plasma.pager");
 spacer(m);
 m.addWidget("org.kde.plasma.systemtray");
