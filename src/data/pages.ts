@@ -114,7 +114,7 @@ export const PAGES: Record<PageId, Page> = {
      */
     eyebrow: "computer repair · over twenty years",
     title: "Oh. It's you.",
-    lede: "Broken boards get soldered here, not boxed up and quoted as a new machine. Dead, slow, crawling with viruses, or holding the only copy of photographs of somebody who isn't around to take any more. You email me, I tell you roughly what it will cost, and then I fix it.",
+    lede: "Broken boards get soldered here, not boxed up and quoted as a new machine. Dead, slow, crawling with viruses, or holding the only copy of photographs of somebody who isn't around to take any more. You email me, I tell you roughly what it will cost, and then I get to work.",
     ctas: [
       { label: "Fix my computer →", to: "contact", primary: true },
       // Featured on the landing page at the client's request (2026-08-14). It
@@ -206,7 +206,7 @@ export const PAGES: Record<PageId, Page> = {
     blocks: [
       { kicker: "origin", title: "It was dead when I got it", body: "A 486 — a desktop from the early nineties, ancient even then, and already dead when it reached me. I took it apart to find out why. That is still the whole job." },
       { kicker: "now", title: "Your machine does not leave this room", body: "Whatever comes in is worked on where I am, not packed into a box and sent away. The places with a counter and a lanyard will often do exactly that, then read you a tracking number." },
-      { kicker: "stance", title: "Most dead computers aren't", body: "Most machines somebody has been told are finished need one part and about forty minutes. The ones genuinely past saving get stripped, and their parts go into somebody else's repair. \u201cIt is not worth fixing\u201d is a sentence with a commission attached." },
+      { kicker: "stance", title: "Most dead computers aren't", body: "Most machines somebody has been told are finished often need one part, not a new machine. The ones genuinely past saving get stripped, and their parts go into somebody else's repair. \u201cIt is not worth fixing\u201d is a sentence with a commission attached." },
     ],
   },
   // The form itself is a component, not data — `App` renders `SignUp` in place
@@ -253,7 +253,7 @@ export const PAGES: Record<PageId, Page> = {
     // of these cost money and the way you pay is an e-transfer to a person,
     // which is unusual enough that saying so up front is less strange than
     // letting somebody discover it at the click.
-    lede: "Small programs I wrote to fix things that annoyed me, and a few I've collected over the years. Some are free. The rest cost a few dollars \u2014 send an e-transfer and a code comes back that unlocks the download. Shareware, the old way: none of it turns into $9.99 a month the moment you look away.",
+    lede: "Small programs I wrote to fix things that annoyed me, and a few I've collected over the years. Some are free. The rest cost a few dollars \u2014 send an e-transfer and a code comes back that unlocks the download.",
     ctas: [{ label: "Ask me about one \u2192", to: "contact", primary: true }],
     blocks: [],
   },
@@ -576,7 +576,7 @@ export const PAGES: Record<PageId, Page> = {
         "To install anything at all from a link they read out to you",
         "To keep the conversation secret from your bank or your family"
       ] },
-      { kicker: "the tell that never fails", title: "Nobody real asks for gift cards", body: "No company, no bank, no government department and no police force has ever been paid in Apple, Google Play, Steam or Amazon gift cards. Not once, anywhere. If gift cards come up in any conversation about money you supposedly owe, the conversation is a crime in progress. The same goes for cryptocurrency machines and for couriers sent to collect cash." },
+      { kicker: "the tell that never fails", title: "Nobody real asks for gift cards", body: "No bank, no government department and no police force takes gift cards, and no company asks you to settle a debt, a fine or a refund with them. If gift cards come up in any conversation about money you supposedly owe, the conversation is a crime in progress. The same goes for cryptocurrency machines and for couriers sent to collect cash." },
       { kicker: "you are allowed", title: "Hanging up is not rude", body: "People stay on the line because they were raised not to be rude to a stranger, and the script is built on exactly that. You are allowed to put the phone down in the middle of a sentence, on anybody, for any reason. Do not try to argue, catch them out, or keep them talking to waste their time — that is an hour of your life against a shift they are paid for, and it marks your number as one that answers. Hang up, then report the number. That does the damage." },
 
       // ---- 3. How the call runs, in the order it runs.
@@ -588,7 +588,7 @@ export const PAGES: Record<PageId, Page> = {
         "A callback: you rang a number from a pop-up, hung up, and now they ring you"
       ] },
       { kicker: "who they claim to be", title: "The names they borrow", body: "The name is chosen to make you drop your guard, and it is always one you already trust. Impersonating these companies is the scam — the companies are not involved.", hasList: true, items: [
-        "Microsoft, Windows Defender, or \"Windows Support\" — the most common by a wide margin",
+        "Microsoft, Windows Defender, or \"Windows Support\" — the most common",
         "Norton, McAfee or another antivirus, usually about a renewal you never signed up for",
         "Amazon, PayPal or Apple, about a purchase or a refund",
         "Your bank's fraud department, ringing to \"protect\" your account",
@@ -613,7 +613,6 @@ export const PAGES: Record<PageId, Page> = {
         "They ring back again and again once you hang up — for hours, then for days or weeks, knowing a little more about you each time",
         "A different number each time, often made to look local, or made to look like the real company",
         "They ask for your mobile number \"in case we get cut off\"",
-        "No \"this call may be recorded\" at the start — real support lines nearly always say it, scammers do not",
         "They will not give you a number that reaches a real switchboard",
         "The name they give changes if you ask twice, and the badge number never checks out",
         "\"I am going to stay on the line with you the whole time\" — including while you drive to the bank"

@@ -53,6 +53,16 @@ export function canTakeFocus(f: FocusFacts): boolean {
   return !f.disabled && !f.inert && f.rendered && f.visible;
 }
 
+/** Inside the hidden body of a closed `<details>` (at any depth)? */
+function inClosedDetails(el: HTMLElement): boolean {
+  for (let d = el.closest("details"); d; d = d.parentElement?.closest("details") ?? null) {
+    const summary = el.closest("summary");
+    const ownSummary = summary !== null && summary.parentElement === d;
+    if (!(d as HTMLDetailsElement).open && !ownSummary) return true;
+  }
+  return false;
+}
+
 /** The browser's answers to `FocusFacts`, for a real element. */
 function factsOf(el: HTMLElement): FocusFacts {
   const style = getComputedStyle(el);
@@ -61,7 +71,10 @@ function factsOf(el: HTMLElement): FocusFacts {
     inert: el.closest("[inert]") !== null,
     // No client rects means no box: display:none on it or on any ancestor
     // (which is what `hidden` does). Cheaper than walking the ancestors.
-    rendered: el.getClientRects().length > 0,
+    // …except inside a closed `<details>`: Chrome hides its body with
+    // `content-visibility`, which leaves the children reporting rects. The
+    // closed element's own `<summary>` is still a real, visible control.
+    rendered: el.getClientRects().length > 0 && !inClosedDetails(el),
     visible: style.visibility !== "hidden" && style.visibility !== "collapse",
   };
 }

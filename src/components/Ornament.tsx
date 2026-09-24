@@ -1,4 +1,5 @@
-import { Suspense, lazy } from "react";
+import { lazy } from "react";
+import { Lazy } from "./Lazy";
 
 import { useConfig } from "../config/ConfigContext";
 import { NAV } from "../data/pageIds";
@@ -118,9 +119,12 @@ export function Ornament({ layout }: { layout: LayoutId }) {
       {(ornament === "duel" || ornament === "duelholy") && (
         // The one ornament that is a canvas rather than CSS — an endless run of
         // little lightsword matches. See docs/DUEL.md and DuelOrnament.tsx.
-        <Suspense fallback={null}>
+        // `Lazy`, not a bare `Suspense`: the hero is outside every route
+        // boundary, so a chunk that 404s after a redeploy would otherwise
+        // unmount the whole tree. Failed, the ornament is simply absent.
+        <Lazy>
           <DuelOrnament pairing={ornament} />
-        </Suspense>
+        </Lazy>
       )}
 
       {layout === "radial" && (

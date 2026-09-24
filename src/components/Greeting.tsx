@@ -136,7 +136,7 @@ export function Greeting() {
             else on your computer, and you can switch it off again at any time with the
             button marked <strong>plain</strong> at the top of the page.
           </p>
-          <p>Nothing about you is saved or counted, and this message will not come back.</p>
+          <p>Nothing here tracks you, and this message will not come back.</p>
         </div>
         <div className="v-dialog-actions">
           <button
@@ -172,7 +172,7 @@ export function Greeting() {
           still, press the button marked <strong>plain</strong> at the top of the page
           and everything stops moving. Sound is already switched off.
         </p>
-        <p>Nothing about you is saved or counted, and this message will not come back.</p>
+        <p>Nothing here tracks you, and this message will not come back.</p>
       </div>
       <div className="v-dialog-actions">
         <button type="button" className="v-btn v-btn-primary" onClick={dismiss} autoFocus>

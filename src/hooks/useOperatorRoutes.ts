@@ -137,6 +137,22 @@ export function arrowPages(
   );
 }
 
+/**
+ * Which element a keystroke should be judged against for sideways scrolling.
+ *
+ * Clicking a non-focusable spot inside Deck's card row leaves focus on
+ * `<body>`, yet Chrome still arrow-scrolls the row that was clicked — so a key
+ * whose target is the document itself is judged against the last thing the
+ * pointer went down on instead. Anything actually focused speaks for itself.
+ */
+export function pagingTarget<T>(
+  target: T | null,
+  lastPointer: T | null,
+  isDocument: (t: T) => boolean,
+): T | null {
+  return target && isDocument(target) && lastPointer ? lastPointer : target;
+}
+
 export function useOperatorRoutes(): void {
   const { config, go, openDoor, closeDoor, closePanel, panelOpen, doorOpen, poke } = useConfig();
 
@@ -149,6 +165,7 @@ export function useOperatorRoutes(): void {
   useEffect(() => {
     const keys: string[] = [];
 
+    let lastPointer: EventTarget | null = null;
     const onKey = (event: KeyboardEvent) => {
       const key = (event.key || "").toLowerCase();
       poke();
@@ -240,7 +257,12 @@ export function useOperatorRoutes(): void {
         return;
       }
 
-      if (arrowPages(key, live.current, keys, event.target)) {
+      const judged = pagingTarget<EventTarget>(
+        event.target,
+        lastPointer,
+        (t) => t === document.body || t === document.documentElement || t === document,
+      );
+      if (arrowPages(key, live.current, keys, judged)) {
         const i = NAV.findIndex((n) => n.id === live.current.page);
         if (i > -1) {
           go(NAV[(i + (key === "arrowright" ? 1 : NAV.length - 1)) % NAV.length].id);
@@ -254,6 +276,7 @@ export function useOperatorRoutes(): void {
     // sideways pointer drag over text and nothing else.
     let dragFrom: number | null = null;
     const onDown = (event: PointerEvent) => {
+      lastPointer = event.target;
       dragFrom = isEditable(event.target) ? null : event.clientX;
       poke();
     };

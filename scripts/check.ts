@@ -63,7 +63,7 @@ import {
   DEFAULT_RIM,
   GRAVITY,
 } from "../src/fx/duel";
-import { drawFx, loadDuelEngine } from "../src/fx/effects";
+import { drawFx, duelRetryDue, loadDuelEngine } from "../src/fx/effects";
 import type { FxCache } from "../src/fx/effects";
 import { duelCamera, ORNAMENT_PX } from "../src/components/DuelOrnament";
 import type { DuelCam } from "../src/components/DuelOrnament";
@@ -129,7 +129,7 @@ import { applyLook, themeClasses, themeVars } from "../src/theme";
 import { LOOK_KEYS, validLookPages } from "../src/data/lookSettings";
 import { effectiveStation } from "../src/data/stations";
 import { edgeState } from "../src/hooks/useEdgeFade";
-import { arrowPages } from "../src/hooks/useOperatorRoutes";
+import { arrowPages, pagingTarget } from "../src/hooks/useOperatorRoutes";
 import type { ScrollBox } from "../src/hooks/useOperatorRoutes";
 import { POINTER_LIGHT_LAYOUTS, coalesce, pointerLightWrites } from "../src/hooks/useMotionSystems";
 import { canTakeFocus } from "../src/hooks/useFocusTrap";
@@ -5281,12 +5281,40 @@ check("arrow keys page the site only where an arrow key means nothing else", () 
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/\/\/[^\n]*/g, "");
   must(
-    /if \(arrowPages\(key, live\.current, keys, event\.target\)\) \{\s*const i = NAV\.findIndex/.test(src),
+    /if \(arrowPages\(key, live\.current, keys, judged\)\) \{\s*const i = NAV\.findIndex/.test(src),
     "useOperatorRoutes no longer pages through arrowPages — the gate above is testing a function the page does not call",
   );
   must((src.match(/go\(NAV\[/g) ?? []).length === 1, "useOperatorRoutes pages from a second place arrowPages does not guard");
   must(/live\.current = \{[^}]*\bdoorOpen\b/.test(src), "the live state handed to arrowPages no longer carries doorOpen");
   return "pages from the body and the stage; not in a sideways scroller, under the door or panel, or mid-konami";
+});
+
+check("a key with nothing focused is judged against what the pointer went down on", () => {
+  // Second-run review 2026-09-24: clicking a non-focusable spot in Deck's row
+  // leaves focus on <body>, Chrome still arrow-scrolls the clicked row, and
+  // the site paged as well. The judged target must be the pointer's.
+  const isDoc = (t: string) => t === "body";
+  must(pagingTarget<string>("body", "deck-card", isDoc) === "deck-card", "a body-targeted key ignored the last pointerdown");
+  must(pagingTarget<string>("link", "deck-card", isDoc) === "link", "a focused element was overridden by the pointer");
+  must(pagingTarget<string>("body", null, isDoc) === "body", "with no pointer history the body stopped being the target");
+  const src = readFileSync("src/hooks/useOperatorRoutes.ts", "utf8");
+  must(/arrowPages\(key, live\.current, keys, judged\)/.test(src), "onKey no longer hands arrowPages the pointer-aware target");
+  must(/lastPointer = event\.target/.test(src), "pointerdown no longer records its target");
+  return "body keys judged by the last pointerdown; focused elements by themselves";
+});
+
+check("a duel chunk that fails to load backs off and cannot blank the site", () => {
+  // Second-run review 2026-09-24: the lazy duel ornament sat in a bare
+  // <Suspense> outside every route boundary (a 404'd chunk unmounted the whole
+  // tree), and a failed load retried every frame, silently.
+  const orn = readFileSync("src/components/Ornament.tsx", "utf8");
+  must(!/<Suspense\b/.test(orn), "Ornament.tsx wraps a lazy chunk in a bare Suspense again");
+  must(/<Lazy>\s*<DuelOrnament/.test(orn), "the duel ornament is no longer inside Lazy's error boundary");
+  must(duelRetryDue(performance.now()), "a fresh tab is not allowed to fetch the engine");
+  const fx = readFileSync("src/fx/effects.ts", "utf8");
+  must(/if \(duelRetryDue\(performance\.now\(\)\)\) loadDuelEngine\(\)/.test(fx), "lazyDuel fetches without consulting the backoff");
+  must(/duelRetryAt = performance\.now\(\) \+ Math\.min\(60_000/.test(fx), "a failed load no longer schedules a backed-off retry");
+  return "Lazy boundary around the ornament; failed loads back off, capped at a minute";
 });
 
 /*

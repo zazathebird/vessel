@@ -124,8 +124,15 @@ new_sqlite_classes = ["RateLimiter"]
 tag = "v2"
 new_sqlite_classes = ["MachineSignal"]
 
+# Invocation logs are OFF (2026-09-24): they record every request's metadata
+# for days, which the Contact page's "nothing about you is stored here" and
+# SPEC-ACCOUNTS §9's no-personal-data inventory both deny. The Worker's own
+# console lines (the CSP reports) still reach the dashboard and `wrangler tail`.
 [observability]
 enabled = true
+
+[observability.logs]
+invocation_logs = false
 
 # Secrets are set with `wrangler secret put`, never committed:
 #   AUTH_PEPPER     — HMAC key for stored auth hashes (§4)

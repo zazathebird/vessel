@@ -2128,10 +2128,24 @@ export function loadDuelEngine(): Promise<void> {
     },
     (error: unknown) => {
       duelLoading = null;
+      // Back off rather than refetch every frame: 2s, 4s, 8s … capped at a
+      // minute. The first failure is logged, once — a chunk that stops
+      // answering is almost always a redeploy under an open tab.
+      if (duelFailures === 0) console.error("[vessel] the duel engine did not load", error);
+      duelFailures += 1;
+      duelRetryAt = performance.now() + Math.min(60_000, 1000 * 2 ** duelFailures);
       throw error;
     },
   );
   return duelLoading;
+}
+
+let duelFailures = 0;
+let duelRetryAt = 0;
+
+/** Whether a frame may ask for the engine again. Exported for the gate suite. */
+export function duelRetryDue(now: number): boolean {
+  return now >= duelRetryAt;
 }
 
 /** A duel effect that draws nothing but the palette ground until the engine is here. */
@@ -2141,7 +2155,7 @@ function lazyDuel(pool: DuelPool): Effect {
       duelEffects[pool](f, cache);
       return;
     }
-    loadDuelEngine().catch(() => {});
+    if (duelRetryDue(performance.now())) loadDuelEngine().catch(() => {});
   };
 }
 
