@@ -188,7 +188,14 @@ LOOK_FILES=(.config/kdeglobals
             .config/plasma-org.kde.plasma.desktop-appletsrc
             .config/gtk-3.0/settings.ini
             .config/gtk-4.0/settings.ini
-            .gtkrc-2.0)
+            .gtkrc-2.0
+            .config/breezerc
+            .config/Kvantum)
+# breezerc carries the window glow (the Breeze decoration's shadow colour) and
+# Kvantum is a DIRECTORY: the chosen theme plus any theme that exists only in this
+# account. Both were once outside the list, and the glow followed you into every
+# look after the first one that set it. Hence `-e`, not `-f`, wherever this list is
+# tested, and a prefix match rather than equality when a restore picks members.
 
 log()  { printf '\n==> %s\n' "$*"; }
 info() { printf '    %s\n' "$*"; }
@@ -211,7 +218,7 @@ case "${ACTION}" in
     save)
         mkdir -p "${PROFILE_DIR}"
         present=()
-        for f in "${LOOK_FILES[@]}"; do [ -f "${HOME}/${f}" ] && present+=("${f}"); done
+        for f in "${LOOK_FILES[@]}"; do [ -e "${HOME}/${f}" ] && present+=("${f}"); done
         [ "${#present[@]}" -gt 0 ] || { echo "Nothing to save — none of the look files exist yet." >&2; exit 1; }
         tar czf "${PROFILE_DIR}/${PROFILE}.tar.gz" -C "${HOME}" "${present[@]}"
         printf 'Saved %d files as "%s" in %s\n' "${#present[@]}" "${PROFILE}" "${PROFILE_DIR}"
@@ -230,7 +237,7 @@ case "${ACTION}" in
         # the ordinary way to use this: try one, dislike it, try another.
         mkdir -p "${PROFILE_DIR}"
         prev=()
-        for f in "${LOOK_FILES[@]}"; do [ -f "${HOME}/${f}" ] && prev+=("${f}"); done
+        for f in "${LOOK_FILES[@]}"; do [ -e "${HOME}/${f}" ] && prev+=("${f}"); done
         BACKUP="before-restore-$(date '+%Y%m%d-%H%M%S')"
         if [ "${#prev[@]}" -gt 0 ]; then
             tar czf "${PROFILE_DIR}/${BACKUP}.tar.gz" -C "${HOME}" "${prev[@]}"
@@ -248,12 +255,23 @@ case "${ACTION}" in
         # that does the sharing. Only names this script knows are extracted, so
         # an archive can add nothing to the account, and the intersection is
         # taken first because naming a member tar cannot find is an error.
+        #
+        # A LOOK_FILES entry may be a directory (.config/Kvantum), so a member
+        # UNDER one is taken too — but never a member with a `..` segment in it,
+        # which a prefix match would otherwise wave through to anywhere.
         want=()
         while IFS= read -r member; do
+            case "/${member}/" in */../*) continue ;; esac
+            case "${member}" in */) continue ;; esac   # directories come with their files
             for f in "${LOOK_FILES[@]}"; do
-                if [ "${member}" = "${f}" ]; then want+=("${member}"); break; fi
+                case "${member}" in
+                    "${f}"|"${f}"/*) want+=("${member}"); break ;;
+                esac
             done
         done < <(tar tzf "${ARCHIVE}")
+        # A profile saved before breezerc joined LOOK_FILES does not carry it. Its
+        # absence means "no glow", not "keep whatever the last look had".
+        printf '%s\n' "${want[@]}" | grep -qx '.config/breezerc' || rm -f "${HOME}/.config/breezerc"
         [ "${#want[@]}" -gt 0 ] || die "'${PROFILE}' contains none of the files a look is made of."
         tar xzf "${ARCHIVE}" -C "${HOME}" -- "${want[@]}"
         printf 'Restored "%s" (%d files).\n' "${PROFILE}" "${#want[@]}"
@@ -618,6 +636,13 @@ if [ "${LOOK}" != "ubuntu" ]; then
         *)         set_key kwinrc org.kde.kdecoration2 ButtonsOnLeft "M"
                    set_key kwinrc org.kde.kdecoration2 ButtonsOnRight "HIAX" ;;
     esac
+    # The window glow lives in breezerc and survives a look change exactly as the
+    # buttons above do, so every look sets it rather than inheriting a variant's
+    # cyan halo. These are Breeze's own defaults: a plain dark shadow, no outline.
+    set_key breezerc Common ShadowSize "ShadowLarge"
+    set_key breezerc Common ShadowStrength "255"
+    set_key breezerc Common ShadowColor "0,0,0"
+    set_key breezerc Common OutlineIntensity "OutlineMedium"
     set_key kwinrc Plugins blurEnabled "true"
     set_key kwinrc Plugins contrastEnabled "true"
     set_key kwinrc Effect-blur BlurStrength "${BLUR_STRENGTH}"
