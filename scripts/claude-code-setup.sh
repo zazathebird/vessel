@@ -12,8 +12,9 @@
 #   1. Refuses to run as root — Claude Code lives in the user's home.
 #   2. Installs the prerequisites with apt: curl, git, ca-certificates, ripgrep.
 #   3. Downloads Anthropic's official installer to a file (never piped straight
-#      into bash), prints its checksum so you can compare it against another
-#      download, and runs it. It installs to ~/.local/bin, no root needed.
+#      into bash) and runs it. It installs to ~/.local/bin, no root needed.
+#      Its SHA-256 is CHECKED only when you pass --sha256 with a value you got
+#      somewhere else; otherwise it is printed and says plainly it was not.
 #   4. Puts ~/.local/bin on PATH for bash and zsh if it is not already.
 #   5. Optionally clones the website repo to ~/project/website (--with-repo).
 #   6. Verifies `claude --version` answers.
@@ -21,6 +22,7 @@
 # Usage:
 #   ./claude-code-setup.sh              # install Claude Code
 #   ./claude-code-setup.sh --with-repo  # and clone the website repo
+#   ./claude-code-setup.sh --sha256 HEX # refuse the installer unless it matches
 #
 # Afterwards: open a new terminal, run `claude`, and sign in when it asks.
 set -euo pipefail
@@ -30,17 +32,58 @@ REPO_DIR="${HOME}/project/website"
 INSTALLER_URL="https://claude.ai/install.sh"
 
 WITH_REPO=0
-for arg in "$@"; do
-    case "${arg}" in
-        --with-repo) WITH_REPO=1 ;;
-        -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-        *) printf 'Unknown option: %s\n' "${arg}" >&2; exit 1 ;;
-    esac
-done
+EXPECTED_SHA256=""
 
 log()  { printf '\n==> %s\n' "$*"; }
 info() { printf '    %s\n' "$*"; }
 die()  { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
+
+# The installer's checksum, and what may honestly be said about it (2026-09-24). It used to be
+# printed and compared with nothing, beside a line inviting a comparison nobody could make from
+# here — which reads as verification and is not. The installer is a live script that changes
+# upstream, so no value can be pinned in this file; the one honest check is against a value the
+# person got somewhere else. Prints one line; returns 0 match, 1 mismatch, 2 not checked.
+installer_verdict() {
+    local file="$1" expected="$2" actual
+    actual="$(sha256sum "${file}" | cut -d' ' -f1)"
+    if [ -z "${expected}" ]; then
+        printf 'sha256 %s — NOT verified: nothing was given to compare it with (pass --sha256)\n' "${actual}"
+        return 2
+    fi
+    if [ "${actual}" = "$(printf '%s' "${expected}" | tr '[:upper:]' '[:lower:]')" ]; then
+        printf 'sha256 %s — matches the value you gave\n' "${actual}"
+        return 0
+    fi
+    printf 'sha256 %s — does NOT match %s\n' "${actual}" "${expected}"
+    return 1
+}
+
+parse_args() {
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --with-repo) WITH_REPO=1 ;;
+            --sha256)
+                [ "$#" -ge 2 ] || die "--sha256 needs a value"
+                EXPECTED_SHA256="$2"
+                shift
+                ;;
+            --sha256=*) EXPECTED_SHA256="${1#--sha256=}" ;;
+            -h|--help) sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+            *) printf 'Unknown option: %s\n' "$1" >&2; exit 1 ;;
+        esac
+        shift
+    done
+    case "${EXPECTED_SHA256}" in
+        "") ;;
+        *[!0-9A-Fa-f]*) die "--sha256 must be 64 hex characters" ;;
+        *) [ "${#EXPECTED_SHA256}" -eq 64 ] || die "--sha256 must be 64 hex characters" ;;
+    esac
+    return 0
+}
+
+# Sourced by the gate for its functions; run for real otherwise.
+[ "${BASH_SOURCE[0]}" = "$0" ] || return 0
+parse_args "$@"
 
 # 1. Not root.
 if [ "$(id -u)" -eq 0 ]; then
@@ -63,8 +106,14 @@ trap 'rm -rf "${tmp}"' EXIT
 curl -fsSL "${INSTALLER_URL}" -o "${tmp}/install.sh" || die "Could not download ${INSTALLER_URL}. Is the network up?"
 [ -s "${tmp}/install.sh" ] || die "The installer downloaded empty."
 info "saved to ${tmp}/install.sh ($(wc -c < "${tmp}/install.sh") bytes)"
-info "sha256: $(sha256sum "${tmp}/install.sh" | cut -d' ' -f1)"
-info "(compare against a second download on another machine if you want to be sure of it)"
+verdict_rc=0
+verdict="$(installer_verdict "${tmp}/install.sh" "${EXPECTED_SHA256}")" || verdict_rc=$?
+info "${verdict}"
+case "${verdict_rc}" in
+    0) ;;
+    2) info "Downloaded over HTTPS from ${INSTALLER_URL}; that is the whole of the assurance here." ;;
+    *) die "The installer is not the one you expected, so it was NOT run." ;;
+esac
 
 log "Running the installer"
 bash "${tmp}/install.sh"
