@@ -1467,14 +1467,23 @@ if [ -n "${KWRITE}" ]; then
     info "screen locker: autolock off"
     info "powerdevil: display never dims, never turns off, never auto-suspends"
 
-    # Apply to the running session. Both daemons re-read on request, so this does
-    # not wait for a reboot — which matters, because the window between now and the
-    # next reboot is exactly when somebody is watching to see whether it worked.
+    # Apply to the running session, because the window between now and the next
+    # reboot is exactly when somebody is watching to see whether it worked.
+    #
+    # RESTART PowerDevil; do not ask it to reparse. Measured 2026-09-24 on this box:
+    # after reparseConfiguration answered success, the X server's DPMS timers still
+    # read 1200/1200/1200 from the old config and the screen blanked 20 minutes
+    # later. A restart of plasma-powerdevil.service put all three at 0 at once.
+    # reparse is only the fallback for a session with no systemd user unit.
     if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v qdbus6 >/dev/null 2>&1; then
-        qdbus6 org.kde.Solid.PowerManagement /org/kde/Solid/PowerManagement \
-            org.kde.Solid.PowerManagement.reparseConfiguration >/dev/null 2>&1 \
-            && info "powerdevil reloaded live" \
-            || info "powerdevil will pick it up at the next login"
+        if systemctl --user restart plasma-powerdevil.service >/dev/null 2>&1; then
+            info "powerdevil restarted with the new settings"
+        else
+            qdbus6 org.kde.Solid.PowerManagement /org/kde/Solid/PowerManagement \
+                org.kde.Solid.PowerManagement.reparseConfiguration >/dev/null 2>&1 \
+                && info "powerdevil asked to reload (restart it or log out to be sure)" \
+                || info "powerdevil will pick it up at the next login"
+        fi
         qdbus6 org.kde.screensaver /ScreenSaver org.kde.screensaver.configure \
             >/dev/null 2>&1 || true
     fi
