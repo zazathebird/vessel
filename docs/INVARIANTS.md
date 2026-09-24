@@ -1055,6 +1055,10 @@ All deliberate. Add to this list rather than silently diverging.
     and the scroll-velocity boost are untouched. **`transform` on `.v-block` stays reserved** — the
     CSS rules that keep entrances and layouts off it cost nothing and keep the property free. Gated:
     no script under `src/` outside the canvas effects may write a perspective or rotate.
+16. **The screensaver waits ten minutes, not sixty seconds** (client, 2026-09-24: "make the
+    Screensaver timeout like 10 minutes"). SPEC § Screensaver says sixty seconds without a click; the
+    timer in `ConfigContext`'s `poke` is `600_000`. Nothing else about it changed: clicks and keys
+    reset it, movement does not, calm disables it, the panel, door and `holdSaver` hold it off.
 
 ## FX and canvas internals
 

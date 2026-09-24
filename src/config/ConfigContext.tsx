@@ -508,7 +508,8 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   );
 
   // ---- screensaver ----
-  // Sixty seconds without a *click* fades the interface out. Mouse movement
+  // Ten minutes without a *click* fades the interface out (the spec says sixty
+  // seconds; the client asked for ten minutes — deviation 16). Mouse movement
   // deliberately does not count, so leaving the pointer drifting over the page
   // still lets it sleep. Disabled entirely in calm, and the panel and door hold
   // it off — they are fixed-position siblings the fade cannot reach.
@@ -519,7 +520,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       const { config: cfg, panelOpen: panel, doorOpen: door, saverHeld: held } = live.current;
       if (cfg.calm || panel || door || held) return;
       setSaver(true);
-    }, 60_000);
+    }, 600_000);
   }, []);
 
   /**

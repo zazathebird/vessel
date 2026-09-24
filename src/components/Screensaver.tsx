@@ -1,9 +1,10 @@
 import { useConfig } from "../config/ConfigContext";
 
 /**
- * Sixty seconds without a click fades the whole interface out and leaves only
- * the canvas, which speeds up. Mouse movement deliberately does not wake it —
- * a click does (SPEC.md § Screensaver). Disabled entirely in calm.
+ * Ten minutes without a click (deviation 16; the spec says sixty seconds)
+ * fades the whole interface out and leaves only the canvas, which speeds up.
+ * Mouse movement deliberately does not wake it — a click does
+ * (SPEC.md § Screensaver). Disabled entirely in calm.
  *
  * The overlay is what catches that click. The chrome behind it has already had
  * `pointer-events: none` applied by its own fade, so nothing underneath can

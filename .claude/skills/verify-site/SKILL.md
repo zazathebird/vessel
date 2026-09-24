@@ -132,7 +132,7 @@ document.querySelector('h1').textContent
 
 ## Things that cannot be watched here, and what to do instead
 
-Canvas effects, the duel, entrance animations, the 60-second screensaver, and any rAF-driven
+Canvas effects, the duel, entrance animations, the ten-minute screensaver, and any rAF-driven
 transition. rAF is parked (trap 3). Two escape hatches:
 
 - **`fxlab.html`** — all sixteen effects, driven through `FxCanvas`'s exact frame maths by an

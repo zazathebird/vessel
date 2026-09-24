@@ -418,7 +418,7 @@ about making a trace legible. Read them before writing or editing an effect.
 
 ## Known deviations from the prototype
 
-**The fifteen are listed in full in `docs/INVARIANTS.md`** — all deliberate, each with its reason.
+**The sixteen are listed in full in `docs/INVARIANTS.md`** — all deliberate, each with its reason.
 **Add to that list rather than silently diverging.** In brief: guardrail evaluation is all-clauses
 and must reach the page as well as the dice (1); focus-visible styles exist (2); Magazine's h1
 minimum is the spec's `46px` (3); Matrix rain is rebuilt per column (4); "breathing" drives the
@@ -428,7 +428,7 @@ are literal colours (9); visible "vessel" branding is gone while **internal iden
 keep the old name** (10); photo slots hold EXIF-stripped placeholders (11 — moot since 2026-09-23: the only pages with photos were removed, and `public/photos/` is gone); the contact sheet
 duotones them in every mode including calm (12); **fourteen layouts, twenty-five palettes, sixteen
 effects, all appended and never inserted** (13); six self-hosted variable webfonts, each paired with
-a platform-picked system fallback (14); **the cursor-lean card tilt is deleted** (15).
+a platform-picked system fallback (14); **the cursor-lean card tilt is deleted** (15); the screensaver waits ten minutes, not sixty seconds (16).
 
 ## The duel
 
