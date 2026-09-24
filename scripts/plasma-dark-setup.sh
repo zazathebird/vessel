@@ -290,13 +290,24 @@ esac
 [ "$(id -u)" -ne 0 ] || die "Run this as the user whose desktop it is, not root. Every setting below
        lands in that user's ~/.config; as root it themes root's desktop, which nobody sees."
 command -v sudo >/dev/null 2>&1 || die "sudo is not installed. As root: apt install sudo && /usr/sbin/usermod -aG sudo ${USER}"
-sudo -v || die "sudo refused. Is ${USER} in the sudo group?"
+# Asked for lazily, the first time something privileged has to CHANGE. Rebuilding
+# a look with --no-install on a box whose SDDM file already says the right thing
+# then needs no password at all — which is what lets a look be rebuilt and
+# photographed over SSH, where a sudo prompt just hangs. Anything that does need
+# root still asks, exactly as before.
+SUDO_OK=0
+need_sudo() {
+    [ "${SUDO_OK}" -eq 1 ] && return 0
+    sudo -v || die "sudo refused. Is ${USER} in the sudo group?"
+    SUDO_OK=1
+}
 [ -r /etc/os-release ] && grep -qE '^(ID|ID_LIKE)=.*debian' /etc/os-release || die "This is apt/Debian-only."
 
 # ----------------------------------------------------------------------------
 # 1. Packages.
 # ----------------------------------------------------------------------------
 if [ "${DO_INSTALL}" -eq 1 ]; then
+    need_sudo
     log "Installing Plasma and the parts that make it themeable"
     sudo apt-get update -q
 
@@ -393,7 +404,6 @@ else
 fi
 
 if command -v sddm >/dev/null 2>&1; then
-    sudo mkdir -p /etc/sddm.conf.d
     tmp="$(mktemp)"
     {
         printf '# Written by plasma-dark-setup.sh. Delete this file to undo it.\n'
@@ -403,15 +413,22 @@ if command -v sddm >/dev/null 2>&1; then
             printf '\n[Autologin]\nUser=%s\nSession=%s\nRelogin=false\n' "${USER}" "${SESSION}"
         fi
     } > "${tmp}"
-    sudo install -o root -g root -m 0644 "${tmp}" /etc/sddm.conf.d/10-vessel.conf
+    if cmp -s "${tmp}" /etc/sddm.conf.d/10-vessel.conf; then
+        info "/etc/sddm.conf.d/10-vessel.conf already says this; left alone"
+    else
+        need_sudo
+        sudo mkdir -p /etc/sddm.conf.d
+        sudo install -o root -g root -m 0644 "${tmp}" /etc/sddm.conf.d/10-vessel.conf
+        info "wrote /etc/sddm.conf.d/10-vessel.conf"
+    fi
     rm -f "${tmp}"
-    info "wrote /etc/sddm.conf.d/10-vessel.conf"
     [ "${DO_AUTOLOGIN}" -eq 1 ] && info "autologin: ${USER} into ${SESSION:-<no X11 session found>}"
 
     # Make SDDM the display manager if something else currently is. Debian reads
     # this file at boot; the systemd units follow it.
     current="$(cat /etc/X11/default-display-manager 2>/dev/null || true)"
     if [ "${current}" != "/usr/bin/sddm" ]; then
+        need_sudo
         printf '/usr/bin/sddm\n' | sudo tee /etc/X11/default-display-manager >/dev/null
         for other in lightdm gdm3 lxdm; do
             systemctl list-unit-files "${other}.service" >/dev/null 2>&1 && sudo systemctl disable "${other}" >/dev/null 2>&1 || true
