@@ -558,6 +558,16 @@ wrong machine is worse than not running.
   old `xargs -I{} sh -c` ran a crafted filename as root. `--undo` follows the `--undo` rule: it
   reverses only what its record says, restores modes without following links, and never deletes
   the RDP user's home.
+- **Nothing that script does as root acts on a NAME under `/home/user`** (2026-09-24). uid 1000
+  can swap any of it mid-run: `chmod -R` follows a command-line symlink, and an undo that tested
+  only the leaf for a link chmod'd a file outside the home through a swapped ancestor. Every
+  change goes through `fs_tool` (python3): paths opened one component at a time with
+  `O_NOFOLLOW`, changes made on the opened inode via `/proc/self/fd`, and the undo also demands
+  the recorded dev:inode — a hardlink swapped in at a recorded name is left alone. **Without
+  python3 it changes nothing**; the shell cannot hold a directory open. Files made after the
+  snapshot are swept out of the share group before `groupdel`. Every `mv` is `mv -T` (a plain
+  `mv` as root into a user-owned directory moves the file INTO any directory link planted at the
+  destination). All gated, break-verified.
 - **The Chromium profile IS the pairing** — the persisted directory handle from
   `showDirectoryPicker()` lives in its IndexedDB. That is why the kiosk is a systemd *user* service
   and never a system one, and why the launcher must never gain `--user-data-dir` or `--incognito`: a
@@ -573,7 +583,17 @@ wrong machine is worse than not running.
   somebody's files. The timer is `Persistent=false` deliberately — a missed week waits for the next
   one rather than firing at an arbitrary moment after a boot.
 - **The Chromium managed policy is the answer to autologin**, which is not optional: a host that
-  stops sharing when the power flickers is not a host. **Both scripts write it.**
+  stops sharing when the power flickers is not a host. **Both scripts write it.** On the
+  ThinkCentre it has ONE definition, `chromium_policy_json`, and `--verify` rebuilds it from the
+  kiosk URL and compares **every** key on disk — it used to read three, so a policy with
+  `URLBlocklist` or `DeveloperToolsAvailability` deleted verified green. **Do not restate the key
+  list in `--verify`.**
+- **`--verify` judges the kiosk by what it shows, not by `is-active`** (`kiosk_liveness`). The
+  launcher is active while it polls for a display, so a box whose autologin failed verified green.
+  Ten minutes after a boot, an active unit with no graphical session, or no browser, FAILS; a box
+  set up since its last boot (unit file newer than `btime`) is still a note. **And the autologin
+  user must be `$USER`** — the account whose profile holds the pairing — in every display-manager
+  branch.
   `DefaultFileSystemReadGuardSetting` stays at "ask" (3) because that prompt *is* the folder picker
   the machine exists to answer; write is blocked, since §8 shares read-only.
 - **`sudo docker`, never the `docker` group** — group membership is root-equivalent and this box
@@ -588,7 +608,10 @@ wrong machine is worse than not running.
   one accepted value is permanent. Resolving only when the *full* target already exists is false on
   exactly the normal first run: `--store /srv/data/vessel` with `/srv/data` a symlink to `/etc` was
   compared as typed, matched no blocked prefix, and `prepare_store` then followed the link and handed
-  `/etc/vessel` to the autologin desktop user. **A component that exists but is not a directory is
+  `/etc/vessel` to the autologin desktop user. **Nobody's home, not the home itself, no dot-folder,
+  nothing under `/opt` or `/snap`** (2026-09-24) — `/home/other`, `$HOME` and `/opt/google/chrome`
+  were all accepted and chowned. **A remembered value is judged like a typed one and a refusal
+  names the file**, which must be a plain file, not a link. **A component that exists but is not a directory is
   refused, never carried into the tail** — a dangling symlink names a target that is not there yet
   and `mkdir -p` follows it, so `-L` is tested beside `-e`. **The gate drives `parse_args`, not
   `canon_store`**: driving the resolver alone stays green when the caller stops consulting it, and
@@ -704,6 +727,17 @@ wrong machine is worse than not running.
     `dirname $HOME`, never `/`) because a root account's home is `/root` and refusing everything under
     `/` would refuse `/mnt` and `/media`. `$HOME` is canonicalised before the comparison, or a
     symlinked ancestor makes it refuse the user's *own* files.
+  - **No dot-component, anywhere on the canonical path** (2026-09-24) — and on Windows no
+    `AppData`, on the Mac no `Library`, anywhere. Every dot-directory entry was a finite list keyed
+    to THIS home: `~/.claude`, `~/.wine`, `~/.azure`, `%USERPROFILE%\.config` passed, and so did a
+    copied home on a backup disk (`/media/backup/home/bob/.ssh`), which no `$HOME` entry can name.
+    The explicit entries stay; the structural rule only refuses more. `%USERPROFILE%\AppData`
+    itself was shareable while Local and Roaming were blocked — the blocked-leaf shape again.
+  - **A drive letter is resolved or refused** (Windows, 2026-09-24). `subst X: ...\.ssh` and
+    `net use Y: \\localhost\C$` are letters that are not reparse points, so the walk never saw
+    them. `Get-DriveMapping` carries a SUBST across and walks again, and THROWS for a network
+    letter or anything it cannot classify, which the walk refuses. Driven with stubs;
+    **`subst.exe`'s output format is assumed, not yet seen on a real Windows box.**
   - **Prefix-match, not exact-match**, and **a blocked directory must have no shareable ancestor.**
     `$HOME` blocked with no children blocked left `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.config` and
     `~/Library` shareable — precisely the paths Chrome blocks with block-all-children semantics.
@@ -729,7 +763,9 @@ wrong machine is worse than not running.
 - **Junctions need no administrator; symbolic links do.** That is why Windows uses a junction. **A
   script that demands administrator for its safe half teaches people to give administrator to
   scripts.**
-- **`CHECKSUMS.txt` and the readable `.txt` copies are generated, never typed.** A checksum in a
+- **`CHECKSUMS.txt` and the readable `.txt` copies are generated, never typed** — and `dist-setup/`
+  is gated byte for byte against a fresh run of `setup-bundle.sh`, so a script fixed here and not
+  re-bundled fails the check rather than shipping the old hole under a matching checksum. A checksum in a
   document is wrong the first time a script changes, and the person who suffers is the one who checks
   properly, sees a mismatch, and concludes they were handed something tampered with. **The `.txt`
   downloads rather than opening** — `worker/downloads.ts` forces `attachment` and `octet-stream`

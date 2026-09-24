@@ -6341,7 +6341,7 @@ check("the setup scripts REFUSE, driven against a real home directory", () => {
   // fails, DEFS comes back empty and every verdict reads BROKEN.
   const probeScript = String.raw`
 set -uo pipefail
-SRC="$1"; FIX="$2"; SIB="$3"; OS="$4"
+SRC="$1"; FIX="$2"; SIB="$3"; OS="$4"; shift 4
 # fold_case asks uname, so a Linux run never folds and a folding bug is
 # invisible to it. The Darwin run answers for the Mac.
 [ "$OS" = Darwin ] && uname() { echo Darwin; }
@@ -6356,7 +6356,7 @@ DEFS="$(awk '
 HOME="$FIX"; SHARE_ROOT="$FIX/Shared"
 eval "$DEFS"
 for p in "$FIX" "$FIX/.ssh" "$FIX/.gnupg" "$FIX/.config" "$FIX/.local" \
-         "$FIX/.local/share" /etc / "$FIX/Documents" "$SIB" "$SIB/.ssh" "$SIB/Documents"; do
+         "$FIX/.local/share" /etc / "$FIX/Documents" "$SIB" "$SIB/.ssh" "$SIB/Documents" "$@"; do
   r="$(check_folder "$p" 2>/dev/null | head -1)"
   case "$r" in OK*) v=ALLOWED ;; NO*) v=refused ;; *) v=BROKEN ;; esac
   printf '%s\t%s\n' "$v" "$p"
@@ -6364,6 +6364,19 @@ done
 `;
 
   const root = mkdtempSync(join(tmpdir(), "vessel-blocklist-"));
+  /*
+   * A COPIED HOME ON A BACKUP DISK, in its own temporary tree so it sits inside
+   * none of the account containers — on the Linux run `dirname "$HOME"` is
+   * `root` itself, and a backup under it would be refused as "somebody else's
+   * account" whether or not the rule under test exists. Every dot-directory
+   * entry is keyed to THIS home, so before 2026-09-24 `backup/home/bob/.ssh`
+   * matched nothing, and neither did `~/.claude`, `~/.wine` or `~/.azure`: the
+   * list was finite and the secrets are not.
+   */
+  const backup = realpathSync(mkdtempSync(join(tmpdir(), "vessel-backup-")));
+  for (const d of ["home/bob/.ssh/keys", "home/bob/Documents", "Users/bob/Library/Keychains", "Users/bob/Pictures"]) {
+    mkdirSync(join(backup, d), { recursive: true });
+  }
   let driven = 0;
   try {
     /*
@@ -6382,16 +6395,25 @@ done
     // shape that shattered the list.
     for (const home of ["plain", "bob smith"]) {
       const fix = join(base, home);
-      for (const d of [".ssh", ".gnupg", ".config", ".local/share/keyrings", "Documents", "Shared"]) {
+      for (const d of [".ssh", ".gnupg", ".config", ".local/share/keyrings", "Documents", "Shared",
+                       ".claude", ".wine/drive_c", ".azure", "Pictures"]) {
         mkdirSync(join(fix, d), { recursive: true });
       }
+      // An innocent name that is a link into a dot-folder: refused because the
+      // path compared is the canonical one, not the one typed.
+      if (!existsSync(join(fix, "notes"))) symlinkSync(join(fix, ".claude"), join(fix, "notes"));
       // A second account beside it, in the same container — which is what
       // `dirname "$HOME"` resolves to here, so the containment rule can be
       // driven in a throwaway tree instead of only on a real /home.
       const sibling = join(base, `${home}-neighbour`);
       for (const d of [".ssh", "Documents"]) mkdirSync(join(sibling, d), { recursive: true });
       for (const file of files) {
-        const out = execFileSync("bash", ["-c", probeScript, "probe", file, fix, sibling, os], {
+        const extra = [
+          `${fix}/.claude`, `${fix}/.wine/drive_c`, `${fix}/.azure`, `${fix}/notes`, `${fix}/Pictures`,
+          `${backup}/home/bob/.ssh`, `${backup}/home/bob/.ssh/keys`, `${backup}/home/bob/Documents`,
+          `${backup}/Users/bob/Library/Keychains`, `${backup}/Users/bob/Library`, `${backup}/Users/bob/Pictures`,
+        ];
+        const out = execFileSync("bash", ["-c", probeScript, "probe", file, fix, sibling, os, ...extra], {
           encoding: "utf8",
         });
         const verdict = new Map<string, string>();
@@ -6430,19 +6452,49 @@ done
           driven += 1;
         }
 
+        /*
+         * THE STRUCTURAL RULE (2026-09-24): a dot-component anywhere refuses,
+         * under this home or on a backup disk, and on the Mac so does any
+         * `Library`. Each of these was ALLOWED by the finite lists.
+         */
+        const structural: [string, string][] = [
+          [`${fix}/.claude`, "~/.claude (agent credentials) — no entry named it"],
+          [`${fix}/.wine/drive_c`, "~/.wine — a whole Windows profile, no entry named it"],
+          [`${fix}/.azure`, "~/.azure (cloud credentials) — no entry named it"],
+          [`${fix}/notes`, "an innocently named link into ~/.claude"],
+          [`${backup}/home/bob/.ssh`, "another home's .ssh on a backup disk — every entry is keyed to THIS home"],
+          [`${backup}/home/bob/.ssh/keys`, "inside another home's .ssh on a backup disk"],
+        ];
+        if (file.includes("macos")) {
+          structural.push(
+            [`${backup}/Users/bob/Library/Keychains`, "a copied Mac home's Keychains on a backup disk"],
+            [`${backup}/Users/bob/Library`, "a copied Mac home's Library on a backup disk"],
+          );
+        }
+        for (const [p, why] of structural) {
+          must(
+            verdict.get(p) === "refused",
+            `${file} (${os}): ${p.replace(fix, "~").replace(backup, "BACKUP")} is ${verdict.get(p) ?? "unresolved"} with HOME="${home}" — ${why}`,
+          );
+          driven += 1;
+        }
+
         // And it must still be usable: an ordinary folder has to pass, or the
         // safe answer is "refuse everything" and nobody can share anything.
-        must(
-          verdict.get(`${fix}/Documents`) === "ALLOWED",
-          `${file} (${os}): an ordinary folder is refused with HOME="${home}" — the blocklist has become a wall`,
-        );
-        driven += 1;
+        for (const p of [`${fix}/Documents`, `${fix}/Pictures`, `${backup}/home/bob/Documents`, `${backup}/Users/bob/Pictures`]) {
+          must(
+            verdict.get(p) === "ALLOWED",
+            `${file} (${os}): an ordinary folder (${p.replace(fix, "~").replace(backup, "BACKUP")}) is ${verdict.get(p) ?? "unresolved"} with HOME="${home}" — the blocklist has become a wall`,
+          );
+          driven += 1;
+        }
       }
     }
   } finally {
     rmSync(root, { recursive: true, force: true });
+    rmSync(backup, { recursive: true, force: true });
   }
-  return `${driven} verdicts from the real check_folder, over 2 scripts x 2 home directories (one with a space), and the macOS script again as Darwin`;
+  return `${driven} verdicts from the real check_folder, over 2 scripts x 2 home directories (one with a space), and the macOS script again as Darwin; dot-folders and Library refused anywhere, a backup disk included`;
 });
 
 /*
@@ -6510,11 +6562,22 @@ check("the Windows script resolves EVERY path component, not just the leaf", () 
   const root = mkdtempSync(join(tmpdir(), "vessel-pwsh-"));
   try {
     const harness = join(root, "resolve.ps1");
+    /*
+     * The walk asks Get-DriveMapping about the drive letter on every round, and
+     * there are no drive letters here. The stub answers the one question the
+     * walk asks — "is this letter a SUBST, and of what?" — from VESSEL_SUBST,
+     * for paths spelled `X:...`, which are passed through without GetFullPath
+     * (on Linux that would make `X:` a relative directory name). The REAL
+     * Get-DriveMapping is driven by the gate after this one.
+     */
     writeFileSync(
       harness,
       "param([string] $Path)\n" +
         "$SEP = [string][System.IO.Path]::DirectorySeparatorChar\n" +
-        "$full = [System.IO.Path]::GetFullPath($Path).TrimEnd([char]$SEP)\n" +
+        "function Get-DriveMapping { param([string] $Full)\n" +
+        "  if ($Full.StartsWith('X:')) { if ($env:VESSEL_SUBST -eq 'THROW') { throw 'unexplained letter' }; return $env:VESSEL_SUBST }\n" +
+        "  return '' }\n" +
+        "$full = if ($Path.StartsWith('X:')) { $Path } else { [System.IO.Path]::GetFullPath($Path).TrimEnd([char]$SEP) }\n" +
         "function Test-It {\n" +
         block +
         "\n  return $full\n}\nTest-It\n",
@@ -6522,6 +6585,7 @@ check("the Windows script resolves EVERY path component, not just the leaf", () 
     );
 
     const real = realpathSync(root);
+    const sep = "/";
     mkdirSync(join(root, "home", "me", "Documents"), { recursive: true });
     mkdirSync(join(root, "home", "me", ".ssh"), { recursive: true });
     // The shipped Windows aliases, reproduced in shape: an ancestor link, a
@@ -6531,8 +6595,11 @@ check("the Windows script resolves EVERY path component, not just the leaf", () 
     symlinkSync(join(root, "home", "me", "Documents"), join(root, "home", "me", "leaflink"));
     symlinkSync(join(root, "nowhere-at-all"), join(root, "dangling"));
 
-    const run = (p: string) =>
-      execFileSync("pwsh", ["-NoProfile", "-File", harness, p], { encoding: "utf8" }).trim();
+    const run = (p: string, subst = "") =>
+      execFileSync("pwsh", ["-NoProfile", "-File", harness, p], {
+        encoding: "utf8",
+        env: { ...process.env, VESSEL_SUBST: subst },
+      }).trim();
 
     const cases: [string, string, string][] = [
       ["an ancestor link", join(root, "Documents and Settings", "me", "Documents"), join(real, "home/me/Documents")],
@@ -6560,7 +6627,31 @@ check("the Windows script resolves EVERY path component, not just the leaf", () 
     );
     driven += 1;
 
-    return `${driven} verdicts from the real resolver: ancestor, chained, leaf and unresolvable links`;
+    /*
+     * A SUBST LETTER (2026-09-24, review item 13). `subst X: C:\Users\me\.ssh`
+     * makes `X:\keys` a path into .ssh that is not a reparse point anywhere, so
+     * the walk never resolved it and the blocklist compared `X:\keys` as typed.
+     * The walk now asks about the letter every round and carries the rest of
+     * the path across; a subst whose target is itself behind a link must come
+     * out fully resolved, and a letter nobody can explain must be refused.
+     */
+    const substCases: [string, string, string, string][] = [
+      ["a SUBST letter onto .ssh", `X:${sep}keys`, join(real, "home", "me", ".ssh"), join(real, "home/me/.ssh/keys")],
+      ["a SUBST letter onto a link", `X:${sep}me${sep}Documents`, join(root, "Documents and Settings"), join(real, "home/me/Documents")],
+    ];
+    mkdirSync(join(root, "home", "me", ".ssh", "keys"), { recursive: true });
+    for (const [what, input, target, want] of substCases) {
+      const got = run(input, target);
+      must(got === want, `${what}: the resolver returned "${got}" where the real folder is "${want}" — the letter was compared as typed`);
+      driven += 1;
+    }
+    const unc = run(`X:${sep}Users`, "\\\\localhost\\C$");
+    must(unc.startsWith("That drive letter is a network share"), `a SUBST onto a UNC path was not refused: "${unc}"`);
+    const unexplained = run(`X:${sep}keys`, "THROW");
+    must(unexplained.startsWith("Could not work out"), `a drive letter that could not be explained was not refused: "${unexplained}"`);
+    driven += 2;
+
+    return `${driven} verdicts from the real resolver: ancestor, chained, leaf and unresolvable links; SUBST letters resolved, a UNC subst and an unexplained letter refused`;
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -6625,6 +6716,7 @@ check("the Windows script REFUSES the folders that matter, driven under pwsh", (
     ["$bad + '\\'", "$bad + $SEP"],
     ["$profileParent + '\\'", "$profileParent + $SEP"],
     ["$profileRoot + '\\'", "$profileRoot + $SEP"],
+    ["($full -split '\\\\')", "($full -split ([regex]::Escape($SEP)))"],
   ];
   for (const [a, b] of subs) {
     must(block.includes(a), `the blocklist no longer contains ${a} — this gate is testing nothing`);
@@ -6651,6 +6743,10 @@ check("the Windows script REFUSES the folders that matter, driven under pwsh", (
       ["Users", "me", "AppData", "Local", "Google", "Chrome"],
       ["Users", "me", "AppData", "Local", "Packages"],
       ["Users", "other"], ["Users", "other", ".ssh"], ["Users", "other", "Documents"],
+      ["Users", "me", "AppData", "LocalLow", "Vendor"], ["Users", "me", ".config"], ["Users", "me", ".azure"],
+      ["Users", "me", ".claude"], ["Users", "me", "Pictures"],
+      ["Backup", "Users", "bob", ".ssh"], ["Backup", "Users", "bob", "AppData", "Roaming", "Mozilla"],
+      ["Backup", "Users", "bob", "Documents"],
     ]) mkdirSync(join(real, ...d), { recursive: true });
 
     const harness = join(root, "block.ps1");
@@ -6712,9 +6808,26 @@ check("the Windows script REFUSES the folders that matter, driven under pwsh", (
       ["the Windows directory", join(real, "Windows"), false],
       ["Program Files", join(real, "Program Files"), false],
       ["ProgramData", join(real, "ProgramData"), false],
+      /*
+       * 2026-09-24. AppData ITSELF was shareable — Local and Roaming were
+       * blocked and their parent, which holds both and LocalLow, was not. And
+       * the dot-directory entries were a finite list: .config, .azure and
+       * .claude all passed, as did a copied profile on a backup disk, which no
+       * entry keyed to %USERPROFILE% can name.
+       */
+      ["%USERPROFILE%\\AppData ITSELF", join(profile, "AppData"), false],
+      ["%USERPROFILE%\\AppData\\LocalLow", join(profile, "AppData", "LocalLow"), false],
+      ["%USERPROFILE%\\AppData\\LocalLow\\Vendor", join(profile, "AppData", "LocalLow", "Vendor"), false],
+      ["%USERPROFILE%\\.config", join(profile, ".config"), false],
+      ["%USERPROFILE%\\.azure", join(profile, ".azure"), false],
+      ["%USERPROFILE%\\.claude", join(profile, ".claude"), false],
+      ["a backup profile's .ssh", join(real, "Backup", "Users", "bob", ".ssh"), false],
+      ["a backup profile's AppData\\Roaming\\Mozilla", join(real, "Backup", "Users", "bob", "AppData", "Roaming", "Mozilla"), false],
       // The converse. A blocklist that refuses everything is not a blocklist,
       // and Documents is the folder the whole feature exists to share.
       ["Documents", join(profile, "Documents"), true],
+      ["Pictures", join(profile, "Pictures"), true],
+      ["a backup profile's Documents", join(real, "Backup", "Users", "bob", "Documents"), true],
     ];
 
     let driven = 0;
@@ -6732,7 +6845,80 @@ check("the Windows script REFUSES the folders that matter, driven under pwsh", (
       if (!shouldAllow) refused += 1;
     }
 
-    return `${driven} verdicts from the real Test-ShareableFolder blocklist under pwsh: ${refused} refused (the five dot-directories themselves, both app-data roots, the profile and its parent), Documents still shareable`;
+    return `${driven} verdicts from the real Test-ShareableFolder blocklist under pwsh: ${refused} refused (dot-directories and AppData anywhere, a backup profile, the profile and its parent), Documents still shareable`;
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/*
+ * What a drive letter really is, driven under pwsh (2026-09-24, review item
+ * 13). `subst X: C:\Users\me\.ssh` and `net use Y: \\localhost\C$` are drive
+ * letters that are not disks, and neither is a reparse point, so the component
+ * walk could not see them. The real Get-DriveMapping is sliced out and run with
+ * its two questions to the machine — the subst table and the drive type —
+ * answered by stubs, since pwsh on Linux has no drive letters to ask about.
+ * What cannot be proven here is the format of subst.exe's output on a real
+ * Windows install; the pattern is `X:\: => C:\target`, as documented.
+ */
+check("the Windows script explains every drive letter or refuses it, driven under pwsh", () => {
+  let hasPwsh = true;
+  try {
+    execFileSync("pwsh", ["-NoProfile", "-Command", "exit 0"], { stdio: "pipe" });
+  } catch {
+    hasPwsh = false;
+  }
+  if (!hasPwsh) skip("no `pwsh` here (snap install powershell --classic), so Get-DriveMapping was not driven");
+
+  const src = readFileSync("scripts/windows-share-setup.ps1", "utf8").replace(/^\uFEFF/, "");
+  const from = src.indexOf("function Get-DriveMapping {");
+  must(from >= 0, "Get-DriveMapping is gone from windows-share-setup.ps1");
+  const to = src.indexOf("\n}\n", from);
+  must(to > from, "could not find the end of Get-DriveMapping");
+  const fn = src.slice(from, to + 3);
+  // The walk must still ask it, every round, inside the fail-closed try.
+  const walkFrom = src.indexOf("    try {\n        $rounds = 0");
+  must(walkFrom >= 0, "the reparse walk is gone from windows-share-setup.ps1");
+  const walk = src.slice(walkFrom, src.indexOf("        return \"Could not work out where that folder really is", walkFrom));
+  must(/\$mapped = Get-DriveMapping \$full/.test(walk), "the reparse walk no longer asks Get-DriveMapping about the drive letter");
+
+  const root = mkdtempSync(join(tmpdir(), "vessel-drive-"));
+  try {
+    const harness = join(root, "drive.ps1");
+    writeFileSync(
+      harness,
+      "param([string] $Full)\n" +
+        "$ErrorActionPreference = 'Stop'\nSet-StrictMode -Version 2.0\n" +
+        "function Get-SubstTable { if ($env:T_SUBST -eq 'THROW') { throw 'subst.exe missing' }; @($env:T_SUBST -split ';') }\n" +
+        "function Get-DriveKind { param([string] $Letter) if ($env:T_KIND -eq 'THROW') { throw 'no such drive' }; $env:T_KIND }\n" +
+        fn +
+        "\ntry { $r = Get-DriveMapping $Full; \"OK[$r]\" } catch { 'THROW' }\n",
+      "utf8",
+    );
+    const ask = (full: string, subst: string, kind: string) =>
+      execFileSync("pwsh", ["-NoProfile", "-File", harness, full], {
+        encoding: "utf8",
+        env: { ...process.env, T_SUBST: subst, T_KIND: kind },
+      }).trim();
+    const table = "X:\\: => C:\\Users\\me\\.ssh;Q:\\: => D:\\Photos";
+    const cases: [string, string, string, string, string][] = [
+      ["a SUBST letter", "X:\\keys", table, "Fixed", "OK[C:\\Users\\me\\.ssh]"],
+      ["a SUBST letter typed in lower case", "x:\\keys", table, "Fixed", "OK[C:\\Users\\me\\.ssh]"],
+      ["an ordinary fixed disk", "C:\\Users\\me\\Documents", table, "Fixed", "OK[]"],
+      ["a USB stick", "E:\\Photos", table, "Removable", "OK[]"],
+      ["a mapped network letter (net use)", "Y:\\Users\\me", table, "Network", "THROW"],
+      ["a letter with no volume", "Z:\\x", table, "NoRootDirectory", "THROW"],
+      ["a drive type that could not be read", "C:\\x", table, "THROW", "THROW"],
+      ["a subst table that could not be read", "C:\\x", "THROW", "Fixed", "THROW"],
+      ["a path with no drive letter", "relative\\x", table, "Fixed", "THROW"],
+    ];
+    let driven = 0;
+    for (const [what, full, subst, kind, want] of cases) {
+      const got = ask(full, subst, kind);
+      must(got === want, `${what}: Get-DriveMapping said ${got}, expected ${want} — a letter that is not a disk must be resolved or refused`);
+      driven += 1;
+    }
+    return `${driven} drive letters through the real Get-DriveMapping: SUBST resolved, network and unexplained letters refused, and the walk still asks it`;
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -7599,7 +7785,19 @@ for p in "$@"; do
     DO_ALLOW_SSH_PASSWORDS=0; DO_PIHOLE=0; PIHOLE_ADMIN_LAN=0
     STORE_DIR=""; STORE_EXPLICIT=0; KIOSK_URL=""; DEFAULT_URL="about:blank"
     DEFAULT_STORE="/srv/vessel"; STORE_FILE="$TMPROOT/none"; OPTIONS_FILE="$TMPROOT/none2"
-    parse_args --store "$p" about:blank && printf 'ACCEPTED %s\n' "$STORE_DIR"
+    HOME="$TMPROOT/homes/me"
+    case "$p" in
+      FILE:*)
+        # A value REMEMBERED in the store file, no --store: what the next run reads back.
+        STORE_FILE="$TMPROOT/store-file"; printf '%s\n' "$(printf '%s' "$p" | cut -d: -f2-)" > "$STORE_FILE"
+        parse_args about:blank && printf 'ACCEPTED %s\n' "$STORE_DIR" ;;
+      LINKFILE:*)
+        STORE_FILE="$TMPROOT/store-link"; printf '/srv/vessel\n' > "$TMPROOT/store-target"
+        ln -sfn "$TMPROOT/store-target" "$STORE_FILE"
+        parse_args about:blank && printf 'ACCEPTED %s\n' "$STORE_DIR" ;;
+      *)
+        parse_args --store "$p" about:blank && printf 'ACCEPTED %s\n' "$STORE_DIR" ;;
+    esac
   )"
   # No braced shell expansions anywhere in this probe, deliberately: it is a
   # template literal on the TypeScript side, and String.raw suppresses backslash
@@ -7620,6 +7818,10 @@ done
     // — the hole was only ever reachable through a path not yet created.
     symlinkSync("/etc", join(root, "link-to-etc"));
     symlinkSync("/var", join(root, "link-to-var"));
+    // HOME for the probe, and a second account beside it (2026-09-24, review item 6).
+    mkdirSync(join(root, "homes", "me"), { recursive: true });
+    mkdirSync(join(root, "homes", "other"), { recursive: true });
+    const rroot = realpathSync(root);
 
     const out = execFileSync(
       "bash",
@@ -7627,7 +7829,11 @@ done
        join(root, "link-to-etc", "vessel"),
        join(root, "link-to-var", "newlib"),
        join(root, "plain", "store"),
-       "/srv/vessel", "/etc", "//etc/x", "/home"],
+       "/srv/vessel", "/etc", "//etc/x", "/home",
+       join(root, "homes", "other", "store"), join(root, "homes", "me"), join(root, "homes", "me", "vessel"),
+       join(root, "homes", "me", ".config", "vessel"), "/home/user", "/home/someone-else/data",
+       "/opt/google/chrome", "/snap/chromium", "FILE:/etc/vessel", "FILE:/home/user", "FILE:/srv/vessel-kept",
+       "LINKFILE:"],
       { encoding: "utf8" },
     );
     const verdict = new Map<string, string>();
@@ -7642,6 +7848,16 @@ done
       ["/etc", "a blocked directory named outright"],
       ["//etc/x", "a leading // must collapse before the comparison"],
       ["/home", "a directory refused outright"],
+      [join(root, "homes", "other", "store"), "another account's home — sudo chown would hand it to this user"],
+      [join(root, "homes", "me"), "this user's home itself — it would be chmod'd 0750"],
+      [join(root, "homes", "me", ".config", "vessel"), "a dot-folder in this home — keys and the browser profile live there"],
+      ["/home/user", "a home under /home that is not this user's"],
+      ["/home/someone-else/data", "inside another account's home under /home"],
+      ["/opt/google/chrome", "the browser binary's own directory — /opt was an exact entry, so its children passed"],
+      ["/snap/chromium", "a snap — /snap was an exact entry, so its children passed"],
+      ["FILE:/etc/vessel", "a REMEMBERED value naming /etc — the file is user-writable and read back as root's chown target"],
+      ["FILE:/home/user", "a remembered value naming another home"],
+      ["LINKFILE:", "a store file that is a symlink — it cannot be trusted to be what was written"],
     ] as const) {
       must(
         verdict.get(p) === "REFUSED",
@@ -7652,17 +7868,19 @@ done
 
     // And it must stay usable, or the safe answer is "refuse everything" and the
     // script cannot set up the host it exists to set up.
-    for (const p of [join(root, "plain", "store"), "/srv/vessel"]) {
+    for (const p of [join(root, "plain", "store"), "/srv/vessel", join(root, "homes", "me", "vessel"), "FILE:/srv/vessel-kept"]) {
       must(
         verdict.get(p)?.startsWith("ACCEPTED") === true,
         `thinkcentre-setup.sh refused ${p.replace(root, "TMP")}, an ordinary store path — the blocklist has become a wall`,
       );
       driven += 1;
     }
+    must(verdict.get(join(root, "homes", "me", "vessel")) === `ACCEPTED ${join(rroot, "homes", "me", "vessel")}`,
+      `a folder inside this user's own home came back as ${verdict.get(join(root, "homes", "me", "vessel"))}`);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-  return `${driven} verdicts from the real parse_args, against a symlinked throwaway tree`;
+  return `${driven} verdicts from the real parse_args, against a symlinked throwaway tree: other homes, the home itself, dot-folders, /opt and /snap refused, typed or remembered`;
 });
 
 /*
@@ -7770,6 +7988,132 @@ printf 'relogin\t%s\n' "$(sddm_value Autologin Relogin "$F[@]" || printf UNSET)"
 });
 
 /*
+ * --verify checks EVERY lockdown key the builder writes — driven (2026-09-24,
+ * review item 5). It checked three hand-picked keys, so a policy with
+ * URLBlocklist, DeveloperToolsAvailability, ExtensionInstallBlocklist or
+ * IncognitoModeAvailability deleted or loosened verified green. The builder's
+ * own `chromium_policy_json` is the expected value, so this runs it, writes the
+ * result as the policy on disk, and then loosens one key at a time: each must
+ * FAIL through the real `verify_policy_file`, and `{}` must fail everything.
+ */
+check("--verify compares every Chromium lockdown key with the builder's, driven", () => {
+  const probe = String.raw`
+set -uo pipefail
+SRC="$1"; POL="$2"; EXP="$3"
+have() { command -v "$1" >/dev/null 2>&1; }
+# A heredoc'd JSON document ends in its own column-0 brace, so the function ends at the first
+# column-0 brace OUTSIDE a heredoc, not the first one.
+eval "$(awk '/^(chromium_policy_json|json_value|json_keys|verify_policy_file)\(\)/{i=1} i{print} i&&/<<EOF$/{h=1;next} i&&h&&/^EOF$/{h=0;next} i&&!h&&/^}/{i=0}' "$SRC")"
+chromium_policy_json https mcclevarty.ca > "$EXP"
+[ -s "$POL" ] || cp "$EXP" "$POL"
+verify_policy_file "$POL" "$EXP" || printf 'NOTHING\tcompared\tnothing\n'
+`;
+  const root = mkdtempSync(join(tmpdir(), "vessel-policy-"));
+  try {
+    const run = (policy: string | null) => {
+      const pol = join(root, "pol.json");
+      writeFileSync(pol, policy ?? "");
+      const out = execFileSync("bash", ["-c", probe, "probe", "scripts/thinkcentre-setup.sh", pol, join(root, "exp.json")], { encoding: "utf8" });
+      return out.trim().split("\n").map((l) => l.split("\t")).map(([label, want, got]) => ({ label, ok: want === got, got }));
+    };
+    const clean = run(null);
+    must(clean.length >= 30, `only ${clean.length} policy keys were compared — the builder writes more than that`);
+    must(clean.every((r) => r.ok), `the builder's own policy fails its own check: ${clean.filter((r) => !r.ok).map((r) => r.label).join(", ")}`);
+    const written = JSON.parse(readFileSync(join(root, "exp.json"), "utf8")) as Record<string, unknown>;
+    const loosen: [string, unknown][] = [
+      ["URLBlocklist", undefined],
+      ["URLBlocklist", []],
+      ["DeveloperToolsAvailability", 1],
+      ["ExtensionInstallBlocklist", undefined],
+      ["IncognitoModeAvailability", 0],
+      ["URLAllowlist", ["*"]],
+      ["DefaultFileSystemWriteGuardSetting", 3],
+    ];
+    for (const [key, value] of loosen) {
+      const bad: Record<string, unknown> = { ...written };
+      if (value === undefined) delete bad[key];
+      else bad[key] = value;
+      const got = run(JSON.stringify(bad));
+      const row = got.find((r) => r.label === `policy ${key}`);
+      must(row !== undefined && !row.ok, `a policy with ${key} ${value === undefined ? "deleted" : `set to ${JSON.stringify(value)}`} passed --verify`);
+      must(got.filter((r) => !r.ok).length === 1, `loosening ${key} failed other keys too — the comparison is not per key`);
+    }
+    const empty = run("{}");
+    must(empty.length === clean.length && empty.every((r) => !r.ok), "`{}` as the policy did not fail every key");
+    return `${clean.length} keys from the builder's own policy compared; ${loosen.length} single loosenings and an empty policy each FAIL`;
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/*
+ * --verify FAILS a kiosk that is "active" but showing nothing — driven
+ * (2026-09-24, review item 4). The launcher is active while it polls for a
+ * display, so a box whose autologin failed, or whose browser died under a
+ * running unit, verified green. The real `kiosk_liveness` answers each shape;
+ * a verdict of kind `check` with expected != actual is a FAIL in verify().
+ */
+check("--verify fails an active kiosk with no desktop or no browser, driven", () => {
+  const src = readFileSync("scripts/thinkcentre-setup.sh", "utf8");
+  must(/done < <\(kiosk_liveness "\$\{active\}" "\$\{gsid\}" "\$\{chromium_up\}"/.test(src), "verify() no longer feeds kiosk_liveness into check");
+  const probe = String.raw`
+set -uo pipefail
+SRC="$1"; shift
+eval "$(awk '/^readonly KIOSK_GRACE_SECONDS=/{print} /^kiosk_liveness\(\)/{i=1} i{print} i&&/^}/{i=0}' "$SRC")"
+kiosk_liveness "$@"
+`;
+  const fails = (...args: string[]) =>
+    execFileSync("bash", ["-c", probe, "probe", "scripts/thinkcentre-setup.sh", ...args], { encoding: "utf8" })
+      .trim().split("\n").map((l) => l.split("\t"))
+      .filter(([kind, , want, got]) => kind === "check" && want !== got)
+      .map(([, label]) => label);
+  const cases: [string, string[], string[]][] = [
+    ["a healthy kiosk", ["active", "2", "yes", "86400", "no"], []],
+    ["active, polling for a display that never came, an hour after boot", ["active", "", "no", "3600", "no"], ["graphical session", "chromium"]],
+    ["a desktop, the unit active, and no browser", ["active", "2", "no", "3600", "no"], ["chromium"]],
+    ["inactive with no desktop after a real boot", ["inactive", "", "no", "3600", "no"], ["kiosk running", "graphical session", "chromium"]],
+    ["failed", ["failed", "2", "no", "3600", "no"], ["kiosk running", "chromium"]],
+    ["set up over SSH, not yet rebooted", ["inactive", "", "no", "3600", "yes"], []],
+    ["two minutes after boot, still starting", ["active", "", "no", "120", "no"], []],
+  ];
+  for (const [what, args, want] of cases) {
+    const got = fails(...args);
+    must(
+      JSON.stringify(got) === JSON.stringify(want),
+      `${what}: --verify would FAIL [${got.join(", ")}] where it should FAIL [${want.join(", ")}]`,
+    );
+  }
+  return `${cases.length} kiosk states through the real kiosk_liveness: polling, browserless and dead kiosks FAIL; a fresh setup and a booting box do not`;
+});
+
+/*
+ * --verify demands that autologin is THIS user — driven (2026-09-24, review item
+ * 11). "Some user logs in automatically" passed a box autologging into an
+ * account with no kiosk, whose Chromium profile holds no pairing. The real
+ * `check` and `autologin_line` run, and every display-manager branch must ask.
+ */
+check("--verify requires the autologin user to be the kiosk user, driven", () => {
+  const src = readFileSync("scripts/thinkcentre-setup.sh", "utf8");
+  for (const dm of ["sddm", "lightdm", "gdm3"]) {
+    must(src.includes(`< <(autologin_line ${dm} `), `the ${dm} branch of verify() no longer checks WHICH user autologs in`);
+  }
+  const probe = String.raw`
+set -uo pipefail
+SRC="$1"; WHO="$2"
+eval "$(awk '/^VERIFY_FAILED=0/{print} /^(check|autologin_line)\(\)/{i=1} i{print} i&&/^}/{i=0}' "$SRC")"
+IFS=$'\t' read -r l e a < <(USER=user autologin_line sddm "$WHO")
+check "$l" "$e" "$a" >/dev/null
+printf '%s\n' "$VERIFY_FAILED"
+`;
+  const verdict = (who: string) =>
+    execFileSync("bash", ["-c", probe, "probe", "scripts/thinkcentre-setup.sh", who], { encoding: "utf8" }).trim();
+  must(verdict("user") === "0", "autologin as the kiosk user FAILED --verify");
+  must(verdict("someone-else") === "1", "autologin as a different user PASSED --verify — that account holds no pairing");
+  must(verdict("") === "1", "no autologin user PASSED --verify");
+  return "the kiosk user passes; another user and none FAIL; all three display-manager branches ask";
+});
+
+/*
  * The screen-never-blanks settings, written by the builder and read back by
  * --verify, both through real KConfig — driven (2026-09-24, review item 1).
  * Plasma 6 reads PowerDevil's profile from NESTED groups, `[AC][Display]` and
@@ -7856,8 +8200,17 @@ check("rdp-separate-user.sh opens a home without running filenames or following 
     .filter((l) => !/^\s*#/.test(l))
     .join("\n");
   must(!/\bsh -c\b/.test(code), "rdp-separate-user.sh builds an sh -c command again");
+  // 2026-09-24: nothing may act on a NAME under the kiosk home. `chmod -R` follows a link named
+  // on its command line, so find-then-chmod-by-name raced a symlink swap; and a plain `mv` as
+  // root into a directory uid 1000 owns moves the file INTO whatever directory link is planted
+  // at the destination.
+  must(!/\b(chmod|chgrp|chown)\s+(-\S+\s+)*-R\b/.test(code), "rdp-separate-user.sh runs a recursive chmod/chgrp/chown by name again");
+  const mvs = code.split("\n").filter((l) => /(^|[;&|]\s*|\s)mv\s/.test(l));
+  must(mvs.length >= 3, `only ${mvs.length} mv lines found in rdp-separate-user.sh`);
+  for (const l of mvs) must(/\bmv -T --/.test(l), `an mv without -T in rdp-separate-user.sh: ${l.trim()}`);
   execFileSync("bash", ["-n", "scripts/rdp-separate-user.sh"], { stdio: "pipe" });
 
+  let sweep = "";
   const root = mkdtempSync(join(tmpdir(), "vessel-rdp-"));
   try {
     const home = join(root, "home");
@@ -7865,6 +8218,13 @@ check("rdp-separate-user.sh opens a home without running filenames or following 
     mkdirSync(join(home, ".ssh"), { mode: 0o700 });
     mkdirSync(join(root, "outside"), { mode: 0o700 });
     writeFileSync(join(home, "Docs", "sub", "f.txt"), "x", { mode: 0o600 });
+    writeFileSync(join(home, "Docs", "g.txt"), "x", { mode: 0o600 });
+    // Outside the home: what an ancestor swap and a hardlink swap point the undo at.
+    writeFileSync(join(root, "outside", "f.txt"), "x", { mode: 0o666 });
+    writeFileSync(join(root, "victim.txt"), "x", { mode: 0o644 });
+    // Explicit, because writeFileSync's mode passes through the umask.
+    execFileSync("chmod", ["666", join(root, "outside", "f.txt")]);
+    execFileSync("chmod", ["644", join(root, "victim.txt")]);
     // Both quote styles, each running a command relative to the working directory.
     writeFileSync(join(home, "a'$(touch PWNED)'b"), "");
     writeFileSync(join(home, 'c"$(touch PWNED2)"d'), "");
@@ -7884,12 +8244,31 @@ printf 'pwned\t%s\n' "$(ls "$T" | grep -c PWNED)"
 printf 'outside\t%s\n' "$(stat -c %a "$T/outside")"
 printf 'ssh\t%s\n' "$(stat -c %a "$H/.ssh")"
 printf 'opened\t%s\n' "$(stat -c %a "$H/Docs")"
+# Made AFTER the snapshot, inside a setgid folder: in no record, carrying the share group.
+SG="$(id -G | tr ' ' '\n' | sed -n 2p)"
+if [ -n "$SG" ]; then
+  open_to_group "$H" "$SG"
+  mkdir "$H/Docs/newdir"; : > "$H/Docs/new.txt"
+  printf 'new-group-before\t%s\n' "$([ "$(stat -c %g "$H/Docs/new.txt")" = "$SG" ] && echo share || echo other)"
+  fs_tool sweep "$H" "$SG" "$(id -g)" "$T/manifest"
+  printf 'new-group-after\t%s\n' "$([ "$(stat -c %g "$H/Docs/new.txt")" = "$(id -g)" ] && echo own || echo still-share)"
+  printf 'newdir-setgid\t%s\n' "$([ -g "$H/Docs/newdir" ] && echo yes || echo no)"
+  printf 'recorded-kept\t%s\n' "$([ "$(stat -c %g "$H/Docs")" = "$SG" ] && echo yes || echo no)"
+else
+  printf 'new-group-before\tno-secondary-group\n'
+fi
 chmod 777 "$T/outside"
+# An ANCESTOR swapped for a link: Docs/sub/f.txt is recorded at 600, and outside/f.txt is 666.
 mv "$H/Docs/sub" "$H/Docs/sub.real"
 ln -s "$T/outside" "$H/Docs/sub"
-restore_modes "$T/manifest"
+# A DIFFERENT FILE at a recorded name: a hardlink to something outside the home.
+rm "$H/Docs/g.txt"; ln "$T/victim.txt" "$H/Docs/g.txt"
+restore_modes "$T/manifest" 2>/dev/null
 printf 'outside-after-undo\t%s\n' "$(stat -c %a "$T/outside")"
+printf 'ancestor-after-undo\t%s\n' "$(stat -c %a "$T/outside/f.txt")"
+printf 'hardlink-after-undo\t%s\n' "$(stat -c %a "$T/victim.txt")"
 printf 'docs-after-undo\t%s\n' "$(stat -c %a "$H/Docs")"
+printf 'docs-group-after-undo\t%s\n' "$([ "$(stat -c %g "$H/Docs")" = "$(id -g)" ] && echo own || echo other)"
 `;
     const out = execFileSync("bash", ["-c", probe, "probe", join(process.cwd(), "scripts/rdp-separate-user.sh"), root], {
       encoding: "utf8",
@@ -7902,10 +8281,173 @@ printf 'docs-after-undo\t%s\n' "$(stat -c %a "$H/Docs")"
     must(/^2?77\d$/.test(got.get("opened") ?? ""), `Docs was not opened to the group (${got.get("opened")})`);
     must(got.get("outside-after-undo") === "777", `the undo followed a symlink and changed its target (${got.get("outside-after-undo")})`);
     must(got.get("docs-after-undo") === "700", `the undo did not restore Docs (${got.get("docs-after-undo")}), setgid included`);
+    must(got.get("docs-group-after-undo") === "own", "the undo did not put Docs's group back");
+    // 2026-09-24, review item 3: the old undo tested only the LAST component for a link.
+    must(
+      got.get("ancestor-after-undo") === "666",
+      `the undo followed a swapped ANCESTOR and chmod'd a file outside the home to ${got.get("ancestor-after-undo")}`,
+    );
+    must(
+      got.get("hardlink-after-undo") === "644",
+      `the undo changed a different file that now sits at a recorded name (${got.get("hardlink-after-undo")}) — the inode must be the recorded one`,
+    );
+    // Review item 8: files made after the snapshot must not keep a group that is about to be deleted.
+    sweep = got.get("new-group-before") === "no-secondary-group"
+      ? "no secondary group here, so the post-snapshot sweep was NOT driven"
+      : (() => {
+          must(got.get("new-group-before") === "share", "a file made in an opened folder did not inherit the share group — the fixture is wrong");
+          must(got.get("new-group-after") === "own", "a file made after the snapshot kept the share group through the sweep — groupdel would orphan it");
+          must(got.get("newdir-setgid") === "no", "a folder made after the snapshot kept its setgid bit through the sweep");
+          must(got.get("recorded-kept") === "yes", "the sweep touched a RECORDED folder — that is restore's job, from the record");
+          return "post-snapshot files swept out of the share group";
+        })();
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-  return "injection names inert, links unfollowed both ways, dotfiles untouched, modes restored, sudo and home-sharing opt-in";
+  return "injection names inert, links unfollowed at every component, a swapped-in hardlink untouched, dotfiles untouched, modes restored, " + sweep + ", sudo and home-sharing opt-in";
+});
+
+/*
+ * Both kiosk launchers rewrite Chromium's Preferences BESIDE the file and only
+ * when jq produced something, and both pick the browser by absolute path first —
+ * driven (2026-09-24, review item 10). The Pi's launcher had regressed on both:
+ * `mktemp` in /tmp made the rename a cross-filesystem copy (a power cut mid-copy
+ * truncates the profile that IS the pairing), an empty jq output was moved over
+ * the real file, and `command -v chromium` let /usr/local/bin — group-writable
+ * by `staff` — choose the binary. The blocks are sliced out of each launcher's
+ * heredoc and run: `mv` and `jq` are stubbed on PATH to record and to fail, and
+ * `/usr/bin/` is pointed at a throwaway directory, the only substitution made.
+ */
+check("both kiosk launchers rewrite Preferences safely and pick the browser by path, driven", () => {
+  try {
+    execFileSync("bash", ["-c", "command -v jq"], { stdio: "pipe" });
+  } catch {
+    skip("jq is not installed here, and both launchers rewrite Preferences with it");
+  }
+  const root = mkdtempSync(join(tmpdir(), "vessel-launch-"));
+  try {
+    let driven = 0;
+    for (const file of ["scripts/thinkcentre-setup.sh", "scripts/pi-setup.sh"]) {
+      const text = readFileSync(file, "utf8");
+      const prefsFrom = text.indexOf('for prefs in "${HOME}/.config/chromium/Default/Preferences"');
+      must(prefsFrom >= 0, `${file}: the Preferences rewrite loop is gone`);
+      const prefsTo = text.indexOf("\ndone\n", prefsFrom) + "\ndone\n".length;
+      const prefsBlock = text.slice(prefsFrom, prefsTo);
+      const pickFrom = text.indexOf('CHROMIUM=""', prefsTo);
+      must(pickFrom >= 0, `${file}: the browser pick is gone`);
+      const pickEnd = text.indexOf('[ -n "${CHROMIUM}" ] ||', pickFrom);
+      must(pickEnd > pickFrom, `${file}: the browser pick has no end`);
+      const pickBlock = text.slice(pickFrom, pickEnd);
+      must(pickBlock.includes("/usr/bin/"), `${file}: the browser pick no longer tries /usr/bin first`);
+
+      const tag = file.includes("pi-") ? "pi" : "tc";
+      const home = join(root, tag, "home");
+      const bin = join(root, tag, "bin");
+      const usr = join(root, tag, "usrbin");
+      mkdirSync(join(home, ".config", "chromium", "Default"), { recursive: true });
+      mkdirSync(bin, { recursive: true });
+      mkdirSync(usr, { recursive: true });
+      const prefs = join(home, ".config", "chromium", "Default", "Preferences");
+      const original = '{"profile":{"exit_type":"Crashed","exited_cleanly":false},"keep":1}';
+      writeFileSync(prefs, original);
+      writeFileSync(join(bin, "mv"), `#!/bin/bash\nprintf '%s\\n' "$@" >> "${join(root, tag, "mv.log")}"\nexec /bin/mv "$@"\n`, { mode: 0o755 });
+      writeFileSync(join(bin, "chromium"), "#!/bin/sh\n", { mode: 0o755 });
+      const run = (block: string, env: Record<string, string>) =>
+        execFileSync("/bin/bash", ["-c", `set -uo pipefail\nlog() { :; }\n${block}\nprintf '%s' "\${CHROMIUM:-}"`], {
+          encoding: "utf8",
+          env: { ...process.env, HOME: home, ...env },
+        });
+
+      // 1. A real rewrite: the temp file must live beside Preferences, not in /tmp.
+      run(prefsBlock, { PATH: `${bin}:${process.env.PATH}` });
+      const rewritten = JSON.parse(readFileSync(prefs, "utf8"));
+      must(rewritten.profile.exit_type === "Normal" && rewritten.keep === 1, `${file}: Preferences was not rewritten (${JSON.stringify(rewritten)})`);
+      const moved = readFileSync(join(root, tag, "mv.log"), "utf8").split("\n").filter((l) => l.includes("Preferences."));
+      must(moved.length === 1 && moved[0].startsWith(join(home, ".config", "chromium", "Default") + "/"),
+        `${file}: the new Preferences was written at ${moved[0] ?? "nowhere"} — outside the profile directory, the rename is a cross-filesystem copy`);
+
+      // 2. jq that says nothing must leave the real file alone.
+      writeFileSync(prefs, original);
+      writeFileSync(join(bin, "jq"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      run(prefsBlock, { PATH: `${bin}:${process.env.PATH}` });
+      must(readFileSync(prefs, "utf8") === original, `${file}: an EMPTY jq output was moved over Preferences — Chromium discards the profile, and the pairing with it`);
+      rmSync(join(bin, "jq"));
+      must(readdirSync(join(home, ".config", "chromium", "Default")).length === 1, `${file}: a temporary Preferences copy was left behind`);
+
+      // 3. The browser: /usr/bin wins over a PATH entry, and PATH is only the fallback.
+      const pinned = pickBlock.split("/usr/bin/").join(`${usr}/`);
+      writeFileSync(join(usr, "chromium"), "#!/bin/sh\n", { mode: 0o755 });
+      const chose = run(pinned, { PATH: `${bin}:${process.env.PATH}` }).trim();
+      must(chose === join(usr, "chromium"), `${file}: the launcher chose ${chose} over the browser in /usr/bin — a group-writable PATH entry picks the binary holding the folder handle`);
+      rmSync(join(usr, "chromium"));
+      const fallback = run(pinned, { PATH: bin }).trim();
+      must(fallback === join(bin, "chromium"), `${file}: with nothing in /usr/bin the launcher did not fall back to PATH (${fallback})`);
+      driven += 5;
+    }
+    return `${driven} verdicts over both launchers: rename beside the file, empty jq refused, no temp left, /usr/bin first, PATH as fallback`;
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/*
+ * The Claude Code installer's checksum is compared, or says it was not — driven
+ * (2026-09-24, review item 14). It was printed beside "compare against a second
+ * download", compared with nothing, which reads as verification and is not.
+ */
+check("claude-code-setup.sh checks the installer against a given hash or says it did not, driven", () => {
+  const root = mkdtempSync(join(tmpdir(), "vessel-installer-"));
+  try {
+    const f = join(root, "install.sh");
+    writeFileSync(f, "echo hello\n");
+    const sum = execFileSync("sha256sum", [f], { encoding: "utf8" }).split(" ")[0];
+    const probe = String.raw`
+SRC="$1"; F="$2"; E="$3"
+source "$SRC"
+set +e
+installer_verdict "$F" "$E"
+printf '\t%s\n' "$?"
+`;
+    const ask = (expected: string) =>
+      execFileSync("bash", ["-c", probe, "probe", join(process.cwd(), "scripts/claude-code-setup.sh"), f, expected], { encoding: "utf8" });
+    const none = ask("");
+    must(/NOT verified/.test(none) && none.trim().endsWith("\t2"), `with no --sha256 the installer's hash did not say it was unverified: ${none.trim()}`);
+    must(ask(sum).trim().endsWith("\t0"), "the right hash did not match");
+    must(ask(sum.toUpperCase()).trim().endsWith("\t0"), "the right hash in upper case did not match");
+    must(ask("0".repeat(64)).trim().endsWith("\t1"), "a wrong hash was accepted");
+    const text = readFileSync("scripts/claude-code-setup.sh", "utf8");
+    must(/\*\) die "The installer is not the one you expected, so it was NOT run\."/.test(text), "a mismatch no longer stops the installer running");
+    must(text.indexOf("installer_verdict \"${tmp}/install.sh\"") < text.indexOf('bash "${tmp}/install.sh"'), "the installer runs before its hash is judged");
+    return "no hash: says NOT verified; right hash (either case): match; wrong hash: refused before the installer runs";
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/*
+ * dist-setup/ is what scripts/setup-bundle.sh builds, byte for byte — driven
+ * (2026-09-24). The bundle is what gets uploaded, and CHECKSUMS.txt is what a
+ * careful person compares against; both are generated, never typed. A script
+ * fixed here and not re-bundled ships the old hole under a checksum that
+ * "proves" it. This runs the real bundler into a throwaway directory and
+ * compares every file, so editing a script without regenerating fails here.
+ */
+check("dist-setup/ is exactly what setup-bundle.sh builds", () => {
+  const root = mkdtempSync(join(tmpdir(), "vessel-bundle-"));
+  try {
+    execFileSync("bash", [join(process.cwd(), "scripts/setup-bundle.sh"), "out"], { cwd: root, stdio: "pipe" });
+    const built = readdirSync(join(root, "out")).sort();
+    const shipped = readdirSync("dist-setup").sort();
+    must(JSON.stringify(built) === JSON.stringify(shipped), `dist-setup/ holds [${shipped.join(", ")}] where the bundler builds [${built.join(", ")}]`);
+    for (const name of built) {
+      const a = readFileSync(join(root, "out", name), "latin1");
+      const b = readFileSync(join("dist-setup", name), "latin1");
+      must(a === b, `dist-setup/${name} is not what setup-bundle.sh builds from scripts/ — run: bash scripts/setup-bundle.sh`);
+    }
+    return `${built.length} files, byte for byte, CHECKSUMS.txt included`;
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 /*
