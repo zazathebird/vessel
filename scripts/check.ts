@@ -3793,7 +3793,7 @@ check("a share code carries the look and never the duel", () => {
       zoom: 1.4,
       tuning: { ...DEFAULT_DUEL_TUNING, rest: 0.5 },
     },
-    duelPages: { work: { bars: false } },
+    duelPages: { now: { bars: false } },
   };
 
   // 1. Encoding must not smuggle the duel in. A code is hyphen-separated
@@ -3817,7 +3817,7 @@ check("a share code carries the look and never the duel", () => {
   const after = { ...loud, ...(shared as object) } as Config;
   must(after.duel.pin?.[0] === "hooded", "applying a share code dropped the pinned pairing");
   must(after.duel.tuning.rest === 0.5, "applying a share code reset the pacing");
-  must(after.duelPages.work?.bars === false, "applying a share code dropped a page override");
+  must(after.duelPages.now?.bars === false, "applying a share code dropped a page override");
   // And it must still have done its actual job.
   must(after.pal === loud.pal && after.layout === loud.layout, "the code lost the look");
   return `7 fields, ${code.length} chars, duel settings untouched by a round trip`;
@@ -3992,12 +3992,12 @@ check("the duel settings publish, refuse rubbish, and default to a no-op", () =>
   //    resolved object would freeze today's values onto sixteen pages that
   //    nobody would think to revisit.
   const site = { ...DEFAULT_DUEL_SETTINGS, zoom: 1.4, tuning: { ...DEFAULT_DUEL_TUNING, rest: 2 } };
-  const pages = validDuelPages({ work: { bars: false }, nosuchpage: { bars: false } });
+  const pages = validDuelPages({ now: { bars: false }, nosuchpage: { bars: false } });
   must(!("nosuchpage" in pages), "an unknown page id survived validation");
-  must(Object.keys(pages.work ?? {}).length === 1, "a partial override was widened");
-  const onWork = resolveDuel(site, pages, "work");
-  must(onWork.bars === false, "the override did not apply");
-  must(onWork.zoom === 1.4 && onWork.tuning.rest === 2, "the override froze the site default");
+  must(Object.keys(pages.now ?? {}).length === 1, "a partial override was widened");
+  const onNow = resolveDuel(site, pages, "now");
+  must(onNow.bars === false, "the override did not apply");
+  must(onNow.zoom === 1.4 && onNow.tuning.rest === 2, "the override froze the site default");
   must(resolveDuel(site, pages, "about").bars === true, "an override leaked onto another page");
 
   // 5. A restriction can never empty a side. An ornament that draws no fighter
@@ -4041,8 +4041,8 @@ check("the duel settings publish, refuse rubbish, and default to a no-op", () =>
  * **`tuning` was one key holding four.** `DuelPageSettings` was
  * `Partial<DuelSettings>`, whose `tuning` is the whole four-knob object, so the
  * editor could not express "this page disagrees about Patience" and wrote all
- * four. Reproduced in a signed-in browser: Patience on `/work`, then the site's
- * Circling 1.00 → 2.50, and `/work` read 1.00 for ever — while the editor's own
+ * four. Reproduced in a signed-in browser: Patience on `/now`, then the site's
+ * Circling 1.00 → 2.50, and `/now` read 1.00 for ever — while the editor's own
  * summary said *"work sets 1 of its own: tuning"*. That is precisely the
  * "sixteen of them would silently go stale" failure the sparse map exists to
  * prevent, one level down. The old gate only ever exercised a `{ bars: false }`
@@ -4051,8 +4051,8 @@ check("the duel settings publish, refuse rubbish, and default to a no-op", () =>
  * **`validDuelPages` repaired where it promised to refuse.** It validated the
  * whole object and kept every key *present in the input*, taking its value from
  * the validated result — so a refused field survived as an override pinned to
- * the global default. `{ work: { zoom: 99 } }` became `{ work: { zoom: 1 } }`,
- * and a site at 1.4 then rendered `/work` at 1.0 with nothing reporting a
+ * the global default. `{ now: { zoom: 99 } }` became `{ now: { zoom: 1 } }`,
+ * and a site at 1.4 then rendered `/now` at 1.0 with nothing reporting a
  * refusal. Worse for a list: an emptying allow-list is refused, and the refusal
  * became an explicit `good: null` cancelling the site's roster restriction on
  * that page.
@@ -4066,59 +4066,59 @@ check("a page override is partial to the knob, and a refused field is dropped", 
   };
 
   // 1. One knob, and only that knob, stops tracking the site.
-  const onePages = validDuelPages({ work: { tuning: { patience: 2.5 } } });
+  const onePages = validDuelPages({ now: { tuning: { patience: 2.5 } } });
   must(
-    JSON.stringify(onePages.work?.tuning) === JSON.stringify({ patience: 2.5 }),
-    `a one-knob override came back as ${JSON.stringify(onePages.work?.tuning)}`,
+    JSON.stringify(onePages.now?.tuning) === JSON.stringify({ patience: 2.5 }),
+    `a one-knob override came back as ${JSON.stringify(onePages.now?.tuning)}`,
   );
-  const onWork = resolveDuel(site, onePages, "work");
-  must(onWork.tuning.patience === 2.5, "the page's own knob did not apply");
+  const onNow = resolveDuel(site, onePages, "now");
+  must(onNow.tuning.patience === 2.5, "the page's own knob did not apply");
   must(
-    onWork.tuning.circling === 2.5 && onWork.tuning.rest === 1.5,
-    `the other knobs froze at ${JSON.stringify(onWork.tuning)} instead of tracking the site`,
+    onNow.tuning.circling === 2.5 && onNow.tuning.rest === 1.5,
+    `the other knobs froze at ${JSON.stringify(onNow.tuning)} instead of tracking the site`,
   );
 
   // 2. Moving the site moves every knob the page has not spoken about.
   const moved = { ...site, tuning: { ...site.tuning, circling: 0.5 } };
   must(
-    resolveDuel(moved, onePages, "work").tuning.circling === 0.5,
+    resolveDuel(moved, onePages, "now").tuning.circling === 0.5,
     "a page that never mentioned circling did not follow the site",
   );
 
   // 3. A refused field is dropped, so the page keeps following the site.
   for (const [label, raw] of [
-    ["an out-of-band number", { work: { zoom: 99 } }],
-    ["an emptying allow-list", { work: { good: [] } }],
-    ["a wrong-side allow-list", { work: { good: ["ringmaster"] } }],
-    ["a half-valid allow-list", { work: { good: ["ronin", "nonsense"] } }],
-    ["an out-of-band knob", { work: { tuning: { rest: -1 } } }],
-    ["a non-numeric knob", { work: { tuning: { impact: "fast" } } }],
+    ["an out-of-band number", { now: { zoom: 99 } }],
+    ["an emptying allow-list", { now: { good: [] } }],
+    ["a wrong-side allow-list", { now: { good: ["ringmaster"] } }],
+    ["a half-valid allow-list", { now: { good: ["ronin", "nonsense"] } }],
+    ["an out-of-band knob", { now: { tuning: { rest: -1 } } }],
+    ["a non-numeric knob", { now: { tuning: { impact: "fast" } } }],
     // A key the validated object INHERITS rather than owns (2026-09-07). The
     // walk used `key in full`, which is true of `constructor`, so a published
     // `{ tuning: { constructor: 1 } }` indexed `DUEL_BANDS.constructor` and
     // destructured a function as a pair: a TypeError inside `loadConfig`, on
     // every visitor's first render, from one field. Parsed from JSON so the
     // `__proto__` case is an own property, as it is off the wire.
-    ["a prototype key in tuning", JSON.parse('{"work":{"tuning":{"constructor":1}}}')],
-    ["a prototype key in the override", JSON.parse('{"work":{"constructor":1,"__proto__":{"zoom":2}}}')],
-    ["a dunder key in tuning", JSON.parse('{"work":{"tuning":{"__proto__":{"rest":2}}}}')],
+    ["a prototype key in tuning", JSON.parse('{"now":{"tuning":{"constructor":1}}}')],
+    ["a prototype key in the override", JSON.parse('{"now":{"constructor":1,"__proto__":{"zoom":2}}}')],
+    ["a dunder key in tuning", JSON.parse('{"now":{"tuning":{"__proto__":{"rest":2}}}}')],
   ] as const) {
     const pages = validDuelPages(raw);
     must(
-      pages.work === undefined,
-      `${label} survived as ${JSON.stringify(pages.work)} instead of being dropped`,
+      pages.now === undefined,
+      `${label} survived as ${JSON.stringify(pages.now)} instead of being dropped`,
     );
     must(
-      JSON.stringify(resolveDuel(site, pages, "work")) === JSON.stringify(site),
-      `${label} changed what /work resolves to`,
+      JSON.stringify(resolveDuel(site, pages, "now")) === JSON.stringify(site),
+      `${label} changed what /now resolves to`,
     );
   }
 
   // 4. And a good value beside a refused one still lands, alone.
-  const mixed = validDuelPages({ work: { zoom: 1.2, rim: 99 } });
+  const mixed = validDuelPages({ now: { zoom: 1.2, rim: 99 } });
   must(
-    JSON.stringify(mixed.work) === JSON.stringify({ zoom: 1.2 }),
-    `a mixed override came back as ${JSON.stringify(mixed.work)}`,
+    JSON.stringify(mixed.now) === JSON.stringify({ zoom: 1.2 }),
+    `a mixed override came back as ${JSON.stringify(mixed.now)}`,
   );
   return "one knob stays one knob, 9 refused fields dropped, the good half of a mixed override kept";
 });
@@ -5006,10 +5006,10 @@ check("a page's look override reaches the page, and only that page", () => {
   const peat = PALETTES.findIndex((p) => p.id === LOW_CONTRAST[0]);
   const cfg: Config = {
     ...DEFAULT_CONFIG,
-    page: "work",
+    page: "now",
     calm: false,
     grain: false,
-    lookPages: { work: { pal: peat, layout: "ledger", fx: "plasma", grain: true, slots: true } },
+    lookPages: { now: { pal: peat, layout: "ledger", fx: "plasma", grain: true, slots: true } },
   };
 
   // The merge itself: named dials override, unnamed dials track the site.
@@ -5131,7 +5131,7 @@ check("the cursor-lean card tilt stays deleted", () => {
 
 check("a page look override refuses rubbish and never repairs it", () => {
   // Identity with what came in: a valid partial survives exactly as sent.
-  const good = { work: { pal: 3, layout: "ledger", grain: false }, about: { fx: "plasma" } };
+  const good = { now: { pal: 3, layout: "ledger", grain: false }, about: { fx: "plasma" } };
   must(
     JSON.stringify(validLookPages(good)) === JSON.stringify(good),
     "a valid override did not round-trip identically",
@@ -5139,21 +5139,21 @@ check("a page look override refuses rubbish and never repairs it", () => {
 
   // A refused field is DROPPED — an override pinned to a default is a working
   // override shadowing whatever the site later says, the validDuelPages bug.
-  const mixed = validLookPages({ work: { pal: 999, layout: "nope", grain: "yes", fx: "plasma" } });
+  const mixed = validLookPages({ now: { pal: 999, layout: "nope", grain: "yes", fx: "plasma" } });
   must(
-    JSON.stringify(mixed) === JSON.stringify({ work: { fx: "plasma" } }),
+    JSON.stringify(mixed) === JSON.stringify({ now: { fx: "plasma" } }),
     `refused fields were kept or repaired: ${JSON.stringify(mixed)}`,
   );
 
   // An override emptied by refusals is dropped whole — {} and absence must
   // mean the same thing, or the panel's override count lies.
-  must(!("work" in validLookPages({ work: { pal: -1 } })), "an emptied override survived as {}");
+  must(!("now" in validLookPages({ now: { pal: -1 } })), "an emptied override survived as {}");
 
   // Unknown pages and non-object shapes are dropped, never guessed at.
   must(Object.keys(validLookPages({ nothome: { pal: 1 } })).length === 0, "an unknown page key survived");
   must(Object.keys(validLookPages("0-7-5")).length === 0, "a string was accepted as a look map");
   must(Object.keys(validLookPages([{ pal: 1 }])).length === 0, "an array was accepted as a look map");
-  must(Object.keys(validLookPages({ work: [3] })).length === 0, "an array was accepted as an override");
+  must(Object.keys(validLookPages({ now: [3] })).length === 0, "an array was accepted as an override");
 
   // A hidden catalogue entry is stored-valid: hidden is unlisted, not invalid.
   must(

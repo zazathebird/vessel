@@ -9,6 +9,10 @@ obligation. Replace freely; nothing in `src/` knows these files by anything but 
 Files live in `public/photos/<slug>.jpg`, re-encoded from the ~1280px-wide thumbnails Commons
 renders. See *Encoding* below for what is on disk now and how to reproduce it.
 
+**No photos ship as of 2026-09-23.** `/gallery` and `/work`, the only pages with photo slots, were
+removed (`docs/RETIRED-PAGES.md`), and all eight files went with them. The rows below are the record
+of where they came from; git has the files. The tile component and its `slots` toggle remain.
+
 | Slug | Source page | Author | License |
 |---|---|---|---|
 | `drive-teardown` | https://commons.wikimedia.org/wiki/File:Open_hard-drive.jpg | Zzubnik | Public domain |

@@ -261,7 +261,10 @@ The spec's *Product decisions already made* table is binding. The ones most like
 - **No city is ever named**, and the operator is not named. No client names on Work.
 - **The email never appears in static markup** — assembled at runtime, click-to-reveal, copies on
   reveal, resets to unrevealed on page change.
-- **Guestbook has no form.** "A form is a database is a liability."
+- **No testimonials and no case studies unless they are real.** `/work` and `/guestbook` were
+  removed 2026-09-23 because an earlier model session had invented all eleven. They are archived
+  in `docs/RETIRED-PAGES.md` as a template only. Never restore that content, and never write a
+  replacement: a fabricated case study is fake evidence of skill.
 - **The operator door and its `authenticate` button are theatre.** Never present an unlock route as
   security.
 - **The self-deprecating copy is *out*, and so is the one-person framing** (client's reversal, and
@@ -277,7 +280,7 @@ The spec's *Product decisions already made* table is binding. The ones most like
 - **Nothing on the site advertises the site** — no palette inventories, no feature lists, no mention
   of pages a visitor cannot see. A joke that works by reciting an inventory is still reciting the
   inventory. The 404's page *list* stays: those are navigation.
-- **The 404's page count moves whenever a content page is added** — "eleven other pages" today,
+- **The 404's page count moves whenever a content page is added** — "seven other pages" today,
   gated. The counts on that page are jokes that depend on being true.
 - **No copy promises anything the client has not said, and no fee is named.** "Free diagnosis" and
   "Fixed, or you pay nothing" were both removed as untrue of the business. *"Rough quote back, free"*
@@ -297,9 +300,9 @@ The spec's *Product decisions already made* table is binding. The ones most like
   the truth, having been chosen for rhythm. **The most dangerous shape is a retired promise rebuilt
   without its words**, which is why the gate tests `PAGES` and the snippets for the *form* of a
   promise, not for a phrase.
-- **A quotation is somebody's words; an attribution is the writer's.** The guestbook's five quotes
-  may be re-attributed freely and **never reworded** — editing them for rhythm manufactures a
-  testimonial.
+- **A quotation is somebody's words; an attribution is the writer's.** If real customer quotes
+  ever appear, the attribution may be rewritten freely and the quote **never reworded** — editing
+  one for rhythm manufactures a testimonial.
 - **`/now` claims to be true today, so it may only ever contain true things.** It lists what is
   actually in for repair, which means **it goes stale by sitting still**, and a stale `now` page is
   worse than no `now` page. Same rule for `about`: there is no workshop yet, there is a bin of parts.
@@ -352,8 +355,9 @@ The spec's *Product decisions already made* table is binding. The ones most like
   Tab. **The panel and door are deliberately not modal**: `sudo` with the panel open opens the door.
 - **Adapted layouts: the operator's stored layout is never overwritten** when a small screen
   collapses it — it re-emerges when the window widens. That state is surfaced nowhere.
-- **Seventeen real URLs are wired in `src/data/pageIds.ts`** — ten content pages (the spec's eight
-  plus `/setup` and `/scams`), `/404`, `/signup`, `/signin`, `/admin`, `/downloads`, and (phase 2)
+- **Thirteen real URLs are wired in `src/data/pageIds.ts`** — six content pages (the spec's eight
+  plus `/setup` and `/scams`, less `/gallery`, `/changelog`, `/work` and `/guestbook`, removed
+  2026-09-23; `docs/RETIRED-PAGES.md`), `/404`, `/signup`, `/signin`, `/admin`, `/downloads`, and (phase 2)
   `/machines` and `/share`. **`PATHS` is a total map from a closed union**, which makes every link
   compiler-checkable — and **adding a content page moves the 404's page count**.
 - **One route has something after it, and exactly one** — `/downloads/<name>`, whose names are D1
@@ -383,8 +387,8 @@ The spec's *Product decisions already made* table is binding. The ones most like
   and the flag anyway**: it is the mechanism for withdrawing an effect without moving anyone's share
   code. Same split as `CATEGORIES` / `PICKABLE_CATEGORIES`.
 - **Every surface that reads `PICKABLE_FX` is operator-gated.** A visitor's only appearance control
-  is the calm toggle, and the home page's "Show me something weird" **navigates to the gallery, it
-  does not roll the dice**.
+  is the calm toggle, and no visitor-facing control rolls the dice (the home page's "Show me something weird", which
+  navigated to the removed gallery, is gone with it).
 - **Presets define themselves structurally and derive their share code** (`src/data/presets.ts`) — a
   hardcoded `"N-7-5-3-5-3"` stays correct until a catalogue gains an entry and then becomes a
   *working* code pointing at the wrong palette. **A preset is a menu, so it may never name a `hidden`
@@ -420,7 +424,7 @@ minimum is the spec's `46px` (3); Matrix rain is rebuilt per column (4); "breath
 vignette (5); Contact's CTA reveals the address (6); the hero ornament is a setting with eight
 entries, five withdrawn, and carries a *station* (7); the vitals strip is removed (8); duel blades
 are literal colours (9); visible "vessel" branding is gone while **internal identifiers deliberately
-keep the old name** (10); photo slots hold EXIF-stripped placeholders (11); the contact sheet
+keep the old name** (10); photo slots hold EXIF-stripped placeholders (11 — moot since 2026-09-23: the only pages with photos were removed, and `public/photos/` is gone); the contact sheet
 duotones them in every mode including calm (12); **fourteen layouts, twenty-five palettes, sixteen
 effects, all appended and never inserted** (13); six self-hosted variable webfonts, each paired with
 a platform-picked system fallback (14); **the cursor-lean card tilt is deleted** (15).

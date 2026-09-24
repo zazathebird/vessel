@@ -152,10 +152,10 @@ different claims, and the client has explicitly called out the difference.
 
 ## Sweeping every route
 
-Sixteen routes (`src/data/pageIds.ts`): `/ /scams /about /work /gallery /contact /guestbook /now
-/changelog /setup /404 /signup /signin /admin /machines /share`.
+Fifteen routes (`src/data/pageIds.ts`): `/ /scams /about /work /contact /guestbook /now /setup
+/404 /signup /signin /admin /machines /share /downloads`.
 
-Reuse one iframe and swap `src` rather than opening sixteen tabs. Worth probing per route:
+Reuse one iframe and swap `src` rather than opening fifteen tabs. Worth probing per route:
 horizontal overflow (`documentElement.scrollWidth - innerWidth`, a documented trap class),
 console errors, images missing `alt`, controls with no accessible name, unlabelled inputs.
 

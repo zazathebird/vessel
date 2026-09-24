@@ -87,24 +87,8 @@ export const SNIPPETS: Record<PageId, readonly string[]> = {
     "Over twenty years of board-level soldering, data recovery, and the machines other shops send away. No name, no face, no city — a preference.",
   ],
 
-  work: [
-    "Selected repairs: what came in, what was wrong, what happened next. No client names, and no photographs of anyone's living room.",
-  ],
-
-  gallery: [
-    "Broken hardware, odd photographs and the inside of a cable drawer. Nothing the camera recorded about where any of it was taken survived the upload.",
-  ],
-
-  guestbook: [
-    "A guestbook with nothing to sign. Anything typed into it would have to be stored somewhere, and I would rather not hold onto it.",
-  ],
-
   now: [
     "The computers in for repair right now, what is wrong with each one, and roughly where it has got to. Updated whenever one goes home.",
-  ],
-
-  changelog: [
-    "The bigger changes made to this computer repair site, kept. Nobody needs it \u2014 it is here because quietly deleting things is how a site lies.",
   ],
 
   downloads: [

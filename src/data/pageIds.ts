@@ -1,20 +1,25 @@
 /**
- * The seventeen pages and their real URLs — the spec's nine, plus setup and
+ * The thirteen pages and their real URLs — the spec's nine, plus setup and
  * scams, plus signup, signin and admin (phase 1), machines and share (phase 2,
- * SPEC-ACCOUNTS.md §13), and downloads (2026-08-19).
+ * SPEC-ACCOUNTS.md §13), and downloads (2026-08-19), less the gallery, the
+ * changelog, work and guestbook, which the client removed on 2026-09-23 —
+ * the first two as filler, the last two because their case studies and
+ * quotes had been invented by an earlier model session and were never real.
  *
  * The prototype swaps pages in place with no URL change; the spec is explicit
  * that this is a prototype limitation, not a design decision, so the real build
- * gets seventeen addressable routes.
+ * gets thirteen addressable routes.
  */
 
 export type PageId =
-  | "home" | "about" | "work" | "gallery" | "contact"
-  | "guestbook" | "now" | "changelog" | "setup" | "scams" | "notfound" | "signup" | "signin" | "admin"
+  | "home" | "about" | "contact"
+  | "now" | "setup" | "scams" | "notfound" | "signup" | "signin" | "admin"
   | "machines" | "share" | "downloads";
 
 /**
- * Header nav — **seven** public pills, in order.
+ * Header nav — **four** public pills, in order. It was seven until gallery,
+ * work and guestbook were removed (client, 2026-09-23); the history below is
+ * kept as written.
  *
  * "404" was genuinely in the nav — that was the joke — until the client pulled
  * it behind sign-in on 2026-08-13 (`OPERATOR_NAV` below). The page itself is
@@ -54,9 +59,6 @@ export const NAV: { id: PageId; label: string }[] = [
    */
   { id: "contact", label: "Contact" },
   { id: "about", label: "About" },
-  { id: "work", label: "Work" },
-  { id: "gallery", label: "Gallery" },
-  { id: "guestbook", label: "Guestbook" },
 ];
 
 /**
@@ -93,7 +95,9 @@ export const OPERATOR_NAV: { id: PageId; label: string }[] = [
 ];
 
 /**
- * Now and Changelog are footer links, not main nav. A settled decision.
+ * Now is a footer link, not main nav. A settled decision. (Changelog was
+ * beside it until the client removed it on 2026-09-23: a page about the
+ * website, on a site whose rule is that nothing advertises the site.)
  *
  * Account joins them rather than `NAV` deliberately: `useOperatorRoutes` cycles
  * `NAV` only, so adding a pill there would change the operator door's cycling as
@@ -114,7 +118,6 @@ export const OPERATOR_NAV: { id: PageId; label: string }[] = [
  */
 export const FOOTER_NAV: { id: PageId; label: string }[] = [
   { id: "now", label: "Now" },
-  { id: "changelog", label: "Changelog" },
   // Setup joins them rather than `NAV` (2026-08-14, client request — TODO 9).
   // It is a secondary page in the same sense they are, and the six pills are a
   // settled design; adding a seventh would also change what the operator door's
@@ -143,12 +146,8 @@ export const FOOTER_NAV: { id: PageId; label: string }[] = [
 export const PATHS: Record<PageId, string> = {
   home: "/",
   about: "/about",
-  work: "/work",
-  gallery: "/gallery",
   contact: "/contact",
-  guestbook: "/guestbook",
   now: "/now",
-  changelog: "/changelog",
   setup: "/setup",
   scams: "/scams",
   notfound: "/404",

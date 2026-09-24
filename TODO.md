@@ -39,6 +39,12 @@ break-verified — the fix was confirmed by watching the test fail against the o
 `../debian-desktop/BLUEPRINT.md` §3 is the argument; §6 is that machine's own task list, and it is
 newer than the host section below.
 
+**2026-09-23 (not yet deployed):** `/gallery` and `/changelog` removed as filler, and `/work` and
+`/guestbook` removed because the client confirmed their case studies and quotes were invented by an
+earlier model session (routes 17 → 13, nav 7 → 4 pills, 404 says "seven", every photo gone; all four
+archived in `docs/RETIRED-PAGES.md`), `/scams` reorganised into five runs with its repeats
+merged, `/setup`'s two closing blocks merged, `/about`'s parts list cut. `npm run check` 91 green.
+
 ---
 
 ## Needs the client — decisions, not work
@@ -54,9 +60,8 @@ newer than the host section below.
    the "pay once, nothing renews" promise (now cut — wanted back permanently?); Contact's "within
    a day"; the two guestbook numbers; `work`'s "two years" (now "ever since"); the per-machine
    record line (cut); the years figure ("over twenty" everywhere, one phrase to change); the Kevin
-   joke on home (adjacent to the accent framing he declined for `/scams`); and **whether `/work`'s
-   six case studies and the five guestbook quotes are real** — the most important one, because a
-   fabricated case study is evidence of capability that has to go.
+   joke on home (adjacent to the accent framing he declined for `/scams`);. (`/work` and the
+   guestbook are answered: both were invented and both are removed, 2026-09-23.)
 5. **Was the first machine he took apart a 486?** It is `/about`'s origin story.
 6. **`design/SPEC-SHARING.md` is a DRAFT awaiting sign-off.**
 7. **Unattended remote access** — for CUSTOMER machines, self-hosted RustDesk or MeshCentral, never
@@ -472,9 +477,6 @@ wants one, per this project's own discipline.
 - **A republish may be needed for the withdrawn circles to fully go** — hidden is unlisted, not
   invalid; check the published row names none of Lens/Valve/Aperture/Orrery.
 - **Photo slots hold Wikimedia placeholders** (`docs/PHOTOS.md`) — swap for his own, same treatment.
-- **The gallery describes a video that does not exist**, and its drive-shelf block says forty drives
-  while the alt text describes the five in the photograph. Both defensible, both worth a real clip
-  and a real count.
 
 ## Traps recorded, not work
 
