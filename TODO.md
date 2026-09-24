@@ -47,6 +47,66 @@ merged, `/setup`'s two closing blocks merged, `/about`'s parts list cut. `npm ru
 
 ---
 
+## Review of 2026-09-24 — four parallel reviews, findings not yet fixed
+
+Security 8.5, live hygiene 9, code quality 7, performance 6–8, accessibility 8. No Critical/High in
+the site. **Where each item runs:** site fixes run on the PC that has the Cloudflare token (the
+Debian box has none); host-script fixes must be written *and tested* on the ThinkCentre.
+
+### For the ThinkCentre session (host scripts — test on the box)
+
+1. **`plasma-dark-setup.sh:1356,1361` writes PowerDevil keys with `--group AC`.** Plasma 6 reads
+   `[AC][Display]` and `[AC][SuspendAndShutdown]`, so the display-off fix is probably ignored and
+   the kiosk still blanks. Check: `kreadconfig6 --file powerdevilrc --group AC --group Display --key
+   TurnOffDisplayWhenIdle`, then leave it idle 20 min. `--verify` never reads powerdevilrc — add it.
+2. **`graphical_session_id` in `thinkcentre-setup.sh` picks the first `Class=user` session**, and
+   SSH sessions are `Class=user` too (`Type=tty`). `--verify` over SSH can FAIL a healthy box.
+   Filter on `Type` x11/wayland or a non-empty `Seat`.
+3. The SDDM config loop keeps the *first* `User=`/`Session=`; SDDM lets later files win, and the
+   loop ignores sections. Low.
+4. **`scripts/rdp-separate-user.sh` — do not run as written.** Lines ~427-431 paste `{}` into a
+   `sh -c` string run as root (a filename in /home/user with `'` or `$(…)` executes); it makes a
+   sudo-capable user that logs in by password over xrdp with no lockout; it loosens /home/user
+   700 → 750; it has no `--undo`.
+5. **Both `attic-*.DO-NOT-RUN` files are mode 755.** The GDM one disables SDDM. `chmod -x` them.
+6. **`plasma-vibes.sh` and `konsole-profiles.sh` are looks, not host** — by BLUEPRINT §3 they
+   belong in `../debian-desktop`, and they are a second look system nobody documents or gates.
+7. **Use a repo-scoped deploy key**, not github.com/settings/ssh/new — an always-on kiosk box with
+   RDP should not hold write access to the whole GitHub account.
+8. The Share operator tab has never been seen in a browser on the phone band (header may scroll).
+9. Stale lines left by the 09-11 commits: "Share tab UNVERIFIED, never built" and "two commits
+   unpushed, nothing deployed" (both deployed 2026-09-23 as Worker 3d1133a5); "green at 77" (91);
+   `REMOTE-ACCESS.md`'s xrdp/freerdp state not re-checked since 09-11.
+
+### For the site (needs the PC with the Cloudflare token)
+
+10. **Anonymous lockout of password sign-in** (`worker/accounts.ts` `signin` → `assertAttempt`
+    before the password is checked; `rate-limit.ts` per-handle `account:` bucket). Six bad tries at
+    a known handle block the owner's correct password for 15+ min, renewably. Passkeys still work.
+11. **`/share` step 1 points signed-in users at `/downloads` for the setup script**, which is not
+    publicly listed and, until re-uploaded, still carries the other-account `.ssh` hole. Fixed by
+    the bundle re-upload (*Needs hardware* item 1), or hold the link back until then.
+12. **The duel engine (~60 KB min / 16 KB gz) ships to every visitor** — `src/fx/effects.ts`
+    imports it statically. Lazy-load it; it is operator-only.
+13. **Arrow keys page the site inside Deck's sideways-scrolling grid** (`useOperatorRoutes.ts`).
+14. `--mx`/`--my` are written on every pointermove without rAF batching, and invalidate the whole
+    `.vessel` subtree (`inherits: true`) for 11 layouts that never read them.
+15. `useFocusTrap.ts`'s `FOCUSABLE` does not exclude hidden/`inert` elements.
+16. `setPassword` (`accounts.ts` ~1804) reports `set` on a UNIQUE conflict whose batch rolled back.
+17. Passkey labels skip `expectDisplayName` (bidi/zero-width reach the owner's own list). Info.
+18. A stolen operator cookie can rewrite live download-page text without the password — inside
+    the "releases, not writes" rule, but worth his call given what the page is for.
+19. No linter: the four `eslint-disable … exhaustive-deps` comments suppress nothing. Add
+    `eslint-plugin-react-hooks` or delete them. `DownloadEditor.tsx` (2,014 lines) wants splitting.
+20. Doc drift: `check:fast` takes ~43s, not ~4s; `SECURITY-AUDIT.md:1334` says `/api/account/slot`
+    authorises on the session alone (it now requires the password); CLAUDE.md's `OPERATOR_NAV`
+    line omits Share.
+21. Hygiene: no `Cross-Origin-Resource-Policy`, no HSTS `preload`, CAA allows five CAs,
+    `/api/health` is anonymous and uncached (a D1 query + a DO call per hit), no font preload.
+22. **MX points at namespro while SPF is `-all` and DMARC `reject`** — mail *sent* as
+    @mcclevarty.ca will be rejected. Fine only if he never sends from the domain; confirm which
+    address the contact reveal shows.
+
 ## Needs the client — decisions, not work
 
 1. **The four duel sliders** (circling, rest, impact, patience) still carry defaults. Size works,
