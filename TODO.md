@@ -47,6 +47,23 @@ merged, `/setup`'s two closing blocks merged, `/about`'s parts list cut. `npm ru
 
 ---
 
+## Proposed by the client 2026-09-24 — not started
+
+1. **Login history on the account page** ("IP, timestamp, OS"). The account page already exists
+   (`/signin` signed in: password, passkeys, TOTP, change password). **IP and user-agent collide
+   with SPEC-ACCOUNTS §9** — "No raw IP address is stored, anywhere" and the inventory's explicit
+   exclusion of IPs and user-agent strings — and with Contact's "nothing about you is stored".
+   Recommended shape, pending his answer: a **sessions list** with sign-in time, a coarse device
+   label derived at sign-in ("Windows · Chrome", never the raw UA), which credential was used,
+   and "sign out this one / all others" (the `sessions_after` epoch already does the latter);
+   the current request's IP shown live but never stored. Any stored field is a §9 spec change.
+2. **Customisable file browser** (`/machines` explorer). Per-user look and behaviour: view mode,
+   density, sort, icon style, colours from the palette set, what a double-click does, hidden-file
+   visibility. Today one choice persists in localStorage (`vessel.explorer.v1`). Decide: per
+   browser (localStorage, zero spec impact) or per account (a prefs field in D1 — not personal
+   data, but a §9 inventory line). Build after phase 2 has been seen working by eye (pairing
+   has never happened on the real box).
+
 ## Review of 2026-09-24 — four parallel reviews, findings not yet fixed
 
 Security 8.5, live hygiene 9, code quality 7, performance 6–8, accessibility 8. No Critical/High in
