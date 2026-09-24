@@ -76,6 +76,27 @@ so the count is diagnostic detail and `ok` is the verdict.
 > whose success criterion is the current failure signal is worse than one that says nothing, and
 > it is read at the worst possible moment. Hence keying on `ok`, which cannot drift.
 
+## Rotating a secret
+
+The Worker holds four secrets (`wrangler secret put <NAME>`; they cannot be read back). **None of
+them carries a key id**, so there is no overlap window: the moment a new value is put, everything
+made under the old one stops verifying. What that costs differs completely between them. Back up
+any new value in the password manager **before** putting it.
+
+| Secret | What it keys | What rotating it breaks | Verdict |
+|---|---|---|---|
+| `RATE_SALT_SEED` | The names of the rate-limit buckets (and the daily client-key salt) | Every in-flight counter is forgotten — anybody mid-backoff starts fresh | **Rotates freely.** Nothing stored depends on it |
+| `SESSION_SECRET` | Session cookies, and every short ticket: TOTP, set-password, the two WebAuthn challenges, download tickets | **Everybody is signed out**; a sign-in half-way through TOTP or a passkey ceremony starts again; a customer mid-download re-types their code | **Rotates cleanly.** Nothing stored depends on it — the right move after any suspicion of a leaked cookie secret |
+| `AUTH_PEPPER` | The HMAC over every stored auth hash — **passwords, recovery codes, TOTP backup codes and download codes** (and the decoy salts `challenge` invents) | **Every password, every recovery code, every backup code and every download code stops working at once.** Nothing recomputes them: the server never held the inputs | **Do not rotate** short of a confirmed leak of the pepper *and* the database together. Passkeys are untouched (they are signatures, not hashes), so an account with a passkey still signs in; every other account has no way back in — an operator reset leaves recovery, and recovery codes are dead too — and is re-created. Every customer needs a new download code |
+| `TOTP_ENC_KEY` | AES-GCM over every stored TOTP secret (`totp.secret_enc`) | Every enrolled authenticator stops verifying — nobody with TOTP can finish a password sign-in | **Only offline.** There is no key id on the ciphertext, so rotation is: decrypt every `totp.secret_enc` under the old key, re-encrypt under the new, write them back, *then* put the new secret — one script, run once, with both keys in hand. The fallback without the old key is an operator TOTP reset for every account (`/admin`, or step 3 above), and each owner re-enrols |
+
+**Key versioning is not implemented**, deliberately for now: adding a key id to the TOTP ciphertext
+is a migration of every enrolled secret, and a second pepper would mean every verification trying
+two HMACs. If rotation ever becomes routine rather than an emergency, that is the work.
+
+A rotation of `SESSION_SECRET` also ends the always-on host's session, so the kiosk signs in again
+as it does after the twelve-hour ceiling.
+
 ## What this does not survive
 
 Losing the Cloudflare account itself. That is the real single point of failure

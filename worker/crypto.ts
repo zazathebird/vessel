@@ -149,7 +149,7 @@ function expandIpv6(address: string): number[] | null {
  * anywhere in this Worker, and must not start being read**: it is client-supplied
  * and appending to it would hand every attacker a rate-limit bypass.
  */
-export function normaliseIp(ip: string): string {
+export function normaliseIp(ip: string, prefix: 64 | 48 = 64): string {
   const raw = ip.trim().toLowerCase();
   // No colon: IPv4, or the `local` literal `buckets()` uses when there is no
   // edge in front of us. Either way it is already the whole client.
@@ -168,10 +168,21 @@ export function normaliseIp(ip: string): string {
     return raw;
   }
 
+  /*
+   * **The /48 cut is available to one caller, the `pair:` bucket, and only there**
+   * (2026-09-24, audit item 56). The two-tier answer the note above anticipated
+   * arrived for sign-in lockout rather than for stuffing: keyed on the /64, a
+   * single free tunnel-broker /48 is 65,536 distinct (client, handle) pairs, so
+   * six of them fill the handle-wide ceiling and lock the owner out. At /48 that
+   * takes six /48s. The `client:` bucket stays at /64 for the reason above — it
+   * is shared by every handle, and a /48 there is a neighbour's outage — while a
+   * `pair:` bucket is per handle, so the only people who share one at /48 are
+   * strangers guessing at the same account from the same allocation.
+   */
   return `${groups
-    .slice(0, 4)
+    .slice(0, prefix / 16)
     .map((g) => g.toString(16))
-    .join(":")}::/64`;
+    .join(":")}::/${prefix}`;
 }
 
 /**
@@ -190,9 +201,14 @@ export function normaliseIp(ip: string): string {
  * **The address is normalised first** — see `normaliseIp`. Hashing the raw
  * string gave every IPv6 client an unlimited supply of fresh buckets.
  */
-export async function clientKey(ip: string, seed: string, now = Date.now()): Promise<string> {
+export async function clientKey(
+  ip: string,
+  seed: string,
+  now = Date.now(),
+  prefix: 64 | 48 = 64,
+): Promise<string> {
   const day = Math.floor(now / 86_400_000);
-  return toHex(await hmac(seed, `${day}:${normaliseIp(ip)}`));
+  return toHex(await hmac(seed, `${day}:${normaliseIp(ip, prefix)}`));
 }
 
 /** A random identifier for a database row. */

@@ -488,6 +488,7 @@ the signalling service, which is exactly the party it must be secure against.
 
 ```
 accounts      id · handle · created_at · grant_pubkey · is_operator · reset_at
+                sessions_after                         ← session epoch, §4 (2026-09-24)
 credentials   id · account_id · kind · label · created_at · last_used_at
                 last_challenge · last_challenge_at        ← replay guard, §4
                 kind = 'password' | 'passkey' | 'recovery'
@@ -516,9 +517,16 @@ that a stored field is a spec change to be argued rather than slipped in, so eac
   which voids §4's reason for waiving both the TOTP stage and rate limiting on the passkey path: a
   replay forges no signature.
 
-**None of the three is personal data**, which is what §9 exists to police. Each stores either a
+**A fourth clock field joined them on 2026-09-24: `accounts.sessions_after`** (migration `0010`,
+§12 *Resolved 2026-09-24*). The moment before which no session for the account is honoured —
+stamped by a password change, a recovery set-password, an operator password reset and an operator
+TOTP reset. Without it a stolen session outlived every one of those events for up to twelve hours,
+because a stateless token cannot otherwise be ended early. It is a server-set timestamp on a
+credential event, coarser than `reset_at` beside it.
+
+**None of the four is personal data**, which is what §9 exists to police. Each stores either a
 clock window or a digest of a random value **the server itself minted minutes earlier**; none is
-derived from anything about the person, none is disclosed to anybody, and all three are coarser
+derived from anything about the person, none is disclosed to anybody, and all four are coarser
 than `credentials.last_used_at`, which this inventory already covered. Each is also **load-bearing
 for a documented attack** — the alternative to storing them is not storing less, it is accepting
 replay.
@@ -585,6 +593,7 @@ later addition has to be argued against a list rather than slipped in.
 | `drives.label` | A label the owner types | No |
 | `grants.paths` | Relative subpaths under a drive | No absolute path, no home directory, no username |
 | `created_at`, `last_seen`, `last_used_at`, `reset_at` | Timestamps | Activity metadata. Retained because a user needs "last used" to spot a credential that is not theirs |
+| `sessions_after` | A timestamp: the last credential change that ended the account's sessions | No. Set by the server on a password change or an operator reset, never shown, derived from nothing about the person |
 | `audit` | Actor, action, target, time | Behavioural, and deliberately so — it is the record that catches a compromised frontend (§3). No IP, no user agent |
 
 **Not stored, at any point:** email addresses, real names, dates of birth, phone numbers, postal
@@ -791,6 +800,25 @@ retracted focus-ring claim is kept precisely because a plausible-sounding bug is
 than to disprove twice.
 
 Each rejected option carries a **"revisit if"** — the condition that would make it the right answer.
+
+### Resolved 2026-09-24 (a session epoch enters the inventory)
+
+**`accounts.sessions_after` is approved and §9 lists it.** Sessions survived a password change and an
+operator reset (`TODO.md` *Needs the client* item 2, audit item 58); the client's instruction was to
+fix everything the review found, and this was the one fix that needed a stored field. The token
+already carries, inside its MAC, when its session first began, so one timestamp per account ends
+every older session; the request that changed the password is re-issued a fresh one. The same events
+hang up the account's signalling sockets.
+
+- *Rejected: a session table.* The option `worker/session.ts` has rejected since 2026-08-12: it
+  writes a row about a person on every sign-in, which is the thing §9 exists to avoid, to buy
+  per-device sign-out that nothing asks for. **Revisit if** per-device session management ("sign out
+  that laptop") is wanted — the epoch can only end *all* sessions.
+- *Rejected: a per-account secret mixed into the session MAC.* The same column wearing a key's name,
+  and a missing row becomes an unverifiable token instead of a refused one. **Revisit if** a key
+  hierarchy for sessions is ever wanted for another reason.
+- *Not built: a "sign out everywhere" button.* None existed; the column makes it a two-line route.
+  **Revisit if** the client asks for it.
 
 ### Resolved 2026-09-04 (the replay-guard fields enter the inventory)
 

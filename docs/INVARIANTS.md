@@ -388,7 +388,11 @@ move above the health check, start the Worker.
   Keyed on the whole string, rotating inside one /64 — which every residential and VPS allocation
   hands you for free — produced **zero** 429s over 72 attempts. **/64 and not /48 deliberately**:
   one /48 can span hundreds of unrelated households, so cutting there turns a stuffing run into an
-  outage for real visitors. `X-Forwarded-For` is still never read — do not start.
+  outage for real visitors. **The one exception is the per-handle `pair:` bucket, keyed on the /48**
+  (2026-09-24, audit item 56): at the /64 one free tunnel-broker /48 was 65,536 pairs and refilled
+  the handle ceiling; a `pair:` bucket is per handle, so the only people sharing one at /48 are
+  strangers guessing at the same account. **Do not "harmonise" either cut into the other.**
+  `X-Forwarded-For` is still never read — do not start.
 - **`recordSuccess` resets the per-handle buckets and only *decays* the client bucket** by one —
   wiping it on success hands an attacker a free reset. Client allowance 50, because one address is a
   household behind NAT. **Signup has its own bucket** (allowance 12), sized just above the harness's
@@ -400,7 +404,11 @@ move above the health check, start the Worker.
   refunds the buckets that said yes when one says no, so one address feeds `account:` at most six
   times — that refund is load-bearing here too. `proof:` (signed-in re-proof) and
   `second-factor:` (only reachable with the password) stay single buckets at 5, deliberately.
-  Gated by driving the real `RateLimiter` through `signin`.
+  Gated by driving the real `RateLimiter` through `signin`. **Say the cost honestly**: six IPv4
+  addresses or six /48s in one window still lock password *and recovery* sign-in for a handle —
+  a few free tunnels or cloud VMs, not a botnet. **Passkey sign-in is the mitigation**, since no
+  bucket touches it; `challenge` checks the same buckets as `signin` so both screens give one
+  retry time, and recovery is deliberately not an exit around the ceiling.
 - **Rate limiting reserves and checks in one round-trip** — `/check` then `/fail` let N concurrent
   sign-ins all pass before any failure landed. **`challenge` deliberately stays on `/check`**: asking
   for a salt is not a failable attempt, and counting it would let anyone lock an owner out. It is the
@@ -418,8 +426,16 @@ move above the health check, start the Worker.
   of ten per abandoned attempt, for the person recovery exists for.
 - **Authorisation for set-password is a ticket, not the session.** **The ticket is single-use on the
   server, not just in the client** — its subject carries the redeemed credential and `setPassword`
-  requires that credential's key slot to still exist. Clearing it in `flows.ts` is a courtesy, not
-  the enforcement.
+  requires that credential's key slot to still exist, **inside every write's own WHERE** (audit
+  item 57), with the statement that deletes the slot last. The read ahead of the batch is only the
+  friendly early answer. Clearing it in `flows.ts` is a courtesy, not the enforcement.
+- **A session that began before `accounts.sessions_after` is refused** (migration 0010, audit item
+  58). A password change, a recovery set-password, an operator password reset and an operator TOTP
+  reset stamp it inside their own batches, then hang up the account's signalling sockets
+  (`hangUpSignalling`, after the commit, so a re-dial presents a refused session). The request that
+  changed the password is re-issued a **fresh** session — never a refresh, which carries the old
+  `issuedAt` the epoch just refused. The comparison is strictly less-than so that re-issue stands.
+  **Still no session table**: the token already carries when its session first began.
 - **Change-password reuses the salt** — recovery codes derive against the password's salt, so
   rolling it would silently kill all ten.
 - **A passkey sign-in has no TOTP stage and no rate limiting.** User verification is the passkey's
@@ -775,6 +791,13 @@ with per-person access.
 - **A draft and a `granted` page both 404; a `code` page says it exists.** Somebody holding a code
   has to be told where to type it, whereas the existence of a page named after a customer is itself
   the thing being kept quiet.
+- **A download ticket names the code that bought it and dies with it** (audit item 60). The subject
+  is `REF|list` inside the MAC; `resolveAccess` re-reads the code on every use (`ticketStillOpens`:
+  present, not revoked, and `opened` still naming it) and grants only the intersection. Revoke and
+  delete end tickets at once, a slug or id recreated inside the thirty minutes is not opened by an
+  old ticket, and a ref-less ticket is refused. **Uses and expiry are not re-checked** — the use was
+  the redemption, and expiry bounds redemption — so do not "tighten" that into a mid-download
+  refusal.
 - **Every refusal from the byte route is the same refusal, including "no such id"** — one `denied`
   object thrown from all three places. Distinguishing 404 from 403 makes the status code an existence
   oracle over the whole table, unauthenticated and unthrottled, and ids are lowercase-kebab named
@@ -811,10 +834,14 @@ with per-person access.
   `ByteString` conversion, so one character above U+00FF throws — not a 400 on upload but a **500 on
   every click, for ever**, on a row that saved cleanly. `Réparation.exe` is an ordinary name here, so
   it is encoded (RFC 5987); what `saveFile` refuses is control characters, quotes and backslashes.
-- **An upload writes the row before the bytes and marks it usable after** — `uploaded_at` is null in
-  between and a page hides those rows, so a half-dead upload leaves an invisible draft rather than a
-  link that 404s at a customer. **The size is read from the object with `head`, never from the
-  browser.**
+- **An upload writes the row before the bytes and marks it usable after** — for a NEW file
+  `uploaded_at` is null in between and a page hides those rows, so a half-dead upload leaves an
+  invisible draft rather than a link that 404s at a customer. **A REPLACEMENT keeps the old file
+  live until the finish** (audit item 55): `beginUpload` writes nothing to the row, the multipart
+  upload is invisible until `complete()` swaps the object, and `finishUpload` — password-proved —
+  then sets size, type and `uploaded_at` in one statement. **Do not null `uploaded_at` at begin**:
+  begin is session-only, so that line let a stolen cookie take every download offline. **The size
+  is read from the object with `head`, never from the browser.**
 - **The upload is multipart even for a small file** — one path that always works beats two where the
   second is discovered by a 413 on the day a file gets big.
 - **A replacement upload writes its bytes before its metadata; a new file is the other way round.** A

@@ -114,6 +114,12 @@ was break-verified (it fails with the fix reverted). What only the box can confi
 10. ~~**Anonymous lockout of password sign-in**~~ **Fixed 2026-09-24 on a branch, NOT deployed** —
     per-(address, handle) bucket at 5 plus a per-handle ceiling at 30 (`SECURITY-AUDIT.md` item 50).
     Items 16, 17, 18 and the CORP/health half of 21 are in the same commits (items 51–54).
+    **Follow-up, same day, also NOT deployed** (items 55–60): the pair bucket keys IPv6 on the /48
+    (a /64 key let one free tunnel refill the lockout; passkeys remain the real mitigation); session
+    epoch + signalling hang-up on password change / operator resets; replacement uploads stay live;
+    download tickets die with their code; `setPassword`'s UPDATE branch guarded in the write;
+    `BREAK-GLASS.md` gained secret rotation. **Deploy order: `npm run db:migrate:remote` (0010)
+    first, then `npm run deploy`.**
 11. **`/share` step 1 points signed-in users at `/downloads` for the setup script**, which is not
     publicly listed and, until re-uploaded, still carries the other-account `.ssh` hole. Fixed by
     the bundle re-upload (*Needs hardware* item 1), or hold the link back until then.
@@ -146,10 +152,11 @@ was break-verified (it fails with the fix reverted). What only the box can confi
 1. **The four duel sliders** (circling, rest, impact, patience) still carry defaults. Size works,
    `rest` is a real multiplier, the preview follows the selected page. His eye is the one thing
    that cannot be substituted for.
-2. **Sessions survive a password change and an operator reset** (audit item 5). Closing it is one
-   column on `accounts` and a check in `requireAccount` — a §9 inventory change, so his call.
-3. **`beginUpload` hides a live file before the password is asked** (audit item 6). Keeping the
-   old bytes live until `finishUpload` is the fix.
+2. ~~**Sessions survive a password change and an operator reset**~~ **Fixed 2026-09-24 on a branch,
+   NOT deployed** ("fix everything"): `accounts.sessions_after`, migration 0010 — **apply it before
+   deploying** — §9 updated; the same events hang up signalling sockets (`SECURITY-AUDIT.md` 58–59).
+3. ~~**`beginUpload` hides a live file before the password is asked**~~ **Fixed 2026-09-24 on a
+   branch, NOT deployed**: the old bytes stay live until `finishUpload` (`SECURITY-AUDIT.md` 55).
 4. **Eight copy facts only he can supply** (2026-08-26; each renders the safe reading meanwhile):
    the "pay once, nothing renews" promise (now cut — wanted back permanently?); Contact's "within
    a day"; the two guestbook numbers; `work`'s "two years" (now "ever since"); the per-machine
