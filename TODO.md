@@ -57,6 +57,15 @@ merged, `/setup`'s two closing blocks merged, `/about`'s parts list cut. `npm ru
    label derived at sign-in ("Windows · Chrome", never the raw UA), which credential was used,
    and "sign out this one / all others" (the `sessions_after` epoch already does the latter);
    the current request's IP shown live but never stored. Any stored field is a §9 spec change.
+   **Follow-up idea (client, same day): the log lives on THEIR machine.** The Worker is the only
+   party that sees every sign-in (an intruder signs in from their own browser, so a browser-kept
+   log never sees them), so the Worker emits each event to the owner's paired agent, which appends
+   to a file in a folder they choose. While the agent is offline, events queue **encrypted to a
+   per-machine ECDH key** (the agent's current key is ECDSA, signing only) and are deleted on
+   delivery — the operator cannot read the queue. Opt-in per field via a checklist (sign-ins,
+   device label, IP, failed attempts incl. attacker IPs, credential changes, file access), all
+   off by default. §9 gains an honest line for the opaque queue. Order: sessions list first →
+   phase 2 seen working → this.
 2. **Customisable file browser** (`/machines` explorer). Per-user look and behaviour: view mode,
    density, sort, icon style, colours from the palette set, what a double-click does, hidden-file
    visibility. Today one choice persists in localStorage (`vessel.explorer.v1`). Decide: per
