@@ -2654,17 +2654,102 @@ readonly NO_USER_BUS="could not ask — no systemd user bus (run this from the d
 # 2 is the desktop (Class=user, Type=x11). Taking the FIRST match is why the session-type report
 # read "unspecified" on a machine that was correctly on X11 — and would have read "unspecified" on
 # one that was wrongly on Wayland too, which is the whole failure this question exists to catch.
-# Class is what separates them, so ask for Class rather than trusting the order.
+#
+# Class alone is not enough either, and that was the second time this went wrong: an SSH login is
+# ALSO Class=user, with Type=tty. Over SSH — which is how --verify is usually run on this box — the
+# SSH session could come back first, and every check keyed on "is there a desktop" then asked about
+# a terminal: `graphical session type` FAILED as `tty` on a healthy X11 box, and unclutter was
+# looked for in a session that never started it. So a session counts only when its Type is one a
+# display server gives it. Wayland is accepted HERE on purpose: hiding a Wayland desktop is not
+# this function's job — the session-type check in verify() fails it by name.
 graphical_session_id() {
-    local sid
+    local sid class type
     while read -r sid; do
         [ -n "${sid}" ] || continue
-        if [ "$(loginctl show-session "${sid}" -p Class --value 2>/dev/null)" = "user" ]; then
-            printf '%s' "${sid}"
-            return 0
-        fi
+        class="$(loginctl show-session "${sid}" -p Class --value 2>/dev/null)"
+        [ "${class}" = "user" ] || continue
+        type="$(loginctl show-session "${sid}" -p Type --value 2>/dev/null)"
+        case "${type}" in
+            x11|wayland|mir)
+                printf '%s' "${sid}"
+                return 0
+                ;;
+        esac
     done < <(loginctl list-sessions --no-legend 2>/dev/null | awk -v u="${USER}" '$3 == u {print $1}')
     return 1
+}
+
+# The files SDDM reads, in the order it reads them, NUL-separated: the packaged defaults, then
+# /etc/sddm.conf.d, then /etc/sddm.conf — each directory sorted by name, and every regular file in
+# it, since SDDM does not filter on `.conf` (a stray `10-vessel.conf~` left by an editor is read
+# too). `$1` is a root prefix, empty on the real machine; the gate points it at a throwaway tree.
+sddm_config_files() {
+    local root="${1:-}" dir f
+    local LC_ALL=C
+    for dir in "${root}/usr/lib/sddm/sddm.conf.d" "${root}/etc/sddm.conf.d"; do
+        [ -d "${dir}" ] || continue
+        for f in "${dir}"/*; do
+            [ -f "${f}" ] && printf '%s\0' "${f}"
+        done
+    done
+    [ -f "${root}/etc/sddm.conf" ] && printf '%s\0' "${root}/etc/sddm.conf"
+    return 0
+}
+
+# The value SDDM itself would use for KEY in [SECTION]: files in the order given, LATER FILES WIN,
+# and only a key inside the named section counts. The first version kept the FIRST `User=` it saw
+# in any section of any file — so a later drop-in switching autologin off, or a `User=` under some
+# other section, reported as whatever the earliest file said. An empty value is still a value:
+# SDDM assigns it, so `User=` in a later file really does switch autologin off, and this says so.
+# Prints the value and returns 0, or prints nothing and returns 1 when no file sets it.
+sddm_value() {
+    local section="$1" key="$2" f v found=1 val=""
+    shift 2
+    for f in "$@"; do
+        [ -f "${f}" ] || continue
+        if v="$(awk -v want="${section}" -v key="${key}" '
+            function trim(s) { sub(/^[ \t\r]+/, "", s); sub(/[ \t\r]+$/, "", s); return s }
+            { line = trim($0) }
+            line ~ /^[#;]/ || line == "" { next }
+            line ~ /^\[.*\]$/ { sec = trim(substr(line, 2, length(line) - 2)); next }
+            sec == want {
+                eq = index(line, "=")
+                if (eq > 0 && trim(substr(line, 1, eq - 1)) == key) { val = trim(substr(line, eq + 1)); hit = 1 }
+            }
+            END { if (hit) { print val; exit 0 } exit 1 }
+        ' "${f}")"; then
+            val="${v}"
+            found=0
+        fi
+    done
+    [ "${found}" -eq 0 ] || return 1
+    printf '%s' "${val}"
+}
+
+# What PowerDevil and the screen locker will do when this box sits idle, read back through KConfig
+# itself — so /etc/xdg defaults and the nesting are resolved the way the daemons resolve them.
+# One line per question: label, expected, actual, tab-separated. Returns 2 when there is no
+# kreadconfig to ask.
+#
+# The groups are NESTED — [AC][Display], [AC][SuspendAndShutdown] — per PowerDevil's own schema
+# (PowerDevilProfileSettings.kcfg). plasma-dark-setup.sh once wrote these keys into a flat [AC]
+# group, PowerDevil read none of them, and nothing on this box asked. An unset key reads as
+# `unset` and FAILS, because PowerDevil's default for an unset key is to dim and turn the display
+# off: silence in this file is a screen that blanks.
+display_idle_settings() {
+    local kread="" c
+    for c in kreadconfig6 kreadconfig5; do
+        have "${c}" && { kread="${c}"; break; }
+    done
+    [ -n "${kread}" ] || return 2
+    printf 'display never turns off\tfalse\t%s\n' \
+        "$("${kread}" --file powerdevilrc --group AC --group Display --key TurnOffDisplayWhenIdle --default unset 2>/dev/null)"
+    printf 'display never dims\tfalse\t%s\n' \
+        "$("${kread}" --file powerdevilrc --group AC --group Display --key DimDisplayWhenIdle --default unset 2>/dev/null)"
+    printf 'powerdevil never auto-suspends\t0\t%s\n' \
+        "$("${kread}" --file powerdevilrc --group AC --group SuspendAndShutdown --key AutoSuspendAction --default unset 2>/dev/null)"
+    printf 'screen never locks itself\tfalse\t%s\n' \
+        "$("${kread}" --file kscreenlockerrc --group Daemon --key Autolock --default unset 2>/dev/null)"
 }
 
 # Read one key out of an INI-ish file, ignoring comments. Enough for the display managers' config
@@ -2969,6 +3054,26 @@ verify() {
             "$(first_or missing systemctl is-enabled unattended-upgrades)"
     fi
 
+    # The screen must never blank, dim, suspend or lock. On a Plasma desktop the launcher's `xset`
+    # calls are not what decides that — PowerDevil runs its own idle timer and calls DPMS itself —
+    # so the only honest question is what PowerDevil's and the locker's own files say. Nothing
+    # asked until 2026-09-24, and the keys had been written into the wrong group the whole time.
+    if pkg_installed powerdevil || pkg_installed plasma-workspace; then
+        local idle_out="" idle_rc=0 idle_label idle_expected idle_actual
+        idle_out="$(display_idle_settings)" || idle_rc=$?
+        if [ "${idle_rc}" -eq 2 ]; then
+            unknown_check "display never turns off" \
+                "could not ask — neither kreadconfig6 nor kreadconfig5 is installed"
+        else
+            while IFS=$'\t' read -r idle_label idle_expected idle_actual; do
+                [ -n "${idle_label}" ] || continue
+                check "${idle_label}" "${idle_expected}" "${idle_actual:-unset}"
+            done <<< "${idle_out}"
+        fi
+    else
+        note "display idle (powerdevil)" "not a Plasma desktop — the launcher's xset is the mechanism"
+    fi
+
     # X11 is load-bearing on this host and not a preference: the launcher blanks the screen with
     # xset and hides the pointer with unclutter, both of which are silent no-ops under Wayland, so
     # a Wayland session gives you a kiosk that blanks itself — the one thing an always-on host
@@ -2981,11 +3086,10 @@ verify() {
     dm_name="${dm##*/}"
     case "${dm_name}" in
         sddm)
-            for sddm_conf in /etc/sddm.conf.d/*.conf /etc/sddm.conf; do
-                [ -f "${sddm_conf}" ] || continue
-                [ -n "${autologin_user}" ] || autologin_user="$(ini_value "${sddm_conf}" User)"
-                [ -n "${session_pin}" ]    || session_pin="$(ini_value "${sddm_conf}" Session)"
-            done
+            local -a sddm_files=()
+            mapfile -d '' -t sddm_files < <(sddm_config_files "")
+            autologin_user="$(sddm_value Autologin User "${sddm_files[@]}" || true)"
+            session_pin="$(sddm_value Autologin Session "${sddm_files[@]}" || true)"
             check "autologin configured (sddm)" "yes" \
                 "$([ -n "${autologin_user}" ] && echo yes || echo "no — no [Autologin] User= found")"
             check "display manager session" "plasmax11" "${session_pin:-unset}"

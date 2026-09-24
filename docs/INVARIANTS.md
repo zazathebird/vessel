@@ -530,6 +530,22 @@ wrong machine is worse than not running.
   the machine nobody is standing at. The real host runs Plasma, so `scripts/plasma-dark-setup.sh`
   pins the X11 session and writes the SDDM autologin `thinkcentre-setup.sh` cannot — that script only
   knows LightDM, and **its warning about autologin is expected on this box, not a failure**.
+- **On Plasma, PowerDevil — not `xset` — decides whether the screen blanks, and its keys live in
+  NESTED groups.** `powerdevilrc` is `[AC][Display]` (`TurnOffDisplayWhenIdle`,
+  `DimDisplayWhenIdle`) and `[AC][SuspendAndShutdown]` (`AutoSuspendAction`), upper-camel, per
+  PowerDevil's own `PowerDevilProfileSettings.kcfg`. A flat `[AC]` is read by nothing, silently —
+  that shipped once. `--verify` reads them back through `kreadconfig6` and an unset key FAILS,
+  since PowerDevil's default is to blank. Gated by executing the builder's writes into a
+  throwaway config and reading them back.
+- **`--verify`'s "graphical session" is filtered on `Type` (x11/wayland), not `Class` alone** — an
+  SSH login is `Class=user` too, and `--verify` is usually run over SSH. **SDDM's autologin is read
+  the way SDDM reads it**: packaged drop-ins, `/etc/sddm.conf.d` sorted, then `/etc/sddm.conf`,
+  later wins, `[Autologin]` only. Both driven by the gate.
+- **`rdp-separate-user.sh` makes a password login on 3389, so sudo and loosening `/home/user` are
+  opt-in** (`--with-sudo`, `--share-home`), and **no filename ever reaches a shell string** — the
+  old `xargs -I{} sh -c` ran a crafted filename as root. `--undo` follows the `--undo` rule: it
+  reverses only what its record says, restores modes without following links, and never deletes
+  the RDP user's home.
 - **The Chromium profile IS the pairing** — the persisted directory handle from
   `showDirectoryPicker()` lives in its IndexedDB. That is why the kiosk is a systemd *user* service
   and never a system one, and why the launcher must never gain `--user-data-dir` or `--incognito`: a

@@ -174,18 +174,41 @@ Fixed in `plasma-dark-setup.sh` §7, applied live as well as written to disk:
 
 ```sh
 kwriteconfig6 --file kscreenlockerrc --group Daemon --key Autolock false
-kwriteconfig6 --file powerdevilrc --group AC --key turnOffDisplayWhenIdle false
-kwriteconfig6 --file powerdevilrc --group AC --key dimDisplayWhenIdle    false
-kwriteconfig6 --file powerdevilrc --group AC --key autoSuspendAction     0
+kwriteconfig6 --file powerdevilrc --group AC --group Display            --key TurnOffDisplayWhenIdle --type bool false
+kwriteconfig6 --file powerdevilrc --group AC --group Display            --key DimDisplayWhenIdle     --type bool false
+kwriteconfig6 --file powerdevilrc --group AC --group SuspendAndShutdown --key AutoSuspendAction      0
 qdbus6 org.kde.Solid.PowerManagement /org/kde/Solid/PowerManagement \
        org.kde.Solid.PowerManagement.reparseConfiguration
 ```
 
 **It disables the ACTIONS with booleans, not the timeouts with a sentinel**, because a timeout
-whose "never" value you have guessed wrong is a screen that blanks *immediately*. And **each key
-is written in both cases** — KConfig keys are case-sensitive, PowerDevil's generated accessors
-are lower-camel while KDE's own settings module has written the upper-camel form, and a key in
-the wrong case is not an error, it is silently ignored.
+whose "never" value you have guessed wrong is a screen that blanks *immediately*.
+
+**Corrected 2026-09-24: the first version of this fix wrote the keys into the wrong group.** It
+wrote a flat `[AC]` group, in both lower- and upper-camel spellings. Plasma 6 reads each profile
+from **nested** groups — `[AC][Display]` and `[AC][SuspendAndShutdown]` — per PowerDevil's own
+schema (`PowerDevilProfileSettings.kcfg` in `plasma/powerdevil`, whose migration fixtures show the
+file in exactly that shape), and the key is the schema's upper-camel entry name; the lower-camel
+form is the generated C++ accessor and was never read from the file. So PowerDevil almost
+certainly ran on its defaults the whole time — dim, then display off — and nothing on the box
+asked. `plasma-dark-setup.sh` now writes the nested groups, deletes the stale flat keys and reads
+them back; `thinkcentre-setup.sh --verify` reads all four (display off, dim, auto-suspend, screen
+locker) through `kreadconfig6` and **FAILS** if any would let the screen blank. Verified here only
+against real KConfig in a throwaway config directory (the gate does the same); **not yet on the
+box.** To confirm there, as `user` in the desktop session:
+
+```sh
+./scripts/plasma-dark-setup.sh --no-install          # re-applies §7 with the nested groups
+kreadconfig6 --file powerdevilrc --group AC --group Display --key TurnOffDisplayWhenIdle   # false
+kreadconfig6 --file powerdevilrc --group AC --group Display --key DimDisplayWhenIdle       # false
+kreadconfig6 --file powerdevilrc --group AC --group SuspendAndShutdown --key AutoSuspendAction  # 0
+./scripts/thinkcentre-setup.sh --verify              # the four idle lines must say ok
+```
+
+Then **the 20-minute idle test**, which is the only one that proves it: touch nothing — no
+keyboard, no mouse, no RDP/VNC session attached — for at least 20 minutes, then look at the
+screen. It must still be lit, undimmed and unlocked, with the kiosk on it. Log out and back in
+(or reboot) and repeat once, since `reparseConfiguration` is the live path and login is the other.
 
 **The lesson is the shape of it.** The X11 pin was chosen *because* `xset` works there. That
 reasoning stopped one layer short of the thing that actually owns the display on this desktop,

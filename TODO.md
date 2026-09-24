@@ -55,28 +55,59 @@ Debian box has none); host-script fixes must be written *and tested* on the Thin
 
 ### For the ThinkCentre session (host scripts — test on the box)
 
-1. **`plasma-dark-setup.sh:1356,1361` writes PowerDevil keys with `--group AC`.** Plasma 6 reads
+**Items 1–5, 7 and 9 were FIXED IN THE REPO on 2026-09-24 (a different machine, nothing run on the
+box).** Each fixed host-script item has a gate in `npm run check` that drives the real function and
+was break-verified (it fails with the fix reverted). What only the box can confirm is listed under
+*Confirm on the box* below; until then treat the fixes as written, not as proven.
+
+1. **FIXED in repo — confirm on the box.** ~~`plasma-dark-setup.sh:1356,1361` writes PowerDevil keys with `--group AC`.~~ Plasma 6 reads
    `[AC][Display]` and `[AC][SuspendAndShutdown]`, so the display-off fix is probably ignored and
    the kiosk still blanks. Check: `kreadconfig6 --file powerdevilrc --group AC --group Display --key
    TurnOffDisplayWhenIdle`, then leave it idle 20 min. `--verify` never reads powerdevilrc — add it.
-2. **`graphical_session_id` in `thinkcentre-setup.sh` picks the first `Class=user` session**, and
+   *Now:* nested `[AC][Display]` / `[AC][SuspendAndShutdown]` per PowerDevil's own
+   `PowerDevilProfileSettings.kcfg`; stale flat keys deleted; `--verify` reads all four idle keys
+   back and FAILS on any that would blank. `docs/HOST-BUILD-LOG.md` wall 7 has the on-box steps.
+2. **FIXED in repo.** ~~`graphical_session_id` in `thinkcentre-setup.sh` picks the first `Class=user` session~~, and
    SSH sessions are `Class=user` too (`Type=tty`). `--verify` over SSH can FAIL a healthy box.
    Filter on `Type` x11/wayland or a non-empty `Seat`.
-3. The SDDM config loop keeps the *first* `User=`/`Session=`; SDDM lets later files win, and the
+3. **FIXED in repo** (`sddm_value`, last file wins, `[Autologin]` only). ~~The SDDM config loop keeps the *first* `User=`/`Session=`;~~ SDDM lets later files win, and the
    loop ignores sections. Low.
-4. **`scripts/rdp-separate-user.sh` — do not run as written.** Lines ~427-431 paste `{}` into a
+4. **FIXED in repo — never run on the box in this form.** No `sh -c`; sudo is `--with-sudo`
+   (and it refuses a user already in `sudo` without it); loosening `/home/user` is `--share-home`;
+   `--undo` reverses only what `/var/lib/vessel-rdp-user/` records. Was:
+   ~~**`scripts/rdp-separate-user.sh` — do not run as written.** Lines ~427-431 paste `{}` into a
    `sh -c` string run as root (a filename in /home/user with `'` or `$(…)` executes); it makes a
    sudo-capable user that logs in by password over xrdp with no lockout; it loosens /home/user
-   700 → 750; it has no `--undo`.
-5. **Both `attic-*.DO-NOT-RUN` files are mode 755.** The GDM one disables SDDM. `chmod -x` them.
+   700 → 750; it has no `--undo`.~~
+5. **FIXED** (644 in git, gated). ~~**Both `attic-*.DO-NOT-RUN` files are mode 755.** The GDM one disables SDDM. `chmod -x` them.~~
 6. **`plasma-vibes.sh` and `konsole-profiles.sh` are looks, not host** — by BLUEPRINT §3 they
    belong in `../debian-desktop`, and they are a second look system nobody documents or gates.
-7. **Use a repo-scoped deploy key**, not github.com/settings/ssh/new — an always-on kiosk box with
+7. **FIXED in the docs** (the GitHub step below). **Use a repo-scoped deploy key**, not the account-wide SSH-keys page — an always-on kiosk box with
    RDP should not hold write access to the whole GitHub account.
 8. The Share operator tab has never been seen in a browser on the phone band (header may scroll).
-9. Stale lines left by the 09-11 commits: "Share tab UNVERIFIED, never built" and "two commits
+9. **FIXED** (lines below corrected; the Share tab is still unseen — item 8). Stale lines left by the 09-11 commits: "Share tab UNVERIFIED, never built" and "two commits
    unpushed, nothing deployed" (both deployed 2026-09-23 as Worker 3d1133a5); "green at 77" (91);
    `REMOTE-ACCESS.md`'s xrdp/freerdp state not re-checked since 09-11.
+
+#### Confirm on the box (after pulling the 2026-09-24 fixes)
+
+- [ ] `./scripts/plasma-dark-setup.sh --no-install` as `user` in the desktop session; then the
+      three `kreadconfig6 … --group AC --group Display|SuspendAndShutdown` reads say
+      `false` / `false` / `0`, and `~/.config/powerdevilrc` has no flat `[AC]` keys left.
+- [ ] **The 20-minute idle test**: touch nothing, no remote session attached, 20+ minutes; the
+      screen is lit, undimmed, unlocked, kiosk showing. Repeat once after a logout/login.
+- [ ] `./scripts/thinkcentre-setup.sh --verify` **over SSH while the desktop is logged in**:
+      `graphical session type` is `ok x11` (not `tty`), `pointer hidden` is checked, the four new
+      idle lines are `ok`, and autologin/session read `user` / `plasmax11`.
+- [ ] `ls /etc/sddm.conf.d/ /usr/lib/sddm/sddm.conf.d/` — if anything sorts after
+      `10-vessel.conf`, `--verify` now reports what SDDM will really use; make sure that is right.
+- [ ] Before any RDP work: `sudo bash scripts/rdp-separate-user.sh --help` reads right; then run it
+      (plain, no flags unless wanted), log in over xrdp as the new user, and confirm `id` shows no
+      `sudo`. Then `sudo bash scripts/rdp-separate-user.sh --undo` on a throwaway run if you want
+      to prove the undo, and re-run.
+- [ ] `ls -l scripts/attic-*` shows no `x` after the pull.
+- [ ] The deploy key: add `~/.ssh/id_ed25519.pub` as a deploy key on the one repository (see
+      the GitHub step under *Open, raised by the client*), `ssh -T git@github.com` names the repo.
 
 ### For the site (needs the PC with the Cloudflare token)
 
@@ -189,7 +220,7 @@ boots SDDM into Plasma **on X11**, `usbcore.autosuspend=-1` is live in `/proc/cm
 8. **Remote access is broken until someone runs the fix** — `docs/REMOTE-ACCESS.md` is the full
    record. xrdp is installed but `disabled`; `freerdp-shadow-cli3` held 3389 on 2026-09-11 but is
    not a systemd unit, so **after the next reboot there is no RDP server at all** and SSH on 22 is
-   the only way in. Two halves, and they are different tools: `scripts/rdp-separate-user.sh` plus
+   the only way in (**all as of 2026-09-11 — unchecked since**). Two halves, and they are different tools: `scripts/rdp-separate-user.sh` plus
    `systemctl enable --now xrdp xrdp-sesman` gives a *second* desktop that survives reboot;
    shadow-over-RDP or `krfb` gives the *live kiosk screen* and still needs a user unit and
    `loginctl enable-linger user` to persist. `/home/user/.xsession` is still present and is still
@@ -198,12 +229,13 @@ boots SDDM into Plasma **on X11**, `usbcore.autosuspend=-1` is live in `/proc/cm
 
 ## Open, raised by the client 2026-09-08
 
-0. **THE SHARE TAB IS COMMITTED BUT UNVERIFIED — DO NOT ASSUME IT WORKS.** `npm run check` has
-   never run against it, it has never been built, and it has never been seen in a browser.
+0. **THE SHARE TAB HAS STILL NEVER BEEN SEEN IN A BROWSER.** It has since passed `npm run check`,
+   been built, and was **deployed on 2026-09-23 as Worker 3d1133a5** — but nobody has looked at
+   it, on the phone band least of all (review item 8: the header may scroll).
    Three files changed: `src/data/pageIds.ts` (adds `{ id: "share", label: "Share" }` to
    `OPERATOR_NAV`), `src/components/Footer.tsx` (a `me`-gated `share` link beside
-   `account`/`admin`), and `scripts/check.ts` (a new three-nav reachability gate). **Run
-   `npm run check` and look at the page before deploying any of it.**
+   `account`/`admin`), and `scripts/check.ts` (a new three-nav reachability gate). **Look at the
+   page, signed in, desk and phone band.**
 
    **FIXED 2026-09-08: the dependency install works on this box.** A plain
    `npm ci --no-audit --no-fund` added 110 packages in 5s, `node_modules/.bin` is populated, and
@@ -217,7 +249,8 @@ boots SDDM into Plasma **on X11**, `usbcore.autosuspend=-1` is live in `/proc/cm
    which `.profile` already puts on PATH. Debian's own `nodejs` package is untouched, so nothing
    system-wide changed and removing the two directories reverts it. The tarball was checksummed
    against nodejs.org's published SHASUMS256 before unpacking. `npm ci` then added 108 packages on
-   npm 10.9.8 and `npm run check` is green at 77; `wrangler 4.122.0` starts.
+   npm 10.9.8 and `npm run check` was green at 77 (91 by 2026-09-23, 96 on 2026-09-24);
+   `wrangler 4.122.0` starts.
 
    **What this box still has NO credentials for, and what that blocks:**
    - **Cloudflare** — `wrangler whoami` says *not authenticated*; there is no `~/.config/.wrangler`
@@ -231,13 +264,19 @@ boots SDDM into Plasma **on X11**, `usbcore.autosuspend=-1` is live in `/proc/cm
      with *"could not read Username"* because a non-interactive shell has nowhere to prompt.
      **An ed25519 key was generated for this host on 2026-09-08** at `~/.ssh/id_ed25519`
      (`ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFI5Xt0LfDVlig346cZ/bG58bsvQcZdU2WeMGOSC3UJ8
-     thinkcentre-host-20260908`). It is **not yet on the account** — `ssh -T git@github.com` answers
-     *Permission denied (publickey)*. Paste it at github.com/settings/ssh/new, then
-     `git remote set-url origin git@github.com:zazathebird/vessel.git` and the push needs nothing
-     typed ever again on this box.
+     thinkcentre-host-20260908`). It is **not yet on GitHub** — `ssh -T git@github.com` answers
+     *Permission denied (publickey)*. **Add it as a DEPLOY KEY on this one repository** —
+     the repo's *Settings → Deploy keys → Add deploy key* — **not** on the account's SSH-keys page.
+     An account key opens every repository the account can reach, from an always-on box that
+     autologins to a desktop and takes RDP; a deploy key opens one. Tick **Allow write access**
+     only because this box commits and pushes (it did on 2026-09-11); if it ever stops being a
+     place work is done, remove the key and re-add it read-only, which is all a pull needs. A key
+     can be a deploy key on only one repo, so a second repo on this box needs its own key. Then
+     `git remote set-url origin git@github.com:zazathebird/vessel.git`.
 
-   **Two commits are unpushed** as of 2026-09-11: `ae2ef52` (the host blanking fix) and the
-   share-page steps commit. Both are green under `npm run check`. Nothing is deployed.
+   ~~**Two commits are unpushed** as of 2026-09-11~~ — `ae2ef52` (the host blanking fix) and the
+   share-page steps commit both reached `main` and were **deployed 2026-09-23 as Worker
+   3d1133a5**. (The blanking fix itself turned out to write the wrong group — review item 1.)
 
    The old note is kept below because the symptom was real and may come back:
 

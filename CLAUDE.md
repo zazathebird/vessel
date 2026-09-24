@@ -378,8 +378,9 @@ The spec's *Product decisions already made* table is binding. The ones most like
   those are written to be forwarded, and a page about fraud that describes itself differently each
   time it is forwarded is arguing against itself. Gated on both sides, length, the retired claims,
   the no-rotate list, and that every home line names the business.
-- **The 404 pill left the public nav** and now leads `OPERATOR_NAV` (404 / Account / Admin) plus a
-  Config tab. **`OPERATOR_NAV` is deliberately not part of `NAV`**, which `useOperatorRoutes` cycles
+- **The 404 pill left the public nav** and now leads `OPERATOR_NAV` (404 / Account / Admin / Share)
+  plus a Config tab. Share is there because the one page that sets the machine up was
+  undiscoverable once signed in; `machines` is deliberately not beside it (see `pageIds.ts`). **`OPERATOR_NAV` is deliberately not part of `NAV`**, which `useOperatorRoutes` cycles
   and Radial's orbit renders. The 404 *page* still renders for anyone at an unknown URL.
 - **`FX` is the wire format; `PICKABLE_FX` is the menu.** Anything offering a choice to a human reads
   `PICKABLE_FX`; anything *resolving* a stored or shared value reads `FX`, because a hidden effect is

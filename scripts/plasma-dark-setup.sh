@@ -1332,15 +1332,26 @@ fi
 # thing you connect to see is a password prompt, on the machine you are not
 # standing at. Nothing on this box managed either of these until now.
 #
-# WHY BOTH SPELLINGS OF EACH KEY. KConfig keys are case-sensitive, and PowerDevil's
-# generated accessors are lower-camel (`turnOffDisplayWhenIdle`, confirmed in
-# libpowerdevilcore) while KDE's own settings module has historically written the
-# upper-camel form into this file. A key in the wrong case is not an error: it is
-# silently ignored, and the symptom is a kiosk that blanks itself weeks later. The
-# boolean is safe to write twice — either spelling read yields false — which is the
-# reason this disables the ACTION with a boolean rather than by putting a sentinel
-# in the timeout. A timeout whose "never" value you have guessed wrong is a screen
-# that blanks IMMEDIATELY, and that is not a guess worth taking.
+# WHERE THE KEYS LIVE, AND WHY THIS WAS WRONG ONCE. Plasma 6's powerdevilrc is not
+# flat: PowerDevil's own schema (PowerDevilProfileSettings.kcfg in plasma/powerdevil)
+# declares each profile's settings in NESTED groups — [AC][Display] for
+# DimDisplayWhenIdle / TurnOffDisplayWhenIdle, [AC][SuspendAndShutdown] for
+# AutoSuspendAction — and its migration fixtures show the file in that shape. The
+# first version of this section wrote every key straight into a flat [AC] group, in
+# two spellings, and PowerDevil reads neither: a key in the wrong GROUP is exactly as
+# silent as a key in the wrong case. kwriteconfig6 nests with a repeated --group.
+#
+# The key names are the schema's <entry name=…>, which is the upper-camel form. The
+# lower-camel `turnOffDisplayWhenIdle` is the generated C++ ACCESSOR, not the key,
+# and was never read from the file. The stale flat keys the first version wrote are
+# deleted below so nobody reading the file later mistakes them for the live ones.
+#
+# The ACTION is disabled with a boolean rather than by putting a sentinel in the
+# timeout. A timeout whose "never" value you have guessed wrong is a screen that
+# blanks IMMEDIATELY, and that is not a guess worth taking.
+#
+# thinkcentre-setup.sh --verify reads these three back from the nested groups and
+# FAILS if the display would still dim, blank or suspend. Keep the two in step.
 log "Stopping the screen blanking, dimming and locking"
 
 # The screen locker. Autolock=false is the one that matters; LockOnResume covers
@@ -1351,15 +1362,30 @@ if [ -n "${KWRITE}" ]; then
 
     # PowerDevil, AC profile. This box has no battery; the AC profile is the only
     # one it ever loads, and writing the others would be pretending otherwise.
+    "${KWRITE}" --file powerdevilrc --group AC --group Display --key DimDisplayWhenIdle --type bool false
+    "${KWRITE}" --file powerdevilrc --group AC --group Display --key TurnOffDisplayWhenIdle --type bool false
+    # 0 is PowerButtonAction::NoAction — an ACTION enum, which is a different kind
+    # of value from a timeout and is unambiguous.
+    "${KWRITE}" --file powerdevilrc --group AC --group SuspendAndShutdown --key AutoSuspendAction 0
+
+    # The flat [AC] keys an earlier version of this script wrote. PowerDevil never
+    # read them; they are removed so the file says only what is true.
     for key in turnOffDisplayWhenIdle TurnOffDisplayWhenIdle \
-               dimDisplayWhenIdle DimDisplayWhenIdle; do
-        "${KWRITE}" --file powerdevilrc --group AC --key "${key}" false
+               dimDisplayWhenIdle DimDisplayWhenIdle \
+               autoSuspendAction AutoSuspendAction; do
+        "${KWRITE}" --file powerdevilrc --group AC --key "${key}" --delete 2>/dev/null || true
     done
-    # 0 is "do nothing" for an ACTION enum, which is a different kind of value from
-    # a timeout and is unambiguous.
-    for key in autoSuspendAction AutoSuspendAction; do
-        "${KWRITE}" --file powerdevilrc --group AC --key "${key}" 0
-    done
+
+    # Read back, because writing the file is not the same as the file saying it.
+    if [ -n "${KREAD:-}" ]; then
+        pd_off="$("${KREAD}" --file powerdevilrc --group AC --group Display --key TurnOffDisplayWhenIdle 2>/dev/null || true)"
+        pd_dim="$("${KREAD}" --file powerdevilrc --group AC --group Display --key DimDisplayWhenIdle 2>/dev/null || true)"
+        pd_sus="$("${KREAD}" --file powerdevilrc --group AC --group SuspendAndShutdown --key AutoSuspendAction 2>/dev/null || true)"
+        if [ "${pd_off}" != "false" ] || [ "${pd_dim}" != "false" ] || [ "${pd_sus}" != "0" ]; then
+            warn "powerdevilrc did not read back as written (TurnOffDisplayWhenIdle=${pd_off:-unset},
+     DimDisplayWhenIdle=${pd_dim:-unset}, AutoSuspendAction=${pd_sus:-unset}). This screen WILL blank."
+        fi
+    fi
 
     info "screen locker: autolock off"
     info "powerdevil: display never dims, never turns off, never auto-suspends"

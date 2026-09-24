@@ -29,6 +29,7 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -6965,6 +6966,280 @@ done
 });
 
 /*
+ * `--verify` finds the DESKTOP session, not the SSH one — driven (2026-09-24,
+ * review item 2). An SSH login is `Class=user` too, with `Type=tty`, so a lookup
+ * keyed on Class alone could hand back the terminal: `graphical session type`
+ * then FAILED as `tty` on a healthy X11 box, which is how --verify is usually
+ * run. The real function runs against a stub `loginctl` on PATH that lists the
+ * user manager, then an SSH session, then the desktop — the order that bit.
+ */
+check("--verify picks the graphical session, not an SSH one, driven", () => {
+  const probe = String.raw`
+set -uo pipefail
+SRC="$1"; BIN="$2"
+eval "$(awk '/^graphical_session_id\(\)/{i=1} i{print} i&&/^}/{i=0}' "$SRC")"
+for scenario in desktop-and-ssh ssh-only wayland; do
+  printf '%s\t%s\n' "$scenario" "$(SCENARIO="$scenario" USER=user PATH="$BIN:$PATH" graphical_session_id || printf none)"
+done
+`;
+  const stub = String.raw`#!/bin/bash
+if [ "$1" = list-sessions ]; then
+  printf '1 1000 user - -\n3 1000 user - pts/0\n'
+  [ "$SCENARIO" = ssh-only ] || printf '2 1000 user seat0 tty2\n'
+  exit 0
+fi
+case "$2:$4" in
+  1:Class) echo manager ;; 1:Type) echo unspecified ;;
+  3:Class) echo user ;;    3:Type) echo tty ;;
+  2:Class) echo user ;;
+  2:Type) if [ "$SCENARIO" = wayland ]; then echo wayland; else echo x11; fi ;;
+esac
+`;
+  const root = mkdtempSync(join(tmpdir(), "vessel-loginctl-"));
+  try {
+    mkdirSync(join(root, "bin"));
+    writeFileSync(join(root, "bin", "loginctl"), stub, { mode: 0o755 });
+    const out = execFileSync("bash", ["-c", probe, "probe", "scripts/thinkcentre-setup.sh", join(root, "bin")], {
+      encoding: "utf8",
+    });
+    const got = new Map(out.trim().split("\n").map((l) => l.split("\t") as [string, string]));
+    must(
+      got.get("desktop-and-ssh") === "2",
+      `with an SSH session listed before the desktop, graphical_session_id returned ${got.get("desktop-and-ssh")} — it must be the x11 session (2), not the tty one (3)`,
+    );
+    must(
+      got.get("ssh-only") === "none",
+      `over SSH with no desktop, graphical_session_id returned ${got.get("ssh-only")} — a tty is not a graphical session`,
+    );
+    must(
+      got.get("wayland") === "2",
+      `a Wayland desktop must still be FOUND (${got.get("wayland")}), so the session-type check can fail it by name`,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+  return "3 loginctl scenarios through the real function, SSH-first ordering included";
+});
+
+/*
+ * `--verify` reads SDDM's autologin the way SDDM does — driven (2026-09-24,
+ * review item 3). SDDM reads the packaged drop-ins, then /etc/sddm.conf.d sorted,
+ * then /etc/sddm.conf, and a LATER file wins; keys are scoped to their section.
+ * The old loop kept the first `User=` it met in any section of any file. The real
+ * `sddm_config_files` and `sddm_value` run against a throwaway tree.
+ */
+check("--verify reads SDDM autologin last-file-wins and section-scoped, driven", () => {
+  const probe = String.raw`
+set -uo pipefail
+SRC="$1"; ROOT="$2"
+eval "$(awk '/^(sddm_config_files|sddm_value)\(\)/{i=1} i{print} i&&/^}/{i=0}' "$SRC")"
+mapfile -d '' -t F < <(sddm_config_files "$ROOT")
+printf 'user\t%s\n' "$(sddm_value Autologin User "$F[@]" || printf UNSET)"
+printf 'session\t%s\n' "$(sddm_value Autologin Session "$F[@]" || printf UNSET)"
+printf 'relogin\t%s\n' "$(sddm_value Autologin Relogin "$F[@]" || printf UNSET)"
+`.replaceAll("$F[@]", "$" + "{F[@]}");
+  const root = mkdtempSync(join(tmpdir(), "vessel-sddm-"));
+  const put = (rel: string, text: string) => {
+    mkdirSync(join(root, rel, ".."), { recursive: true });
+    writeFileSync(join(root, rel), text);
+  };
+  try {
+    // Packaged defaults first, with empty values — lowest priority.
+    put("usr/lib/sddm/sddm.conf.d/default.conf", "[Autologin]\nUser=\nSession=\n");
+    // An earlier drop-in: a wrong session, and a User= in ANOTHER section first.
+    put("etc/sddm.conf.d/05-early.conf", "[Users]\nUser=not-autologin\n[Autologin]\nUser=someone-else\nSession=plasma\n");
+    // The project's own drop-in, later in sort order, with padding and a comment.
+    put("etc/sddm.conf.d/10-vessel.conf", "# written by plasma-dark-setup.sh\n[Autologin]\n  User = user \nSession=plasmax11\n");
+    // sddm.conf is read LAST: it sets one unrelated key in the right section.
+    put("etc/sddm.conf", "[Autologin]\nRelogin=false\n[General]\nUser=general-is-not-autologin\n");
+    const out = execFileSync("bash", ["-c", probe, "probe", "scripts/thinkcentre-setup.sh", root], { encoding: "utf8" });
+    const got = new Map(out.trim().split("\n").map((l) => l.split("\t") as [string, string]));
+    must(got.get("user") === "user", `autologin user read as "${got.get("user")}" — the later drop-in must win, and only [Autologin] counts`);
+    must(got.get("session") === "plasmax11", `session read as "${got.get("session")}" — the later drop-in must win`);
+    must(got.get("relogin") === "false", `Relogin read as "${got.get("relogin")}" — /etc/sddm.conf is read too, and last`);
+
+    // And a later file that switches autologin OFF must be believed.
+    put("etc/sddm.conf.d/99-off.conf", "[Autologin]\nUser=\n");
+    const off = execFileSync("bash", ["-c", probe, "probe", "scripts/thinkcentre-setup.sh", root], { encoding: "utf8" });
+    const offUser = off.split("\n").find((l) => l.startsWith("user\t"))?.split("\t")[1];
+    must(offUser === "", `a later "User=" (autologin off) read as "${offUser}" — an empty value is still SDDM's answer`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+  return "4 SDDM files in real read order, section scope and an empty later override, through the real parser";
+});
+
+/*
+ * The screen-never-blanks settings, written by the builder and read back by
+ * --verify, both through real KConfig — driven (2026-09-24, review item 1).
+ * Plasma 6 reads PowerDevil's profile from NESTED groups, `[AC][Display]` and
+ * `[AC][SuspendAndShutdown]` (PowerDevilProfileSettings.kcfg); the builder wrote
+ * a flat `[AC]` that PowerDevil never read, and --verify never asked. This
+ * executes the builder's own `kwriteconfig` lines into a throwaway
+ * XDG_CONFIG_HOME, then the real `display_idle_settings`, which must say ok —
+ * and must say FAIL for the old flat shape and for an empty file.
+ */
+check("the kiosk screen-never-blanks keys are written where PowerDevil reads them, driven", () => {
+  const has = (tool: string) => {
+    try {
+      execFileSync("bash", ["-c", 'command -v "$1"', "has", tool], { stdio: "pipe" });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (!has("kwriteconfig6") || !has("kreadconfig6")) {
+    skip("kwriteconfig6/kreadconfig6 are not installed here, so KConfig could not be driven");
+  }
+  const builder = readFileSync("scripts/plasma-dark-setup.sh", "utf8");
+  const writes = builder
+    .split("\n")
+    .filter((l) => /^\s*"\$\{KWRITE\}" --file (powerdevilrc|kscreenlockerrc) /.test(l) && !l.includes("--delete"));
+  must(writes.length >= 4, `only ${writes.length} powerdevilrc/kscreenlockerrc writes found in the builder`);
+
+  const probe = String.raw`
+set -uo pipefail
+SRC="$1"
+have() { command -v "$1" >/dev/null 2>&1; }
+eval "$(awk '/^display_idle_settings\(\)/{i=1} i{print} i&&/^}/{i=0}' "$SRC")"
+display_idle_settings
+`;
+  const verdict = (writesToRun: string[] | null, raw?: string) => {
+    const root = mkdtempSync(join(tmpdir(), "vessel-kconfig-"));
+    try {
+      const env = { ...process.env, XDG_CONFIG_HOME: join(root, "cfg"), XDG_CONFIG_DIRS: join(root, "xdg"), KWRITE: "kwriteconfig6" };
+      mkdirSync(env.XDG_CONFIG_HOME, { recursive: true });
+      mkdirSync(env.XDG_CONFIG_DIRS, { recursive: true });
+      if (raw !== undefined) writeFileSync(join(env.XDG_CONFIG_HOME, "powerdevilrc"), raw);
+      if (writesToRun) execFileSync("bash", ["-euc", writesToRun.join("\n")], { env, stdio: "pipe" });
+      const out = execFileSync("bash", ["-c", probe, "probe", "scripts/thinkcentre-setup.sh"], { env, encoding: "utf8" });
+      return out
+        .trim()
+        .split("\n")
+        .map((l) => l.split("\t"))
+        .map(([label, expected, actual]) => ({ label, ok: expected === actual, actual }));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  };
+
+  const written = verdict(writes);
+  must(written.length === 4, `display_idle_settings answered ${written.length} questions, not 4`);
+  const bad = written.filter((r) => !r.ok);
+  must(
+    bad.length === 0,
+    `after the builder's own writes, --verify still says the screen will blank: ${bad.map((r) => `${r.label}=${r.actual}`).join(", ")}`,
+  );
+
+  const flat = verdict(null, "[AC]\nTurnOffDisplayWhenIdle=false\nturnOffDisplayWhenIdle=false\nDimDisplayWhenIdle=false\nAutoSuspendAction=0\n");
+  must(
+    flat.filter((r) => r.label !== "screen never locks itself").every((r) => !r.ok),
+    "--verify passed the old flat [AC] powerdevilrc, which PowerDevil never reads",
+  );
+  const empty = verdict(null);
+  must(empty.every((r) => !r.ok), "--verify passed an empty config — PowerDevil's defaults blank the screen");
+  return `${writes.length} builder writes through kwriteconfig6, read back ok; the flat [AC] shape and an empty file both FAIL`;
+});
+
+/*
+ * `rdp-separate-user.sh`'s file-opening loop, EXECUTED (2026-09-24, review
+ * item 4). It used to paste each filename into an `sh -c` string run as root, so a
+ * file in /home/user named with a quote and a `$(...)` ran as root; and `chmod -R`
+ * on a top-level symlink followed it. The real functions are sourced and run,
+ * as this user, against a throwaway home holding exactly those names, and the
+ * undo manifest is replayed after a recorded directory is swapped for a link.
+ */
+check("rdp-separate-user.sh opens a home without running filenames or following links, driven", () => {
+  const text = readFileSync("scripts/rdp-separate-user.sh", "utf8");
+  const code = text
+    .split("\n")
+    .filter((l) => !/^\s*#/.test(l))
+    .join("\n");
+  must(!/\bsh -c\b/.test(code), "rdp-separate-user.sh builds an sh -c command again");
+  execFileSync("bash", ["-n", "scripts/rdp-separate-user.sh"], { stdio: "pipe" });
+
+  const root = mkdtempSync(join(tmpdir(), "vessel-rdp-"));
+  try {
+    const home = join(root, "home");
+    mkdirSync(join(home, "Docs", "sub"), { recursive: true, mode: 0o700 });
+    mkdirSync(join(home, ".ssh"), { mode: 0o700 });
+    mkdirSync(join(root, "outside"), { mode: 0o700 });
+    writeFileSync(join(home, "Docs", "sub", "f.txt"), "x", { mode: 0o600 });
+    // Both quote styles, each running a command relative to the working directory.
+    writeFileSync(join(home, "a'$(touch PWNED)'b"), "");
+    writeFileSync(join(home, 'c"$(touch PWNED2)"d'), "");
+    symlinkSync(join(root, "outside"), join(home, "link-out"));
+
+    const probe = String.raw`
+set -uo pipefail
+SRC="$1"; T="$2"; H="$T/home"
+cd "$T"
+source "$SRC"
+set +e
+printf 'defaults\t%s %s %s\n' "$DO_SUDO" "$DO_SHARE_HOME" "$DO_UNDO"
+G="$(id -gn)"
+snapshot_modes "$H" "$T/manifest"
+open_to_group "$H" "$G"
+printf 'pwned\t%s\n' "$(ls "$T" | grep -c PWNED)"
+printf 'outside\t%s\n' "$(stat -c %a "$T/outside")"
+printf 'ssh\t%s\n' "$(stat -c %a "$H/.ssh")"
+printf 'opened\t%s\n' "$(stat -c %a "$H/Docs")"
+chmod 777 "$T/outside"
+mv "$H/Docs/sub" "$H/Docs/sub.real"
+ln -s "$T/outside" "$H/Docs/sub"
+restore_modes "$T/manifest"
+printf 'outside-after-undo\t%s\n' "$(stat -c %a "$T/outside")"
+printf 'docs-after-undo\t%s\n' "$(stat -c %a "$H/Docs")"
+`;
+    const out = execFileSync("bash", ["-c", probe, "probe", join(process.cwd(), "scripts/rdp-separate-user.sh"), root], {
+      encoding: "utf8",
+    });
+    const got = new Map(out.trim().split("\n").map((l) => l.split("\t") as [string, string]));
+    must(got.get("defaults") === "0 0 0", `defaults are "${got.get("defaults")}" — sudo and --share-home must be opt-in`);
+    must(got.get("pwned") === "0", "a filename in the home was EXECUTED by the group-opening loop — it runs as root on the box");
+    must(got.get("outside") === "700", `a top-level symlink was followed: its target went to ${got.get("outside")}`);
+    must(got.get("ssh") === "700", `a hidden directory was opened (${got.get("ssh")}) — dotfiles are nobody else's`);
+    must(/^2?77\d$/.test(got.get("opened") ?? ""), `Docs was not opened to the group (${got.get("opened")})`);
+    must(got.get("outside-after-undo") === "777", `the undo followed a symlink and changed its target (${got.get("outside-after-undo")})`);
+    must(got.get("docs-after-undo") === "700", `the undo did not restore Docs (${got.get("docs-after-undo")}), setgid included`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+  return "injection names inert, links unfollowed both ways, dotfiles untouched, modes restored, sudo and home-sharing opt-in";
+});
+
+/*
+ * The superseded RDP scripts are kept as a record and must not be runnable by
+ * accident (review item 5) — the GDM one disables SDDM, which takes the kiosk's
+ * autologin, and with it file sharing, offline at the next reboot.
+ */
+check("the attic scripts are not executable", () => {
+  const attic = readdirSync("scripts").filter((f) => f.endsWith(".DO-NOT-RUN"));
+  must(attic.length >= 2, `only ${attic.length} attic scripts found`);
+  for (const f of attic) {
+    must((statSync(`scripts/${f}`).mode & 0o111) === 0, `scripts/${f} is executable on disk`);
+  }
+  // The disk mode is what a checkout gives the NEXT machine only if git agrees,
+  // so ask git too — when there is a git to ask. Without one (an unpacked
+  // archive), the disk answer stands and the detail says the index went unread.
+  let tracked = "";
+  try {
+    tracked = execFileSync("git", ["ls-files", "-s", "--", ...attic.map((f) => `scripts/${f}`)], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch {
+    return `${attic.length} attic scripts, not executable on disk; git's index could not be read here`;
+  }
+  for (const f of attic) {
+    const line = tracked.split("\n").find((l) => l.endsWith(`scripts/${f}`));
+    must(line !== undefined, `scripts/${f} is not tracked`);
+    must(line!.startsWith("100644"), `scripts/${f} is tracked as ${line!.split(" ")[0]} — it must not be executable`);
+  }
+  return `${attic.length} attic scripts, 644 in git and on disk`;
+});
+
+/*
  * The desktop-looks project is a SEPARATE repository (2026-09-14), checked out
  * beside this one as `../debian-desktop`. The split is by authority: every script that can
  * take the file host offline — `plasma-dark-setup.sh` above all, which pins the X11
@@ -7098,6 +7373,7 @@ check("every host script parses", () => {
     "scripts/claude-code-setup.sh",
     "scripts/linux-drive-report.sh",
     "scripts/06-wifi-tools.sh",
+    "scripts/rdp-separate-user.sh",
   ];
   for (const file of files) execFileSync("bash", ["-n", file], { stdio: "pipe" });
   return `${files.length} scripts parse`;

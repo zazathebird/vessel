@@ -40,15 +40,35 @@ display problem and no amount of X fiddling fixes it. `dbus-run-session` is not 
 either: Plasma 6 boots its session through systemd, whose user manager is still shared.
 
 The fix is a **separate uid**, which gets its own `/run/user/<uid>/bus`. `scripts/rdp-separate-user.sh`
-creates one (`patrick`), gives it sudo and a Plasma `~/.xsession`, and puts both accounts in
-a `shared` group so `/home/user`'s **non-hidden** files are reachable — dotfiles are excluded
-deliberately, since `~/.local` holds the kiosk unit and `~/.ssh` holds keys.
+creates one (`patrick` by default, `--user NAME` otherwise) with a Plasma `~/.xsession` and
+**no sudo**. Two things are opt-in since the 2026-09-24 review, because each is a decision:
+
+- `--with-sudo` — xrdp logs in by **password**, with no lockout, so a sudo-capable RDP user makes
+  that password root's for anyone who can reach 3389. Administer over SSH (key-only) instead. The
+  script refuses outright if the named user is *already* in `sudo` and the flag is absent.
+- `--share-home` — puts both accounts in a `shared` group and opens `/home/user`'s **non-hidden**
+  files to it. This **loosens** `/home/user` from `drwx------` to 750. Dotfiles stay excluded:
+  `~/.local` holds the kiosk unit and `~/.ssh` holds keys. Symlinks are skipped, never followed.
+
+`--undo` reverses exactly what the record in `/var/lib/vessel-rdp-user/` says the script did —
+modes and groups put back from a manifest (never through a symlink), memberships and the group
+removed only if it added them, the user removed only if it created it. It **never deletes the
+RDP user's home**; that is left for a person to look at first.
+
+The earlier version pasted each `/home/user` filename into an `sh -c` string run as root, so a
+file named with a quote and a `$(…)` executed as root. That is gone, and `npm run check` drives
+the loop against exactly those names.
 
 Everything else already works and was verified on 2026-09-08: TLS, PAM auth, printer
 redirection from the Windows laptop, and the ufw restriction of 3389 to `tailscale0` plus
 `<LAN-CIDR>`. Only the session choice was ever wrong.
 
-## State as of 2026-09-11 — nothing here survives a reboot
+## State as of 2026-09-11 — NOT RE-CHECKED SINCE; nothing here survives a reboot
+
+**Unchecked since 2026-09-11.** Everything in this section is what was seen that day. The box
+has very likely rebooted since, so re-check before trusting any of it:
+`systemctl is-active xrdp xrdp-sesman; systemctl is-enabled xrdp; ss -tlnp | grep 3389;
+pgrep -a freerdp-shadow; ls -la ~/.xsession*`.
 
 - **xrdp is installed but `inactive` and `disabled`.** Disabled some time after 2026-09-08.
 - **`freerdp-shadow-cli3` holds 3389**, started 12:07 that day:
@@ -64,17 +84,18 @@ redirection from the Windows laptop, and the ufw restriction of 3389 to `tailsca
 For a desktop of your own, reboot-proof:
 
 ```sh
-sudo bash scripts/rdp-separate-user.sh        # ends with an interactive passwd
-sudo systemctl enable --now xrdp xrdp-sesman  # the script only restarts; xrdp is disabled now
+sudo bash scripts/rdp-separate-user.sh        # ends with an interactive passwd; add --share-home
+                                              # and/or --with-sudo only if you want them (above)
+sudo systemctl enable --now xrdp xrdp-sesman  # the script only restarts; xrdp was disabled on 09-11
 ```
 
 For the live kiosk screen to come back on its own, `freerdp-shadow-cli3` needs a user unit
 plus `loginctl enable-linger user`. Not written yet.
 
-Two known rough edges in `scripts/rdp-separate-user.sh`, both harmless if you know about them:
-it only restarts xrdp rather than enabling it (hence the second command above), and its
-`chmod 750 /home/user` *loosens* that directory — it is `drwx------` today — despite a comment
-implying otherwise.
+One known rough edge in `scripts/rdp-separate-user.sh`: it only restarts xrdp rather than
+enabling it (hence the second command above). The `chmod 750 /home/user` it used to do
+unconditionally now happens only with `--share-home`, which says that it loosens the directory.
+**It has never been run on the box in this form** — see the checklist in `TODO.md`.
 
 ## Do not retry: GNOME + GDM
 
@@ -86,4 +107,5 @@ keyring, which under autologin never unlocks — the same failure that got KWall
 
 `scripts/attic-rdp-*.DO-NOT-RUN` are the two superseded scripts, kept only as a record.
 The xrdp one was run once on 2026-09-08; its `~/.xsession` line is the black-screen bug, and
-`/home/user/.xsession` is still present and still needs removing.
+`/home/user/.xsession` was still present on 2026-09-11 and still needed removing (unchecked
+since; the fix script moves it aside and records where).
