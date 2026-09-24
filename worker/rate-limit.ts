@@ -154,6 +154,24 @@ export class RateLimiter {
     const bucket = await this.load(now);
     if (bucket.failures > 0) {
       bucket.failures -= 1;
+      /*
+       * **The refund has to lift the block it is refunding, or it is not a
+       * refund** (2026-09-14). `attempt` reserves up front, so the attempt that
+       * crosses the allowance sets `blockedUntil` *before* its outcome is
+       * known — and `attempt`'s own contract says everything after it is
+       * blocked "until refunded". Decrementing `failures` alone did not
+       * refund it: the 51st request from a household behind one NAT would be
+       * the *correct* password, `assertAttempt` would count it and arm a
+       * 15-minute block, `recordSuccess` would put the count back under the
+       * allowance, and the person who had just signed in successfully was
+       * refused every credential route for the rest of the window.
+       *
+       * Clearing it only once the count is back inside the allowance is what
+       * keeps the stuffing defence intact: a run of genuine failures has
+       * `failures` above `free` even after the decrement, so the block stands
+       * and one success buys back one attempt, never the block.
+       */
+      if (bucket.failures <= free) bucket.blockedUntil = 0;
       await this.state.storage.put("bucket", bucket);
     }
     return this.check(now, free);

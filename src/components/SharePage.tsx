@@ -292,6 +292,17 @@ function AgentPanel({
     null,
   );
   const [error, setError] = useState<string | null>(null);
+  /**
+   * What is in flight, or null. Every one of these four writes both a D1 row and
+   * an IndexedDB handle, and none of them is idempotent.
+   *
+   * `addDrive` is the one with teeth: `setPending(null)` happens after the
+   * await, so a second click on a slow `driveAdd` posted a second row with the
+   * same label — and `saveHandle` then bound the folder to the second id only,
+   * leaving the first a drive that can never be opened. The checklist matches on
+   * the label, so it ticked the row off regardless and nothing said a word.
+   */
+  const [busy, setBusy] = useState<string | null>(null);
 
   // A row re-keyed by another tab means this tab's key no longer answers for
   // the machine. Running the agent anyway would offer connections nobody can
@@ -352,12 +363,20 @@ function AgentPanel({
   }, [peers]);
 
   async function allowAccess(driveId: string) {
-    const handle_ = await shareStore.handle(driveId);
-    if (handle_) await handle_.requestPermission({ mode: "read" });
-    await refreshAttach();
+    if (busy) return;
+    setBusy(driveId);
+    try {
+      const handle_ = await shareStore.handle(driveId);
+      if (handle_) await handle_.requestPermission({ mode: "read" });
+      await refreshAttach();
+    } finally {
+      setBusy(null);
+    }
   }
 
   async function reattach(driveId: string) {
+    if (busy) return;
+    setBusy(driveId);
     try {
       const picked = await window.showDirectoryPicker!({ mode: "read" });
       await shareStore.saveHandle(driveId, picked);
@@ -366,10 +385,14 @@ function AgentPanel({
     } catch (cause) {
       if ((cause as { name?: string }).name === "AbortError") return;
       setError("Could not re-attach that folder.");
+    } finally {
+      setBusy(null);
     }
   }
 
   async function removeDrive(driveId: string) {
+    if (busy) return;
+    setBusy(driveId);
     setError(null);
     try {
       await api.driveRemove(driveId);
@@ -377,6 +400,8 @@ function AgentPanel({
       await onChanged();
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "Could not remove that drive.");
+    } finally {
+      setBusy(null);
     }
   }
 
@@ -392,7 +417,8 @@ function AgentPanel({
 
   async function addDrive(event: React.FormEvent) {
     event.preventDefault();
-    if (!pending || !pending.label.trim()) return;
+    if (!pending || !pending.label.trim() || busy) return;
+    setBusy("add");
     setError(null);
     try {
       const added = await api.driveAdd(row.id, pending.label.trim());
@@ -403,6 +429,8 @@ function AgentPanel({
       await refreshAttach();
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "Could not add that drive.");
+    } finally {
+      setBusy(null);
     }
   }
 
@@ -475,15 +503,30 @@ function AgentPanel({
                   {attach[drive.id] === "attached" ? (
                     <span className="v-field-hint">attached</span>
                   ) : attach[drive.id] === "needs-permission" ? (
-                    <button type="button" className="v-btn" onClick={() => void allowAccess(drive.id)}>
+                    <button
+                      type="button"
+                      className="v-btn"
+                      disabled={busy !== null}
+                      onClick={() => void allowAccess(drive.id)}
+                    >
                       Allow access
                     </button>
                   ) : (
-                    <button type="button" className="v-btn" onClick={() => void reattach(drive.id)}>
+                    <button
+                      type="button"
+                      className="v-btn"
+                      disabled={busy !== null}
+                      onClick={() => void reattach(drive.id)}
+                    >
                       Re-attach
                     </button>
                   )}
-                  <button type="button" className="v-btn" onClick={() => void removeDrive(drive.id)}>
+                  <button
+                    type="button"
+                    className="v-btn"
+                    disabled={busy !== null}
+                    onClick={() => void removeDrive(drive.id)}
+                  >
                     Remove
                   </button>
                 </div>
@@ -510,9 +553,9 @@ function AgentPanel({
                   <button
                     type="submit"
                     className="v-btn v-btn-primary"
-                    disabled={!pending.label.trim()}
+                    disabled={!pending.label.trim() || busy !== null}
                   >
-                    Add drive
+                    {busy === "add" ? "Adding…" : "Add drive"}
                   </button>
                   <button type="button" className="v-btn" onClick={() => setPending(null)}>
                     Cancel

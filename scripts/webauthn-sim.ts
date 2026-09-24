@@ -131,7 +131,29 @@ export class SoftwareAuthenticator implements Authenticator {
     private rpId: string,
   ) {}
 
-  async create({ challenge }: { challenge: Uint8Array }): Promise<AuthenticatorAttestation> {
+  /*
+   * The parameter type is taken FROM the interface rather than restated, so it
+   * cannot drift from it again.
+   *
+   * It had drifted. `Authenticator.create` takes `{ challenge, accountId,
+   * handle }` and this took `{ challenge }` alone — and the `implements` clause
+   * above did not catch it, because TypeScript checks method parameters
+   * bivariantly, so a narrower parameter object satisfies the interface. The
+   * mismatch surfaced only at the call site, in `auth-e2e.ts`, which passed all
+   * three and had two silently discarded as excess properties. Nothing reported
+   * any of it, because **`scripts/` was typechecked by nothing at all** until
+   * `tsconfig.scripts.json` landed on 2026-09-15.
+   *
+   * That matters more here than the runtime effect (which is none — neither
+   * field reaches the attestation this builds). `CLAUDE.md` justifies this file
+   * on the grounds that it *encodes* what the Worker *decodes*, independently,
+   * as a second opinion. A second opinion that has quietly stopped matching the
+   * shape of the thing it stands in for is worth less than it appears to be.
+   */
+  async create(
+    options: Parameters<Authenticator["create"]>[0],
+  ): Promise<AuthenticatorAttestation> {
+    const { challenge } = options;
     const keys = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, [
       "sign",
       "verify",

@@ -22,6 +22,7 @@
 
 import { execFileSync } from "node:child_process";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -61,6 +62,8 @@ import {
   DEFAULT_RIM,
   GRAVITY,
 } from "../src/fx/duel";
+import { drawFx } from "../src/fx/effects";
+import type { FxCache } from "../src/fx/effects";
 import { duelCamera, ORNAMENT_PX } from "../src/components/DuelOrnament";
 import type { DuelCam } from "../src/components/DuelOrnament";
 import { BLADE_COLORS, DUEL_POOLS, FIGHTERS, NEVER_MEET, rollPairing } from "../src/fx/fighters";
@@ -73,6 +76,7 @@ import {
   validDuelPages,
   validDuelSettings,
 } from "../src/data/duelSettings";
+import type { DuelSettings } from "../src/data/duelSettings";
 import { PUBLISHED_KEYS } from "../src/config/siteConfig";
 import { decodeShareCode, encodeShareCode } from "../src/config/shareCode";
 import { roll } from "../src/config/randomiser";
@@ -99,46 +103,72 @@ import type { SortableFile } from "../src/data/downloads";
 import { DRAWN_CATEGORIES } from "../src/components/CategoryIcon";
 import { rangePlan } from "../worker/downloads";
 import { readJson, readJsonLenient } from "../worker/accounts";
+import { publishSiteConfig } from "../worker/site-config";
+import { authHash } from "../worker/crypto";
+import { toBase64Url } from "../worker/encoding";
+import { SESSION_COOKIE, mint as mintSession } from "../worker/session";
+import type { Env } from "../worker/env";
 import type { BadRequest } from "../worker/encoding";
-import { PATHS, pageFromPath, pathFor, subFromPath } from "../src/data/pageIds";
-import { metaForPath, robotsTxt, sitemapXml } from "../worker/page-meta";
+import { pageFromPath, pathFor, subFromPath } from "../src/data/pageIds";
+import { crawlerFile, metaForPath, robotsTxt, sitemapXml } from "../worker/page-meta";
 import { NEVER_ROTATES, SNIPPETS, snippetFor } from "../src/data/snippets";
 import { LAYOUTS, FX, PICKABLE_FX, TYPESETS, SCOPES } from "../src/data/catalog";
 import type { LayoutId } from "../src/data/catalog";
 import { LOW_CONTRAST, PALETTES } from "../src/data/palettes";
 import { DEFAULT_ORNAMENT, ORNAMENTS, PICKABLE_ORNAMENTS } from "../src/data/ornaments";
-import { decodeShareCode } from "../src/config/shareCode";
 import { adaptLayout } from "../src/config/bands";
 import { DEFAULT_STATION, PICKABLE_STATIONS, STATIONS } from "../src/data/stations";
 import { GUARDRAILS, combinationOf, effectiveGrain, isAllowed, matched, resolve, warnings } from "../src/data/guardrails";
 import { applyLook, themeClasses, themeVars } from "../src/theme";
-import { validLookPages } from "../src/data/lookSettings";
+import { LOOK_KEYS, validLookPages } from "../src/data/lookSettings";
 import { effectiveStation } from "../src/data/stations";
 import { edgeState } from "../src/hooks/useEdgeFade";
 import type { Band } from "../src/config/bands";
 import { PRESETS } from "../src/data/presets";
 
 /**
- * `--fast` skips only the duel simulation, which is 360,000 stepped frames and
- * the one gate that takes tens of seconds. Everything else is milliseconds, so
- * the fast pass is what runs after every edit; the full pass gates the deploy.
+ * `--fast` skips only the duel simulation, which is 1.44M stepped frames and
+ * the single most expensive gate. It is not the only slow one, though: measured
+ * 2026-09-17, the full pass is ~55s and the fast pass ~42s, so skipping the duel
+ * buys about twelve seconds rather than the bulk of the run. The fast pass is
+ * what runs after every edit; the full pass gates the deploy.
  */
 const FAST = process.argv.includes("--fast");
 
-type Result = { name: string; ok: boolean; detail: string };
+type Status = "ok" | "fail" | "skip";
+type Result = { name: string; status: Status; detail: string };
 const results: Result[] = [];
 
 /*
- * Gates that need a tool this machine may not have. A gate that quietly passes
- * when it could not run is the 2026-09-03 lesson wearing a different hat, so
- * anything landing here is NAMED in the report instead of disappearing.
+ * A gate that needs a tool or a checkout this machine may not have calls
+ * `skip(reason)` — it throws, like `must()`, but a distinct class so it can never
+ * be mistaken for a failure. The gate is recorded as SKIP: not a pass, not a
+ * failure, and NAMED in the report on green and red runs alike. A gate that
+ * quietly reports `ok` when it verified nothing is the 2026-09-03 lesson wearing
+ * a different hat (audit items 36, 39, 40 — until 2026-09-14 a skipped gate wrote
+ * `ok` in the status column, counted as a pass, and the "could not be run" list
+ * vanished the moment any other gate failed). The test for skip versus ok: skip
+ * is for a gate that verified NOTHING; a gate that did most of its work stays
+ * `ok` and names the part that went dark in its detail.
  */
-const SKIPPED: string[] = [];
+class Skipped extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = "Skipped";
+  }
+}
+const skip = (reason: string): never => {
+  throw new Skipped(reason);
+};
+const record = (error: unknown): Pick<Result, "status" | "detail"> =>
+  error instanceof Skipped
+    ? { status: "skip", detail: error.message }
+    : { status: "fail", detail: (error as Error).message };
 const check = (name: string, fn: () => string) => {
   try {
-    results.push({ name, ok: true, detail: fn() });
+    results.push({ name, status: "ok", detail: fn() });
   } catch (error) {
-    results.push({ name, ok: false, detail: (error as Error).message });
+    results.push({ name, ...record(error) });
   }
 };
 const must = (cond: boolean, message: string) => {
@@ -154,7 +184,7 @@ const must = (cond: boolean, message: string) => {
  */
 const pending: Promise<void>[] = [];
 const checkAsync = (name: string, fn: () => Promise<string>, timeoutMs = 5_000) => {
-  const slot: Result = { name, ok: false, detail: "did not settle" };
+  const slot: Result = { name, status: "fail", detail: "did not settle" };
   results.push(slot);
   const timeout = new Promise<string>((_, reject) =>
     setTimeout(() => reject(new Error(`did not settle within ${timeoutMs}ms — a body reader that cannot be cancelled hangs exactly like this`)), timeoutMs),
@@ -162,12 +192,11 @@ const checkAsync = (name: string, fn: () => Promise<string>, timeoutMs = 5_000) 
   pending.push(
     Promise.race([fn(), timeout]).then(
       (detail) => {
-        slot.ok = true;
+        slot.status = "ok";
         slot.detail = detail;
       },
-      (error: Error) => {
-        slot.ok = false;
-        slot.detail = error.message;
+      (error: unknown) => {
+        Object.assign(slot, record(error));
       },
     ),
   );
@@ -992,6 +1021,66 @@ check("every custom property a stylesheet reads is one something writes", () => 
   return `${styles.length} stylesheets, ${written.size} properties written, none read that are not`;
 });
 
+// ---- 2b′. `--faint` is not a text colour ------------------------------------
+//
+// 2026-09-14, audit item 16. `--faint` measures 2.78–4.09:1 against `--bg`
+// across the 25 palettes, under AA's 4.5 on every one, and CLAUDE.md has said
+// "text uses `--muted`" since the 2026-08-17 pass. That pass fixed five
+// selectors and missed two — `.v-knock`'s own label ("operator access") and
+// `.v-saver-label` ("click to return", the screensaver's only exit
+// instruction) — and in both a *sibling* was fixed while the parent's own text
+// was not. A rule that lives in a paragraph of prose is a rule the next
+// stylesheet edit does not read; this is the rule as a gate.
+//
+// The allow-list is the whole design. Two elements genuinely are decorative,
+// each is named here with the reason, and anything else setting `color` from
+// `--faint` fails by selector. A third instance cannot survive the way these
+// two did, because adding one means adding a line *here*, with a reason, in a
+// file that is reviewed. An entry that no longer matches anything also fails:
+// a stale allow-list is a hole waiting for a selector to be reused.
+//
+// There is no CSS shorthand that sets `color`; `-webkit-text-fill-color` is the
+// one other property that paints glyphs, so both are matched. Borders and
+// hairlines in `--faint` are not text and are not this gate's business.
+
+check("`--faint` colours nothing but the named decorative elements", () => {
+  const ALLOWED: Record<string, string> = {
+    // Console's prompt word beside the blinking block. `aria-hidden`, and the
+    // console log above it is the content; the word carries no instruction.
+    ".v-caret": "decorative console prompt, aria-hidden",
+    // The footer's middle dot. `aria-hidden`, a single glyph, and its click is
+    // one of the door's theatre routes, which must not advertise itself.
+    ".v-footer-dot": "decorative footer glyph, aria-hidden",
+  };
+
+  const dir = "src/styles";
+  const offenders: string[] = [];
+  const seen = new Set<string>();
+  let rules = 0;
+  for (const file of readdirSync(dir).filter((f) => f.endsWith(".css")).sort()) {
+    const css = readFileSync(join(dir, file), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    for (const m of css.matchAll(/([^{}]*)\{([^{}]*)\}/g)) {
+      const paints = /(?:^|[;\s])(?:-webkit-text-fill-)?color\s*:\s*var\(\s*--faint\b/.test(m[2]);
+      if (!paints) continue;
+      rules += 1;
+      for (const raw of m[1].split(",")) {
+        const selector = raw.trim().split(/\s+/).pop() ?? raw.trim();
+        // The last compound of a selector names the element painted; the full
+        // selector is what the report prints, so the line is findable.
+        if (selector in ALLOWED) seen.add(selector);
+        else offenders.push(`${file}: ${raw.trim()}`);
+      }
+    }
+  }
+  must(
+    offenders.length === 0,
+    `text set in \`--faint\`, which fails AA on all 25 palettes — use \`--muted\`, or name it in this gate's allow-list with a reason: ${offenders.join(" / ")}`,
+  );
+  const stale = Object.keys(ALLOWED).filter((s) => !seen.has(s));
+  must(stale.length === 0, `allow-list entries that no longer set \`--faint\` anywhere: ${stale.join(", ")}`);
+  return `${rules} rules paint text in --faint, all ${Object.keys(ALLOWED).length} on the named decorative allow-list`;
+});
+
 // ---- 2c. The download's partial-response arithmetic -------------------------
 //
 // 2026-08-19, the first time the bucket was made to hand over a byte, and the
@@ -1021,10 +1110,16 @@ check("every custom property a stylesheet reads is one something writes", () => 
 
 check("a download is a 206 only when it is genuinely partial", () => {
   const size = 300_000;
-  // The three shapes `R2Range` is a union of, spelled structurally: this file is
-  // bundled for Node and has no workers-types in scope.
-  type Served = { offset?: number; length?: number } | { suffix: number };
-  const rows: Array<[string, boolean, Served | undefined, { offset: number; length: number } | null]> = [
+  /*
+   * `R2Range` itself, not a copy of it. This table used to spell the union
+   * structurally — `{ offset?, length? } | { suffix }` — on the grounds that the
+   * file is bundled for Node and has no workers-types in scope, which stopped
+   * being true when `tsconfig.scripts.json` arrived. The copy had already
+   * drifted: it made both `offset` and `length` optional in one arm, so it could
+   * express `{}`, a shape R2 never reports and `rangePlan` is not written for.
+   * A checker holding its own copy of a type only ever confirms its own copy.
+   */
+  const rows: Array<[string, boolean, R2Range | undefined, { offset: number; length: number } | null]> = [
     ["no Range header, R2 reports the whole object", false, { offset: 0, length: size }, null],
     ["no Range header, no reported range", false, undefined, null],
     ["bytes=100000-100999", true, { offset: 100_000, length: 1_000 }, { offset: 100_000, length: 1_000 }],
@@ -1396,18 +1491,139 @@ if (!FAST) check("duel: a blow always flashes, and no reaction precedes its caus
   return `${blows} blows, all flashed; ${reactions} reactions, none before its cause`;
 });
 
+/*
+ * Fairness, and why this gate measures the COIN rather than the wins.
+ *
+ * Until 2026-09-15 this counted match wins: about 119 samples over 360,000
+ * frames. Two things were wrong with that, and only one of them was the one
+ * anybody had noticed.
+ *
+ * **It was blind.** At n ≈ 119 a 3σ threshold only rejects a bias of
+ * p ≥ 0.638 half the time, so a director favouring one side 60/40 — a real
+ * bug, and an obvious one on screen — sailed straight through. The gate spent
+ * 360,000 frames on a question it could not answer.
+ *
+ * **And it cried wolf while doing it.** Measured over 200 standalone passes of
+ * its own simulation, the win statistic reached ≥3σ in **2**, max 3.29. So it
+ * failed `predeploy` at random about 1 run in 175. (A 150-pass run on
+ * 2026-09-14 saw 0 and concluded it was "not reproducible standalone"; it is,
+ * just rarely — the two runs pool to 2/350 ≈ 0.57%. The separate 2-in-5
+ * observation that opened this investigation is still unexplained and should
+ * be treated as unexplained rather than as noise.)
+ *
+ * The invariant CLAUDE.md actually names is *"no sequence names a side. Every
+ * beat is `ATT` or `DEF`, and the role coin consults nothing"*. That coin is
+ * `st.dir.att`, and it is what this measures now.
+ *
+ * **It counts THROWS, not sequence starts, and the difference is the whole
+ * point.** `chooseSequence` throws the coin only when `st.dir.chain` has
+ * reached 0; a chained phrase deliberately reuses the same aggressor for one
+ * to three more sequences, because a run of pressure by one fighter is what a
+ * fight looks like. Counting every sequence start would enter those correlated
+ * repeats as independent samples — the same modelling error the win statistic
+ * made, one level down. A throw is observable from outside: `st.dir.seq` is a
+ * fresh object at every sequence start, and the coin was thrown iff `chain`
+ * was 0 going in.
+ *
+ * The null was calibrated before any threshold was chosen — first over 200
+ * passes of the three-round shape this replaced (pooled p = 0.49983 over
+ * 329,113 throws, lag-1 0.49931, so the throws are independent as well as
+ * fair), and then **re-measured at the twelve-round shape actually used here,
+ * with the corrected detector**, rather than assumed to transfer. 60 passes:
+ *
+ *   pooled p(att = "a")  = 0.49999 over 401,208 throws    (z = 0.013)
+ *   pooled p(a wins)     = 0.49887 over  28,657 matches   (z = 0.384)
+ *   coin σ: median 0.76, p95 1.98, max 2.40, ≥4σ in 0 of 60
+ *   win  σ: median 0.73, p95 1.65, max 2.74, ≥4σ in 0 of 60
+ *
+ * Both statistics fit the binomial model and neither comes near the bar, so
+ * both 4σ thresholds are measured rather than guessed. Note the second line:
+ * the engine's *outcomes* are now established as fair over 28,657 matches,
+ * which is a far stronger statement than the 119 a single pass can make, and it
+ * is what makes a 4σ win threshold a real check rather than a formality.
+ *
+ * **The win count is kept, and it is NOT a loose band.** A fair coin does not
+ * prove fair outcomes — damage, reach or the reaction table could be asymmetric
+ * under a perfectly fair director — and that is the one property the coin
+ * cannot see, so it is the last thing that should be allowed to go slack. The
+ * first version of this rewrite put it at 6σ over the same ~119 matches, which
+ * bought quiet by giving up detection; the round count is what pays for the
+ * threshold instead. Both halves sit at 4σ now, and both are better than the 3σ
+ * they replace on both axes at once — see the round-count note in the body.
+ */
 if (!FAST) check("duel: fairness, reachability, stability", () => {
   const styles = ["hooded", "caped", "maned", "horned"] as const;
   let left = 0;
   let right = 0;
   let nan = 0;
+  let throws = 0;
+  let heads = 0;
   const seen = new Set<string>();
-  for (let r = 0; r < 3; r += 1) {
+  /*
+   * **Twelve rounds, not three, and the win statistic is why** (2026-09-15,
+   * second pass).
+   *
+   * The first version of this rewrite moved the coin to 4σ — correctly, since
+   * the coin gained 13.8× the samples — and moved the *win* count from 3σ to
+   * 6σ at the same time. That second move was wrong, and it is worth saying so
+   * plainly: the win estimator did not change and neither did its ~119 samples,
+   * so only the bar moved, which is exactly the "raise the threshold until it
+   * stops failing" this file warns against, applied to the one half that got no
+   * new evidence. It took detection from p ≥ 0.638 to p ≥ 0.775 for the only
+   * property the coin gate cannot see — a fair director with asymmetric
+   * outcomes, which is what damage, reach or the reaction table getting out of
+   * step would look like.
+   *
+   * The honest fix for a threshold that has to rise is more samples. Twelve
+   * rounds measure at ~478 matches and ~6,690 coins a pass, so at 4σ both
+   * halves are now strictly better than the 3σ they replace, on both axes at
+   * once:
+   *
+   *              detects            false-fails
+   *   wins  old  p >= 0.638         ~1 run in 175
+   *   wins  new  p >= 0.592         ~1 run in 16,000
+   *   coin  new  p >= 0.524         ~1 run in 16,000
+   *
+   * The cost is 1.44M stepped frames instead of 360k, which measured 2026-09-17
+   * at about twelve seconds — the whole suite finishes in ~55, against ~42 with
+   * this gate skipped. It is `!FAST`, so it is paid on `predeploy` and never on
+   * the edit hook.
+   */
+  const ROUNDS = 12;
+  for (let r = 0; r < ROUNDS; r += 1) {
     const st = createDuel(styles[r % 4], styles[(r + 1) % 4]);
     let over = 0;
+    let prevSeq: unknown = st.dir.seq;
+    let prevChain = st.dir.chain;
+    let prevMatches = st.matches;
     for (let i = 0; i < 120_000; i += 1) {
       advanceDuel(st, 1);
       if (st.dir.seq) seen.add(st.dir.seq.id);
+      /*
+       * A sequence began this frame, and the coin was thrown iff the chain
+       * counter going in was 0 — **or a match turned over on this frame**,
+       * which is the clause the first version of this gate was missing.
+       *
+       * `step()` clears `chain` to 0 on the reset and then falls through to
+       * `runDirector` in the *same* step, so the opening coin of a new match is
+       * genuinely thrown while `prevChain` — sampled at the end of the previous
+       * frame — still holds whatever the dying match left behind. Measured: it
+       * dropped 1.70% of throws (141 of 8,282 over five passes). Those misses
+       * were unbiased (69/141 heads) so the 4σ calibration survived them, but
+       * the comment claimed an exactness the code did not have, and a sample
+       * count that quietly drifts is the thing every threshold here rests on.
+       */
+      if (
+        st.dir.seq &&
+        st.dir.seq !== prevSeq &&
+        (prevChain === 0 || st.matches !== prevMatches)
+      ) {
+        throws += 1;
+        if (st.dir.att === "a") heads += 1;
+      }
+      prevSeq = st.dir.seq;
+      prevChain = st.dir.chain;
+      prevMatches = st.matches;
       if (st.over > 0 && over === 0) {
         if (st.a.health <= 0 && st.b.health > 0) right += 1;
         else if (st.b.health <= 0 && st.a.health > 0) left += 1;
@@ -1417,16 +1633,27 @@ if (!FAST) check("duel: fairness, reachability, stability", () => {
     }
   }
   const n = left + right;
-  const sigma = Math.abs(left - n / 2) / Math.sqrt(n * 0.25);
+  const coin = Math.abs(heads - throws / 2) / Math.sqrt(throws * 0.25);
+  const wins = Math.abs(left - n / 2) / Math.sqrt(n * 0.25);
   must(nan === 0, `${nan} non-finite frames`);
   must(n > 100, `only ${n} matches — the fight may be stalling`);
-  must(sigma < 3, `side bias ${sigma.toFixed(2)} sigma over ${n} matches`);
+  // Calibrated at ~6,600 over twelve rounds; a collapse in the sample size is
+  // itself the finding, because both thresholds below are chosen against it.
+  must(throws > 5000, `only ${throws} role coins thrown — expected ~6,600 over ${ROUNDS} rounds`);
+  must(
+    coin < 4,
+    `the role coin named a side: ${(heads / throws).toFixed(4)} over ${throws} throws, ${coin.toFixed(2)} sigma`,
+  );
+  must(
+    wins < 4,
+    `one side wins ${((left / n) * 100).toFixed(0)}% of ${n} matches (${wins.toFixed(2)} sigma) — the coin is fair, so look at damage, reach or the reaction table`,
+  );
   // Nothing is ranged `far` any more — the leash keeps the fight out of that
   // band entirely — so every module in the pool must actually be reachable.
   const total = DUEL_TABLES.modules.length;
   const fired = seen.size;
   must(fired === total, `only ${fired} of ${total} modules fired`);
-  return `${n} matches, ${sigma.toFixed(2)}σ, ${fired}/${total} modules, no NaN`;
+  return `coin ${(heads / throws).toFixed(4)} over ${throws} throws (${coin.toFixed(2)}σ), ${n} matches (${wins.toFixed(2)}σ), ${fired}/${total} modules, no NaN`;
 });
 
 /*
@@ -2012,21 +2239,53 @@ check("duel: the health bar clears every costume, and stays in frame", () => {
    *
    * The bar is 34 × 4 world units and is drawn outside the body transform, so
    * at `scale: 1` its coordinates arrive here in world units untouched.
+   *
+   * **Attributed by draw order, not by coordinate** (2026-09-14). This used to
+   * read the fighter off the rectangle's own x — `bar.x + 17 - BODY_W / 2`
+   * against `st.a.x` — on the reasoning, recorded below, that the match is
+   * arithmetic rather than nearest-neighbour. It is arithmetic, and it is still
+   * ambiguous: `stepFighter` clamps **both** fighters to the identical arena
+   * wall (`20`, or `WORLD_W - 20 - BODY_W`), and the body-separation resolve
+   * that would push them apart is skipped whenever either is airborne or in a
+   * ground pass. On those frames `st.a.x === st.b.x` exactly, both bars matched
+   * `st.a`, and `st.b`'s bar was judged against `st.a`'s `y` and `st.a`'s
+   * headroom — reporting an underside 80 units *below* the torso when one of
+   * the two was at the apex of a somersault. That is the `musketeer: … -80.2`
+   * failure `TODO.md` recorded on 2026-09-14: **the gate, not the renderer.**
+   * Measured at 0.31% of duels, ~3.6% of gate runs — green almost always,
+   * which is the worst rate a gate can have.
+   *
+   * The fix is the draw order, which is unambiguous. `drawDuel` calls
+   * `drawFighter(st.a)` and then `drawFighter(st.b)`, and the *only two*
+   * `fillRect` calls in the whole of `duel.ts` are this bar's backing and its
+   * fill — so the recorded stream is exactly (backing, fill) per living
+   * fighter, in that order. The fill is painted in `blade`, the one argument
+   * that tells the two `drawFighter` calls apart, so each pair names its own
+   * fighter and the x arithmetic becomes an *assertion* instead of a guess.
+   *
+   * **Not by exempting an airborne fighter**, which was the other reading
+   * `TODO.md` offered: that would stop testing the bar during exactly the
+   * frames the camera is under most stress, and it would mask the ambiguity
+   * rather than remove it.
    */
-  const bars: { x: number; y: number }[] = [];
+  const rects: { x: number; y: number; w: number; h: number; fill: string }[] = [];
+  let fill = "";
   const ctx = new Proxy(
     {},
     {
       get(_t, key: string) {
         if (key === "fillRect") {
           return (x: number, y: number, w: number, h: number) => {
-            if (w === 34 && h === 4) bars.push({ x, y });
+            rects.push({ x, y, w, h, fill });
           };
         }
         if (key === "canvas") return { width: 700, height: 700 };
         return typeof key === "string" && /^[a-z]/.test(key) ? () => undefined : 0;
       },
-      set: () => true,
+      set(_t, key: string, value: unknown) {
+        if (key === "fillStyle") fill = String(value);
+        return true;
+      },
     },
   ) as unknown as CanvasRenderingContext2D;
 
@@ -2043,7 +2302,17 @@ check("duel: the health bar clears every costume, and stays in frame", () => {
     bars: true,
     kick: false,
     dim: 1,
+    // `paper` is required on `DuelView` on purpose — the field's own note says a
+    // missing one must be a compile error — and this gate omitted it for as long
+    // as `scripts/` went unchecked. Nothing here reads a stroke colour, so it
+    // changes no measurement; what it restores is the guarantee. `rim` stays
+    // unset so the carve runs at `DEFAULT_RIM`, as it does on the page.
+    paper: "#000",
   };
+
+  // The whole attribution rides on the two blade colours differing, so say so
+  // here rather than letting a typo above quietly send every bar to `st.a`.
+  must(view.bladeA !== view.bladeB, "the two blade colours must differ for the bars to be told apart");
 
   const good = (Object.keys(FIGHTERS) as FighterStyle[]).filter((f) => FIGHTERS[f].side === "good");
   const evil = (Object.keys(FIGHTERS) as FighterStyle[]).filter((f) => FIGHTERS[f].side === "evil");
@@ -2056,22 +2325,43 @@ check("duel: the health bar clears every costume, and stays in frame", () => {
     const st = createDuel(good[k % good.length], evil[k % evil.length]);
     for (let i = 0; i < 900; i += 1) {
       advanceDuel(st, 1);
-      bars.length = 0;
+      rects.length = 0;
       drawDuel(ctx, st, view);
-      for (const bar of bars) {
-        /*
-         * Attributed exactly, not by proximity. The bar is emitted at
-         * `centre(f) - 17`, and `centre` is `f.x + BODY_W / 2` — so the match
-         * is arithmetic. Nearest-x looks equivalent and is not: the two cross
-         * during a `pass`, and a fighter at the top of a somersault is 80 world
-         * units above the other, so a misattributed bar reports a wild offset
-         * against the wrong costume's headroom.
-         */
-        const key = bar.x + 17 - BODY_W / 2;
-        const f = Math.abs(key - st.a.x) < 1e-6 ? st.a : st.b;
+      must(
+        rects.length % 2 === 0,
+        `${rects.length} rectangles this frame — the bar emits its backing and its fill together, so an odd count means something else in duel.ts now calls fillRect`,
+      );
+      for (let j = 0; j < rects.length; j += 2) {
+        const bar = rects[j];
+        const level = rects[j + 1];
         must(
-          Math.abs(key - f.x) < 1e-6,
-          `a 34x4 rectangle at x=${bar.x} belongs to neither fighter — is something else this size?`,
+          bar.w === 34 && bar.h === 4 && bar.fill === view.ink,
+          `a ${bar.w}x${bar.h} rectangle in ${bar.fill} leads a pair — the backing is 34x4 in ink, so the rectangle stream is no longer (backing, fill) per fighter`,
+        );
+        must(
+          level.h === 4 && level.x === bar.x && level.y === bar.y,
+          `the fill at ${level.x},${level.y} does not sit on its backing at ${bar.x},${bar.y}`,
+        );
+        /*
+         * The fill is the half painted in `blade`, which is the argument
+         * `drawFighter` was handed — so it names the call that is in flight,
+         * which is what the coordinate could not do when the two fighters are
+         * clamped to the same wall.
+         */
+        must(
+          level.fill === view.bladeA || level.fill === view.bladeB,
+          `the bar's fill is painted in ${level.fill}, which is neither fighter's blade`,
+        );
+        const f = level.fill === view.bladeA ? st.a : st.b;
+        /*
+         * And now the arithmetic is worth asserting. The bar is emitted at
+         * `centre(f) - 17`, and `centre` is `f.x + BODY_W / 2`, so an exact
+         * match is owed — a 34×4 rectangle over neither fighter means something
+         * else this size has arrived in the stream.
+         */
+        must(
+          Math.abs(bar.x + 17 - BODY_W / 2 - f.x) < 1e-6,
+          `${f.style}: a 34x4 rectangle at x=${bar.x} is not over the fighter whose blade it was drawn in`,
         );
         const headroom = FIGHTERS[f.style].headroom;
         const offset = f.y - bar.y;
@@ -2110,7 +2400,7 @@ check("duel: the health bar clears every costume, and stays in frame", () => {
  * `Math.max(0, NaN)` is `NaN`, so one bad frame count makes `st.acc` `NaN`
  * permanently: `Math.floor(NaN)` is `NaN`, `NaN > 0` is false, and `acc -= NaN`
  * keeps it `NaN`. Every later call is a silent no-op. The hosts' own clamps do
- * not help — `Math.min(3, Math.max(0.2, NaN))` is also `NaN`, and every host of
+ * not help — `Math.min(3, Math.max(0, NaN))` is also `NaN`, and every host of
  * this engine writes that same line against a `performance.now()` delta.
  */
 /*
@@ -2264,6 +2554,12 @@ check("every frame clamp floors at zero, so a fast display is not a fast world",
     "src/components/DuelOrnament.tsx",
     "src/components/DuelBench.tsx",
     "src/components/DuelSettingsEditor.tsx",
+    // The two self-contained benches carry their own copy of the loop and
+    // were still floored at 0.2 after the four hosts were fixed, ungated — a
+    // bench that runs fast on a fast display misreports the tempo it exists
+    // to judge.
+    "scripts/duel-bench.template.html",
+    "scripts/fx-bench.template.html",
   ];
   let clamps = 0;
   for (const file of hosts) {
@@ -2674,6 +2970,11 @@ if (!FAST) check("duel: the renderer leaves the canvas as it found it", () => {
     bars: true,
     kick: true,
     dim: 1,
+    // Required on `DuelView`, and omitted here until `scripts/` was typechecked.
+    // This gate counts `save`/`restore` and the composite operation, neither of
+    // which a stroke colour touches — but the carve's `save`/`clip`/`restore` is
+    // exactly what it is counting, so the field belongs at a real value.
+    paper: "#000",
   };
   let flashes = 0;
   let marks = 0;
@@ -3544,6 +3845,42 @@ check("the duel settings publish, refuse rubbish, and default to a no-op", () =>
     `settings default rim ${DEFAULT_DUEL_SETTINGS.rim} against the engine's ${DEFAULT_RIM}`,
   );
 
+  // 1b. And they are frozen all the way down — driven by writing, not by
+  //     `Object.isFrozen` alone (2026-09-14 audit). `Object.freeze` is shallow,
+  //     so `tuning` was a writable object under a frozen parent for as long as
+  //     the file's own comment claimed a write would throw. `DEFAULT_CONFIG.duel`
+  //     hands this exact object to every un-published visitor, so the write is
+  //     made through that route as well: it must throw, and the value must
+  //     still read 1 afterwards.
+  const frozenWrites: Array<[string, () => void]> = [
+    ["DEFAULT_DUEL_TUNING.rest", () => ((DEFAULT_DUEL_TUNING as { rest: number }).rest = 2)],
+    ["DEFAULT_DUEL_SETTINGS.zoom", () => ((DEFAULT_DUEL_SETTINGS as { zoom: number }).zoom = 2)],
+    [
+      "DEFAULT_DUEL_SETTINGS.tuning.circling",
+      () => ((DEFAULT_DUEL_SETTINGS.tuning as { circling: number }).circling = 2),
+    ],
+    [
+      "DEFAULT_CONFIG.duel.tuning.patience",
+      () => ((DEFAULT_CONFIG.duel.tuning as { patience: number }).patience = 2),
+    ],
+  ];
+  for (const [what, write] of frozenWrites) {
+    let threw: unknown = null;
+    try {
+      write();
+    } catch (error) {
+      threw = error;
+    }
+    must(threw instanceof TypeError, `writing ${what} on the frozen default did not throw`);
+  }
+  must(
+    DEFAULT_DUEL_TUNING.rest === 1 &&
+      DEFAULT_DUEL_SETTINGS.zoom === 1 &&
+      DEFAULT_DUEL_SETTINGS.tuning.circling === 1 &&
+      DEFAULT_CONFIG.duel.tuning.patience === 1,
+    "a write to a frozen duel default went through",
+  );
+
   // 2. **Both** published-key lists must carry both fields. They are separate
   //    arrays in separate files and either one missing a key drops the value
   //    silently on publish — the operator's own browser shows a setting that
@@ -3885,6 +4222,375 @@ check("the duel's Size reaches the camera and never cuts a fighter off", () => {
   return `${frames} frames at Size 0.6/1/1.6, none clipped, 1.6 larger on ${grew}; 3 hosts pass it through`;
 });
 
+
+/**
+ * A recording 2D context, for driving the real effects from node.
+ *
+ * **It cannot say whether anything is visible**, and the four gates below do
+ * not pretend to: that question has no rasteriser here and is answered offline
+ * with `scripts/fx-shot.mjs` plus a peak/coverage script, exactly as the
+ * `CLAUDE.md` note says. What a recorder *can* answer is bookkeeping — what
+ * state an effect leaves behind on a context that outlives it, and how many
+ * objects it allocates to draw one frame. Both have shipped as bugs.
+ *
+ * `save` and `restore` are real for the two stroke ends, and that is not a
+ * detail. The first version of the gate below left them as the catch-all no-op
+ * and reported `aurora`, `duel` and `duelholy` as leaking as well — all three
+ * set a stroke end *inside* a pair, correctly, and a stub that never pops
+ * cannot tell that apart from setting one in the open, which is the whole
+ * question being asked.
+ */
+function fxRecorder() {
+  const state = { cap: "butt", join: "miter" };
+  const stack: { cap: string; join: string }[] = [];
+  const strokes: { cap: string; join: string }[] = [];
+  const set = { cap: false, join: false };
+  /** Objects allocated by the effect, per frame. See the `bokeh` gate. */
+  const made = { radial: 0, linear: 0 };
+  const gradient = { addColorStop: () => undefined };
+  const ctx = new Proxy(
+    {},
+    {
+      get(_t, key: string) {
+        if (key === "lineCap") return state.cap;
+        if (key === "lineJoin") return state.join;
+        if (key === "save") {
+          return () => stack.push({ cap: state.cap, join: state.join });
+        }
+        if (key === "restore") {
+          return () => {
+            const was = stack.pop();
+            if (was) {
+              state.cap = was.cap;
+              state.join = was.join;
+            }
+          };
+        }
+        if (key === "stroke") {
+          return () => strokes.push({ cap: state.cap, join: state.join });
+        }
+        if (key === "createRadialGradient") {
+          return () => {
+            made.radial += 1;
+            return gradient;
+          };
+        }
+        if (key === "createLinearGradient") {
+          return () => {
+            made.linear += 1;
+            return gradient;
+          };
+        }
+        // `scan`'s sweep wedge. Uncounted — it is one a frame by design, and the
+        // catch-all below would hand it `undefined` to call `addColorStop` on.
+        if (key === "createConicGradient") return () => gradient;
+        if (key === "getTransform") return () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 });
+        if (key === "measureText") return () => ({ width: 8 });
+        if (key === "canvas") return { width: 1200, height: 800 };
+        return typeof key === "string" && /^[a-z]/.test(key) ? () => undefined : 0;
+      },
+      set(_t, key: string, value: unknown) {
+        if (key === "lineCap") {
+          state.cap = String(value);
+          set.cap = true;
+        }
+        if (key === "lineJoin") {
+          state.join = String(value);
+          set.join = true;
+        }
+        return true;
+      },
+    },
+  ) as unknown as CanvasRenderingContext2D;
+  return { ctx, state, stack, strokes, set, made };
+}
+
+/** One frame's worth of the `drawFx` contract, with the varying parts named. */
+function fxFrame(
+  ctx: CanvasRenderingContext2D,
+  over: Partial<Parameters<typeof drawFx>[1]> = {},
+): Parameters<typeof drawFx>[1] {
+  return {
+    ctx,
+    w: 1200,
+    h: 800,
+    p: PALETTES[0],
+    duel: DEFAULT_DUEL_SETTINGS,
+    t: 0.4,
+    beat: 0.4,
+    boost: 1,
+    sleeping: false,
+    dt: 1,
+    quality: 1,
+    mx: 0.5,
+    my: 0.5,
+    ...over,
+  };
+}
+
+/*
+ * The context outlives every effect on it, so a stroke end is contagious.
+ *
+ * `FxCanvas` holds one `CanvasRenderingContext2D` for the life of the canvas
+ * and swaps the *effect* underneath it, so any state an effect sets outside a
+ * `save`/`restore` pair is inherited by whatever runs next. Four effects set
+ * `lineCap` and/or `lineJoin` to "round" in the open — `vessels`, `flow`,
+ * `orbits`, `telemetry` — and the five that stroke without ever naming either
+ * (`stars`, `constellation`, `tunnel`, `pressure`, `scan`) then drew with
+ * rounded ends for the rest of the tab, visibly on `stars`' streaks and
+ * `constellation`'s links. Only ever after one particular navigation, which is
+ * why it could not be reproduced on demand.
+ *
+ * The cure is one reset in the frame path, beside the base `setTransform` that
+ * already declares what the frame path owns. Both halves are gated: the hazard
+ * is *driven* — the real effects, through a recording context, with no reset
+ * between them, so a fifth effect that starts leaving a cap behind fails here
+ * and has to be thought about — and the cure is read out of `FxCanvas.tsx`,
+ * which is where the page actually gets it.
+ *
+ * `rain` and `scan` are the two effects that cannot be driven from node: both
+ * build an offscreen atlas with `document.createElement`. Neither is a setter,
+ * and `scan` is one of the victims rather than a cause.
+ */
+check("no effect leaves a stroke end behind for the next one", () => {
+  const { ctx, state, stack, strokes, set } = fxRecorder();
+  const drivable = FX.map((f) => f.id).filter((id) => id !== "rain" && id !== "scan");
+  const leaks: string[] = [];
+  const naive: string[] = [];
+  let stroked = 0;
+
+  for (const id of drivable) {
+    // A fresh cache per effect, exactly as `FxCanvas` drops the cache when the
+    // effect id changes — and the two duels would otherwise share a fight.
+    const cache: FxCache = {};
+    state.cap = "butt";
+    state.join = "miter";
+    stack.length = 0;
+    for (let i = 0; i < 4; i += 1) {
+      set.cap = false;
+      set.join = false;
+      strokes.length = 0;
+      drawFx(id, fxFrame(ctx, { t: 0.4 + i * 0.37 }), cache);
+      stroked += strokes.length;
+      // Inherited, not chosen: this effect never named the property and still
+      // stroked with something other than the canvas default.
+      if (!set.cap && strokes.some((s) => s.cap !== "butt")) naive.push(id);
+      if (!set.join && strokes.some((s) => s.join !== "miter")) naive.push(id);
+    }
+    if (state.cap !== "butt" || state.join !== "miter") leaks.push(id);
+  }
+
+  must(stroked > 0, "no effect stroked at all — the recording context is not being driven");
+  must(
+    leaks.join(",") === "vessels,flow,orbits,telemetry",
+    `effects leaving a stroke end set are [${leaks.join(", ")}], expected vessels, flow, orbits, telemetry — a new one means the frame path's reset now covers a case nobody has looked at`,
+  );
+  // Each effect above started from the defaults, so nothing should have
+  // inherited anything: this is the assertion that goes red if the per-effect
+  // isolation in this gate ever stops being real.
+  must(naive.length === 0, `${naive.join(", ")} stroked with an end it never set`);
+
+  // And the cure, read where the page gets it rather than restated here.
+  const src = readFileSync("src/fx/FxCanvas.tsx", "utf8");
+  const at = src.indexOf("ctx.setTransform(scale");
+  must(at >= 0, "FxCanvas no longer sets the base transform in the frame path");
+  // The baseline is one block: the transform and the two stroke ends, before
+  // the frame path gets on with anything else.
+  const baseline = src.slice(at, src.indexOf("motion.scrollV", at));
+  must(
+    /ctx\.lineCap\s*=\s*"butt"/.test(baseline) && /ctx\.lineJoin\s*=\s*"miter"/.test(baseline),
+    "FxCanvas's frame path does not reset lineCap/lineJoin beside the base transform — the four effects above will leak their round ends into the next effect",
+  );
+
+  return `${drivable.length} effects driven, ${stroked.toLocaleString()} strokes, 4 leak a stroke end and the frame path resets both`;
+});
+
+/*
+ * The full-bleed duel and the hero ornament must agree about the same setting.
+ *
+ * `duelling` built its `DuelState` inside an `if (!st)` that runs once on the
+ * mount and wrote `st.allow` there and nowhere else — so a roster restriction
+ * changed afterwards reached the background fight **never**: not at the next
+ * match, not at the tenth, until the effect id changed or the page reloaded.
+ * Its own comment claimed it would be honoured "until the next match", and
+ * `DuelOrnament`, whose effect depends on `duel.good` / `duel.evil`, honoured
+ * it at once — so the ornament and the background disagreed about the same
+ * published setting on the same page. That is the documented "it ignores my
+ * settings after a minute" shape, one surface over.
+ *
+ * Driven end to end: change the settings under a running fight, take it over a
+ * match boundary, and read the fighters who walk on. The separate gate above
+ * holds the restriction over six matches; this one is about the restriction
+ * *arriving* while nobody remounts anything.
+ */
+check("a running background duel re-reads its roster restriction", () => {
+  const { ctx } = fxRecorder();
+  const cache: FxCache = {};
+
+  drawFx("duel", fxFrame(ctx), cache);
+  const st = cache.duel;
+  must(st != null, "the duel effect built no fight at all");
+  must(st!.allow != null, "an unrestricted fight still carries the pool as its allow-list");
+
+  // One fighter a side, chosen from the far end of each pool so the odds of
+  // the opening roll already having picked them are 1 in 144.
+  const good = DUEL_POOLS.duel.good[DUEL_POOLS.duel.good.length - 1];
+  const evil = DUEL_POOLS.duel.evil[DUEL_POOLS.duel.evil.length - 1];
+  const narrowed = { ...DEFAULT_DUEL_SETTINGS, good: [good], evil: [evil] };
+
+  drawFx("duel", fxFrame(ctx, { duel: narrowed }), cache);
+  must(
+    st!.allow!.good.join(",") === good && st!.allow!.evil.join(",") === evil,
+    `the restriction did not reach the running fight: allow is [${st!.allow!.good.join(", ")}] / [${st!.allow!.evil.join(", ")}]`,
+  );
+
+  // And it is honoured where `DuelState.allow` exists to be honoured — the
+  // re-roll inside `advanceDuel`, on the match boundary. `over` counts down the
+  // victory hold, so one more frame from 1 is the turnover.
+  const before = st!.matches;
+  st!.over = 1;
+  drawFx("duel", fxFrame(ctx, { duel: narrowed }), cache);
+  must(st!.matches === before + 1, "the fight did not take the match boundary");
+  // As a pair, not as left and right: `rollPairing` ends on a coin that decides
+  // which alignment walks on from which side.
+  must(
+    [st!.a.style, st!.b.style].slice().sort().join(",") === [good, evil].slice().sort().join(","),
+    `the new match walked on ${st!.a.style} against ${st!.b.style}, not the pair the restriction leaves`,
+  );
+
+  // Widening again has to arrive too — a restriction that can only tighten is
+  // one the operator cannot undo without a reload.
+  drawFx("duel", fxFrame(ctx, { duel: DEFAULT_DUEL_SETTINGS }), cache);
+  must(
+    st!.allow!.good.length === DUEL_POOLS.duel.good.length,
+    "lifting the restriction did not reach the running fight",
+  );
+
+  /*
+   * And the pin, which is the other half of the same control and had the same
+   * bug one mechanism over. It used to be expressed by choosing `createDuel`
+   * on the mount, so a pin that changed — or was lifted — reached a running
+   * fight never. Both directions are driven, because a pin that can only be
+   * applied is one the operator cannot undo without a reload.
+   */
+  const pinned: [FighterStyle, FighterStyle] = [DUEL_POOLS.duel.good[2], DUEL_POOLS.duel.evil[5]];
+  const withPin = { ...DEFAULT_DUEL_SETTINGS, pin: pinned };
+  drawFx("duel", fxFrame(ctx, { duel: withPin }), cache);
+  st!.over = 1;
+  drawFx("duel", fxFrame(ctx, { duel: withPin }), cache);
+  must(
+    st!.a.style === pinned[0] && st!.b.style === pinned[1],
+    `the pin did not bind the next match: ${st!.a.style} against ${st!.b.style}, expected ${pinned.join(" v ")}`,
+  );
+  // A pin holds across every later boundary, not only the first.
+  st!.over = 1;
+  drawFx("duel", fxFrame(ctx, { duel: withPin }), cache);
+  must(
+    st!.a.style === pinned[0] && st!.b.style === pinned[1],
+    "the pin bound one match and then let go",
+  );
+
+  /*
+   * Lifting it has to roll again — and this is the half a pin-only fix misses,
+   * because a fight built pinned carries no pool and would have nothing to roll
+   * from. Rolled over enough boundaries that staying on the pinned pair by
+   * chance is not a plausible reading: 144 orderings, so twelve boundaries all
+   * landing on it is 144⁻¹².
+   */
+  let moved = false;
+  for (let i = 0; i < 12 && !moved; i += 1) {
+    st!.over = 1;
+    drawFx("duel", fxFrame(ctx, { duel: DEFAULT_DUEL_SETTINGS }), cache);
+    if (st!.a.style !== pinned[0] || st!.b.style !== pinned[1]) moved = true;
+  }
+  must(moved, "lifting the pin left the fight on the pinned pair over 12 match boundaries");
+
+  return `restriction and pin both reach a running fight and bind the next match (${good} v ${evil}; pin ${pinned.join(" v ")}), and both lift again`;
+});
+
+/*
+ * A failed context allocation must not be cached, or the effect is dead for good.
+ *
+ * `rain`'s glyph atlas and `scan`'s wireframe sphere both guard their
+ * `getContext("2d")` and then wrote the result into the cache **regardless**.
+ * The key matches on every later frame, so one transient failure — a browser
+ * out of canvas memory, a tab that lost its GPU process — cached a permanently
+ * blank atlas for that palette, size and tier: `rain` drew nothing at all and
+ * `scan` lost the instrument it is named after, with no retry and nothing
+ * logged.
+ *
+ * These are the two effects that touch the DOM, which is why they sit out of
+ * the gate above. Here that is the point: `document.createElement` is answered
+ * with a canvas whose `getContext` returns null, which is exactly the failure.
+ */
+check("rain and scan do not cache a failed atlas", () => {
+  const { ctx } = fxRecorder();
+  const had = Object.getOwnPropertyDescriptor(globalThis, "document");
+  Object.defineProperty(globalThis, "document", {
+    value: { createElement: () => ({ width: 0, height: 0, getContext: () => null }) },
+    configurable: true,
+    writable: true,
+  });
+  try {
+    for (const [id, key] of [
+      ["rain", "rainAtlas"],
+      ["scan", "scanSphere"],
+    ] as const) {
+      const cache: FxCache = {};
+      for (let i = 0; i < 3; i += 1) drawFx(id, fxFrame(ctx, { t: 0.4 + i }), cache);
+      must(
+        cache[key] == null,
+        `${id} cached an atlas built without a context — it will draw nothing for the life of the tab and never retry`,
+      );
+    }
+  } finally {
+    if (had) Object.defineProperty(globalThis, "document", had);
+    else delete (globalThis as { document?: unknown }).document;
+  }
+  return "3 frames each with getContext failing; neither effect poisons its cache";
+});
+
+/*
+ * One gradient per disc, not one per disc per frame.
+ *
+ * `bokeh` built a `createRadialGradient` plus two hex strings inside its draw
+ * loop — up to 60 gradients and 120 strings a frame, about 3,600 gradient
+ * objects a second at 60Hz, and the only per-object per-frame allocation left
+ * in `effects.ts`. `plasma`'s buckets and `drawDuel`'s lock flare both carry
+ * comments about exactly this. It is also invisible to the quality tier, which
+ * moves fill rate and not CPU-side construction.
+ *
+ * Counted rather than asserted about the source: the ramps are cached on the
+ * palette and on `partsBox` by identity, so the numbers below are the whole
+ * claim — built once, not rebuilt while nothing moves, and rebuilt when the
+ * palette bleeds to another one.
+ */
+check("bokeh builds its aperture ramps once, not once a frame", () => {
+  const { ctx, made } = fxRecorder();
+  const cache: FxCache = {};
+
+  made.radial = 0;
+  drawFx("bokeh", fxFrame(ctx), cache);
+  const discs = made.radial;
+  must(discs >= 20, `${discs} discs on the first frame, expected the field's 20-60`);
+
+  made.radial = 0;
+  for (let i = 1; i < 30; i += 1) drawFx("bokeh", fxFrame(ctx, { t: 0.4 + i * 0.05 }), cache);
+  must(
+    made.radial === 0,
+    `${made.radial} gradients allocated over 29 steady frames — the ramps are being rebuilt in the draw loop`,
+  );
+
+  // A palette change has to reach them, or the 0.9s bleed leaves the discs the
+  // old accent while every other token moves.
+  drawFx("bokeh", fxFrame(ctx, { p: PALETTES[7] }), cache);
+  must(
+    made.radial === discs,
+    `a palette change rebuilt ${made.radial} of ${discs} ramps`,
+  );
+
+  return `${discs} ramps built once, 0 allocated over the next 29 frames, all ${discs} rebuilt on a palette change`;
+});
 
 check("catalogues match the documented counts", () => {
   must(LAYOUTS.length === 14, `${LAYOUTS.length} layouts, expected 14`);
@@ -4373,7 +5079,11 @@ check("a page's look override reaches the page, and only that page", () => {
    * does, because Ornament.tsx names `config.ornament` in prose.
    */
   const ALLOWED = new Set(["SiteConfigPanel.tsx", "CommandPalette.tsx"]);
-  const DIALS = /\bconfig\.(pal|layout|fx|ornament|type|station|grain|breathe|cursor|slots|entrances)\b/;
+  // Built from `LOOK_KEYS`, not typed out (2026-09-14 audit): the list here
+  // used to be a hand-copied twin of the one in `lookSettings.ts`, so a twelfth
+  // dial would have been validated, merged and rendered while this scan never
+  // learned to look for it.
+  const DIALS = new RegExp(`\\bconfig\\.(${LOOK_KEYS.join("|")})\\b`);
   const offenders: string[] = [];
   for (const dir of ["src/components", "src/fx", "src/hooks"]) {
     for (const file of readdirSync(dir)) {
@@ -4390,6 +5100,33 @@ check("a page's look override reaches the page, and only that page", () => {
   );
 
   return "override merges, guards resolve on the merge, all three call sites go through the seam";
+});
+
+check("the cursor-lean card tilt stays deleted", () => {
+  /*
+   * Client, 2026-09-22: "this page jiggle/jitter/twitch needs to be killed and
+   * nuked". It was `useMotionSystems` writing a perspective rotate to every
+   * `.v-block`'s style attribute on every pointermove. Deviation 15. Scans the
+   * script side of the app, comments stripped, for the shape of a 3D lean
+   * written from code — CSS keeps its own perspective (the door's theatre).
+   */
+  const offenders: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (path !== join("src", "fx")) walk(path);
+      } else if (/\.(ts|tsx)$/.test(entry.name)) {
+        const src = readFileSync(path, "utf8")
+          .replace(/\/\*[\s\S]*?\*\//g, "")
+          .replace(/\/\/[^\n]*/g, "");
+        if (/perspective\(|rotate[XYZ3]\w*\(/.test(src)) offenders.push(path);
+      }
+    }
+  };
+  walk("src");
+  must(offenders.length === 0, `a 3D lean is written from script again: ${offenders.join(", ")}`);
+  return "no script under src/ (canvas effects aside) writes a perspective or rotate transform";
 });
 
 check("a page look override refuses rubbish and never repairs it", () => {
@@ -5076,7 +5813,17 @@ check("the Windows setup downloads keep their encodings", () => {
     ps1[0] === 0xef && ps1[1] === 0xbb && ps1[2] === 0xbf,
     "windows-share-setup.ps1 has lost its UTF-8 BOM — PowerShell 5.1 reads it as ANSI",
   );
-  const bat = readFileSync("scripts/launch.bat");
+  /*
+   * The cast names what `readFileSync` already hands back. A Node `Buffer`
+   * decodes itself, but `@cloudflare/workers-types` declares `const Buffer: any`
+   * in the global scope and that clobbers `@types/node`'s, so under this file's
+   * config the compiler can only see `Uint8Array`'s no-argument `toString`.
+   * Annotating the binding as `Buffer` does not help — it is the interface that
+   * is lost, not the inference.
+   */
+  const bat = readFileSync("scripts/launch.bat") as Uint8Array & {
+    toString(encoding: string): string;
+  };
   for (const byte of bat) {
     must(
       byte < 0x80,
@@ -5270,7 +6017,10 @@ check("the setup scripts REFUSE, driven against a real home directory", () => {
   // fails, DEFS comes back empty and every verdict reads BROKEN.
   const probeScript = String.raw`
 set -uo pipefail
-SRC="$1"; FIX="$2"
+SRC="$1"; FIX="$2"; SIB="$3"; OS="$4"
+# fold_case asks uname, so a Linux run never folds and a folding bug is
+# invisible to it. The Darwin run answers for the Mac.
+[ "$OS" = Darwin ] && uname() { echo Darwin; }
 DEFS="$(awk '
   /^(canon|fold_case|check_folder)\(\)/ { infn=1 }
   /^(BLOCK_EXACT|BLOCK_PREFIX)=\(/ { inarr=1 }
@@ -5282,7 +6032,7 @@ DEFS="$(awk '
 HOME="$FIX"; SHARE_ROOT="$FIX/Shared"
 eval "$DEFS"
 for p in "$FIX" "$FIX/.ssh" "$FIX/.gnupg" "$FIX/.config" "$FIX/.local" \
-         "$FIX/.local/share" /etc / "$FIX/Documents"; do
+         "$FIX/.local/share" /etc / "$FIX/Documents" "$SIB" "$SIB/.ssh" "$SIB/Documents"; do
   r="$(check_folder "$p" 2>/dev/null | head -1)"
   case "$r" in OK*) v=ALLOWED ;; NO*) v=refused ;; *) v=BROKEN ;; esac
   printf '%s\t%s\n' "$v" "$p"
@@ -5292,15 +6042,32 @@ done
   const root = mkdtempSync(join(tmpdir(), "vessel-blocklist-"));
   let driven = 0;
   try {
+    /*
+     * AND ONCE AS A MAC. `fold_case` lowercases on Darwin only, so every run on
+     * this Linux box compared unfolded strings — and the other-account rule
+     * folded the input but not `/Users` or `$HOME`, so on a real Mac it matched
+     * nothing and `/Users/other/.ssh` was shareable, with this gate green. The
+     * fixture sits under a capitalised `Users` so the fold has something to do.
+     */
+    const runs = [
+      { os: "Linux", base: root, files: ["scripts/linux-share-setup.sh", "scripts/macos-share-setup.sh"] },
+      { os: "Darwin", base: join(root, "Users"), files: ["scripts/macos-share-setup.sh"] },
+    ];
+    for (const { os, base, files } of runs)
     // "bob smith" is the whole point: an ordinary macOS account name, and the
     // shape that shattered the list.
     for (const home of ["plain", "bob smith"]) {
-      const fix = join(root, home);
+      const fix = join(base, home);
       for (const d of [".ssh", ".gnupg", ".config", ".local/share/keyrings", "Documents", "Shared"]) {
         mkdirSync(join(fix, d), { recursive: true });
       }
-      for (const file of ["scripts/linux-share-setup.sh", "scripts/macos-share-setup.sh"]) {
-        const out = execFileSync("bash", ["-c", probeScript, "probe", file, fix], {
+      // A second account beside it, in the same container — which is what
+      // `dirname "$HOME"` resolves to here, so the containment rule can be
+      // driven in a throwaway tree instead of only on a real /home.
+      const sibling = join(base, `${home}-neighbour`);
+      for (const d of [".ssh", "Documents"]) mkdirSync(join(sibling, d), { recursive: true });
+      for (const file of files) {
+        const out = execFileSync("bash", ["-c", probeScript, "probe", file, fix, sibling, os], {
           encoding: "utf8",
         });
         const verdict = new Map<string, string>();
@@ -5317,7 +6084,24 @@ done
                          `${fix}/.local`, `${fix}/.local/share`, "/etc", "/"]) {
           must(
             verdict.get(p) === "refused",
-            `${file}: ${p.replace(fix, "~")} is ${verdict.get(p) ?? "unresolved"} with HOME="${home}" — that list is the only barrier there is`,
+            `${file} (${os}): ${p.replace(fix, "~")} is ${verdict.get(p) ?? "unresolved"} with HOME="${home}" — that list is the only barrier there is`,
+          );
+          driven += 1;
+        }
+
+        /*
+         * SOMEBODY ELSE'S HOME, which was ALLOWED on all three scripts until
+         * 2026-09-15. `$HOME` was blocked exactly and so was `/home`, and
+         * nothing named what sits between them. The `.ssh` case is the sharp
+         * one: every dot-directory in BLOCK_PREFIX is written `$HOME/.ssh`, so
+         * the list refused your own keys and handed over your housemate's — and
+         * on Debian a home directory is mode 0755 by default, so it needs no
+         * privilege at all. Found by writing the Windows half of this gate.
+         */
+        for (const p of [sibling, `${sibling}/.ssh`, `${sibling}/Documents`]) {
+          must(
+            verdict.get(p) === "refused",
+            `${file} (${os}): ${p.replace(sibling, "~other")} is ${verdict.get(p) ?? "unresolved"} with HOME="${home}" — that is another account's files, and the dot-directory entries are keyed to THIS home so nothing else refuses them`,
           );
           driven += 1;
         }
@@ -5326,7 +6110,7 @@ done
         // safe answer is "refuse everything" and nobody can share anything.
         must(
           verdict.get(`${fix}/Documents`) === "ALLOWED",
-          `${file}: an ordinary folder is refused with HOME="${home}" — the blocklist has become a wall`,
+          `${file} (${os}): an ordinary folder is refused with HOME="${home}" — the blocklist has become a wall`,
         );
         driven += 1;
       }
@@ -5334,7 +6118,7 @@ done
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-  return `${driven} verdicts from the real check_folder, over 2 scripts x 2 home directories (one with a space)`;
+  return `${driven} verdicts from the real check_folder, over 2 scripts x 2 home directories (one with a space), and the macOS script again as Darwin`;
 });
 
 /*
@@ -5373,12 +6157,9 @@ check("the Windows script resolves EVERY path component, not just the leaf", () 
   } catch {
     hasPwsh = false;
   }
-  if (!hasPwsh) {
-    SKIPPED.push(
-      "the Windows path resolver in windows-share-setup.ps1 — no `pwsh` here (snap install powershell --classic)",
-    );
-    return "NOT RUN — pwsh absent, named under 'could not be run' below";
-  }
+  // Nothing below the guard runs without pwsh: the resolver is executed, never
+  // read, so this gate verifies nothing at all on a machine without it.
+  if (!hasPwsh) skip("no `pwsh` here (snap install powershell --classic), so the resolver was not driven");
 
   const src = readFileSync("scripts/windows-share-setup.ps1", "utf8").replace(/^\uFEFF/, "");
   const from = src.indexOf("    try {\n        $rounds = 0");
@@ -5456,6 +6237,178 @@ check("the Windows script resolves EVERY path component, not just the leaf", () 
     driven += 1;
 
     return `${driven} verdicts from the real resolver: ancestor, chained, leaf and unresolvable links`;
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/*
+ * The Windows BLOCKLIST, executed — the last of the three gaps
+ * `docs/AUDIT-2026-09-14.md` names, and the security-shaped one.
+ *
+ * Two gates already touch this file and **neither one calls the blocklist**.
+ * The text gate parses the entry arrays and confirms the required names are
+ * present; the resolver gate above drives the reparse walk and stops short of
+ * the comparison. So the arrays were checked for *membership* and the code that
+ * consumes them was checked not at all — which is precisely how the 2026-09-14
+ * finding sat here with both of them green:
+ *
+ *   %USERPROFILE%\.ssh        ALLOWED     (the entry did not block itself)
+ *   %USERPROFILE%\.ssh\sub    refused
+ *
+ * `StartsWith($bad + '\')` is false when the path *is* the entry, so every
+ * prefix entry that had no twin in `$blockExact` blocked its contents and not
+ * itself. Five were in that shape — `.ssh`, `.aws`, `.gnupg`, `.docker`,
+ * `.kube` — and the script's own page tells the customer to pick the share
+ * root as one folder, so the result is a junction pointing at their private
+ * keys inside the directory they then hand to Chrome. Chrome does not catch it:
+ * its blocklist means "do not pick", never "do not read" (crbug 40061477).
+ *
+ * The Unix half of this has been driven since 2026-09-03 and the Windows half
+ * has not, which is the whole reason the finding was Windows-only.
+ *
+ * Sliced out of the real script exactly as the resolver gate is, with only the
+ * path SEPARATORS substituted and every substitution asserted, so a rewrite
+ * that changes the shape fails here rather than quietly testing nothing.
+ */
+check("the Windows script REFUSES the folders that matter, driven under pwsh", () => {
+  let hasPwsh = true;
+  try {
+    execFileSync("pwsh", ["-NoProfile", "-Command", "exit 0"], { stdio: "pipe" });
+  } catch {
+    hasPwsh = false;
+  }
+  if (!hasPwsh) skip("no `pwsh` here (snap install powershell --classic), so the blocklist was not driven");
+
+  const src = readFileSync("scripts/windows-share-setup.ps1", "utf8").replace(/^﻿/, "");
+  const from = src.indexOf("    $blockExact = @(");
+  must(from >= 0, "$blockExact is gone from windows-share-setup.ps1");
+  const marker = src.indexOf("    foreach ($bad in $blockPrefix) {", from);
+  must(marker >= 0, "the $blockPrefix loop is gone from windows-share-setup.ps1");
+  const end = src.indexOf("\n    }\n", marker);
+  must(end > marker, "could not find the end of the $blockPrefix loop");
+  let block = src.slice(from, end + "\n    }\n".length);
+
+  /*
+   * Separator substitution only. `Join-Path` and `Split-Path` are already
+   * platform-correct under pwsh on Linux; what is hard-coded is the `'\'` in
+   * the trim and in the prefix test, and the prefix test is the line the
+   * finding was in — so if it ever stops looking like this, this gate must
+   * fail rather than carry on testing a shape that no longer ships.
+   */
+  const subs: [string, string][] = [
+    ["TrimEnd('\\')", "TrimEnd([char]$SEP)"],
+    ["$bad + '\\'", "$bad + $SEP"],
+    ["$profileParent + '\\'", "$profileParent + $SEP"],
+    ["$profileRoot + '\\'", "$profileRoot + $SEP"],
+  ];
+  for (const [a, b] of subs) {
+    must(block.includes(a), `the blocklist no longer contains ${a} — this gate is testing nothing`);
+    block = block.split(a).join(b);
+  }
+  // The `-ieq` in the prefix loop is the fix itself. Asserted as text as well as
+  // driven, because losing it is the exact regression and the message should say
+  // so rather than leaving a reader to infer it from a failing path.
+  must(
+    /\$full -ieq \$bad -or/.test(block),
+    "the $blockPrefix loop no longer tests `-ieq` — a prefix entry stops blocking ITSELF, which is the 2026-09-14 finding",
+  );
+
+  const root = mkdtempSync(join(tmpdir(), "vessel-block-"));
+  try {
+    const real = realpathSync(root);
+    const profile = join(real, "Users", "me");
+    for (const d of [
+      ["Windows"], ["Program Files"], ["ProgramData"],
+      ["Users", "me", "Documents"], ["Users", "me", ".ssh"], ["Users", "me", ".ssh", "sub"],
+      ["Users", "me", ".aws"], ["Users", "me", ".gnupg"], ["Users", "me", ".docker"], ["Users", "me", ".kube"],
+      ["Users", "me", "AppData", "Roaming", "Thunderbird"],
+      ["Users", "me", "AppData", "Roaming", "Microsoft", "Protect"],
+      ["Users", "me", "AppData", "Local", "Google", "Chrome"],
+      ["Users", "me", "AppData", "Local", "Packages"],
+      ["Users", "other"], ["Users", "other", ".ssh"], ["Users", "other", "Documents"],
+    ]) mkdirSync(join(real, ...d), { recursive: true });
+
+    const harness = join(root, "block.ps1");
+    writeFileSync(
+      harness,
+      "param([string] $Path)\n" +
+        "$SEP = [string][System.IO.Path]::DirectorySeparatorChar\n" +
+        "$ShareRoot = Join-Path $env:USERPROFILE 'Shared'\n" +
+        "function Test-Block {\n" +
+        "    $full = [System.IO.Path]::GetFullPath($Path).TrimEnd([char]$SEP)\n" +
+        block +
+        "\n    return 'ALLOW'\n}\nTest-Block\n",
+      "utf8",
+    );
+
+    const env = {
+      ...process.env,
+      SystemRoot: join(real, "Windows"),
+      ProgramFiles: join(real, "Program Files"),
+      ProgramData: join(real, "ProgramData"),
+      USERPROFILE: profile,
+      APPDATA: join(profile, "AppData", "Roaming"),
+      LOCALAPPDATA: join(profile, "AppData", "Local"),
+    };
+    const verdict = (p: string) =>
+      execFileSync("pwsh", ["-NoProfile", "-File", harness, p], { encoding: "utf8", env }).trim();
+
+    /*
+     * `.ssh` and its four siblings lead, because they ARE the finding: each was
+     * allowed while its own children were refused. The case-varied one is here
+     * because the comparison is `-ieq`/OrdinalIgnoreCase and Windows paths are
+     * case-insensitive — `.SSH` is the same directory.
+     */
+    const cases: [string, string, boolean][] = [
+      ["the profile itself", profile, false],
+      ["the parent of every profile", join(real, "Users"), false],
+      /*
+       * The two that were ALLOWED when this gate was first run, and the reason
+       * it exists. The second is the sharp one: the `.ssh` entry is keyed to
+       * YOUR profile, so the list refused your own keys and handed over the
+       * other account's.
+       */
+      ["another account's profile", join(real, "Users", "other"), false],
+      ["another account's .ssh", join(real, "Users", "other", ".ssh"), false],
+      ["another account's Documents", join(real, "Users", "other", "Documents"), false],
+      ["%USERPROFILE%\\.ssh ITSELF", join(profile, ".ssh"), false],
+      ["%USERPROFILE%\\.ssh\\sub", join(profile, ".ssh", "sub"), false],
+      ["%USERPROFILE%\\.aws itself", join(profile, ".aws"), false],
+      ["%USERPROFILE%\\.gnupg itself", join(profile, ".gnupg"), false],
+      ["%USERPROFILE%\\.docker itself", join(profile, ".docker"), false],
+      ["%USERPROFILE%\\.kube itself", join(profile, ".kube"), false],
+      [".ssh in a different case", join(profile, ".SSH"), false],
+      ["%APPDATA% itself", join(profile, "AppData", "Roaming"), false],
+      ["%APPDATA%\\Thunderbird", join(profile, "AppData", "Roaming", "Thunderbird"), false],
+      ["%APPDATA%\\Microsoft\\Protect (DPAPI keys)", join(profile, "AppData", "Roaming", "Microsoft", "Protect"), false],
+      ["%LOCALAPPDATA% itself", join(profile, "AppData", "Local"), false],
+      ["%LOCALAPPDATA%\\Google\\Chrome", join(profile, "AppData", "Local", "Google", "Chrome"), false],
+      ["%LOCALAPPDATA%\\Packages", join(profile, "AppData", "Local", "Packages"), false],
+      ["the Windows directory", join(real, "Windows"), false],
+      ["Program Files", join(real, "Program Files"), false],
+      ["ProgramData", join(real, "ProgramData"), false],
+      // The converse. A blocklist that refuses everything is not a blocklist,
+      // and Documents is the folder the whole feature exists to share.
+      ["Documents", join(profile, "Documents"), true],
+    ];
+
+    let driven = 0;
+    let refused = 0;
+    for (const [what, path, shouldAllow] of cases) {
+      const got = verdict(path);
+      const allowed = got === "ALLOW";
+      must(
+        allowed === shouldAllow,
+        shouldAllow
+          ? `${what} was REFUSED — the blocklist has become too broad to share anything: ${got}`
+          : `${what} was ALLOWED by the real Windows blocklist (${path}) — this is the shape that junctions a customer's private keys into the folder the page tells them to hand to Chrome`,
+      );
+      driven += 1;
+      if (!shouldAllow) refused += 1;
+    }
+
+    return `${driven} verdicts from the real Test-ShareableFolder blocklist under pwsh: ${refused} refused (the five dot-directories themselves, both app-data roots, the profile and its parent), Documents still shareable`;
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -5575,6 +6528,96 @@ checkAsync("every JSON body the Worker reads is bounded on the stream", async ()
   must(raw.length === 0, `these read a request body without a bound: ${raw.join(", ")}`);
 
   return `endless body cancelled after ${pulled} chunks; UTF-16 and ASCII overflows 413; lenient reader still 413s; ${readdirSync("worker").filter((f) => f.endsWith(".ts")).length} Worker files read no body bare`;
+});
+
+/*
+ * **The published-config ceiling is measured in BYTES, and this drives the real
+ * route to prove it** (2026-09-14 audit). The 2026-09-03 fix swapped
+ * `JSON.stringify(...).length` — UTF-16 code units, which let 11,921 CJK
+ * characters through as "under 12,000" at 35,721 actual bytes — for a
+ * `TextEncoder` count. The gate above it only ever read the constant's value
+ * and that nothing truncates, so a revert to `.length` passed every check in
+ * this file. Here `publishSiteConfig` itself is called, over a stub `env` that
+ * answers the session, the account, the password hash and the limiter the way
+ * D1 and the Durable Object do, with a payload that is under the ceiling in
+ * code units and over it in bytes. The write must not happen and the refusal
+ * must name bytes. Two controls bracket it: the same shape in ASCII is
+ * accepted and written, and an ASCII payload over the ceiling is refused —
+ * so the stub is proven to reach the write, and the ceiling is proven to hold
+ * in both units.
+ */
+checkAsync("the published-config ceiling counts bytes, not UTF-16 units, on the real route", async () => {
+  const account = { id: "acct-check", handle: "operator", is_operator: 1, created_at: 0, reset_at: null };
+  const authSecret = toBase64Url(new Uint8Array(32).fill(7));
+  const env = {
+    SESSION_SECRET: "check-session-secret",
+    AUTH_PEPPER: "check-pepper",
+    RATE_SALT_SEED: "check-seed",
+  } as unknown as Env & Record<string, unknown>;
+  const hash = await authHash(env.AUTH_PEPPER, authSecret);
+  let written: string | null = null;
+  // Both stubs are deliberately partial: the limiter answers `idFromName` and a
+  // stub whose `fetch` allows, and D1 answers `prepare().bind().first()/.run()`.
+  // That is every call `publishSiteConfig` makes and nothing else — a fuller
+  // fake would be a second implementation to keep honest.
+  env.RATE_LIMIT = {
+    idFromName: (name: string) => name,
+    get: () => ({
+      fetch: async () => new Response(JSON.stringify({ allowed: true, retryAt: 0 })),
+    }),
+  } as unknown as DurableObjectNamespace;
+  env.DB = {
+    prepare: (sql: string) => ({
+      bind: (...args: unknown[]) => ({
+        first: async () =>
+          /FROM accounts/.test(sql) ? account : /FROM credentials/.test(sql) ? { auth_hash: hash } : null,
+        run: async () => {
+          if (/INTO site_config/.test(sql)) written = String(args[0]);
+          return { meta: { changes: 1 } };
+        },
+      }),
+    }),
+  } as unknown as D1Database;
+  const cookie = `${SESSION_COOKIE}=${await mintSession(env.SESSION_SECRET, "session", account.id)}`;
+
+  const publish = async (config: unknown): Promise<"ok" | string> => {
+    written = null;
+    const request = new Request("https://mcclevarty.ca/api/site-config", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json", "cf-connecting-ip": "203.0.113.9" },
+      body: JSON.stringify({ authSecret, config }),
+    });
+    try {
+      await publishSiteConfig(request, env);
+      return "ok";
+    } catch (error) {
+      return `${(error as BadRequest).status ?? -1} ${(error as Error).message}`;
+    }
+  };
+
+  // `lookPages` is one of the growing keys, and the Worker validates shape and
+  // size only — the browser judges the values — so a string is a fair payload.
+  const units = 5_000;
+  const wide = { lookPages: "日".repeat(units) };
+  const encoded = JSON.stringify({ lookPages: wide.lookPages });
+  const bytes = new TextEncoder().encode(encoded).byteLength;
+  must(encoded.length < 12_000 && bytes > 12_000, `the probe is ${encoded.length} units and ${bytes} bytes — it must straddle the ceiling`);
+
+  const narrow = await publish({ lookPages: "a".repeat(units) });
+  must(narrow === "ok" && written !== null, `the ASCII control was refused (${narrow}) — the stub is not reaching the write`);
+  must(JSON.parse(written!).lookPages === "a".repeat(units), "the ASCII control was written, but not as sent");
+
+  const over = await publish({ lookPages: "a".repeat(12_100) });
+  must(over.startsWith("400 ") && written === null, `12,100 ASCII bytes were not refused (${over})`);
+
+  const verdict = await publish(wide);
+  must(
+    verdict.startsWith("400 ") && written === null,
+    `${units} three-byte characters (${bytes} bytes) passed a 12,000-byte ceiling — the config length is being measured in UTF-16 units (${verdict})`,
+  );
+  must(/\b\d{5} bytes\b/.test(verdict) && verdict.includes(`${bytes} bytes`), `the refusal does not say how many bytes it measured: ${verdict}`);
+
+  return `real publishSiteConfig: ${units} ASCII written, 12,100 ASCII refused, ${units} CJK (${bytes} bytes) refused`;
 });
 
 
@@ -5697,12 +6740,92 @@ check("the browsing tab pins the agent key: first use pins, a change is refused 
   const pinSave = src.indexOf("shareStore.savePin(");
   must(open > 0 && dial > open && pinRead > open && pinRead < dial, "the pin is not consulted before the socket is dialled");
   must(pinSave > dial, "the pin is saved before the agent has proven its key");
-  must(/if \(verdict === "changed"\) throw new AgentKeyChanged/.test(src), "a changed key is not refused");
+  must(
+    /if \(verdict === "changed" && !acceptNewKey\) throw new AgentKeyChanged/.test(src),
+    "a changed key is not refused, or the accept flag no longer guards the refusal",
+  );
+  /*
+   * The accept flag suppresses the REFUSAL and nothing else (2026-09-14). If it
+   * ever short-circuits the dial, "I re-keyed it" would pin an unverified key —
+   * which is the bug this whole shape was rewritten to remove. `dial()` must be
+   * unconditional, and the write must cover the accepted re-key as well as the
+   * first use, or an accepted key is verified and then not remembered.
+   */
+  must(
+    /const conn = await DriveConnection\.dial\(machine, grantKey\);/.test(src),
+    "the dial is no longer unconditional — an accepted re-key must still be verified",
+  );
+  must(
+    /if \(verdict !== "same"\) await shareStore\.savePin\(/.test(src),
+    "the pin is not written for an accepted re-key, so the owner is asked again every time",
+  );
+  /*
+   * WHO MAY WRITE A PIN (2026-09-14, and the reason this gate grew). The three
+   * assertions above read `browse.ts` and prove the ordering inside `open()`.
+   * They said nothing about anyone ELSE calling `savePin`, and the machines
+   * page did: its "I re-keyed it — accept the new key" button wrote the offered
+   * key straight to the pin store and only then called `connect()`. So the pin
+   * was taken on a key that had proven nothing — the exact inversion of the rule
+   * the lines above exist to enforce — and because nothing rolled it back, a
+   * connection that then failed left the impostor's key pinned, silencing this
+   * very warning for whatever answered next. `deletePin` existed and had no
+   * caller anywhere.
+   *
+   * The fix is to clear the stale pin and let `open()` take its "first" path, so
+   * this is now an ALLOW-LIST rather than an ordering check: two files may write
+   * a pin, and a third one appearing is the bug returning by a different door.
+   * `browse.ts` pins after `dial()` verifies by signature; `SharePage.tsx` pins
+   * at pair time, where `pairMachine` has already proven the key locally against
+   * the password (AES-KW plus the `Q = d·G` import check) rather than trusting
+   * the server's claim.
+   */
+  const PIN_WRITERS = ["src/share/browse.ts", "src/components/SharePage.tsx"];
+  const writers: string[] = [];
+  const walkSrc = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) walkSrc(path);
+      else if (/\.(ts|tsx)$/.test(entry.name) && readFileSync(path, "utf8").includes("shareStore.savePin("))
+        writers.push(path.split("\\").join("/"));
+    }
+  };
+  walkSrc("src");
+  const strayWriters = writers.filter((f) => !PIN_WRITERS.includes(f));
+  must(
+    strayWriters.length === 0,
+    `${strayWriters.join(", ")} writes an agent-key pin — only ${PIN_WRITERS.join(" and ")} may, and only after the key is proven`,
+  );
+  for (const expected of PIN_WRITERS) {
+    must(writers.includes(expected), `${expected} no longer writes a pin — has the trust-on-first-use path moved?`);
+  }
+
+  /*
+   * The page must not reach the pin store AT ALL. It wrote the offered key
+   * before `connect()` (pinning something unverified, with no rollback when the
+   * connect then failed); clearing the pin instead only moved the hole, since a
+   * failed connect after an accept left the machine un-pinned and the next
+   * successful one silently trusted whatever the server named by then. Both were
+   * the page deciding something only the verified connection can know, so the
+   * decision travels as a flag and the store is `browse.ts`'s alone.
+   */
+  const page = readFileSync("src/components/MachinesPage.tsx", "utf8");
+  must(
+    !page.includes("shareStore."),
+    "the machines page touches the pin store — the accept decision must travel as open()'s flag, not as a write",
+  );
+  must(
+    /connect\(asked\.machine, asked\.drive, asked\.key, true\)/.test(page),
+    "the accept-the-new-key button does not pass the accept flag, so the owner cannot get past the warning",
+  );
+  must(
+    /DriveConnection\.open\(machine, key, acceptNewKey\)/.test(page),
+    "the page does not forward the accept flag to open()",
+  );
   must(
     readFileSync("src/components/MachinesPage.tsx", "utf8").includes("cause instanceof AgentKeyChanged"),
     "the machines page does not catch AgentKeyChanged, so the owner is never asked",
   );
-  return "3 verdicts, refusal wording, pin read before dial and saved after verification, page asks";
+  return `3 verdicts, refusal wording, pin read before dial and saved after verification, ${writers.length} permitted pin writers, page holds no pin of its own`;
 });
 
 /*
@@ -5737,6 +6860,249 @@ check("both host scripts write the Chromium managed policy, and parse", () => {
   return `2 host scripts, ${seen} policy keys, both parse`;
 });
 
+/*
+ * The store blocklist, EXECUTED — canonicalisation and the two refusal loops
+ * together, out of the real script (2026-09-17, audit item 28).
+ *
+ * `--store` ends up in `sudo chown ${USER}:${grp}` and `sudo chmod 0750`, and it
+ * is remembered in a user-writable file that later runs re-read, so one accepted
+ * value is permanent. `parse_args` refuses `/etc`, `/usr`, `/var`, `/root` and
+ * the rest — but it compared a path `canon_store` had only *lexically* cleaned
+ * whenever the target did not exist yet, which is the normal first-run shape.
+ * So `--store /srv/data/vessel` with `/srv/data` a symlink to `/etc` matched no
+ * blocked prefix, and `prepare_store` then followed the link for real and handed
+ * `/etc/vessel` to the autologin desktop user.
+ *
+ * This drives `parse_args` itself rather than `canon_store` alone, for the
+ * reason the duel camera gate records: driving the resolver alone stays green
+ * when the caller stops consulting it, and the caller is the barrier. `die` is
+ * stubbed to a refusal and the globals the function reads are supplied, so the
+ * real comparison runs against a real symlinked tree.
+ *
+ * It fails against the pre-fix script — `link-to-etc/vessel` is ACCEPTED there —
+ * which is the only thing that makes it a gate rather than a description.
+ */
+check("the store blocklist refuses a symlinked ancestor, driven", () => {
+  const probe = String.raw`
+set -uo pipefail
+SRC="$1"; TMPROOT="$2"; shift 2
+DEFS="$(awk '/^(canon_store|parse_args)\(\)/{i=1} i{print} i&&/^}/{i=0}' "$SRC")"
+die()  { printf 'REFUSED\n'; exit 7; }
+warn() { :; }
+info() { :; }
+eval "$DEFS"
+for p in "$@"; do
+  out="$(
+    DO_VERIFY_ONLY=0; DO_SSH_KEY_ONLY=0; DO_FIREWALL=1; FIREWALL_EXPLICIT=0
+    DO_CHROMIUM_POLICY=1; POLICY_EXPLICIT=0; DO_AUTO_CHROMIUM=1; AUTOCHROME_EXPLICIT=0
+    DO_ALLOW_SSH_PASSWORDS=0; DO_PIHOLE=0; PIHOLE_ADMIN_LAN=0
+    STORE_DIR=""; STORE_EXPLICIT=0; KIOSK_URL=""; DEFAULT_URL="about:blank"
+    DEFAULT_STORE="/srv/vessel"; STORE_FILE="$TMPROOT/none"; OPTIONS_FILE="$TMPROOT/none2"
+    parse_args --store "$p" about:blank && printf 'ACCEPTED %s\n' "$STORE_DIR"
+  )"
+  # No braced shell expansions anywhere in this probe, deliberately: it is a
+  # template literal on the TypeScript side, and String.raw suppresses backslash
+  # escapes but NOT substitution — so a braced shell default is parsed as
+  # JavaScript and the file stops compiling. Plain "$name" only.
+  [ -n "$out" ] || out=BROKEN
+  printf '%s\t%s\n' "$out" "$p"
+done
+`;
+
+  const root = mkdtempSync(join(tmpdir(), "vessel-store-"));
+  let driven = 0;
+  try {
+    mkdirSync(join(root, "plain"), { recursive: true });
+    // The two shapes that matter: a link whose target is blocked outright, and
+    // one whose target is blocked by prefix. Both are given a tail that does NOT
+    // exist, because an existing tail was resolved correctly even before the fix
+    // — the hole was only ever reachable through a path not yet created.
+    symlinkSync("/etc", join(root, "link-to-etc"));
+    symlinkSync("/var", join(root, "link-to-var"));
+
+    const out = execFileSync(
+      "bash",
+      ["-c", probe, "probe", "scripts/thinkcentre-setup.sh", root,
+       join(root, "link-to-etc", "vessel"),
+       join(root, "link-to-var", "newlib"),
+       join(root, "plain", "store"),
+       "/srv/vessel", "/etc", "//etc/x", "/home"],
+      { encoding: "utf8" },
+    );
+    const verdict = new Map<string, string>();
+    for (const line of out.trim().split("\n")) {
+      const [v, ...rest] = line.split("\t");
+      verdict.set(rest.join("\t"), v);
+    }
+
+    for (const [p, why] of [
+      [join(root, "link-to-etc", "vessel"), "a symlinked ancestor pointing at /etc — this is the shape the fix is for, and it gets chowned"],
+      [join(root, "link-to-var", "newlib"), "a symlinked ancestor pointing at /var"],
+      ["/etc", "a blocked directory named outright"],
+      ["//etc/x", "a leading // must collapse before the comparison"],
+      ["/home", "a directory refused outright"],
+    ] as const) {
+      must(
+        verdict.get(p) === "REFUSED",
+        `thinkcentre-setup.sh ACCEPTED ${p.replace(root, "TMP")} as a data store (${verdict.get(p) ?? "unresolved"}) — ${why}`,
+      );
+      driven += 1;
+    }
+
+    // And it must stay usable, or the safe answer is "refuse everything" and the
+    // script cannot set up the host it exists to set up.
+    for (const p of [join(root, "plain", "store"), "/srv/vessel"]) {
+      must(
+        verdict.get(p)?.startsWith("ACCEPTED") === true,
+        `thinkcentre-setup.sh refused ${p.replace(root, "TMP")}, an ordinary store path — the blocklist has become a wall`,
+      );
+      driven += 1;
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+  return `${driven} verdicts from the real parse_args, against a symlinked throwaway tree`;
+});
+
+/*
+ * The desktop-looks project is a SEPARATE repository (2026-09-14), checked out
+ * beside this one as `../debian-desktop`. The split is by authority: every script that can
+ * take the file host offline — `plasma-dark-setup.sh` above all, which pins the X11
+ * session the kiosk silently depends on — stays HERE, gated; the switcher, the
+ * screenshots and the looks' documentation, none of which touch anything outside
+ * `$HOME`, live there. `../debian-desktop/BLUEPRINT.md` §3 carries the boundary.
+ *
+ * These two gates stay on this side because the thing that breaks them is an edit
+ * to the BUILDER, which lives here and fires the check hook on every change. When
+ * the sibling is not checked out they name themselves under "could not be run"
+ * rather than passing quietly — that is the 2026-09-03 lesson, and a cross-repo
+ * gate is exactly where it would be easiest to forget.
+ */
+/*
+ * The sibling is `debian-desktop`; `debian` was its name for a few hours on
+ * 2026-09-14 and is accepted so an older checkout beside this one still gates
+ * rather than silently skipping. Resolved by looking for the switcher itself, not
+ * for the directory — a directory can exist and be empty, and "the folder is
+ * there" is not the question either gate is asking.
+ */
+const DESKTOP_REPO_CANDIDATES = ["../debian-desktop", "../debian"];
+const DESKTOP_REPO =
+  DESKTOP_REPO_CANDIDATES.find((dir) => existsSync(`${dir}/look-switcher.sh`)) ?? DESKTOP_REPO_CANDIDATES[0];
+const desktopCheckedOut = existsSync(`${DESKTOP_REPO}/look-switcher.sh`);
+const DESKTOP_ABSENT = `neither ${DESKTOP_REPO_CANDIDATES.join(" nor ")} is checked out beside this repo`;
+
+/*
+ * `LOOK_FILES` is two copies of one list — one in the builder here, one in the
+ * switcher there. If they drift, a look saved by one restores incompletely under
+ * the other and the symptom is a panel that comes back wearing the wrong colours:
+ * nothing errors, and you find out by looking at a screen that has no monitor on it
+ * and is usually blanked.
+ */
+check("the two LOOK_FILES copies agree", () => {
+  // Without the switcher there is nothing to compare against — zero bytes
+  // verified — so this is a skip, not a pass.
+  if (!desktopCheckedOut) skip(`${DESKTOP_ABSENT}, so the switcher's copy could not be compared`);
+  const slice = (file: string) => {
+    const text = readFileSync(file, "utf8");
+    const start = text.indexOf("LOOK_FILES=(");
+    must(start >= 0, `${file} has no LOOK_FILES`);
+    const end = text.indexOf(")", start);
+    must(end > start, `${file}'s LOOK_FILES is unterminated`);
+    return text
+      .slice(start + "LOOK_FILES=(".length, end)
+      .split(/\s+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  };
+  const builder = slice("scripts/plasma-dark-setup.sh");
+  const switcher = slice(`${DESKTOP_REPO}/look-switcher.sh`);
+  must(builder.length >= 8, `only ${builder.length} files in the builder's list`);
+  must(
+    builder.join("\n") === switcher.join("\n"),
+    `the copies have drifted:\n  builder:  ${builder.join(" ")}\n  switcher: ${switcher.join(" ")}`,
+  );
+  return `${builder.length} files, identical in both repositories`;
+});
+
+/*
+ * A look name is written FOUR times in the builder — two validator arms, the error
+ * message, the accent table — and again as preview filenames in the other
+ * repository. The validator is a closed set precisely because the name reaches a
+ * filename and a qdbus payload, so a look present in one place and absent from
+ * another is either a look you cannot ask for or a name that no longer exists. The
+ * three in-repo copies are always checked; the previews only when the sibling is
+ * there. `ubuntu` is the one look with no accent of its own (it keeps the default)
+ * and no previews (it is "whatever was already there").
+ */
+check("the desktop looks are one closed set", () => {
+  const text = readFileSync("scripts/plasma-dark-setup.sh", "utf8");
+
+  const caseStart = text.indexOf('case "${LOOK}" in');
+  must(caseStart > 0, "the builder no longer validates --look against a closed set");
+  const arms = text.slice(caseStart, text.indexOf("esac", caseStart));
+  const accepted = new Set(
+    arms
+      .split("\n")
+      .filter((line) => /^\s+[a-z0-9|-]+\)\s*;;\s*$/.test(line))
+      .flatMap((line) => line.trim().replace(/\).*$/, "").split("|")),
+  );
+  must(accepted.size >= 18, `the validator accepts only ${accepted.size} looks`);
+
+  const message = /--look must be one of: ([a-z0-9 -]+) \(got:/.exec(text);
+  must(message !== null, "the --look error message no longer lists the looks");
+  const listed = new Set(message![1].trim().split(/\s+/));
+  const validatorOnly = [...accepted].filter((l) => !listed.has(l));
+  const messageOnly = [...listed].filter((l) => !accepted.has(l));
+  must(
+    validatorOnly.length === 0 && messageOnly.length === 0,
+    `the validator and its error message disagree — validator only: ${validatorOnly.join(" ") || "none"}; message only: ${messageOnly.join(" ") || "none"}`,
+  );
+
+  const accentStart = text.indexOf("if [ \"${ACCENT_SET}\" -eq 0 ]; then");
+  must(accentStart > 0, "the accent table is gone");
+  const accented = new Set(
+    text
+      .slice(accentStart, text.indexOf("esac", accentStart))
+      .split("\n")
+      .filter((line) => /^\s+[a-z0-9-]+\)\s+ACCENT=/.test(line))
+      .map((line) => line.trim().replace(/\).*$/, "")),
+  );
+  const strayAccent = [...accented].filter((l) => !accepted.has(l));
+  must(strayAccent.length === 0, `the accent table names looks the validator refuses: ${strayAccent.join(" ")}`);
+
+  // Three of the four copies live in this repo and were just checked for real,
+  // so this stays `ok` — but the detail must say which copy went dark.
+  if (!desktopCheckedOut) {
+    return `${accepted.size} looks, ${accented.size} accents agree in the builder; the preview filenames were NOT checked — ${DESKTOP_ABSENT}`;
+  }
+  const previews = new Set(
+    readdirSync(`${DESKTOP_REPO}/previews`)
+      .filter((f) => /-\d+\.png$/.test(f))
+      .map((f) => f.replace(/-\d+\.png$/, "")),
+  );
+  const orphans = [...previews].filter((l) => !accepted.has(l));
+  must(orphans.length === 0, `previews name looks that do not exist: ${orphans.join(" ")}`);
+  return `${accepted.size} looks, ${accented.size} accents, ${previews.size} photographed, all agree`;
+});
+
+/*
+ * `bash -n` over the host scripts. Before 2026-09-13 `debian-basics.sh`,
+ * `plasma-dark-setup.sh` and `claude-code-setup.sh` had no gate of any kind — not
+ * even this one — and a heredoc that swallows the rest of the file is exactly the
+ * failure this shape of script invites. The sibling repository parses its own two.
+ */
+check("every host script parses", () => {
+  const files = [
+    "scripts/debian-basics.sh",
+    "scripts/plasma-dark-setup.sh",
+    "scripts/claude-code-setup.sh",
+    "scripts/linux-drive-report.sh",
+    "scripts/06-wifi-tools.sh",
+  ];
+  for (const file of files) execFileSync("bash", ["-n", file], { stdio: "pipe" });
+  return `${files.length} scripts parse`;
+});
+
 const UNCHECKABLE = [
   "whether the fight reads well — it cannot be watched here (rAF parks)",
   "whether any layout is beautiful, or the copy sounds right",
@@ -5746,24 +7112,284 @@ const UNCHECKABLE = [
   // orphaned. It cannot prove the mark is the right one, or that two of them are
   // not the same idea drawn twice — and at 18px that is the whole question.
   "whether a category's icon reads as that category, and whether any two are alike",
+  // The four desktop gates prove the look NAMES agree everywhere and that every
+  // script parses. Nothing here can open a screenshot. The machine has no monitor
+  // and its screen is usually DPMS-blanked, so the only answer is `capture-look.sh`
+  // and a pair of eyes on `desktop/previews/`.
+  "whether a desktop look resembles the distribution it imitates — and whether the host is actually serving files",
 ];
+
+/*
+ * The deploy shape, which nothing gated at all until 2026-09-15.
+ *
+ * `docs/AUDIT-2026-09-14.md` names this as one of three places where the suite
+ * was green throughout the bug it is named after: **no check mentioned
+ * `_redirects`, `_headers`, `rollupOptions`, `fxlab`, `sitelab` or
+ * `run_worker_first`.** Audit item 39 — whose absence served a frameable,
+ * nonce-less, year-cached copy of the app shell at any `/assets/<name>`
+ * somebody chose, live on production — was fixed by deleting a negation from
+ * one line of `wrangler.toml`, and **re-adding that negation passed every check
+ * in the suite.** Its fix exists only as a comment until this gate.
+ *
+ * Every assertion is a sentence `CLAUDE.md` states as an invariant, and each has
+ * a live failure behind it rather than a preference.
+ */
+check("the deploy shape — the traps that had no other gate", () => {
+  const wrangler = readFileSync("wrangler.toml", "utf8");
+  const vite = readFileSync("vite.config.ts", "utf8");
+  const pkg = JSON.parse(readFileSync("package.json", "utf8")) as {
+    scripts: Record<string, string>;
+  };
+  const predeploy = pkg.scripts.predeploy ?? "";
+
+  /*
+   * Item 39. It must be the bare boolean: a negation is matched against the
+   * PATH, not against what exists at it, so `["/*", "!/assets/*"]` excluded
+   * every *miss* under `/assets/` as well as every hit — and a miss is the asset
+   * server's SPA fallback, i.e. the shell with no security headers and
+   * `_headers`' year-long `immutable`. Narrowing the glob only moves the name.
+   */
+  // Every occurrence, not the first: a second `run_worker_first` in an `[env.*]`
+  // block would be invisible to a non-global match, and it is the one that would
+  // win for that environment.
+  const rwfAll = [...wrangler.matchAll(/^\s*run_worker_first\s*=\s*(.+?)\s*$/gm)];
+  must(rwfAll.length > 0, "wrangler.toml no longer sets run_worker_first at all");
+  for (const rwf of rwfAll) {
+    must(
+      rwf[1] === "true",
+      `run_worker_first is ${rwf[1]}, not the bare \`true\` — a list reintroduces audit item 39, because a negation excludes MISSES under the glob as well as hits, and a miss is the unhardened app shell`,
+    );
+  }
+
+  // `/404` is a real page here, not a host fallback.
+  must(
+    /not_found_handling\s*=\s*"single-page-application"/.test(wrangler),
+    "wrangler.toml lost not_found_handling — every client-routed path would become a host 404",
+  );
+
+  /*
+   * `workers_dev` defaults to false once a route exists, and that is wanted: it
+   * closes the signup endpoint that was publicly reachable on the workers.dev
+   * subdomain, outside the route bindings, before cutover.
+   */
+  must(
+    !/^\s*workers_dev\s*=\s*true/m.test(wrangler),
+    "workers_dev = true reopens the signup endpoint on the workers.dev subdomain",
+  );
+
+  // Load-bearing for local development: the routes make `wrangler dev` simulate
+  // `http://mcclevarty.ca/...`, so without this the loopback exemption in
+  // `httpsRedirect` never matches and every local request 301s to itself.
+  /*
+   * Scoped to the `[dev]` table itself rather than `[dev][\s\S]*?upstream_
+   * protocol`, which is unbounded to the right: that would pass on an
+   * `upstream_protocol` sitting in some *later* table, so moving the key out of
+   * `[dev]` — the exact change this is here to catch — would not be caught.
+   * Slice from `[dev]` to the next table header and look only inside it.
+   */
+  const devAt = wrangler.indexOf("\n[dev]");
+  must(devAt !== -1, "wrangler.toml has no [dev] table — local development will 301 every request to itself");
+  const afterDev = wrangler.slice(devAt + 1);
+  const nextTable = afterDev.slice(1).search(/^\[/m);
+  const devTable = nextTable === -1 ? afterDev : afterDev.slice(0, nextTable + 1);
+  must(
+    /^\s*upstream_protocol\s*=\s*"https"/m.test(devTable),
+    "[dev] upstream_protocol is no longer https — every local request will 301 to itself",
+  );
+
+  /*
+   * The dev-only benches are excluded from the build **by construction**: Vite
+   * declares no `rollupOptions.input`, so the build has one entry
+   * (`index.html`) and `dist/` receives none of them.
+   */
+  must(
+    !/rollupOptions/.test(vite),
+    "vite.config.ts declares rollupOptions — if that becomes a multi-page input map, fxlab/sitelab ship to production",
+  );
+  for (const bench of ["fxlab.html", "sitelab.html"]) {
+    must(existsSync(bench), `${bench} has moved — it is a dev-only bench and lives at the repo root`);
+    must(
+      !existsSync(`public/${bench}`),
+      `${bench} is in public/, so it is copied into dist/ and shipped — the benches are dev-only`,
+    );
+  }
+
+  /*
+   * `_redirects` is valid for Pages and is *configuration* to Workers static
+   * assets, which parses it and rejects it as an infinite loop — the deploy
+   * fails at the API call. So it stays in `public/` (Pages is the rollback) and
+   * is stripped from `dist/` at deploy time.
+   */
+  must(
+    existsSync("public/_redirects"),
+    "public/_redirects is gone — it is the Pages rollback, and Pages still auto-deploys from main",
+  );
+  must(
+    /_redirects/.test(predeploy),
+    "predeploy no longer strips dist/_redirects — Workers static assets parses it as configuration and refuses the deploy outright",
+  );
+  /*
+   * And `_headers` is deliberately NOT stripped: unlike `_redirects` it is valid
+   * for both hosts, it is what gives `/assets/*` its `immutable`, and it is the
+   * bundles' `nosniff` on the Pages rollback. Do not generalise "strip the
+   * config files at deploy" to this one.
+   */
+  must(
+    existsSync("public/_headers"),
+    "public/_headers is gone — it carries /assets/* immutable and the Pages rollback's nosniff",
+  );
+  must(
+    !/_headers/.test(predeploy),
+    "predeploy strips dist/_headers — that is the one config file both hosts accept, and it must ship",
+  );
+
+  /*
+   * `npm run deploy`, never bare `wrangler deploy`. The whole guarantee is that
+   * `predeploy` runs the full suite and the build first.
+   */
+  must(
+    /npm run check/.test(predeploy),
+    "predeploy no longer runs the check suite — nothing would stand between this repo and a bad deploy",
+  );
+  must(
+    /npm run build|vite build/.test(predeploy),
+    "predeploy no longer builds — wrangler would publish whatever dist/ happened to hold",
+  );
+  /*
+   * All three projects must be typechecked, AND the deploy must actually run
+   * that. Those are two assertions because they were two facts: `typecheck`
+   * named all three from 2026-09-15, but `predeploy` was `check && build`, and
+   * `build` is `tsc -b` over `tsconfig.json`, whose `include` is `["src",
+   * "vite.config.ts"]`. `wrangler deploy` then esbuilds `worker/` without
+   * checking it. So both the Worker and the gate suite were typechecked by
+   * nothing *at deploy time* — asserting the script named them proved only that
+   * a command nobody on the deploy path ran was correctly spelled.
+   */
+  for (const project of ["tsconfig.worker.json", "tsconfig.scripts.json"]) {
+    must(
+      pkg.scripts.typecheck?.includes(project) ?? false,
+      `npm run typecheck dropped ${project} — that half of the tree goes back to being typechecked by nothing`,
+    );
+  }
+  must(
+    /npm run typecheck/.test(predeploy),
+    "predeploy no longer runs npm run typecheck — worker/ and scripts/ are esbuilt, which strips types without checking them, so nothing on the deploy path would check either",
+  );
+
+  return "run_worker_first bare true, SPA fallback, no workers_dev, benches unshipped, _redirects stripped and _headers kept, predeploy gates the deploy, scripts typechecked";
+});
+
+/*
+ * The addresses that are not pages, driven through the real `crawlerFile`.
+ *
+ * The SPA fallback answers an unknown path with **200 and the whole app shell**,
+ * published config inlined into its head. Right for a page-shaped path, wrong
+ * for everything else — and the wrongness keeps recurring: audit item 39, the
+ * trailing-slash pages, and `/favicon.ico` + `/apple-touch-icon.png`, which
+ * answered `200 text/html` to crawlers, unfurlers and iOS for months while
+ * `index.html`'s comment asserted that the inline icon prevented it.
+ *
+ * This drives the function rather than reading it, and it asserts the converse
+ * too — a page-shaped path must still come back `null` and fall through — so
+ * nobody can satisfy it with a `crawlerFile` that intercepts everything.
+ */
+check("crawlerFile answers the addresses that are not pages, and only those", () => {
+  const at = (path: string) => crawlerFile(new URL(`https://mcclevarty.ca${path}`));
+
+  /*
+   * All four shapes, not the two obvious ones. `index.html` declares no
+   * `rel="apple-touch-icon"`, so iOS probes the root itself and asks for
+   * `-precomposed` FIRST, with sized variants before either on some versions.
+   * The first version of this fix matched two exact strings and left the name
+   * actually requested first still answering 200 with the shell.
+   */
+  const probes = [
+    "/favicon.ico",
+    "/apple-touch-icon.png",
+    "/apple-touch-icon-precomposed.png",
+    "/apple-touch-icon-180x180.png",
+    "/apple-touch-icon-180x180-precomposed.png",
+  ];
+  for (const path of probes) {
+    const response = at(path);
+    must(response !== null, `${path} falls through to the SPA fallback, which answers 200 with the app shell`);
+    must(
+      response!.status === 404,
+      `${path} answers ${response!.status}; it must be 404, because there is genuinely no file there`,
+    );
+    must(
+      !/text\/html/.test(response!.headers.get("content-type") ?? ""),
+      `${path} is answered as HTML — that is the shell leaking at an address that is not a page`,
+    );
+  }
+
+  /*
+   * **And the wiring, because driving the function proves nothing about whether
+   * it is called.** `crawlerFile` is pure; delete its call in `worker/index.ts`,
+   * or move it below the asset fetch, and every address above goes straight back
+   * to `200 text/html` while this gate still reports its cheerful summary line.
+   * That is exactly the shape of audit item 39 — a fix that existed only as a
+   * comment — so the source scan is not redundant with the drive above it: one
+   * says the function is right, the other says the function runs, and neither
+   * implies the other.
+   */
+  const indexSrc = readFileSync("worker/index.ts", "utf8");
+  const callAt = indexSrc.indexOf("crawlerFile(url)");
+  const assetAt = indexSrc.indexOf("await asset(request, env)");
+  must(callAt !== -1, "worker/index.ts no longer calls crawlerFile(url) — every icon and crawler address returns the app shell");
+  must(assetAt !== -1, "worker/index.ts no longer fetches the asset — this gate's ordering check cannot be trusted, fix the gate");
+  must(
+    callAt < assetAt,
+    "worker/index.ts calls crawlerFile AFTER the asset fetch — the SPA fallback answers first, so the 404s never happen",
+  );
+
+  const robots = at("/robots.txt");
+  must(robots !== null && robots.status === 200, "/robots.txt no longer answers 200");
+  const sitemap = at("/sitemap.xml");
+  must(sitemap !== null && sitemap.status === 200, "/sitemap.xml no longer answers 200");
+
+  /*
+   * The converse, and it is the half that stops this being satisfied by a
+   * `crawlerFile` that intercepts everything: a real page must still fall
+   * through to the shell, or the site stops rendering.
+   */
+  for (const path of ["/", "/contact", "/scams", "/downloads", "/downloads/some-file"]) {
+    must(at(path) === null, `crawlerFile intercepted ${path}, which is a page and must reach the app shell`);
+  }
+
+  return `${probes.length} icon probes are 404 and not HTML (precomposed and sized included); crawlerFile is called ahead of the asset fetch; robots and sitemap still 200; five page paths still fall through`;
+});
 
 // ---- report ----------------------------------------------------------------
 
-const failed = results.filter((r) => !r.ok);
+const passed = results.filter((r) => r.status === "ok");
+const failed = results.filter((r) => r.status === "fail");
+const skipped = results.filter((r) => r.status === "skip");
+const LABEL: Record<Status, string> = { ok: "ok  ", fail: "FAIL", skip: "SKIP" };
 for (const r of results) {
-  console.log(`${r.ok ? "ok  " : "FAIL"}  ${r.name.padEnd(46)} ${r.detail}`);
+  console.log(`${LABEL[r.status]}  ${r.name.padEnd(46)} ${r.detail}`);
 }
 console.log("");
+// A skip is never a pass, and never a failure: it is counted beside the passes
+// so the number cannot be read as "everything was verified", and it leaves the
+// exit code alone, because the sibling checkout is legitimately not always
+// there and predeploy must not break over it.
+const couldNot =
+  skipped.length === 0 ? "" : `, ${skipped.length} could not be run`;
 if (failed.length === 0) {
-  console.log(`${results.length} checks passed${FAST ? " (fast — duel simulation skipped)" : ""}.`);
+  console.log(
+    `${passed.length} check${passed.length === 1 ? "" : "s"} passed${couldNot}${FAST ? " (fast — duel simulation skipped)" : ""}.`,
+  );
   console.log("Still needs a person:");
   for (const u of UNCHECKABLE) console.log(`  · ${u}`);
-  if (SKIPPED.length > 0) {
-    console.log("Could NOT be run on this machine:");
-    for (const sk of SKIPPED) console.log(`  · ${sk}`);
-  }
 } else {
-  console.log(`${failed.length} of ${results.length} checks FAILED.`);
+  console.log(`${failed.length} of ${results.length} checks FAILED${couldNot}.`);
   process.exitCode = 1;
+}
+// Printed on red runs too. A red run is exactly when you most need to know what
+// ELSE went unverified, and this list vanishing behind the failure branch was
+// audit item 36.
+if (skipped.length > 0) {
+  console.log("Could NOT be run on this machine:");
+  for (const sk of skipped) console.log(`  · ${sk.name} — ${sk.detail}`);
 }

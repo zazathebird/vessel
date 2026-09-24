@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef } from "react";
+import { lazy, useEffect, useMemo, useRef, useState } from "react";
 
 import { useConfig } from "./config/ConfigContext";
+import { useSession } from "./auth/SessionContext";
 import { PAGES } from "./data/pages";
 import { themeClasses, themeVars } from "./theme";
 import { FxCanvas } from "./fx/FxCanvas";
@@ -11,18 +12,61 @@ import { Header } from "./components/Header";
 import { Hero } from "./components/Hero";
 import { ContentBlock } from "./components/ContentBlock";
 import { Footer } from "./components/Footer";
-import { SignUp } from "./components/SignUp";
-import { SignIn } from "./components/SignIn";
-import { Admin } from "./components/Admin";
-import { MachinesPage } from "./components/MachinesPage";
-import { SharePage } from "./components/SharePage";
-import { DownloadsPage } from "./components/DownloadsPage";
-import { SiteConfigPanel } from "./components/SiteConfigPanel";
-import { OperatorDoor } from "./components/OperatorDoor";
+import { ChunkFailed, Lazy } from "./components/Lazy";
 import { Greeting } from "./components/Greeting";
 import { Screensaver } from "./components/Screensaver";
 import { OverlayHostContext } from "./components/Dialog";
 import { CommandPalette } from "./components/CommandPalette";
+
+/*
+ * The split (2026-09-14). Everything below this comment used to be a static
+ * import, and the whole site was one 512KB chunk with no `import()` anywhere in
+ * `src/` — so every anonymous visitor downloaded, parsed and threw away the
+ * operator's entire application: the downloads editor, the settings panel, the
+ * duel settings editor, `/admin`, `/machines`, `/share`, the door.
+ *
+ * **The seam is the one the site already draws.** Each of these is behind a
+ * route or an overlay flag that starts closed, and `isOperator` is false until
+ * the session probe settles, so nothing here can be reached in the first render
+ * by anybody — which is exactly what a lazy boundary needs and what makes the
+ * `null` fallback invisible rather than a flash. Three rules hold it together:
+ *
+ * 1. **Nothing the first paint needs may go behind one.** The chrome, the hero,
+ *    the grid, the canvas, the greeting, the palette and the screensaver stay
+ *    static. `ConfigContext` is untouched and still reads
+ *    `window.__VESSEL_SITE__` synchronously in the first render (§11) — a
+ *    boundary here cannot make it wait, because none of these components is
+ *    mounted while it builds its initial state.
+ * 2. **The two overlays mount on first open and then stay mounted.** The panel
+ *    keeps state across close/reopen — `leaving`, the pasted code, the
+ *    site/page target — and `SiteConfigPanel`'s own comment says so. `seen`
+ *    below is what preserves that: unmounted until the first open, mounted for
+ *    ever after, which is exactly today's behaviour from the first open onward.
+ * 3. **The duel is deliberately NOT split.** `src/fx/effects.ts` imports
+ *    `./duel` statically for `drawFx`, which every visitor's canvas calls every
+ *    frame, so `duel.ts` + `fighters.ts` (~60KB) stay in the entry no matter
+ *    what happens in this file. Lazily loading `DuelOrnament` alone would buy
+ *    about 4KB and put a suspense boundary in the hero for it. Not worth it —
+ *    see the report; the fix is one change in `effects.ts`, not here.
+ */
+const SignUp = lazy(() => import("./components/SignUp").then((m) => ({ default: m.SignUp })));
+const SignIn = lazy(() => import("./components/SignIn").then((m) => ({ default: m.SignIn })));
+const Admin = lazy(() => import("./components/Admin").then((m) => ({ default: m.Admin })));
+const MachinesPage = lazy(() =>
+  import("./components/MachinesPage").then((m) => ({ default: m.MachinesPage })),
+);
+const SharePage = lazy(() =>
+  import("./components/SharePage").then((m) => ({ default: m.SharePage })),
+);
+const DownloadsPage = lazy(() =>
+  import("./components/DownloadsPage").then((m) => ({ default: m.DownloadsPage })),
+);
+const SiteConfigPanel = lazy(() =>
+  import("./components/SiteConfigPanel").then((m) => ({ default: m.SiteConfigPanel })),
+);
+const OperatorDoor = lazy(() =>
+  import("./components/OperatorDoor").then((m) => ({ default: m.OperatorDoor })),
+);
 
 /**
  * The whole site: one chrome — header, hero with the valve, content grid,
@@ -42,7 +86,9 @@ export default function App() {
    * station follows the ornament that is on the page rather than the one in
    * storage.
    */
-  const { config, look, layout, band, ornament, fx, diving, nav, saver } = useConfig();
+  const { config, look, layout, band, sub, ornament, fx, diving, nav, saver, panelOpen, doorOpen } =
+    useConfig();
+  const { isOperator } = useSession();
 
   const page = PAGES[config.page];
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -65,14 +111,56 @@ export default function App() {
   useOperatorRoutes();
   useAccountRoutes();
 
+  /*
+   * The two overlays, once each has been opened once. See rule 2 above: the
+   * panel is stateful across close/reopen and must not remount, so the flag is
+   * one-way. `panelOpen ||` is what mounts it in the same render as the open,
+   * rather than one render later via the effect.
+   */
+  const [panelSeen, setPanelSeen] = useState(false);
+  const [doorSeen, setDoorSeen] = useState(false);
+  useEffect(() => {
+    if (panelOpen) setPanelSeen(true);
+  }, [panelOpen]);
+  useEffect(() => {
+    if (doorOpen) setDoorSeen(true);
+  }, [doorOpen]);
+
+  /*
+   * Warm the two overlay chunks the moment the session probe says operator.
+   *
+   * They are the only split surfaces reached by a *gesture* rather than a
+   * navigation — ⌘K, five taps on the logo, typing `sudo` — so there is no page
+   * transition to spend the round trip inside, and a panel that arrives a beat
+   * after the keystroke reads as a missed keystroke. The routes are left to
+   * fetch on navigation, which is a transition and already looks like one.
+   *
+   * Nothing here runs for a visitor: `isOperator` is false until the probe
+   * settles and false for ever if it settles as anybody else. A rejection is
+   * swallowed on purpose — this is a prefetch, and the boundary above handles
+   * the real attempt.
+   */
+  useEffect(() => {
+    if (!isOperator) return;
+    void import("./components/SiteConfigPanel").catch(() => {});
+    void import("./components/OperatorDoor").catch(() => {});
+  }, [isOperator]);
+
   // A new page starts at the top, and with its own name in the tab. The stage
   // is the scroll container in every layout but Terminal, which gives it
   // `height: auto` and scrolls the document — so both have to be reset.
+  //
+  // **`sub` is part of "a new page", and leaving it out was the bug.** The one
+  // route with something after it is `/downloads/<name>`, and moving between
+  // the index and a program changes only `sub` — `ConfigContext` treats that as
+  // a navigation, dives the stage and pushes a URL for it. Keyed on the page
+  // alone, clicking a program card rendered the program at whatever offset the
+  // visitor had scrolled the index to, under the index's title.
   useEffect(() => {
     if (stageRef.current) stageRef.current.scrollTop = 0;
     window.scrollTo(0, 0);
     document.title = `${PAGES[config.page].title} · mcclevarty.ca`;
-  }, [config.page]);
+  }, [config.page, sub]);
 
   const stageAnimation = config.calm
     ? "none"
@@ -101,27 +189,32 @@ export default function App() {
     [page],
   );
 
-  // The two account pages render a form where the block grid would go.
-  // Everything around them — hero, layout adaptation, entrance motion, palette
-  // bleed — is unchanged.
+  /*
+   * The routed pages render where the block grid would go — and all six of them
+   * are split, so this is a boundary rather than an element. Everything around
+   * them (hero, layout adaptation, entrance motion, palette bleed, footer) is
+   * outside it and unchanged, which is what makes `null` an honest fallback:
+   * the page is already painted and one region of it arrives late.
+   */
+  const routed =
+    config.page === "signup" ? (
+      <SignUp />
+    ) : config.page === "signin" ? (
+      <SignIn />
+    ) : config.page === "admin" ? (
+      <Admin />
+    ) : config.page === "machines" ? (
+      <MachinesPage />
+    ) : config.page === "share" ? (
+      <SharePage />
+    ) : config.page === "downloads" ? (
+      <DownloadsPage />
+    ) : null;
+
   const body = (
     <>
       <Hero page={page} layout={layout} />
-      {config.page === "signup" ? (
-        <SignUp />
-      ) : config.page === "signin" ? (
-        <SignIn />
-      ) : config.page === "admin" ? (
-        <Admin />
-      ) : config.page === "machines" ? (
-        <MachinesPage />
-      ) : config.page === "share" ? (
-        <SharePage />
-      ) : config.page === "downloads" ? (
-        <DownloadsPage />
-      ) : (
-        grid
-      )}
+      {routed ? <Lazy error={<ChunkFailed />}>{routed}</Lazy> : grid}
       <Footer />
     </>
   );
@@ -186,8 +279,20 @@ export default function App() {
 
       <Screensaver />
       <Greeting />
-      <SiteConfigPanel />
-      <OperatorDoor />
+      {/* Operator-only, and unmounted until the first open — see rule 2. No
+          `error` node: an overlay that failed to arrive is one the operator can
+          ask for again, and a broken-chunk card floating over the page would be
+          worse than nothing. */}
+      {(panelOpen || panelSeen) && (
+        <Lazy>
+          <SiteConfigPanel />
+        </Lazy>
+      )}
+      {(doorOpen || doorSeen) && (
+        <Lazy>
+          <OperatorDoor />
+        </Lazy>
+      )}
       <CommandPalette />
       <Toast />
     </div>

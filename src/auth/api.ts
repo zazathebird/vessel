@@ -480,7 +480,7 @@ export interface DownloadGrantRow {
 
 /** One row of the operator's code list. Holds nothing that identifies a person. */
 export interface DownloadCodeRow {
-  /** First eight hex characters of the stored hash — the handle for revocation. */
+  /** First sixteen hex characters of the stored hash (`REF_LENGTH` in worker/downloads.ts) — the handle for revocation. */
   ref: string;
   label: string;
   item_id: string | null;

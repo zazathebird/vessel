@@ -1,7 +1,9 @@
 /**
- * Final page copy for all thirteen pages that render blocks — the spec's nine,
- * `setup` (2026-08-14), plus the three account pages, whose hero copy was
- * written for this build.
+ * Final page copy for all seventeen pages. Eleven render blocks — the spec's
+ * nine, plus `setup` and `scams` (2026-08-14). The other six (`signup`,
+ * `signin`, `admin`, `machines`, `share`, `downloads`) carry hero copy written
+ * for this build and an empty `blocks` array, because a component renders the
+ * body of each.
  * Copied verbatim from the prototype's PAGES object (Site v2 - Vessel.dc.html:366).
  *
  * COPY CHANGES, both approved by the client (see CLAUDE.md):

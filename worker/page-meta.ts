@@ -64,6 +64,18 @@ const UNLISTED: ReadonlySet<PageId> = new Set<PageId>([
 const SITE = "mcclevarty.ca";
 
 /**
+ * The icon addresses a browser or crawler probes for on its own, none of which
+ * exist here — the favicon is an inline `data:` SVG in `index.html`.
+ *
+ * Anchored at both ends so it can only ever match a root-level icon probe, and
+ * the optional groups are the two things iOS asks for before the plain name:
+ * `-precomposed`, and the sized variants some versions try first. `crawlerFile`
+ * answers all of them 404 rather than letting the SPA fallback hand back the
+ * app shell; see the comment at the branch that uses this.
+ */
+const ICON_PROBE = /^\/(favicon\.ico|apple-touch-icon(-\d{2,4}x\d{2,4})?(-precomposed)?\.png)$/;
+
+/**
  * Attribute-safe escaping.
  *
  * Every value here is site copy rather than visitor input, but the same rule
@@ -192,6 +204,44 @@ export function crawlerFile(url: URL): Response | null {
       headers: { "content-type": "application/xml; charset=utf-8", "cache-control": "public, max-age=3600" },
     });
   }
+  /*
+   * The icon addresses, answered 404 because there is genuinely nothing there.
+   *
+   * The site's favicon is an inline SVG `data:` URI in `index.html` (deviation
+   * 10), so no file exists at either of these — and the SPA fallback answers an
+   * unknown path with **200 and the app shell**. Measured: `/favicon.ico` and
+   * `/apple-touch-icon.png` both returned `200 text/html`, a whole HTML
+   * document with the published config inlined into its head, to anything that
+   * asked. That is the same fault as audit item 39 and the trailing-slash
+   * pages, and the same one the `robots.txt` comment above describes: the
+   * fallback claiming success at an address that is not a page.
+   *
+   * **`index.html`'s comment claimed the inline icon prevented this, and it
+   * does not.** The declared icon stops most *browsers* asking; crawlers,
+   * link unfurlers and iOS do not read it before they fetch. iOS in particular
+   * requests `/apple-touch-icon.png` when somebody saves the site to a home
+   * screen, and was being handed the shell.
+   *
+   * 404 rather than a generated image, deliberately: *Assets* forbids adding
+   * one, an honest "there is no file here" is what is true, and a browser
+   * handed a 404 falls back to the icon `index.html` already declares.
+   *
+   * **It is a pattern rather than two strings, and that is the half the first
+   * version got wrong.** `index.html` declares only `rel="icon"` — there is no
+   * `rel="apple-touch-icon"` link at all — and when no such link exists iOS
+   * probes the root itself, asking for **`apple-touch-icon-precomposed.png`
+   * first**, then `apple-touch-icon.png`, and on several versions the sized
+   * variants (`-180x180` and friends) before either. Matching the two exact
+   * names left the precomposed one — the one actually asked for first — still
+   * answering 200 with the whole shell, which is the very case the paragraph
+   * above claims to have closed.
+   */
+  if (ICON_PROBE.test(url.pathname)) {
+    return new Response("Not found.", {
+      status: 404,
+      headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=3600" },
+    });
+  }
   return null;
 }
 
@@ -259,7 +309,19 @@ export function withPageMeta(response: Response, url: URL): Response {
         // A sub-page's canonical is the index it hangs off, never itself: it is
         // one of an unbounded family of addresses and none of them is preferred.
         ? `https://${SITE}${PATHS.downloads}`
-        : `https://${SITE}${meta.id === "home" ? "/" : url.pathname}`;
+        : /*
+           * **From `PATHS`, never from the request's own pathname**
+           * (2026-09-14). `pageFromPath` strips trailing slashes, so `/contact/`
+           * resolves to `contact`, is not `UNLISTED`, gets no `noindex` — and
+           * emitted `<link rel="canonical" href=".../contact/">`, pointing at
+           * itself. So did `/contact//`, `/contact///` and `//`: an unbounded
+           * family of indexable 200s each nominating *itself* as preferred,
+           * which is the exact failure this file argues at length about two
+           * lines above for a sub-page, arriving through a door it did not
+           * check. `PATHS` is a total map from a closed union, so the canonical
+           * is now the one address the page actually has.
+           */
+          `https://${SITE}${PATHS[meta.id]}`;
   const title = esc(meta.title);
   const description = esc(meta.description);
 

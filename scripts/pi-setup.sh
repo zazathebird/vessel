@@ -243,8 +243,25 @@ report_storage() {
 
     # Anything on a USB or NVMe transport that is not the root device is a candidate for the store.
     local found_external=""
-    local dev size mnt tran
-    while IFS=$'\t' read -r dev size tran mnt; do
+    local dev size mnt tran line
+    # `lsblk -P` (KEY="value" pairs), NEVER `-r` with positional columns.
+    #
+    # With `-r` an EMPTY column is printed as nothing at all, and awk's default
+    # field splitting collapses the run of spaces around it — so every
+    # partition, which has no TRAN, shifted its MOUNTPOINT left into the
+    # transport field. On the exact machine this script is for — a Pi with a USB
+    # SSD mounted at the share root — that meant the mount point was read as the
+    # transport, matched none of usb/nvme/sata, and the disk holding the shared
+    # files was reported as "attached but NOT mounted", or skipped entirely. The
+    # pair form keeps an empty column present as KEY="".
+    while IFS= read -r line; do
+        dev=""; size=""; tran=""; mnt=""
+        case "${line}" in *'NAME="'*)       dev="${line#*NAME=\"}";       dev="${dev%%\"*}" ;; esac
+        case "${line}" in *'SIZE="'*)       size="${line#*SIZE=\"}";      size="${size%%\"*}" ;; esac
+        case "${line}" in *'TRAN="'*)       tran="${line#*TRAN=\"}";      tran="${tran%%\"*}" ;; esac
+        case "${line}" in *'MOUNTPOINT="'*) mnt="${line#*MOUNTPOINT=\"}"; mnt="${mnt%%\"*}" ;; esac
+        [ -n "${dev}" ] || continue
+        dev="/dev/${dev}"
         case "${tran}" in
             usb|nvme|sata) ;;
             *) continue ;;
@@ -255,7 +272,7 @@ report_storage() {
         else
             info "${dev} (${size}, ${tran}) is attached but NOT mounted"
         fi
-    done < <(lsblk -rno NAME,SIZE,TRAN,MOUNTPOINT 2>/dev/null | awk '{printf "/dev/%s\t%s\t%s\t%s\n", $1, $2, $3, $4}' || true)
+    done < <(lsblk -Pno NAME,SIZE,TRAN,MOUNTPOINT 2>/dev/null || true)
 
     if [ -z "${found_external}" ]; then
         warn "No USB or NVMe disk is attached. The sharing host is meant to hold the shared files
@@ -264,7 +281,17 @@ report_storage() {
              simply has nothing to share yet."
     fi
 
-    if [ -f /etc/fstab ] && grep -q 'UUID=' /etc/fstab && grep -q 'nofail' /etc/fstab; then
+    # ONE LINE CARRYING BOTH, not two greps over the whole file. Separately they
+    # were satisfied by two DIFFERENT lines — the root filesystem's UUID entry
+    # and some other line's `nofail` — which is the commonest shape there is,
+    # and it dropped the MANUAL warning that stops a headless host hanging at a
+    # boot console when the store is missing. Comments excluded for the same
+    # reason: a commented example is not an fstab entry.
+    if [ -f /etc/fstab ] && awk '
+        /^[[:space:]]*#/ { next }
+        /UUID=/ && /nofail/ { found = 1 }
+        END { exit !found }
+    ' /etc/fstab; then
         info "/etc/fstab has at least one UUID entry with nofail — that is the shape the guide asks for."
     else
         MANUAL+=("Mount the store from /etc/fstab, by UUID and with 'nofail'. Both halves matter:
@@ -854,7 +881,11 @@ configure_unattended_upgrades() {
     log "Configuring unattended security updates"
 
     local conf="/etc/apt/apt.conf.d/20auto-upgrades"
-    if [ -f "${conf}" ] && grep -q 'Unattended-Upgrade "1"' "${conf}"; then
+    # ANCHORED, because apt.conf comments are `//` and a bare grep matched one.
+    # On a machine where somebody had turned unattended upgrades OFF — which is
+    # done by commenting the line out, and is the only machine this branch
+    # matters on — the script skipped the write and reported them enabled.
+    if [ -f "${conf}" ] && grep -Eq '^[[:space:]]*APT::Periodic::Unattended-Upgrade[[:space:]]+"1"' "${conf}"; then
         skip "${conf} already enables unattended upgrades"
     else
         sudo tee "${conf}" >/dev/null <<'EOF'
@@ -922,6 +953,28 @@ configure_chromium_policy() {
     esac
     host="${url#*://}"
     host="${host%%/*}"
+
+    # THE CHARSET TEST COMES FIRST, AND IT IS A SHELL PATTERN, BECAUSE `grep`
+    # MATCHES PER LINE (2026-09-14). The split above is on `/` and nothing
+    # else, so a ${URL_FILE} with a second line hands this a host containing a
+    # NEWLINE — and `grep -Eq '^...$'` is satisfied by the first line of it
+    # while the WHOLE value is interpolated into the policy below. A payload
+    # whose second line is a bare word produced a file that is still valid
+    # JSON, so the `jq empty` check approved it and POLICY_STATE said it was
+    # written, while the effective "URLAllowlist" became ["*"]: no navigation
+    # lockdown at all, on the box that autologins into the browser holding the
+    # folder handle. A `case` glob is matched against the ENTIRE string,
+    # newlines included. Refused whole, never trimmed to the first line.
+    case "${host}" in
+        *[!A-Za-z0-9.:-]*|"")
+            POLICY_STATE="NOT WRITTEN — the host in ${URL_FILE} is not usable in a policy"
+            warn "The URL in ${URL_FILE} has a host with a character — a line break, a space, a
+             quote — that cannot be in a host name, so the browser lockdown was NOT written.
+             Fix that file: one line, the full URL, nothing else."
+            return
+            ;;
+    esac
+
     if [ -z "${host}" ] || ! printf '%s' "${host}" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]{1,5})?$'; then
         POLICY_STATE="NOT WRITTEN — the host in ${URL_FILE} is not usable in a policy"
         warn "The URL in ${URL_FILE} has a host this script will not put into a Chromium policy:
@@ -977,8 +1030,23 @@ configure_chromium_policy() {
 EOF
     # A malformed policy file is ignored silently by Chromium, which would leave this host
     # unlocked while the summary claimed otherwise.
-    if command -v jq >/dev/null 2>&1; then
-        jq empty "${tmp}" >/dev/null 2>&1 || die "The generated Chromium policy is not valid JSON. This is a bug in this script."
+    #
+    # WARN AND RETURN, NOT `die` (2026-09-14). The two checks above chose warn-and-return
+    # deliberately — this step runs after the packages, the autologin, the launcher, the unit and
+    # lingering, and before unattended-upgrades and the summary — and this one did not, so a
+    # hand-edited ${URL_FILE} could stop the run here with security updates unconfigured and none
+    # of the collected warnings ever printed. The three checks on the same untrusted line now
+    # agree about what a bad value costs: this step, and nothing else.
+    if command -v jq >/dev/null 2>&1 && ! jq empty "${tmp}" >/dev/null 2>&1; then
+        POLICY_STATE="NOT WRITTEN — the generated policy is not valid JSON (a bug in this script)"
+        warn "The Chromium policy this script generated is not valid JSON, so it was NOT installed —
+             Chromium ignores a malformed policy file silently, which would leave this host
+             unlocked while the summary said otherwise. The URL in ${URL_FILE} is the first thing
+             to look at. Everything after this step still ran."
+        MANUAL+=("The Chromium managed policy was NOT written: the generated file was not valid
+             JSON. Until it is, the browser on this machine has no navigation allowlist, DevTools
+             are available and sync is not blocked.")
+        return
     fi
 
     # Raspberry Pi OS ships `chromium-browser` and reads /etc/chromium-browser/...; Debian's
@@ -1058,8 +1126,21 @@ configure_wifi_powersave() {
     if [ "${current}" = "2" ]; then
         skip "power saving is already disabled on '${con}'"
     else
-        nmcli connection modify "${con}" 802-11-wireless.powersave 2
-        info "disabled Wi-Fi power saving on '${con}' (takes effect on the next connect or reboot)"
+        # GUARDED, because this is the last thing before print_summary and the
+        # script runs under `set -e`. Over SSH polkit refuses the modify, nmcli
+        # exits non-zero, and the whole run ended right here — throwing away
+        # every collected MANUAL item and the entire summary (the SD-card
+        # warning, swap, fstab, Samba) over a setting that is an optimisation.
+        # A radio that dozes is a warning; a summary nobody sees is the report.
+        if nmcli connection modify "${con}" 802-11-wireless.powersave 2 2>/dev/null; then
+            info "disabled Wi-Fi power saving on '${con}' (takes effect on the next connect or reboot)"
+        else
+            warn "Could not disable Wi-Fi power saving on '${con}' — NetworkManager refused the
+             change, which is what happens over SSH without a seat. Everything else was done."
+            MANUAL+=("Disable Wi-Fi power saving at the machine itself, or the idle signalling
+             connection drops and this host reports itself offline while still answering a ping:
+                 nmcli connection modify '${con}' 802-11-wireless.powersave 2")
+        fi
     fi
 }
 

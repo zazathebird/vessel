@@ -364,14 +364,19 @@ body {
   }
 }
 
+/* `scale`, not a `transform` carrying the centring with it. The centring is
+   declared on `.v-shock` as a `translate`, which composes with this and — the
+   point — outlives it: calm removes the animation, and a keyframe that owned
+   the centring took the centring away with it. See the note on `.v-shock` in
+   overlays.css. */
 @keyframes v-shock {
   0% {
     opacity: 0.9;
-    transform: translate(-50%, -50%) scale(0);
+    scale: 0;
   }
   100% {
     opacity: 0;
-    transform: translate(-50%, -50%) scale(16);
+    scale: 16;
   }
 }
 

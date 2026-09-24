@@ -129,12 +129,33 @@
   overflow: hidden;
 }
 
+/*
+ * `--edge`, not `--line`: the bottom border is this input's *only* boundary —
+ * the other three sides are `border: 0` — so it is what says "you may type
+ * here", and 1.4.11 wants 3:1 of a non-text indicator. `--line` measures
+ * 1.22–1.61:1 on all 25 palettes. Decorative hairlines keep `--line`; a control
+ * takes `--edge`, the same call `.v-input` records above it in chrome.css.
+ *
+ * The focus ring is pulled inside, because `.v-cmd` above is `overflow: hidden`
+ * and this input is a full-bleed flex child: its border box *is* the
+ * container's padding box, so a ring at the site's `outline-offset: 3px` is
+ * clipped on the left, the top and the right — and `.v-input` sets
+ * `outline: none`, which makes that ring the only focus indicator this control
+ * has. Insetting rather than giving `.v-cmd` padding keeps the border-bottom
+ * spanning the full width, which is what makes it read as the divider between
+ * the query and the list rather than as a field's underline. 0-3-0, so it beats
+ * base.css's `.vessel :focus-visible` on specificity rather than import order.
+ */
 .v-cmd-input {
   border: 0;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--edge);
   border-radius: 0;
   padding: 16px 18px;
   background: transparent;
+}
+
+.v-cmd .v-cmd-input:focus-visible {
+  outline-offset: -3px;
 }
 
 .v-cmd-list {
@@ -217,11 +238,14 @@
   color: var(--fg);
 }
 
+/* `--edge`, not `--line`: the border is the whole of this button — it has no
+   fill and its label is a single glyph — so it is the boundary 1.4.11 asks for
+   3:1 of. Operator-only is not a WCAG exemption. */
 .v-panel-close {
   width: 34px;
   height: 34px;
   flex: none;
-  border: 1px solid var(--line);
+  border: 1px solid var(--edge);
   border-radius: var(--radius);
   background: none;
   color: var(--muted);
@@ -292,12 +316,15 @@
 
 /* Each tile shows its own three accents on its own background, so the grid is a
    preview rather than a list of names. */
+/* `--edge`, not `--line`: each tile is a control, and its border is the only
+   thing dividing one palette's preview from the next — at 1.22–1.61:1 the grid
+   read as one field of colour with no cells in it. */
 .v-swatch {
   display: flex;
   flex-direction: column;
   gap: 7px;
   padding: 10px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--edge);
   border-radius: calc(var(--radius) - 5px);
   cursor: pointer;
   transition: border-color 0.9s ease, box-shadow 0.9s ease;
@@ -370,7 +397,11 @@
   justify-content: space-between;
   gap: 12px;
   padding: 16px;
-  border: 1px dashed var(--line);
+  /* `--edge`, not `--line`: dashed or not, this is the button's own boundary
+     and the thing that makes a row of type read as something you can press.
+     A dashed hairline is already the faintest edge on the panel; at `--line`'s
+     1.22–1.61:1 it was not there at all. */
+  border: 1px dashed var(--edge);
   border-radius: var(--radius);
   background: color-mix(in oklab, var(--bg) 60%, transparent);
   cursor: pointer;
@@ -378,7 +409,10 @@
   font-size: 11px;
   letter-spacing: 0.2em;
   text-transform: uppercase;
-  color: var(--faint);
+  /* `--muted`, not `--faint` (2026-09-14, audit item 16): this is the button's
+     own label, "operator access", and `--faint` fails AA on all 25 palettes.
+     The 2026-08-17 pass fixed `.v-knock-state` beside it and left the parent. */
+  color: var(--muted);
 }
 
 .v-knock-state {
@@ -398,13 +432,37 @@
   backdrop-filter: blur(18px) saturate(1.25);
 }
 
+/*
+ * The door's two shock rings.
+ *
+ * **The centring is a declared `translate` and the keyframes own `scale`**
+ * (2026-09-14). It used to fold `translate(-50%, -50%)` into the `transform`
+ * inside `@keyframes v-shock`, which survives the trap chrome.css documents
+ * beside `.v-toast` — an animated transform beats a declared one — but does not
+ * survive calm: `.vessel.is-calm *` sets `animation: none !important`, which
+ * takes the centring away with the motion. What was left was two 200px rings at
+ * full opacity, un-centred, hanging down and right of the viewport centre; at
+ * ~390px wide about 20px of arc stood outside the dialog every time the
+ * operator opened the door in calm. `translate` and `transform` are separate
+ * properties that compose, so the declaration holds whether or not the
+ * animation runs — the same answer `.v-toast` already takes.
+ *
+ * `opacity: 0` is declared for the other half of the same fault: with the
+ * animation gone the rings would otherwise resolve to their initial opacity of
+ * 1 and sit dead centre over the dialog instead of beside it. The keyframes run
+ * 0.9 → 0 and `both` holds those endpoints while there is an animation at all,
+ * so this changes nothing outside calm — it is only what the element is when
+ * nothing is animating it, which is exactly the state calm creates.
+ */
 .v-shock {
   position: absolute;
   left: 50%;
   top: 50%;
+  translate: -50% -50%;
   width: 200px;
   height: 200px;
   border-radius: 50%;
+  opacity: 0;
   pointer-events: none;
   animation: v-shock 1.15s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
@@ -520,9 +578,12 @@
   color: var(--a1);
 }
 
+/* `--edge`, not `--line`: the secondary button beside the `--a1`-edged primary
+   one. It has no fill, so the border is all there is of it — and a control the
+   eye cannot find is not a smaller control, it is prose. */
 .v-door-leave {
   padding: 14px 18px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--edge);
   background: none;
   color: var(--muted);
 }
@@ -561,8 +622,12 @@
   font-size: 10px;
   letter-spacing: 0.3em;
   text-transform: uppercase;
-  color: var(--faint);
-  opacity: 0.6;
+  /* `--muted`, not `--faint` (2026-09-14, audit item 16): "click to return" is
+     the screensaver's only exit instruction, and `--faint` fails AA on all 25
+     palettes. No `opacity` either — it was 0.6, and `--muted` at 0.6 over `--bg`
+     measures 3.19–4.01:1 across the palettes, under 4.5 on every one; over a
+     boosted effect, which is brighter than bare `--bg`, it is lower still. */
+  color: var(--muted);
 }
 
 

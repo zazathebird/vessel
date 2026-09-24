@@ -89,12 +89,24 @@ export function useFocusTrap(
     document.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("keydown", onKey);
+      // Asked *before* the splice, because this is a question about the stack
+      // as it stood while the trap was open.
+      //
+      // **Returning focus is gated on being the top layer, exactly as Tab and
+      // Escape are.** Traps stack — a dialog opens over the panel, the palette
+      // over either — and closing a *lower* one is not a reason to move focus:
+      // it yanked the caret out of the open modal above and into whatever had
+      // opened the layer underneath it, which is the same fight the stack was
+      // introduced to settle, one property over. The top layer closing is the
+      // only case where "focus returns to whatever opened it" is a description
+      // of what the visitor is looking at.
+      const wasTop = isTopTrap(ref);
       const at = stack.lastIndexOf(ref);
       if (at !== -1) stack.splice(at, 1);
       if (modal) modals = Math.max(0, modals - 1);
       // The opener may have unmounted (the door replaces itself with the panel),
       // in which case there is nothing to return to and the browser default wins.
-      if (previous?.isConnected) previous.focus();
+      if (wasTop && previous?.isConnected) previous.focus();
     };
   }, [open, ref, modal]);
 }

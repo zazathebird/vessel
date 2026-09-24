@@ -47,8 +47,17 @@ export interface DuelSettings {
    * A pinned pairing, or null to roll from the pool on every match.
    *
    * Stored as two ids rather than as a "pinned" flag plus two ids, so the two
-   * cannot disagree. A pin survives match resets because `DuelState.pool` goes
-   * null, which is the same mechanism `createDuel` has always used.
+   * cannot disagree.
+   *
+   * **How it survives a match reset depends on the host, and the second way
+   * arrived on 2026-09-14.** The hero ornament and the bench pin by handing
+   * `createDuel` two ids, which leaves `DuelState.pool` null so there is
+   * nothing to re-roll from; they rebuild the whole fight when this field
+   * changes. The full-bleed background effect deliberately does not rebuild —
+   * a fight that restarts when a slider moves is worse than one that waits for
+   * the next match — so it assigns `DuelState.pin` per frame instead and the
+   * boundary reads it. Same setting, two mechanisms, because the two surfaces
+   * disagree about what a settings change is allowed to interrupt.
    */
   pin: [FighterStyle, FighterStyle] | null;
   /**
@@ -99,6 +108,12 @@ export interface DuelSettings {
  * becoming the default every later visitor is handed, with nothing thrown and
  * nothing logged. Frozen, the same mistake is a `TypeError` on the line that
  * makes it — module code is strict, so the write throws rather than passing.
+ *
+ * **`Object.freeze` is shallow, so `tuning` is the frozen object itself, not a
+ * spread of it** (2026-09-14 audit). `{ ...DEFAULT_DUEL_TUNING }` here was a
+ * fresh, writable object under a frozen parent — the one nested value on this
+ * default, and the one the sentence above was claiming for it. Gated by
+ * writing to it.
  */
 export const DEFAULT_DUEL_TUNING: DuelTuning = Object.freeze({
   circling: 1,
@@ -111,7 +126,7 @@ export const DEFAULT_DUEL_SETTINGS: DuelSettings = Object.freeze({
   pin: null,
   good: null,
   evil: null,
-  tuning: { ...DEFAULT_DUEL_TUNING },
+  tuning: DEFAULT_DUEL_TUNING,
   // `DEFAULT_RIM` in duel.ts. Deliberately not imported: this module is read
   // during the first render and importing the engine to learn one number would
   // pull the whole simulation into that path. The gate asserts they agree.

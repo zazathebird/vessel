@@ -118,7 +118,26 @@ interface BlockDraft {
   kind: BlockKind;
   body: string;
   group: string;
+  /**
+   * The React key, and **editor-local**: it is stripped on the way out and the
+   * Worker never sees it, so the stored shape is unchanged.
+   *
+   * The list has move-up, move-down and remove, and `key={i}` made every block
+   * reachable only by its position — so reordering kept the DOM nodes where
+   * they were and moved the *text* between them, taking the browser's per-node
+   * undo stack, the caret and any in-flight IME composition to the wrong block.
+   * An identity that travels with the block is the whole fix.
+   */
+  uid: string;
 }
+
+/**
+ * Identity for a block, unique within this editor's life. A counter rather than
+ * `crypto.randomUUID()` because the only requirement is that two siblings never
+ * collide, and nothing outside this module ever reads one.
+ */
+let blockSeq = 0;
+const blockUid = () => `b${++blockSeq}`;
 
 export function DownloadEditor() {
   const { say } = useConfig();
@@ -174,6 +193,7 @@ export function DownloadEditor() {
           kind: BLOCK_KINDS.includes(b.kind) ? b.kind : "text",
           body: b.body,
           group: b.group,
+          uid: blockUid(),
         })),
       );
       setFiles(body.files ?? []);
@@ -201,10 +221,26 @@ export function DownloadEditor() {
     setBusy(true);
     setError(null);
     const next = { ...draft, status: status ?? draft.status };
+    /*
+     * Two writes, and the second can fail on its own. Before this, a blocks
+     * save that threw reported "That didn't save." over a page row — a publish
+     * included — that *had* saved, and skipped the refresh, so the screen kept
+     * showing the draft it had just made live. The header's promise that every
+     * save round-trips is what this restores: say which half landed, and
+     * re-read the server either way.
+     */
+    let pageSaved = false;
     try {
       const authSecret = password ? (await derivePassword(handle, password)).authSecret : null;
       const saved = await api.adminPageSave(authSecret ? { ...next, authSecret } : next);
-      if (draft.layout === "blocks") await api.adminBlocksSave(saved.slug, blocks);
+      pageSaved = true;
+      // `uid` is the editor's own; the wire format is the three fields it has
+      // always been.
+      if (draft.layout === "blocks")
+        await api.adminBlocksSave(
+          saved.slug,
+          blocks.map(({ kind, body, group }) => ({ kind, body, group })),
+        );
       setPublishProof(null);
       await refreshPages();
       await openPage(saved.slug);
@@ -214,7 +250,26 @@ export function DownloadEditor() {
         setPublishProof(next);
         return;
       }
-      setError(thrown instanceof ApiError ? thrown.message : "That didn't save.");
+      const message = thrown instanceof ApiError ? thrown.message : "That didn't save.";
+      if (pageSaved) {
+        setPublishProof(null);
+        // The list, and the one field on the draft the server has moved, so the
+        // screen stops claiming this is still a draft. **Deliberately not
+        // `openPage`**: the blocks on screen are the ones that did not save, and
+        // re-reading the page would replace them with the server's older copy —
+        // throwing away the operator's typing at the exact moment it is the only
+        // copy of it. (It also clears `error` on entry, which would take this
+        // message with it.)
+        await refreshPages().catch(() => undefined);
+        setDraft((d) => ({ ...d, status: next.status }));
+        setError(
+          `${message} The page itself saved${
+            next.status === "live" && draft.status !== "live" ? ", and it is live" : ""
+          } — it was the blocks that didn't. They are still on screen; press Save again.`,
+        );
+      } else {
+        setError(message);
+      }
     } finally {
       setBusy(false);
     }
@@ -788,7 +843,7 @@ function BlockEditor({
     <div className="v-dledit-blocks">
       <h3 className="v-field-label">Blocks</h3>
       {blocks.map((block, i) => (
-        <div className="v-dledit-block" key={i}>
+        <div className="v-dledit-block" key={block.uid}>
           <div className="v-dledit-block-bar">
             <select
               className="v-input"
@@ -858,7 +913,7 @@ function BlockEditor({
       <button
         type="button"
         className="v-btn"
-        onClick={() => onChange([...blocks, { kind: "text", body: "", group: "" }])}
+        onClick={() => onChange([...blocks, { kind: "text", body: "", group: "", uid: blockUid() }])}
       >
         Add a block
       </button>
@@ -915,6 +970,24 @@ function toCents(typed: string): number | null {
   const value = Number(trimmed);
   if (!Number.isFinite(value) || value < 0) return null;
   return Math.round(value * 100);
+}
+
+/**
+ * A whole number as typed, or `null` if that is not one.
+ *
+ * `<input type="number">` reports `""` for an emptied box and `"2.5"` for a
+ * typed decimal, and `Number` turns the first into `0` — after which the Worker
+ * clamps in silence, so an empty Days box becomes "never expires" and a decimal
+ * becomes something nobody chose. `min` and `max` are hints the browser gives
+ * while typing and are enforced by nothing on submit. Refused rather than
+ * repaired, like every other value on its way to D1.
+ */
+function wholeNumber(typed: string, min: number, max: number): number | null {
+  const trimmed = typed.trim();
+  if (!trimmed) return null;
+  const value = Number(trimmed);
+  if (!Number.isInteger(value) || value < min || value > max) return null;
+  return value;
 }
 
 /** Whole cents → the dollars the form shows. Blank for "no price". */
@@ -1739,9 +1812,11 @@ function GrantManager({
 }) {
   const [grantee, setGrantee] = useState("");
   const [scope, setScope] = useState("");
-  const [days, setDays] = useState(0);
+  /** As typed, resolved on submit — see `wholeNumber`. */
+  const [days, setDays] = useState("0");
   const [label, setLabel] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   /** Admitting somebody to a page is a release, so it asks (2026-09-06). */
   const [password, setPassword] = useState("");
   const { me } = useSession();
@@ -1761,6 +1836,16 @@ function GrantManager({
 
   async function add(event: React.FormEvent) {
     event.preventDefault();
+    // `addGrant` is a bare INSERT with no dedupe of its own, so a second click
+    // on a slow derive — PBKDF2 takes a moment — writes a second identical row
+    // rather than being absorbed. The same guard every other submit here has.
+    if (busy) return;
+    const life = wholeNumber(days, 0, 3650);
+    if (life === null) {
+      setError("Days has to be a whole number, 0 to 3650. 0 never expires.");
+      return;
+    }
+    setBusy(true);
     setError(null);
     try {
       const { authSecret } = await derivePassword(handle, password);
@@ -1773,7 +1858,7 @@ function GrantManager({
         slug,
         item: scope || null,
         label,
-        days,
+        days: life,
         authSecret,
       });
       setGrantee("");
@@ -1781,6 +1866,27 @@ function GrantManager({
       onChanged();
     } catch (thrown) {
       setError(thrown instanceof ApiError ? thrown.message : "That didn't save.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Revoking, with the same in-flight guard and the same error line as `add`. */
+  async function remove(id: number) {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.adminGrantRemove(id);
+      onChanged();
+    } catch (thrown) {
+      // The route genuinely refuses — 401 on a lapsed session, 404 when the row
+      // is already gone — and a swallowed refusal looks exactly like a
+      // revocation that worked. Somebody stays admitted to a page and the
+      // screen says otherwise.
+      setError(thrown instanceof ApiError ? thrown.message : "Couldn't take that access away.");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -1809,10 +1915,8 @@ function GrantManager({
             <button
               type="button"
               className="v-btn v-btn-danger"
-              onClick={async () => {
-                await api.adminGrantRemove(g.id).catch(() => undefined);
-                onChanged();
-              }}
+              disabled={busy}
+              onClick={() => void remove(g.id)}
             >
               Remove
             </button>
@@ -1861,8 +1965,9 @@ function GrantManager({
               className="v-input"
               type="number"
               min={0}
+              max={3650}
               value={days}
-              onChange={(e) => setDays(Number(e.target.value))}
+              onChange={(e) => setDays(e.target.value)}
             />
             <p className="v-field-hint">0 never expires.</p>
           </div>
@@ -1900,8 +2005,8 @@ function GrantManager({
           />
         </div>
 
-        <button type="submit" className="v-btn" disabled={!grantee.trim() || !password}>
-          Give access
+        <button type="submit" className="v-btn" disabled={busy || !grantee.trim() || !password}>
+          {busy ? "Working…" : "Give access"}
         </button>
       </form>
     </div>

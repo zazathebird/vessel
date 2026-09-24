@@ -71,6 +71,32 @@ function isLoopback(hostname: string): boolean {
 }
 
 /**
+ * The request's own host, but only if it looks like one.
+ *
+ * Two places interpolate it into something with a grammar — the HTTPS redirect's
+ * `Location`, and `connect-src` in the CSP — and both take it from the `Host`
+ * header, which is the client's to write. `;` is **not** a forbidden domain
+ * code point, so `new URL("https://a;b/x")` parses with host `a;b`: a request
+ * carrying `Host: a;script-src 'unsafe-inline';b` would have written two extra
+ * directives into the policy, and a `Host: www.evil.com` would have sent a 301
+ * to somebody else's site.
+ *
+ * Neither is reachable in production — the Worker is bound to `mcclevarty.ca/*`
+ * and `www.mcclevarty.ca/*`, `workers_dev` is false, and Cloudflare does not
+ * route an unrecognised Host here — which is the same premise `crypto.ts`
+ * already rests on for `cf-connecting-ip`. It is closed anyway because the
+ * argument for the concatenation was written about redirect *loops*, not about
+ * trusting the host, so the next reader has nothing to rely on; and because the
+ * fix is a character class.
+ *
+ * Returns null when the host is not a plain hostname with an optional port, and
+ * each caller then does the safe thing rather than the convenient one.
+ */
+function safeHost(url: URL): string | null {
+  return /^[a-z0-9.-]+(?::[0-9]{1,5})?$/i.test(url.host) ? url.host : null;
+}
+
+/**
  * Null when no redirect should happen — wrong scheme, loopback, or a target that
  * would equal the request. The caller treats null as "carry on".
  */
@@ -80,7 +106,13 @@ function httpsRedirect(request: Request, url: URL): Response | null {
   // it. Browsers already treat localhost as a secure context.
   if (isLoopback(url.hostname)) return null;
 
-  const target = `https://${url.host}${url.pathname}${url.search}`;
+  // A host that is not a host is not redirected anywhere — see `safeHost`. The
+  // request is left to be served (or refused) over http rather than answered
+  // with a `Location` built from a string somebody else chose.
+  const host = safeHost(url);
+  if (!host) return null;
+
+  const target = `https://${host}${url.pathname}${url.search}`;
   if (target === request.url) return null;
 
   return new Response(null, {
@@ -188,13 +220,17 @@ function foreignOrigin(request: Request, url: URL): boolean {
  *   is for browsers that only read the other.
  */
 function cspPolicy(nonce: string, url: URL): string {
-  const ws = `${isLoopback(url.hostname) ? "ws" : "wss"}://${url.host}`;
+  // No usable host means no WebSocket origin in the policy rather than a
+  // made-up one: `'self'` already covers the same-host socket in every browser
+  // that resolves it, and this branch is unreachable in production anyway.
+  const host = safeHost(url);
+  const ws = host ? `${isLoopback(url.hostname) ? "ws" : "wss"}://${host}` : "";
   return [
     "default-src 'self'",
     `script-src 'self' 'nonce-${nonce}'`,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data:",
-    `connect-src 'self' ${ws}`,
+    ws ? `connect-src 'self' ${ws}` : "connect-src 'self'",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
@@ -442,7 +478,10 @@ export default {
     // behind it and served every visitor a bare Cloudflare 522. One canonical
     // host, same shape as the https redirect above — host-generic, so loopback
     // and `wrangler dev` (which never see a `www.`) are untouched.
-    if (url.hostname.startsWith("www.")) {
+    // `safeHost` for the reason it gives: this builds a `Location` out of the
+    // client's own `Host`, so `Host: www.evil.com` would have 301'd a visitor
+    // to `evil.com`. Unreachable behind the route bindings, closed anyway.
+    if (url.hostname.startsWith("www.") && safeHost(url)) {
       return new Response(null, {
         status: 301,
         headers: {
@@ -710,8 +749,19 @@ async function route(
  * Object (§13). Everything that decides *whether* this caller may reach the
  * object happens here, in front of it: the session, the ownership check, and
  * the role. The object itself trusts what arrives, which is what keeps it an
- * introducer with no knowledge of accounts. Phase 3 widens exactly this gate
- * to grantees; the object does not change.
+ * introducer with no knowledge of accounts.
+ *
+ * **Phase 3 widens the reach gate to grantees. It must NOT widen the role
+ * gate**, and the comment that used to sit here — "phase 3 widens exactly this
+ * gate to grantees; the object does not change" — was false about the half
+ * that matters (2026-09-14). `MachineSignal`'s `/connect?role=agent` evicts the
+ * incumbent agent unconditionally and makes the newcomer the socket every
+ * browsing tab is introduced to; a grantee who passed a widened reach check
+ * could therefore install themselves as the machine's agent. Not reachable
+ * today, because today reach *is* ownership — which is exactly what makes a
+ * shared check the wrong thing to leave behind. The two are separate statements
+ * below, and the role one compares against `account.id` rather than reusing the
+ * query's verdict, so widening the query cannot satisfy it by accident.
  */
 async function signalUpgrade(request: Request, env: Env, url: URL): Promise<Response> {
   if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
@@ -748,14 +798,36 @@ async function signalUpgrade(request: Request, env: Env, url: URL): Promise<Resp
   const account = await accounts.requireAccount(request, env);
 
   const machineId = url.pathname.slice("/api/signal/".length);
-  const machine = await env.DB.prepare("SELECT id FROM machines WHERE id = ? AND owner_id = ?")
+  // **The reach gate.** This is the line phase 3 widens — `owner_id = ?` becomes
+  // "owner, or holds a grant on this machine". `owner_id` is selected so that
+  // the role gate below can ask its own question of the row rather than
+  // inheriting this one's answer.
+  const machine = await env.DB.prepare(
+    "SELECT id, owner_id FROM machines WHERE id = ? AND owner_id = ?",
+  )
     .bind(machineId, account.id)
-    .first<{ id: string }>();
+    .first<{ id: string; owner_id: string }>();
   if (!machine) throw new BadRequest("No such machine on this account.", 404);
 
   const role = url.searchParams.get("role");
   if (role !== "agent" && role !== "browser") {
     throw new BadRequest("Connect as ?role=agent or ?role=browser.");
+  }
+
+  /*
+   * **The role gate, and it is deliberately redundant today.** Given the WHERE
+   * clause above this comparison cannot currently fail — that is the point. The
+   * agent role is not "a way to connect", it is *being* the machine: the object
+   * evicts whatever agent socket is already open and routes every browsing
+   * tab's offer to the newcomer. Answering for somebody's machine is the
+   * owner's alone, whatever else a grant may come to mean, so it is asserted
+   * where the decision is rather than left as a property of a query written for
+   * a different question. Written as a comparison against `account.id`, not as
+   * a boolean carried down from the lookup, so that widening the lookup leaves
+   * this refusing rather than passing.
+   */
+  if (role === "agent" && machine.owner_id !== account.id) {
+    throw new BadRequest("Only this machine's owner can connect as its agent.", 403);
   }
 
   // Connection events, not liveness (§12 N) — liveness is the object's socket

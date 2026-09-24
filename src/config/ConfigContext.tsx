@@ -222,11 +222,18 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
    * the moment *any* of the four toggles writes one — the header chip, the
    * panel, the command palette or the greeting — and cannot be left claiming
    * "your computer chose this" about a state the visitor chose themselves.
+   *
+   * **Deliberately not memoised, and the sentence above is why.** It was a
+   * `useMemo` over `[boot.systemCalm, config.calm]` while its body read
+   * `calmPreference()` from storage, so the claim was false in exactly the case
+   * it is made about: a toggle that writes a preference *agreeing* with the
+   * current value moves neither dependency, and the memo went on answering
+   * "your computer chose this" about a state the visitor had just chosen. It is
+   * two reads and a `localStorage.getItem`; the memo bought nothing to weigh
+   * against a claim it could not keep. Every write of a preference comes with
+   * an `update()`, so it is re-evaluated at exactly the right moments.
    */
-  const calmBySystem = useMemo(
-    () => boot.systemCalm && config.calm && calmPreference() === null,
-    [boot.systemCalm, config.calm],
-  );
+  const calmBySystem = boot.systemCalm && config.calm && calmPreference() === null;
 
   const [band, setBand] = useState<Band>(() =>
     typeof window === "undefined" ? "desk" : bandForWidth(window.innerWidth),
@@ -306,14 +313,28 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
    * itself, which knows the value it is setting and plays its own confirmation.
    */
   const lastChime = useRef(0);
+  const lastNav = useRef(0);
   const chime = useCallback((voice: VoiceId) => {
     const current = live.current.config;
     if (!current.sound || current.calm) return;
     const now = performance.now();
     // A toast almost always accompanies an action that already has a voice —
     // shuffle is the obvious one. Without this, rolling the dice plays the
-    // flourish and then a tick on top of it.
+    // flourish and then a tick on top of it. Measured against *any* previous
+    // voice, which is what lets it suppress the flourish's own tick.
     if (voice === "toast" && now - lastChime.current < 150) return;
+    // `nav` is throttled against *itself*, not against any voice: the typed
+    // account routes announce themselves and then navigate, and a toast
+    // followed by a navigation is two things happening rather than one thing
+    // twice. What must not happen is thirty of them a second — arrow paging is
+    // not operator-gated, so a visitor holding ArrowRight was enough, and the
+    // throttle above covered only "toast" so every repeat fired a voice.
+    // `useOperatorRoutes` refuses autorepeat at the source; this is the floor
+    // under every other way the same call can arrive in a burst.
+    if (voice === "nav") {
+      if (now - lastNav.current < 150) return;
+      lastNav.current = now;
+    }
     lastChime.current = now;
     play(voice);
   }, []);
@@ -338,6 +359,37 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     [chime],
   );
 
+  /*
+   * The operator's per-load hero ornament. Declared here rather than beside the
+   * effect that fills it (below, with the reasoning) because everything that
+   * can *end* it is above that point: `update` and the four roll sites.
+   */
+  const [operatorRoll, setOperatorRoll] = useState<Config["ornament"] | null>(null);
+
+  /**
+   * A roll that named an ornament ends the per-load one — exactly as an
+   * explicit pick does in `update`, and for the same reason.
+   *
+   * **Every roll site has to say so, and for a long time only `update` did.**
+   * `operatorRoll` sits on top of whatever `config.ornament` says, so a roll
+   * that landed on a new ornament and left the per-load pick standing changed
+   * every dial but the one in the hero slot — for the whole session, since
+   * nothing else cleared it. Shuffle announced a combination the page did not
+   * show, and the report would have been "the ornament is stuck", which is
+   * what the per-load roll exists to prevent.
+   *
+   * **Conditional on the roll actually naming an ornament**, because the
+   * ornament scope can be switched off: a roll that says nothing about the hero
+   * slot must not move it, and dropping the per-load pick there would swap in
+   * the stored ornament on a shuffle that deliberately excluded it.
+   *
+   * It stays component state and is still never a patch to `config` — this
+   * clears a *presentation* override, it does not write one.
+   */
+  const endOperatorRoll = useCallback((result: Partial<Config> | null) => {
+    if (result?.ornament !== undefined) setOperatorRoll(null);
+  }, []);
+
   const update = useCallback((patch: Partial<Config>) => {
     // Freshen the ref in the same tick, not just in the post-render effect.
     //
@@ -356,10 +408,12 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     // Choosing an ornament ends the per-load roll for this session. Without
     // this, the panel would appear broken to the one person who can use it:
     // he picks Sonar, the rolled duel is still what renders, and nothing on
-    // screen explains why his own setting did not take.
-    if (patch.ornament !== undefined) setOperatorRoll(null);
+    // screen explains why his own setting did not take. Through the same helper
+    // as the roll sites, so there is one answer to "what ends it" rather than
+    // an original and four copies.
+    endOperatorRoll(patch);
     setConfig((previous) => ({ ...previous, ...patch }));
-  }, []);
+  }, [endOperatorRoll]);
 
   /**
    * The greeting's answer, and the only route out of OS-forced calm a visitor
@@ -406,8 +460,9 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     }
     chime("shuffle");
     say(describeRoll(result));
+    endOperatorRoll(result);
     setConfig((previous) => ({ ...previous, ...result }));
-  }, [say, chime]);
+  }, [say, chime, endOperatorRoll]);
 
   /**
    * The address is never in static markup — it is assembled from parts at
@@ -445,10 +500,11 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
         const result = roll({ ...live.current.config, mode }, live.current.isOperator);
         if (result) patch = { mode, ...result };
       }
+      endOperatorRoll(patch);
       setConfig((previous) => ({ ...previous, ...patch }));
       say(MODES.find((m) => m.id === mode)?.label ?? mode);
     },
-    [say],
+    [say, endOperatorRoll],
   );
 
   // ---- screensaver ----
@@ -523,6 +579,11 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
      */
     if (cfg.mode === "visit" || cfg.mode === "page") {
       const result = roll(cfg, live.current.isOperator);
+      // A no-op today — this effect runs on mount, where `isOperator` is still
+      // false and the per-load roll has therefore not happened — and written
+      // anyway, because the invariant is *every* roll site ends it. A site that
+      // is exempt by accident of ordering is the next one somebody moves.
+      endOperatorRoll(result);
       if (result) setConfig((previous) => ({ ...previous, ...result }));
     } else if (cfg.mode === "tod" && returning) {
       const pal = paletteIndexForHour(new Date().getHours());
@@ -554,8 +615,12 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
    * StrictMode double-invokes updaters — the same rule `shuffle` and `setMode`
    * already record. Rolling out here and keeping the first result means the
    * double invoke settles on one ornament rather than two.
+   *
+   * **It ends the moment anything else decides the ornament** — an explicit
+   * pick in `update`, or any of the four roll sites, all of which go through
+   * `endOperatorRoll`. The state itself is declared up beside that helper,
+   * since every writer but this one lives above here.
    */
-  const [operatorRoll, setOperatorRoll] = useState<Config["ornament"] | null>(null);
   useEffect(() => {
     if (!isOperator) {
       // Signing out drops it, so the site immediately looks like the site.
@@ -644,6 +709,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       // double-invoked updater would spend two rolls to apply one.
       const current = live.current.config;
       const result = current.mode === "page" ? roll(current, live.current.isOperator) : null;
+      endOperatorRoll(result);
       setConfig((prev) => ({ ...prev, page, ...(result ?? {}) }));
       setNav((n) => n + 1);
       setPanelOpen(false);
@@ -657,7 +723,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     setDiving(true);
     window.clearTimeout(diveTimer.current);
     diveTimer.current = window.setTimeout(commit, 300);
-  }, [poke]);
+  }, [poke, chime, endOperatorRoll]);
 
   /**
    * The door and the panel are the operator's, and only the operator's.
@@ -714,12 +780,44 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   }, [update]);
 
   useEffect(() => {
+    /*
+     * The browser restores the old scroll offset on a popstate, asynchronously,
+     * *after* the handler below has run — so it raced `App`'s forced scroll to
+     * the top and back sometimes landed halfway down the new page. Turning it
+     * off makes this file the only thing that decides where a page starts,
+     * which it already claimed to be. Set once, alongside the handler that
+     * needs it, rather than in a module body that would run under SSR too.
+     */
+    if ("scrollRestoration" in window.history) window.history.scrollRestoration = "manual";
+
     const onPop = () => {
-      // Back and forward are page arrivals, so `page` mode rolls for them as it
-      // does for a click and for a load. Without this the browser's own buttons
-      // were the one route that stayed frozen, which is indistinguishable from
-      // the randomiser being broken.
+      /*
+       * Back and forward are navigations, and everything an in-app one does
+       * they must do too — `commit` above is the list. Three were missing.
+       *
+       * **The pending dive is cancelled first, and it is the one with teeth.**
+       * A click arms `commit` 300ms out; pressing Back inside that window let
+       * the commit run afterwards and `pushState` the page the visitor had just
+       * left — so Back landed them on `/contact`, destroyed the forward entry,
+       * and a second Back only returned them to where they started. Same shape
+       * as the Alt+← fault `useOperatorRoutes` records, arriving by a different
+       * door. `setDiving(false)` because the stage is mid-dive with nothing
+       * coming to resolve it now the commit is gone.
+       *
+       * **`nav` increments**, or back and forward are the one route on the site
+       * that plays no transition at all: the stage's animation is chosen from
+       * `nav`'s parity and a page that swapped under an unchanged `nav` simply
+       * cut. **The panel closes** for the same reason it does on a click — it
+       * is a settings drawer over a page, not over the site.
+       */
+      window.clearTimeout(diveTimer.current);
+      setDiving(false);
+
+      // `page` mode rolls for them as it does for a click and for a load.
+      // Without this the browser's own buttons were the one route that stayed
+      // frozen, which is indistinguishable from the randomiser being broken.
       const rolled = live.current.config.mode === "page" ? roll(live.current.config, live.current.isOperator) : null;
+      endOperatorRoll(rolled);
       setConfig((previous) => ({
         ...previous,
         ...(rolled ?? {}),
@@ -728,10 +826,12 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       // Back and forward have to move the sub-page too, or the browser's own
       // buttons leave the URL and the screen disagreeing.
       setSub(subFromPath(window.location.pathname));
+      setNav((n) => n + 1);
+      setPanelOpen(false);
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
-  }, []);
+  }, [endOperatorRoll]);
 
   const value = useMemo<ConfigContextValue>(
     () => ({

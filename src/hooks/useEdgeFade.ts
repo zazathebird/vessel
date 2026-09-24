@@ -25,7 +25,7 @@ import { useEffect, useState } from "react";
  * Written straight to the DOM rather than held in React state: this fires on
  * every scroll frame of a flick, and re-rendering the header for it would be
  * the one thing on this site that makes a decade-old machine stutter while you
- * drag. It is the same reasoning `useMotionSystems` uses for the cursor lean.
+ * drag. It is the same reasoning `useMotionSystems` uses for its pointer writes.
  */
 /**
  * Which edges are hiding content, from three numbers. `null` means the element
@@ -71,6 +71,10 @@ export function useEdgeFade(): (el: HTMLElement | null) => void {
     if (!el) return;
 
     let frame = 0;
+    // The `fonts.ready` promise below cannot be cancelled, so it carries the
+    // same `live` flag the account screens use: a page change before the
+    // webfonts land would otherwise schedule a measure of a detached node.
+    let live = true;
 
     const measure = () => {
       frame = 0;
@@ -96,9 +100,10 @@ export function useEdgeFade(): (el: HTMLElement | null) => void {
     ro.observe(el);
     const mo = new MutationObserver(schedule);
     mo.observe(el, { childList: true, subtree: true });
-    document.fonts?.ready.then(schedule).catch(() => {});
+    document.fonts?.ready.then(() => live && schedule()).catch(() => {});
 
     return () => {
+      live = false;
       if (frame) cancelAnimationFrame(frame);
       el.removeEventListener("scroll", schedule);
       ro.disconnect();

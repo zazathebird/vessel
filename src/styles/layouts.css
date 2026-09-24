@@ -171,9 +171,27 @@
    * which neutralises every other animation on the site. It does **not**
    * neutralise this one: a scroll-driven animation is progress-driven and
    * ignores duration entirely. So the timeline has to be taken away by hand.
+   *
+   * **And taking it away needs the entrance layer's specificity, which this
+   * rule did not have** (2026-09-14). At 0-2-0 it lost to
+   * `.has-entrances.layout-deck .v-block` — 0-3-0, in a file imported later —
+   * exactly as the base rule above it does, and for exactly the reason the
+   * comment above spends four paragraphs on. So a visitor whose OS says
+   * "reduce motion" but who has not turned calm on got the scroll-driven depth
+   * pass anyway, on the one layout that has one. `.vessel` is on the same
+   * element as `layout-*` (theme.ts), so the prefix takes this to 0-4-0 and the
+   * fix stops depending on import order.
+   *
+   * **Both longhands are re-listed, not `animation-name` alone**: the entrance
+   * rule sets `animation-timeline: auto, view(inline)`, and a rule that renamed
+   * the animations without also dropping the second timeline would leave
+   * `v-rise` bound to a view timeline — motion still driven by scrolling, which
+   * is the thing being refused. This is the "re-list both" rule the comment
+   * above states for the entrance layer, applied to the layer above that.
    */
   @media (prefers-reduced-motion: reduce) {
-    .layout-deck .v-block {
+    .vessel.layout-deck .v-block,
+    .vessel.has-entrances.layout-deck .v-block {
       animation-name: v-rise;
       animation-timeline: auto;
     }
@@ -567,8 +585,24 @@
   box-shadow: none;
   filter: drop-shadow(0 calc(16px * var(--elev, 1)) calc(26px * var(--elev, 1)) rgba(0, 0, 0, 0.5));
   translate: calc((var(--mx, 0.5) - 0.5) * var(--px)) calc((var(--my, 0.5) - 0.5) * var(--px));
+  /*
+   * **`transform` is re-listed, and dropping it was the bug** (2026-09-14).
+   * This rule is 0-2-0 against `.v-block`'s 0-1-0, and `transition` is one
+   * property: naming a new list here *replaces* the base one rather than
+   * adding the parallax to it. The base list carries
+   * `transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1)`, which is the easing on
+   * the cursor-lean `useMotionSystems` writes to the style attribute — so on
+   * the one archetype built entirely around depth, the tilt jumped from one
+   * pointer event to the next while the parallax beside it eased.
+   *
+   * Two separate properties on two timings, deliberately: `translate` is this
+   * layout's own parallax at 0.24s, `transform` is the site-wide lean at
+   * 0.28s. They compose, which is why interaction.css forbids collapsing
+   * either into the other.
+   */
   transition: background-color 0.9s ease, color 0.9s ease, border-color 0.9s ease,
-    translate 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
+    translate 0.24s cubic-bezier(0.2, 0.8, 0.2, 1),
+    transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 /* The lit top edge. Inside the clip, so it follows the cut corner. */

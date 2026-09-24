@@ -25,3 +25,32 @@
   X-Content-Type-Options: nosniff
   Strict-Transport-Security: max-age=63072000; includeSubDomains
   Cache-Control: public, max-age=31536000, immutable
+
+# The two asset families Vite does NOT hash, because they are referenced by a
+# fixed path rather than imported (`fonts.css` names `/fonts/…`, and the photo
+# tiles name `/photos/…`). With no rule here they took the asset server's
+# default — `max-age=0, must-revalidate` — so **192KB of webfonts and 2.0MB of
+# photographs were revalidated on every cold navigation**, while the 512KB
+# bundle beside them was `immutable`. That is a conditional request per file per
+# page view, on the slow connections the copy is written for.
+#
+# **A week, not a year, and deliberately not `immutable`.** These filenames
+# carry no content hash, so a changed file is the *same* URL — the property that
+# makes `/assets/*` safe above is exactly what these lack. A week bounds the
+# staleness of a re-cut font or a replaced photograph to something the operator
+# can wait out, while removing essentially every revalidation inside a real
+# visit. `stale-while-revalidate` then takes the round trip off the critical
+# path for the week after that.
+#
+# If these ever need to be truly immutable, the fix is to move them under `src/`
+# so Vite content-hashes them into `/assets/` and they inherit the rule above —
+# not to lengthen the figure here. `docs/FONTS.md` is the ledger either way.
+/fonts/*
+  X-Content-Type-Options: nosniff
+  Strict-Transport-Security: max-age=63072000; includeSubDomains
+  Cache-Control: public, max-age=604800, stale-while-revalidate=604800
+
+/photos/*
+  X-Content-Type-Options: nosniff
+  Strict-Transport-Security: max-age=63072000; includeSubDomains
+  Cache-Control: public, max-age=604800, stale-while-revalidate=604800
