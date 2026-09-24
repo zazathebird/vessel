@@ -415,7 +415,11 @@ if command -v sddm >/dev/null 2>&1; then
             printf '\n[Autologin]\nUser=%s\nSession=%s\nRelogin=false\n' "${USER}" "${SESSION}"
         fi
     } > "${tmp}"
-    if cmp -s "${tmp}" /etc/sddm.conf.d/10-vessel.conf; then
+    # Right bytes are not enough: a file that says the right thing but is not
+    # root-owned and 0644 is one somebody else could have written, so it is
+    # rewritten (which asks for sudo). Any failure to stat reads as "not right".
+    if cmp -s "${tmp}" /etc/sddm.conf.d/10-vessel.conf \
+       && [ "$(stat -c '%U:%G %a' /etc/sddm.conf.d/10-vessel.conf 2>/dev/null)" = "root:root 644" ]; then
         info "/etc/sddm.conf.d/10-vessel.conf already says this; left alone"
     else
         need_sudo
