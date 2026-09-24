@@ -464,7 +464,8 @@ move above the health check, start the Worker.
   the `Q = d·G` import check bind the public key to the password), stores *that*, and refuses a pair
   response that disagrees. Storing the response's `grantPubkey` is the server saying "trust this".
   `worker/signal.ts` is **an introducer, not a pipe**: it relays SDP/ICE without reading payloads,
-  persists nothing, and all authentication happens in `signalUpgrade` *before* the object is reached.
+  persists nothing, and the session and ownership checks happen in `signalUpgrade` *before* the
+  object is reached. The one check the object makes itself is the agent's key proof, below.
   **The upgrade path bypasses `harden()` deliberately** — copying a 101 response drops its
   `webSocket` and hangs every connection.
 - **Pairing and re-keying demand the password**; rename, remove and the drive routes are
@@ -472,9 +473,27 @@ move above the health check, start the Worker.
 - **File paths travel as arrays of components, never strings** (`src/share/paths.ts`) — the agent
   walks handles component by component, so there is no parser to have a traversal bug in. **Refuse,
   never repair.**
-- **One agent socket per machine; a newcomer replaces the incumbent**, which is sent `replaced`. The
-  frame is the contract — local workerd delivers the server-side close lazily, so nothing may depend
-  on the close code reaching the replaced tab.
+- **A session opens an agent socket; only the machine key makes it the agent** (2026-09-24). The
+  object challenges every agent socket and admits it on a signature over its own nonce by the key
+  whose public half is `agent_pubkey`, which **the Worker hands over after deleting any
+  client-supplied copy of the header**. Until then the socket is not presence, is relayed nothing,
+  evicts nobody and stamps no `last_seen`. **Do not "simplify" admission back to the upgrade** — a
+  stolen cookie then evicts an unattended host for good and hears every owner offer.
+- **One proven agent socket per machine; a newly proven one replaces the incumbent**, which is sent
+  `replaced`. The frame is the contract — local workerd delivers the server-side close lazily, so
+  nothing may depend on the close code reaching the replaced tab. **`replaced` is not terminal**:
+  only a tab of the same profile can prove the key, so the replaced tab asks that profile's tabs
+  (`BroadcastChannel`) and takes back over once none claims to be the agent. Only an *active* tab
+  answers, which is what stops two tabs ping-ponging. `rekeyed` / `proof-refused` **are** terminal.
+- **The handshake binds the signalling peer id** (v2): the offer's signature covers the id the
+  object minted for that socket, and the agent verifies against the `from` the object stamped, so a
+  captured offer fails from any other socket. **A second offer from one peer replaces its first
+  connection**; live peers are capped at `MAX_PEERS`, which must equal `MAX_BROWSER_SOCKETS` (gated).
+- **Every signalling socket has a frame budget** (`FRAME_BUDGET`), kept in the hibernation
+  attachment; exhaustion closes 1008. **A re-key hangs up on the old key** (`/shutdown?reason=rekeyed`
+  with the new key), pending sockets included.
+- **The machine and drive caps live in the INSERT's own WHERE**, and drive labels are unique per
+  machine case-insensitively in the index (migration 0011) — the last-way-in shape again.
 - **STUN only; no TURN** until the client approves the spend. A hard-NAT pair fails with an honest
   message, not silently.
 

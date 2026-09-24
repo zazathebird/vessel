@@ -863,6 +863,12 @@ drives, and read-only makes that harmless.
 
 - *Rejected: refusing the second tab.* A crashed tab with a half-open socket would lock sharing
   out until some timeout expired; replacement makes the newest tab authoritative with no timer.
+- **Amended 2026-09-24:** "a second agent socket" now means a second socket that has **proven the
+  machine key** (§13, Signalling). As first built, a session alone could replace the agent, so a
+  stolen cookie took an unattended host offline until somebody clicked. With the proof, a replacer
+  can only be a tab of the same profile, so the replaced tab is no longer quiescent for good: it
+  asks that profile's other tabs whether one is the agent and takes back over when none is.
+  `docs/DECISIONS.md` (2026-09-24) has the alternatives weighed.
 
 **N. Presence is the DO's socket state, persisted nowhere.** "Is the agent online" is answered by
 whether its socket is currently open; the machine list carries the answer and the browse surface
@@ -1132,11 +1138,15 @@ drops the handle. Bounds: machines and drives are user-writable tables, so both 
 
 One Durable Object per machine (`idFromName(machineId)`), reached by WebSocket at
 `GET /api/signal/<machineId>?role=agent|browser`. The Worker authenticates the upgrade — session
-cookie, account must own the machine — before the DO ever sees it, and stamps `last_seen` when an
-agent connects. The DO:
+cookie, account must own the machine — before the DO ever sees it, and hands the DO the machine's
+`agent_pubkey` for an agent upgrade. The DO:
 
-- holds **one agent socket** (a newcomer replaces the incumbent, which is sent `replaced` — §12 M)
-  and any number of browser sockets, each assigned an opaque peer id;
+- **admits an agent socket only on proof of the machine key** (amended 2026-09-24): it sends a
+  `challenge` nonce it minted, the agent answers `prove` with a P-256 signature over
+  `vessel/p2p/agent-connect/v1\n<machineId>\n<nonce>`, and until that verifies the socket is not
+  presence, is relayed nothing and replaces nobody. `last_seen` is stamped on the proof;
+- holds **one proven agent socket** (a newly proven one replaces the incumbent, which is sent
+  `replaced` — §12 M) and up to eight browser sockets, each assigned an opaque peer id;
 - relays `{ type: "offer" | "answer" | "ice", ... }` between a browser (tagged `from`) and the
   agent (addressed `to`) **without reading payloads** — the signed fingerprints ride inside them,
   so the introducer never handles, and could not usefully alter, the material that authenticates
@@ -1145,18 +1155,21 @@ agent connects. The DO:
   departure, and the Worker's machine list asks the DO the same question over a plain fetch;
 - persists nothing, ever. Who-talked-to-whom exists only as open sockets.
 
-Frames are JSON text, bounded (64 KiB); an oversized or unparseable frame closes the socket.
+Frames are JSON text, bounded (64 KiB) and budgeted per socket (a token bucket, since 2026-09-24);
+an oversized, unparseable or over-budget frame closes the socket.
 
 ### The connect ceremony
 
 1. The browsing tab unwraps the grant key for this connection (§12 K — password prompt, any slot;
    the key is non-extractable and never stored).
 2. It creates an `RTCPeerConnection` (STUN only — §12 P), reads its local DTLS fingerprint from
-   the offer SDP, and signs `vessel/p2p/owner-fp/v1\n<machineId>\n<fingerprint>` with the grant
-   key. Offer + signature go to the agent through the DO.
-3. The agent verifies the signature against its stored trust root. Failure is a refusal before any
-   answer is sent. Success: it answers, signing its own fingerprint under
-   `vessel/p2p/agent-fp/v1\n<machineId>\n<fingerprint>` with the machine key.
+   the offer SDP, and signs `vessel/p2p/owner-fp/v2\n<machineId>\n<peerId>\n<fingerprint>` with the
+   grant key, where `peerId` is the id the DO's `hello` gave this socket (v2, 2026-09-24 — v1 bound
+   no socket, so a captured offer was replayable from anywhere). Offer + signature go to the agent
+   through the DO, which stamps them `from` that same peer id.
+3. The agent verifies the signature against its stored trust root, with `from` as the peer id.
+   Failure is a refusal before any answer is sent. Success: it answers, signing its own fingerprint
+   under `vessel/p2p/agent-fp/v2\n<machineId>\n<peerId>\n<fingerprint>` with the machine key.
 4. The browser verifies that against `agent_pubkey` from its machine list. Only then does either
    side proceed; a substituted fingerprint on either leg fails its check and the connection is
    refused (§3's MITM row).

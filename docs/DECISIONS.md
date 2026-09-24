@@ -13,6 +13,112 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-09-24 — the agent role belongs to the machine key, not to a session
+
+Five phase-2 findings from the 2026-09-24 review (N1–N3, N5, N6), each re-verified against the code
+before it was changed, each gated by running the thing, and each gate **break-verified** — reverted
+fix by fix, and the gate went red every time.
+
+### N1 (Medium): a stolen cookie could take an unattended host offline, and hear its owner
+
+`signalUpgrade` let any session that owned the machine open `?role=agent`, and the signalling object
+evicted the incumbent **unconditionally** on arrival. The evicted tab received `replaced` and went
+quiescent for good — §12 M's "the newest tab is authoritative" assumed the newest tab was the
+owner's — so one upgrade with a thirty-minute cookie left the ThinkCentre's kiosk sitting on "Take
+over here" until somebody walked up to it. The impostor socket was then the one every browsing
+tab's offer was relayed to, ICE candidates included: the owner's addresses, on request. It could
+never finish a connection (the offer's signature is checked against the trust root, and the
+browsing tab checks the answer's against `agent_pubkey`), so this was availability and a network
+leak, not files.
+
+**Decision: an agent socket is pending until it proves the machine key.** The Worker hands the
+object `machines.agent_pubkey` and the machine id on the internal upgrade (deleting any
+client-supplied copy of either header first — a header the caller could set would let it choose the
+key its own proof is checked against). The object sends the socket a `challenge` — 32 random bytes
+it minted — and the agent signs `vessel/p2p/agent-connect/v1\n<machineId>\n<nonce>` with the
+non-extractable key whose public half is that column. Only a verified socket evicts the incumbent,
+counts as presence, is relayed a frame, or stamps `last_seen` (which moved from the Worker into the
+object for that reason). Anything else a pending socket sends closes it 1008; a wrong or replayed
+proof gets `proof-refused` and 4003; a proof after ten seconds is refused.
+
+*Chosen over a signed, timestamped upgrade URL* — which is stateless but replayable inside its
+window unless the server remembers what it has seen, and remembering it would be a new column (§9 is
+a spec change) or DO storage (the object persists nothing). A per-socket nonce in the hibernation
+attachment is fresh by construction and stores nothing anywhere. *Chosen over refusing a second
+agent* — §12 M's reasoning (a crashed tab's half-open socket must not lock sharing out) still holds
+for tabs that can prove the key.
+
+**Pending sockets are bounded at four, and the OLDEST is evicted, never the newcomer refused.**
+Refusing would let anybody with a session hold four stale sockets open and lock the real agent out of
+reconnecting; evicting costs the real agent at most a retry, and its proof is one round trip where a
+flood has to keep pace for ever.
+
+**Recovery from `replaced` is automatic, and asks the profile.** Since only a key-holder can replace
+a tab now, `replaced` means another tab of *the same browser profile* (the key lives in its
+IndexedDB and cannot be exported). So a replaced tab asks that profile's tabs over a
+`BroadcastChannel` whether one of them is the live agent: if one answers, it waits and asks again
+with backoff; if none does — the replacing tab was closed or crashed — it takes back over. A tab that
+stops says `released`, so the wait is usually nothing. Only an active tab answers, so two tabs never
+ping-pong. "Take over here" stays for a person who opened a second tab on purpose. The dropped-socket
+retry also gained backoff (2s doubling to 60s, jittered; it was a flat 5s for ever), and a
+`proof-refused` or `rekeyed` frame is terminal — a key that no longer matches can never prove — and
+sends the page to its re-key form instead of retrying.
+
+**Deploy note:** this changes the signalling protocol. An agent tab running the previous bundle
+never answers the challenge, so it stays pending and the host reads offline **until that tab
+reloads** — restart the kiosk (or reload its `/share` tab) after deploying.
+
+### N2 (Low): the handshake was replayable, and the agent's peer map unbounded
+
+The fingerprint signatures bound role, machine and fingerprint, and nothing about *which socket*, so
+a captured offer was valid from any socket for ever; replayed by a session holder, it got an answer
+and the host's ICE candidates (never a connection — the replayer has no DTLS key). **v2 binds the
+peer id the object minted for the socket**: the browsing tab signs the id its `hello` carried, the
+object stamps `from` on every relayed frame, the agent verifies against `from`, and the answer is
+bound the same way. No extra round trip — both ends already had the value. Context strings moved to
+`…-fp/v2` so a v1 signature cannot verify as v2. In the agent, a second offer from the same peer now
+closes the first `RTCPeerConnection` rather than leaking it beside the new one, and live peers are
+capped at eight (`MAX_PEERS`, equal to the object's `MAX_BROWSER_SOCKETS`, gated equal): a newcomer
+past the cap is refused, an incumbent never evicted.
+
+### N3 (Low): the relay had a size cap and no rate cap
+
+Per-socket token buckets in the hibernation attachment: browsing sockets 64 burst / 16 per second,
+agents 256 / 64 (eight peers' answers and candidates at once). Exhaustion closes 1008 — a dropped
+frame would be a connection that fails later for no visible reason.
+
+### N5 (Low): re-keying left the old key's agent online
+
+`pair()`'s re-key branch replaced `agent_pubkey` and told the object nothing. It now calls
+`/shutdown?reason=rekeyed` with the new key, and the object closes (`rekeyed`, 4005) every agent
+socket admitted under any other key — pending ones included, since a socket admitted before the
+write would otherwise be proved against the old key it was admitted with. Browsing tabs stay and are
+told the agent left, once: the closed socket is demoted before its close, so `webSocketClose` does
+not announce a second departure (the e2e caught that duplicate).
+
+### N6 (Low): drive labels could collide, and both caps were count-then-insert
+
+Migration `0011_drive_labels_unique.sql` adds `(machine_id, label COLLATE NOCASE)` unique, renaming
+(never deleting) any pre-existing duplicate the way 0009 did; production held one paired machine, so
+the rename is expected to match nothing, and it is there so the migration cannot fail half-applied if
+that is wrong. `MACHINES_MAX` and `DRIVES_MAX` moved into the INSERT's own WHERE (`INSERT … SELECT …
+WHERE (SELECT count(*) …) < ?`), zero changes being the refusal and the audit row following it —
+the last-way-in shape. Numbered 0011 because main gained its own 0010 the same day.
+
+### The gates
+
+`npm run check` drives all of it: `MachineSignal` over a fake of the three runtime pieces it touches;
+`VesselAgent` over a fake WebSocket and `RTCPeerConnection`, with Node's real `BroadcastChannel`
+between two agents; and `pair` / `driveAdd` over **node:sqlite with every migration applied**, whose
+D1 shim yields to the event loop per call — which is what makes the count-then-insert race
+reproducible (12 concurrent pairings landed 12 against the old code). `npm run test:auth` drives the
+object in workerd end to end. Fourteen reverts (the last the literal old count-then-insert), fourteen
+red gates.
+
+**What only a real two-browser session can show:** that a real `RTCPeerConnection` completes with
+v2 signatures on both legs, that `BroadcastChannel` recovery behaves across real tabs and a real
+crash, and that the kiosk comes back by itself after its tab is replaced and the replacer closed.
+
 ## 2026-09-22 — a sixth security pass: two fixes that each finished an earlier one
 
 Five parallel read-only reviews (auth and sessions, downloads, the Worker's front door and admin,
