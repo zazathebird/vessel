@@ -820,14 +820,22 @@ export async function ownedMachineIds(env: Env, accountId: string): Promise<stri
  *
  * Best-effort and bounded by `MACHINES_MAX`: a Durable Object hiccup must not
  * fail a credential change that has already committed. The owner's own agent
- * (the kiosk) is hung up too — deliberately; it signs in again the way it does
- * after the twelve-hour ceiling.
+ * (the kiosk) is hung up too — deliberately — with `reason=signed-out`, which
+ * closes without `machine-removed`: the kiosk keeps retrying and is admitted
+ * again once that browser is signed back in. It does not forget its pairing.
  */
-export async function hangUpSignalling(env: Env, machineIds: string[]): Promise<void> {
+export async function hangUpSignalling(
+  env: Env,
+  machineIds: string[],
+  why: "signed-out" | "removed" = "signed-out",
+): Promise<void> {
+  // `removed` is for machines that are actually gone (account deletion): the
+  // object tells every socket so and the kiosk offers to forget the pairing.
+  const url = why === "removed" ? "https://signal/shutdown" : "https://signal/shutdown?reason=signed-out";
   await Promise.allSettled(
     machineIds.map(async (id) => {
       const stub = env.SIGNAL.get(env.SIGNAL.idFromName(id));
-      await stub.fetch("https://signal/shutdown", { method: "POST" });
+      await stub.fetch(url, { method: "POST" });
     }),
   );
 }

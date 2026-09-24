@@ -184,6 +184,18 @@ export class MachineSignal {
         if (this.agent() === null) this.broadcastToBrowsers({ type: "agent-status", online: false });
         return Response.json({ status: "closed" });
       }
+      /*
+       * Sessions ended (2026-09-24 pre-deploy review): a password change, a
+       * reset or a TOTP reset hangs up every socket, but the machine is still
+       * paired. Saying `machine-removed` here put "This machine was removed"
+       * and a Forget button on the kiosk, and stopped it for good. A plain
+       * close reads as a drop: the agent retries quietly, and is admitted again
+       * once somebody signs that browser back in.
+       */
+      if (url.searchParams.get("reason") === "signed-out") {
+        for (const ws of this.ctx.getWebSockets()) ws.close(4006, "sessions ended");
+        return Response.json({ status: "closed" });
+      }
       for (const ws of this.ctx.getWebSockets()) {
         this.send(ws, { type: "machine-removed" });
         ws.close(4004, "machine removed");

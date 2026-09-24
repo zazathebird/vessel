@@ -353,7 +353,7 @@ export async function deleteAccount(request: Request, env: Env): Promise<Respons
   ]);
 
   // The one fan-out every session-ending event shares (`hangUpSignalling`).
-  await hangUpSignalling(env, owned);
+  await hangUpSignalling(env, owned, "removed");
 
   return json({ status: "ok", handle: account.handle });
 }

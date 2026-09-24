@@ -7811,7 +7811,11 @@ const sqliteEnv = async () => {
       idFromName: (name: string) => name,
       get: (id: string) => ({
         fetch: async (url: string) => {
-          if (String(url).endsWith("/shutdown")) hungUp.push(id);
+          // Counted only as a SIGNED-OUT hang-up: a bare /shutdown tells the
+          // kiosk its machine was removed and stops it for good (pre-deploy
+          // review, 2026-09-24), which is wrong for a credential change.
+          const u = new URL(String(url));
+          if (u.pathname === "/shutdown" && u.searchParams.get("reason") === "signed-out") hungUp.push(id);
           return new Response("ok");
         },
       }),
@@ -8460,6 +8464,13 @@ checkAsync(
         await signal.webSocketClose(b as unknown as WebSocket);
         const offlineAfter = browser!.sent.filter((f) => f.type === "agent-status" && f.online === false).length;
         must(offlineAfter - offlineBefore === 1, `browsers were told the agent left ${offlineAfter - offlineBefore} times on one re-key`);
+
+        // A credential change hangs up WITHOUT saying the machine was removed
+        // (pre-deploy review 2026-09-24): the kiosk must read it as a drop.
+        const { ws: watcher } = await connect("browser");
+        await signal.fetch(new Request("https://signal/shutdown?reason=signed-out", { method: "POST" }));
+        must(watcher!.code === 4006, `a signed-out hang-up closed with ${watcher!.code}, not 4006`);
+        must(!watcher!.types().includes("machine-removed"), "a signed-out hang-up told the socket its machine was removed");
 
         must(MAX_BROWSER_SOCKETS === MAX_PEERS, `the object admits ${MAX_BROWSER_SOCKETS} browsing sockets and the agent ${MAX_PEERS} peers — they are one number`);
         return "pending until proven: no presence, no relay, no eviction; wrong key, replay, late proof and early speech refused; 40-frame burst passes, flood closed 1008; re-key closes the old key once";
