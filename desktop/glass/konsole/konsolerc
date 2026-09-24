@@ -1,0 +1,11 @@
+[Desktop Entry]
+DefaultProfile=Halo.profile
+
+[General]
+ConfigVersion=1
+
+[Notification Messages]
+CloseAllTabs=true
+
+[UiSettings]
+ColorScheme=
