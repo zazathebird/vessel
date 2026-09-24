@@ -366,29 +366,41 @@ move above the health check, start the Worker.
   password prompt in front of a list is a password typed carelessly. One helper rather than four
   inline calls, so the fifth admin write inherits the proof.
 
-  **The downloads editor and the site publish follow the same rule, drawn at RELEASES, not writes**
-  (the client's decision). Six routes ask: `mintCode`, `addGrant`, `finishUpload`, `deletePage`,
-  `deleteFile`, `publishSiteConfig` — each changes what somebody *else* can get, and `finishUpload`
-  is the worst write on the site, since a stolen cookie could put replacement bytes under a program's
-  existing link. Every save, block edit, reorder, upload begin and part stays session-only, because
-  the editor saves often. **Gated in both directions** — so do not "harden" `saveFile` into a prompt,
-  and do not "simplify" `finishUpload` out of one.
+  **The downloads editor and the site publish follow the same rule, drawn at RELEASES — what
+  somebody else can get *or is told* — not at writes** (the client's decision, 2026-09-06; moved to
+  include "is told" and withdrawals on 2026-09-24, review item 18). Eight routes ask: `mintCode`,
+  `addGrant`, `finishUpload`, `deletePage`, `deleteFile`, `publishSiteConfig`, and the two
+  withdrawals `revokeCode` and `removeGrant` — `finishUpload` is the worst write on the site, since a
+  stolen cookie could put replacement bytes under a program's existing link. Drafts, reorders, new
+  file rows, upload begin and parts stay session-only. **Gated in both directions** — so do not
+  "harden" a draft save into a prompt, and do not "simplify" `finishUpload` out of one.
 
-  **And two of the saves ask when — and only when — they WIDEN**: `savePage` when a page goes `live`
-  or a live page's visibility opens (`granted` < `code` < `unlisted` < `public`), `saveFile` when an
-  existing row flips `free` on or changes page. The question is asked of the *transition*, never the
-  route — `proven()` asks unconditionally and must not be used there — so a title edit, a narrowing,
-  an unpublish and a new row stay silent. `RELEASE_WORDING` in `src/data/downloads.ts` is read by
-  both the Worker and the editor, which recognises the prompt by its prefix and retries with proof.
+  **And three of the saves ask when — and only when — they WIDEN or the page is LIVE NOW**:
+  `savePage` when a page goes `live`, a live page's visibility opens (`granted` < `code` <
+  `unlisted` < `public`), or the page is already live (so a retitle, a narrowing and an unpublish of
+  a live page ask too — that text is what customers read); `saveBlocks` when the page is live;
+  `saveFile` when an existing row flips `free` on, changes page, or sits on a live page. The
+  question is asked of the *state and transition*, never the route — `proven()` asks
+  unconditionally and must not be used there — so a draft's edits and a new row stay silent.
+  `RELEASE_WORDING` in `src/data/downloads.ts` (`page`, `file`, `live`) is read by both the Worker
+  and the editor, which recognises the prompt by its prefix and retries with proof.
 - **The rate-limit bucket is keyed on a NORMALISED address, IPv6 cut to the /64** (`crypto.ts`).
   Keyed on the whole string, rotating inside one /64 — which every residential and VPS allocation
   hands you for free — produced **zero** 429s over 72 attempts. **/64 and not /48 deliberately**:
   one /48 can span hundreds of unrelated households, so cutting there turns a stuffing run into an
   outage for real visitors. `X-Forwarded-For` is still never read — do not start.
-- **`recordSuccess` resets the account bucket and only *decays* the client bucket** by one — wiping
-  it on success hands an attacker a free reset. Client allowance 50, account 5, because one address
-  is a household behind NAT. **Signup has a third bucket** (allowance 12), sized just above the
-  harness's eight signups per run: shrink it and the harness locks itself out.
+- **`recordSuccess` resets the per-handle buckets and only *decays* the client bucket** by one —
+  wiping it on success hands an attacker a free reset. Client allowance 50, because one address is a
+  household behind NAT. **Signup has its own bucket** (allowance 12), sized just above the harness's
+  eight signups per run: shrink it and the harness locks itself out.
+- **The anonymous per-handle limit is two buckets, and the tight one is per (address, handle)**
+  (2026-09-24, review item 10). `pair:` (client + handle) allows 5; `account:` (handle alone)
+  allows 30. **Do not collapse them back into one per-handle bucket at 5**: that bucket is reachable
+  by anybody who knows a handle, and six wrong guesses from anywhere locked the owner out. `gate`
+  refunds the buckets that said yes when one says no, so one address feeds `account:` at most six
+  times — that refund is load-bearing here too. `proof:` (signed-in re-proof) and
+  `second-factor:` (only reachable with the password) stay single buckets at 5, deliberately.
+  Gated by driving the real `RateLimiter` through `signin`.
 - **Rate limiting reserves and checks in one round-trip** — `/check` then `/fail` let N concurrent
   sign-ins all pass before any failure landed. **`challenge` deliberately stays on `/check`**: asking
   for a salt is not a failable attempt, and counting it would let anyone lock an owner out. It is the

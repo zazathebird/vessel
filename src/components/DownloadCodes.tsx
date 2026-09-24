@@ -24,6 +24,7 @@ import type { DownloadCodeRow, DownloadPageSummary } from "../auth/api";
 import { useSession } from "../auth/SessionContext";
 import { useConfig } from "../config/ConfigContext";
 import { derivePassword } from "../share/unlock";
+import { ProofDialog } from "./ProofDialog";
 
 function day(ms: number | null): string {
   if (!ms) return "—";
@@ -110,6 +111,8 @@ export function DownloadCodes() {
 
   /** The plaintext of the code just minted. Held in state and nowhere else. */
   const [fresh, setFresh] = useState<string | null>(null);
+  /** The row awaiting the password before it is revoked. */
+  const [revoking, setRevoking] = useState<DownloadCodeRow | null>(null);
 
   async function refresh() {
     try {
@@ -170,10 +173,20 @@ export function DownloadCodes() {
     }
   }
 
-  async function onRevoke(ref: string) {
+  /**
+   * Revoking asks for the password too (2026-09-24, review item 18): it is
+   * minting in reverse, and a revoked code cannot be brought back. Asked in a
+   * dialog rather than read from the mint form's box, so the one gesture says
+   * which row it is about.
+   */
+  async function onRevoke(ref: string, typed: string) {
+    if (busy) return;
     setBusy(true);
+    setError(null);
     try {
-      await api.adminDownloadRevoke(ref);
+      const { authSecret } = await derivePassword(me?.account?.handle ?? "", typed);
+      await api.adminDownloadRevoke(ref, authSecret);
+      setRevoking(null);
       say("Code revoked.");
       await refresh();
     } catch (thrown) {
@@ -345,7 +358,10 @@ export function DownloadCodes() {
                       type="button"
                       className="v-btn v-btn-danger"
                       disabled={busy}
-                      onClick={() => void onRevoke(row.ref)}
+                      onClick={() => {
+                        setError(null);
+                        setRevoking(row);
+                      }}
                     >
                       Revoke
                     </button>
@@ -356,6 +372,27 @@ export function DownloadCodes() {
           })}
         </ul>
       )}
+
+      {revoking ? (
+        <ProofDialog
+          title={`Revoke ${revoking.label || revoking.ref}?`}
+          consequence={
+            <p>
+              It stops opening {scopeOf(revoking, pages)} at once, and a revoked code cannot be
+              brought back — the buyer would need a new one.
+            </p>
+          }
+          confirmLabel="Revoke"
+          busyLabel="Revoking…"
+          busy={busy}
+          error={error}
+          onConfirm={(typed) => void onRevoke(revoking.ref, typed)}
+          onClose={() => {
+            setRevoking(null);
+            setError(null);
+          }}
+        />
+      ) : null}
     </section>
   );
 }

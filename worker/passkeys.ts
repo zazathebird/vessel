@@ -48,6 +48,7 @@ import {
   type AccountRow,
   assertPassword,
   auditStatement,
+  expectDisplayName,
   json,
   noStore,
   publicAccount,
@@ -74,6 +75,26 @@ const WRAPPED_KEY_BYTES = 40;
 const CREDENTIAL_ID_MIN = 16;
 const CREDENTIAL_ID_MAX = 1023;
 const LABEL_MAX = 40;
+
+/**
+ * The name a passkey is listed under, **through `expectDisplayName` like every
+ * other name the account stores** (2026-09-24, review item 17).
+ *
+ * This trimmed and sliced, so a bidi override or a zero-width character went
+ * into the owner's own passkey list verbatim — and that list is where the owner
+ * decides which row to *remove*, the one place on the account where two rows
+ * that read alike is a wrong deletion. It also repaired an over-long name by
+ * cutting it, which stores a name nobody typed. Now it refuses both, with the
+ * sentence machine and drive names get.
+ *
+ * Absent or blank still means "passkey": that is a default for a field the
+ * person left empty, not a repair of one they filled in.
+ */
+export function passkeyLabel(value: unknown): string {
+  if (typeof value !== "string" || !value.trim()) return "passkey";
+  return expectDisplayName(value, "passkey", LABEL_MAX);
+}
+
 /**
  * A bound, because `credentials` is a user-writable table (the setups lesson):
  * generous for a person, hostile to a script. Twenty is a phone, a laptop, a
@@ -201,10 +222,7 @@ export async function register(request: Request, env: Env): Promise<Response> {
     throw new BadRequest("That passkey data is malformed.");
   }
 
-  const label =
-    typeof body.label === "string" && body.label.trim()
-      ? body.label.trim().slice(0, LABEL_MAX)
-      : "passkey";
+  const label = passkeyLabel(body.label);
 
   // Optional, absent when the authenticator has no `prf` — §5's missing-slot
   // fallback. When present it is the account's grant key re-wrapped in the

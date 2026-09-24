@@ -157,6 +157,13 @@ async function operator(request: Request, env: Env) {
  * line is "does this change what somebody *else* can get", not "does this
  * write". `assertPassword` carries its own rate limit, so this is a bucket and
  * not an oracle.
+ *
+ * **2026-09-24 (review item 18) moved the line to "does this change what
+ * somebody else can get *or reads*".** `removeGrant` and `revokeCode` take the
+ * password now — withdrawing is a release in reverse — and a save to a page
+ * that is live (its row, its blocks, or an existing file's details on it) asks
+ * through `assertPassword` with `RELEASE_WORDING.live`. Drafts, reordering,
+ * new file rows and upload parts stay session-only.
  */
 /**
  * How far a page's visibility reaches, so a save can tell widening from
@@ -709,7 +716,26 @@ export async function savePage(request: Request, env: Env): Promise<Response> {
     .first<{ visibility: string; status: string }>();
   const widens =
     status === "live" && (before?.status !== "live" || reach(visibility) > reach(before.visibility));
-  if (widens) await assertPassword(request, env, account, b.authSecret, RELEASE_WORDING.page);
+  /*
+   * **And a save to a page that is live NOW asks, whatever it changes**
+   * (2026-09-24, review item 18). `widens` asks about who can get the page;
+   * this asks about what they are told. A stolen cookie could otherwise rewrite
+   * a live page's title, intro and notice — the text a customer follows before
+   * running something they downloaded — without the password. Keyed on the
+   * stored status, not the requested one, so unpublishing a live page asks
+   * too: taking a customer's page down is a change to what somebody else gets.
+   * A draft stays a draft: saving one asks nothing, as before.
+   */
+  const live = before?.status === "live";
+  if (widens || live) {
+    await assertPassword(
+      request,
+      env,
+      account,
+      b.authSecret,
+      widens ? RELEASE_WORDING.page : RELEASE_WORDING.live,
+    );
+  }
 
   /*
    * The presentation switches (0007). Each one falls back to the behaviour the
@@ -893,15 +919,24 @@ export async function reorderFiles(request: Request, env: Env): Promise<Response
   return noStore(json({ ok: true }));
 }
 
-/** Blocks are replaced wholesale — the editor owns the whole list. */
+/**
+ * Blocks are replaced wholesale — the editor owns the whole list.
+ *
+ * On a live page this is the text customers read, so it asks for the password
+ * (2026-09-24, review item 18; `savePage` has the argument). A draft's blocks
+ * stay a session-only save.
+ */
 export async function saveBlocks(request: Request, env: Env): Promise<Response> {
-  await operator(request, env);
+  const account = await operator(request, env);
   const b = await body(request);
   const slug = str(b.slug, 64);
-  const page = await env.DB.prepare("SELECT slug FROM download_pages WHERE slug = ?")
+  const page = await env.DB.prepare("SELECT slug, status FROM download_pages WHERE slug = ?")
     .bind(slug)
-    .first<{ slug: string }>();
+    .first<{ slug: string; status: string }>();
   if (!page) throw new BadRequest("No such page.", 404);
+  if (page.status === "live") {
+    await assertPassword(request, env, account, b.authSecret, RELEASE_WORDING.live);
+  }
 
   const raw = Array.isArray(b.blocks) ? b.blocks : [];
   // A hard cap, because this is a page and not a document store.
@@ -955,9 +990,15 @@ export async function saveFile(request: Request, env: Env): Promise<Response> {
    *
    * A row that does not exist yet has nothing to keep, so there it is required.
    */
-  const existing = await env.DB.prepare("SELECT filename, slug, free FROM download_files WHERE id = ?")
+  // `page_status` is the status of the page the file is on NOW, which is what
+  // decides whether customers are reading its details (see `live` below).
+  const existing = await env.DB.prepare(
+    `SELECT f.filename, f.slug, f.free, p.status AS page_status
+       FROM download_files f LEFT JOIN download_pages p ON p.slug = f.slug
+      WHERE f.id = ?`,
+  )
     .bind(id)
-    .first<{ filename: string; slug: string; free: number }>();
+    .first<{ filename: string; slug: string; free: number; page_status: string | null }>();
   const supplied = str(b.filename, 160);
   const filename = supplied || existing?.filename || "";
   if (!filename) throw new BadRequest("A new file needs the file itself.");
@@ -1063,7 +1104,23 @@ export async function saveFile(request: Request, env: Env): Promise<Response> {
    */
   const free = b.free === true ? 1 : 0;
   const widens = existing !== null && ((free === 1 && existing.free !== 1) || existing.slug !== slug);
-  if (widens) await assertPassword(request, env, account, b.authSecret, RELEASE_WORDING.file);
+  /*
+   * **And an existing file on a live page asks for ANY edit** (2026-09-24,
+   * review item 18). Its name, blurb, version, caveat and price are what a
+   * customer reads before downloading and running it; `savePage` has the
+   * argument. A new row still asks nothing — it has no bytes, is hidden from
+   * visitors until `finishUpload`, and that asks.
+   */
+  const live = existing !== null && existing.page_status === "live";
+  if (widens || live) {
+    await assertPassword(
+      request,
+      env,
+      account,
+      b.authSecret,
+      widens ? RELEASE_WORDING.file : RELEASE_WORDING.live,
+    );
+  }
 
   const now = Date.now();
 
@@ -1387,9 +1444,15 @@ export async function addGrant(request: Request, env: Env): Promise<Response> {
   return noStore(json({ ok: true }));
 }
 
+/**
+ * Take somebody's access away. **Asks for the password** (2026-09-24, review
+ * item 18): it changes what somebody else can get as surely as `addGrant`
+ * does, only in the other direction — and a stolen cookie that could strip a
+ * paying customer's access is a denial of the thing they paid for, lasting as
+ * long as nobody notices.
+ */
 export async function removeGrant(request: Request, env: Env): Promise<Response> {
-  await operator(request, env);
-  const b = await body(request);
+  const { b } = await proven(request, env, "Enter your password to take somebody's access away.");
   const id = Number(b.id);
   if (!Number.isInteger(id)) throw new BadRequest("Which grant?");
   const gone = await env.DB.prepare("DELETE FROM download_grants WHERE id = ?").bind(id).run();

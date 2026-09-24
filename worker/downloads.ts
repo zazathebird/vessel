@@ -882,11 +882,17 @@ export async function listCodes(request: Request, env: Env): Promise<Response> {
  * Revoke by reference — the first `REF_LENGTH` (sixteen) hex characters of the
  * hash, which is what the list shows. The operator cannot revoke by code
  * because they no longer have it, which is the point of not storing it.
+ *
+ * **Asks for the password** (2026-09-24, review item 18). Revoking is minting
+ * in reverse: a stolen operator cookie could otherwise walk this list and kill
+ * every paying customer's code, and nothing they could do would bring one back
+ * — a revoked row stays revoked.
  */
 export async function revokeCode(request: Request, env: Env): Promise<Response> {
-  await operator(request, env);
+  const account = await operator(request, env);
 
   const body = await readBody(request);
+  await assertPassword(request, env, account, body.authSecret, "Enter your password to revoke a code.");
   const ref = typeof body.ref === "string" ? body.ref.toUpperCase() : "";
   if (!new RegExp(`^[0-9A-F]{${REF_LENGTH}}$`).test(ref)) throw new BadRequest("Which code?");
 

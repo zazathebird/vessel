@@ -467,10 +467,44 @@ export async function buckets(
   // literal is a bucket name and not an address, so nothing is written down
   // either way.
   const ip = request.headers.get("cf-connecting-ip") ?? "local";
-  const names = [`client:${await clientKey(ip, env.RATE_SALT_SEED)}`];
+  const client = await clientKey(ip, env.RATE_SALT_SEED);
+  const names = [`client:${client}`];
   if (handleLower) {
     const key = toHex(await hmac(env.RATE_SALT_SEED, handleLower));
-    names.push(kind === "proof" ? `proof:${key}` : `account:${key}`);
+    if (kind === "proof") {
+      names.push(`proof:${key}`);
+    } else {
+      /*
+       * **Two buckets per handle on the anonymous routes, and the tight one is
+       * per (client, handle)** (2026-09-24, review item 10).
+       *
+       * This pushed `account:${key}` alone, at five attempts, and that bucket
+       * is reachable by anybody who knows a handle. Six wrong passwords from
+       * anywhere blocked the owner's *correct* password for fifteen minutes,
+       * and one request an hour held it there — a lockout any stranger could
+       * cause without guessing anything. The `proof` split above closed the
+       * same attack on the signed-in routes; this is the sign-in half.
+       *
+       * - `pair:` is keyed on the client *and* the handle, and keeps the tight
+       *   allowance of five. One address guessing at one handle is throttled
+       *   exactly as before — and it is throttled *alone*: the owner, from
+       *   anywhere else, never shares its bucket.
+       * - `account:` is still per handle, so guessing distributed across many
+       *   addresses stays capped, but at `HANDLE_FREE_ATTEMPTS`, sized so no
+       *   single address can fill it: `gate` refunds every bucket that said
+       *   yes when one says no, so a blocked pair stops feeding the handle
+       *   bucket at six. Locking an owner out now takes several addresses in
+       *   one window, which is the distributed attack the bucket exists to cap,
+       *   paid for rather than free.
+       *
+       * The pair name is an HMAC of the already-HMAC'd, daily-rotating client
+       * key and the handle, so it names a Durable Object and nothing else; no
+       * address and no handle is stored, and §9's inventory is unchanged.
+       * `client:` stays index 0 — `recordSuccess` and `signup` depend on it.
+       */
+      names.push(`pair:${toHex(await hmac(env.RATE_SALT_SEED, `${client}:${handleLower}`))}`);
+      names.push(`account:${key}`);
+    }
   }
   return names;
 }
@@ -487,6 +521,15 @@ export async function buckets(
 const CLIENT_FREE_ATTEMPTS = 50;
 const ACCOUNT_FREE_ATTEMPTS = 5;
 /**
+ * The per-handle ceiling on the anonymous routes, across every address
+ * (2026-09-24). Six times what one address can put into it before its own
+ * `pair:` bucket blocks (five free, plus the one that crosses), so a single
+ * stranger can never lock the owner out; five or more addresses inside one
+ * window can, and that is the distributed guess this bucket caps. Past it the
+ * backoff is the shared one: doubling, to the hour ceiling.
+ */
+const HANDLE_FREE_ATTEMPTS = 30;
+/**
  * Account creations from one address before backoff (2026-08-13 audit). Signup
  * used to lean on the client bucket alone, whose allowance of fifty is sized
  * for a household's sign-in typos — as a creation quota it let one script mint
@@ -497,12 +540,17 @@ const ACCOUNT_FREE_ATTEMPTS = 5;
  */
 const SIGNUP_FREE_ATTEMPTS = 12;
 
-function freeFor(name: string): number {
+export function freeFor(name: string): number {
   if (name.startsWith("client:")) return CLIENT_FREE_ATTEMPTS;
   if (name.startsWith("signup:")) return SIGNUP_FREE_ATTEMPTS;
-  // `account:` and `proof:` both land here, and deliberately share the figure:
-  // they are two buckets so that one cannot be filled by the other (see
-  // `buckets`), not because a re-proof deserves a looser allowance.
+  // The anonymous per-handle ceiling — see `buckets`. Loose because it is
+  // shared with every stranger; `pair:` below is the tight one.
+  if (name.startsWith("account:")) return HANDLE_FREE_ATTEMPTS;
+  // `pair:` and `proof:` land here, and deliberately share the figure: they are
+  // separate buckets so that one cannot be filled by the other (see `buckets`),
+  // not because a re-proof deserves a looser allowance. `second-factor:` lands
+  // here too and must: it is reachable only by somebody who already holds the
+  // password, and five is what makes six digits a real second factor.
   return ACCOUNT_FREE_ATTEMPTS;
 }
 
@@ -1785,29 +1833,47 @@ export async function setPassword(request: Request, env: Env): Promise<Response>
   );
 
   /**
-   * The UNIQUE violation is caught, because losing this race must not look like
-   * a failure (2026-08-14 review).
+   * The UNIQUE violation is caught, because losing this race must not become a
+   * 500 (2026-08-14 review) — **and the answer it gets has to be true**
+   * (2026-09-24, review item 16).
    *
    * Two concurrent set-passwords on one ticket both find no existing password
    * row and both build an INSERT. A commits; B violates
    * `idx_credentials_one_password`, which is not a `BadRequest`, so `index.ts`
-   * turns it into a generic 500 — on the screen that says "do not close this
+   * turned it into a generic 500 — on the screen that says "do not close this
    * page until it succeeds", for the person whose recovery code is already
    * spent. Retrying then fails differently: A's batch has already deleted the
    * redeemed credential's key slot, so the ticket check refuses and tells them
-   * to burn a second of their ten codes. For an operation that *succeeded*.
+   * to burn a second of their ten codes.
    *
-   * `signup` and `passkeys.register` already catch their own UNIQUE this way.
-   * No privilege is involved — both requests are the same legitimate ticket
-   * holder — so the honest answer is the one the winner got.
+   * The first fix answered B `{ status: "set" }`, reasoning that the winner's
+   * answer was the honest one. It is only honest when B asked for the same
+   * password A set. B's batch rolled back — nothing B sent was written — so two
+   * tabs submitting *different* passwords got two "set"s, and the person who
+   * typed B's password walked away believing in a password the account does
+   * not have. **So the stored hash is compared with B's**: equal means the
+   * account holds exactly the password B asked for (a double-submit), and
+   * "set" is true; different means B's password was not set, and B is told so
+   * — 409, naming what actually happened, so nobody burns a recovery code
+   * retrying something that cannot succeed. Refuse, never repair: B's password
+   * is not written over A's, because A is also somebody who was told "set".
    */
   try {
     await env.DB.batch(statements);
   } catch (error) {
-    if (String(error).includes("UNIQUE") || String(error).includes("constraint")) {
+    if (!String(error).includes("UNIQUE") && !String(error).includes("constraint")) throw error;
+    const stored = await env.DB.prepare(
+      "SELECT auth_hash FROM credentials WHERE account_id = ? AND kind = 'password'",
+    )
+      .bind(account.id)
+      .first<{ auth_hash: unknown }>();
+    if (stored && timingSafeEqual(nextHash, fromBlob(stored.auth_hash))) {
       return json({ status: "set" });
     }
-    throw error;
+    throw new BadRequest(
+      "Another request set this account's password a moment ago, and it was not the one you just typed. Sign in with the password that was set there.",
+      409,
+    );
   }
 
   return json({ status: "set" });

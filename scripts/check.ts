@@ -102,8 +102,13 @@ import {
 } from "../src/data/downloads";
 import type { SortableFile } from "../src/data/downloads";
 import { DRAWN_CATEGORIES } from "../src/components/CategoryIcon";
-import { rangePlan } from "../worker/downloads";
-import { readJson, readJsonLenient } from "../worker/accounts";
+import { rangePlan, revokeCode } from "../worker/downloads";
+import { readJson, readJsonLenient, setPassword, signin } from "../worker/accounts";
+import { removeGrant, saveBlocks, saveFile, savePage } from "../worker/downloadPages";
+import { passkeyLabel } from "../worker/passkeys";
+import { RateLimiter } from "../worker/rate-limit";
+import { harden, health } from "../worker/hardening";
+import { RELEASE_WORDING } from "../src/data/downloads";
 import { publishSiteConfig } from "../worker/site-config";
 import { authHash } from "../worker/crypto";
 import { toBase64Url } from "../worker/encoding";
@@ -6974,32 +6979,43 @@ check("the release-shaped operator writes demand the password, and the edits do 
     ["worker/downloadPages.ts", "addGrant"],
     ["worker/downloads.ts", "mintCode"],
     ["worker/site-config.ts", "publishSiteConfig"],
+    // Withdrawals, since 2026-09-24 (review item 18) — a release in reverse.
+    ["worker/downloadPages.ts", "removeGrant"],
+    ["worker/downloads.ts", "revokeCode"],
   ];
   for (const [file, name] of releases) {
     must(asks(bodyOf(files[file], name)), `${file}: ${name} no longer demands the password`);
   }
   /*
    * The two saves that can BE a release ask only when they widen (2026-09-06,
-   * second pass — audit item 34): `assertPassword` under an `if (widens)`
-   * guard, never `proven()`, which asks unconditionally and is the
-   * prompt-on-every-keystroke the client refused. `npm run test:auth` drives the
-   * transition both ways; this is the shape that fails at edit time when the
-   * guard is dropped or the call is.
+   * second pass — audit item 34) **or when the page is live now** (2026-09-24,
+   * review item 18): `assertPassword` under an `if (widens || live)` guard,
+   * never `proven()`, which asks unconditionally and is the prompt on every
+   * draft save the client refused. The driven gate below ("a stolen operator
+   * session cannot change a live download page…") is the behaviour; this is
+   * the shape that fails at edit time when the guard is dropped or the call is.
    */
   for (const name of ["savePage", "saveFile"]) {
     const src = bodyOf(files["worker/downloadPages.ts"], name);
     must(!/\bproven\(/.test(src), `${name} uses proven() — that asks on every save`);
     must(
-      /if \(widens\) await assertPassword\(/.test(src),
-      `${name} no longer asks for the password when a save widens what somebody else can get`,
+      /if \(widens \|\| live\) \{\s*await assertPassword\(/.test(src),
+      `${name} no longer asks for the password when a save widens, or touches a live page`,
     );
     must(
       (src.match(/\bassertPassword\(/g) ?? []).length === 1,
-      `${name} calls assertPassword outside the widening guard`,
+      `${name} calls assertPassword outside the widening/live guard`,
+    );
+  }
+  {
+    const src = bodyOf(files["worker/downloadPages.ts"], "saveBlocks");
+    must(!/\bproven\(/.test(src), "saveBlocks uses proven() — a draft's blocks would ask");
+    must(
+      /if \(page\.status === "live"\) \{\s*await assertPassword\(/.test(src),
+      "saveBlocks no longer asks for the password on a live page",
     );
   }
   const edits: [keyof typeof files, string][] = [
-    ["worker/downloadPages.ts", "saveBlocks"],
     ["worker/downloadPages.ts", "beginUpload"],
     ["worker/downloadPages.ts", "uploadPart"],
     ["worker/downloadPages.ts", "reorderPages"],
@@ -7011,7 +7027,7 @@ check("the release-shaped operator writes demand the password, and the edits do 
   // And the helper itself has to reach assertPassword, or `proven` is a name.
   must(/async function proven\([\s\S]*?assertPassword\(/.test(files["worker/downloadPages.ts"]), "proven() does not call assertPassword");
 
-  return `${releases.length} releases ask, 2 saves ask only when they widen, ${edits.length} edits do not`;
+  return `${releases.length} releases ask, 3 saves ask only when they widen or the page is live, ${edits.length} edits do not`;
 });
 
 /*
@@ -7031,6 +7047,372 @@ check("the Windows script refuses a -BrowserProfile that is not a profile folder
   must(main >= 0 && guard > main, "the guard is not in Main, where the parameter is first consumed");
   must(/if \(\$BrowserProfile -and \$BrowserProfile -notmatch[^\n]*\n[^\n]*Write-Fail[^\n]*\n\s*exit 1/.test(src), "the guard does not exit");
   return "quotes and flags in -BrowserProfile are refused before the task is written";
+});
+
+/*
+ * ---- The 2026-09-24 review's Worker fixes, driven -------------------------
+ *
+ * Each of these calls the real route over a stub `env`, the shape the
+ * published-config gate above established: D1 answers `prepare().bind()` by
+ * matching the SQL, and nothing more. Every gate carries a control proving the
+ * stub reaches the write, so a refusal is the route refusing and not the stub
+ * failing to get there.
+ */
+
+/** A request to a Worker route, JSON body, from a given address. */
+const workerPost = (path: string, body: unknown, headers: Record<string, string> = {}) =>
+  new Request(`https://mcclevarty.ca${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...headers },
+    body: JSON.stringify(body),
+  });
+
+/** Run a route and reduce it to its status — a thrown `BadRequest` is its status. */
+const statusOf = async (run: () => Promise<Response>): Promise<{ status: number; message: string }> => {
+  try {
+    const response = await run();
+    return { status: response.status, message: "" };
+  } catch (error) {
+    return { status: (error as BadRequest).status ?? -1, message: (error as Error).message };
+  }
+};
+
+/*
+ * **A stranger cannot lock the owner out of password sign-in, and distributed
+ * guessing against one handle is still capped** (2026-09-24, review item 10).
+ * The limiter here is the real `RateLimiter` Durable Object class over an
+ * in-memory storage, one instance per bucket name, exactly as the namespace
+ * hands them out — so this is the real backoff arithmetic answering, not a
+ * stub that says yes. It fails against the old single `account:` bucket at
+ * step two: the owner, from their own address, got 429 after a stranger's six
+ * wrong guesses.
+ */
+checkAsync("a stranger cannot lock the owner out of sign-in; guessing across addresses is still capped", async () => {
+  const account = { id: "acct-owner", handle: "owner", is_operator: 0, created_at: 0, reset_at: null };
+  const env = {
+    SESSION_SECRET: "check-session-secret",
+    AUTH_PEPPER: "check-pepper",
+    RATE_SALT_SEED: "check-seed",
+  } as unknown as Env & Record<string, unknown>;
+  const right = toBase64Url(new Uint8Array(32).fill(3));
+  const wrong = toBase64Url(new Uint8Array(32).fill(4));
+  const hash = await authHash(env.AUTH_PEPPER, right);
+
+  const limiters = new Map<string, RateLimiter>();
+  const storage = () => {
+    const m = new Map<string, unknown>();
+    return {
+      get: async (k: string) => structuredClone(m.get(k)),
+      put: async (k: string, v: unknown) => void m.set(k, structuredClone(v)),
+      deleteAll: async () => m.clear(),
+      setAlarm: async () => undefined,
+    };
+  };
+  env.RATE_LIMIT = {
+    idFromName: (name: string) => name,
+    get: (id: string) => {
+      let limiter = limiters.get(id);
+      if (!limiter) {
+        limiter = new RateLimiter({ storage: storage() } as unknown as DurableObjectState);
+        limiters.set(id, limiter);
+      }
+      const one = limiter;
+      return { fetch: (u: string) => one.fetch(new Request(u)) };
+    },
+  } as unknown as DurableObjectNamespace;
+  env.DB = {
+    prepare: (sql: string) => ({
+      bind: (...args: unknown[]) => ({
+        first: async () => (/FROM accounts WHERE handle_lower/.test(sql) && args[0] === "owner" ? account : null),
+        all: async () => ({
+          results: /FROM credentials/.test(sql) && args[0] === account.id ? [{ id: "cred-pw", secret: hash }] : [],
+        }),
+        run: async () => ({ meta: { changes: 1 } }),
+      }),
+    }),
+    batch: async () => [],
+  } as unknown as D1Database;
+
+  const attempt = (ip: string, authSecret: string) =>
+    statusOf(() =>
+      signin(workerPost("/api/auth/signin", { handle: "owner", authSecret }, { "cf-connecting-ip": ip }), env),
+    );
+
+  // 1. One stranger, one address, guessing: throttled after the tight allowance.
+  let strangerBlockedAt = -1;
+  for (let n = 1; n <= 12 && strangerBlockedAt < 0; n += 1) {
+    const { status } = await attempt("203.0.113.50", wrong);
+    if (status === 429) strangerBlockedAt = n;
+    else must(status === 401, `a wrong password answered ${status}, not 401`);
+  }
+  must(strangerBlockedAt > 1 && strangerBlockedAt <= 7, `one address guessing was blocked at attempt ${strangerBlockedAt} — the per-address allowance is five`);
+
+  // 2. The owner, from their own address, is not locked out by it.
+  const owner = await attempt("198.51.100.7", right);
+  must(
+    owner.status === 200,
+    `the owner's correct password was refused (${owner.status} ${owner.message}) after a stranger's ${strangerBlockedAt} guesses — anonymous lockout is back`,
+  );
+
+  // 3. Guessing spread across many addresses still meets a ceiling on the handle.
+  let spreadBlockedAt = -1;
+  for (let n = 1; n <= 80 && spreadBlockedAt < 0; n += 1) {
+    const { status } = await attempt(`192.0.2.${n}`, wrong);
+    if (status === 429) spreadBlockedAt = n;
+  }
+  must(spreadBlockedAt > 0, "80 addresses guessing at one handle were never refused — distributed guessing is uncapped");
+  must(spreadBlockedAt > 7, `the handle-wide ceiling engaged at ${spreadBlockedAt} — no looser than one address's, so one stranger could reach it`);
+  // And that ceiling binds everyone, the owner included: the honest cost.
+  const capped = await attempt("198.51.100.8", right);
+  must(capped.status === 429, `past the handle-wide ceiling the right password still got ${capped.status}`);
+
+  return `one address blocked at ${strangerBlockedAt}; the owner elsewhere signed in; ${spreadBlockedAt} addresses reached the handle ceiling`;
+});
+
+/*
+ * **`setPassword` tells the loser of a UNIQUE race the truth** (2026-09-24,
+ * review item 16). The batch is made to fail the way D1 fails on
+ * `idx_credentials_one_password`; the stored password is then either the one
+ * this request asked for (a double-submit: "set" is true) or another (409).
+ * It fails against the old unconditional `{ status: "set" }`.
+ */
+checkAsync("setPassword reports a lost UNIQUE race truthfully", async () => {
+  const account = { id: "acct-set", handle: "setter", is_operator: 0, created_at: 0, reset_at: null };
+  const env = {
+    SESSION_SECRET: "check-session-secret",
+    AUTH_PEPPER: "check-pepper",
+    RATE_SALT_SEED: "check-seed",
+  } as unknown as Env & Record<string, unknown>;
+  const mine = toBase64Url(new Uint8Array(32).fill(5));
+  const theirs = toBase64Url(new Uint8Array(32).fill(6));
+  let stored: unknown = null;
+  let batchFails = true;
+  env.DB = {
+    prepare: (sql: string) => ({
+      bind: () => ({
+        first: async () => {
+          if (/FROM accounts WHERE id/.test(sql)) return account;
+          if (/FROM key_slots/.test(sql)) return { ok: 1 };
+          if (/SELECT id FROM credentials/.test(sql)) return null;
+          if (/SELECT kdf_salt/.test(sql)) return { salt: new Uint8Array(16).fill(1) };
+          if (/SELECT auth_hash FROM credentials/.test(sql)) return stored === null ? null : { auth_hash: stored };
+          return null;
+        },
+        run: async () => ({ meta: { changes: 1 } }),
+      }),
+    }),
+    batch: async () => {
+      if (batchFails) throw new Error("D1_ERROR: UNIQUE constraint failed: credentials.account_id: SQLITE_CONSTRAINT");
+      return [];
+    },
+  } as unknown as D1Database;
+  const cookie = `${SESSION_COOKIE}=${await mintSession(env.SESSION_SECRET, "session", account.id)}`;
+  const set = async () => {
+    const ticket = await mintSession(env.SESSION_SECRET, "set-password", `${account.id}:cred-rec`);
+    return statusOf(() =>
+      setPassword(
+        workerPost(
+          "/api/account/set-password",
+          {
+            ticket,
+            authSecret: mine,
+            passwordSlot: toBase64Url(new Uint8Array(40).fill(2)),
+            iterations: 600_000,
+            slotAlg: "AES-KW",
+          },
+          { cookie },
+        ),
+        env,
+      ),
+    );
+  };
+
+  batchFails = false;
+  const control = await set();
+  must(control.status === 200, `the uncontended set was refused (${control.status} ${control.message}) — the stub is not reaching the write`);
+
+  batchFails = true;
+  stored = await authHash(env.AUTH_PEPPER, mine);
+  const same = await set();
+  must(same.status === 200, `a double-submit of the same password was refused (${same.status} ${same.message})`);
+
+  stored = await authHash(env.AUTH_PEPPER, theirs);
+  const other = await set();
+  must(
+    other.status === 409,
+    `a request whose password was NOT written was told ${other.status} — "set" for a password the account does not have`,
+  );
+  return "uncontended 200; same password in the race 200; a different password in the race 409";
+});
+
+/*
+ * **Passkey labels go through `expectDisplayName`** (2026-09-24, review item
+ * 17). `passkeyLabel` is driven; that `register` uses it is read from the
+ * source, because the ceremony around it needs a real authenticator.
+ */
+check("passkey labels refuse bidi, zero-width and over-long names, and register uses the refusal", () => {
+  must(passkeyLabel(undefined) === "passkey" && passkeyLabel("   ") === "passkey", "an absent label is not the default");
+  must(passkeyLabel("  Work laptop ") === "Work laptop", "an ordinary label did not survive");
+  const refuses = (label: string) => {
+    try {
+      passkeyLabel(label);
+      return false;
+    } catch (error) {
+      return (error as BadRequest).status === 400;
+    }
+  };
+  must(refuses("Lap‮top"), "a right-to-left override was stored");
+  must(refuses("a​b"), "a zero-width space was stored");
+  must(refuses("x".repeat(41)), "a 41-character label was cut rather than refused");
+  const src = readFileSync("worker/passkeys.ts", "utf8");
+  must(/const label = passkeyLabel\(body\.label\);/.test(src), "register no longer takes its label through passkeyLabel");
+  return "default, ordinary, bidi, zero-width and over-long all behave; register is wired";
+});
+
+/*
+ * **A stolen operator session cannot change a live download page or withdraw
+ * anybody's access without the password** (2026-09-24, review item 18). Every
+ * live-page save and both withdrawals are driven three ways: no proof (401 with
+ * the sentence the editor recognises, nothing written), the right proof
+ * (written), and — for the saves — a draft page with no proof (written, which
+ * is the control and the "drafts stay silent" half). Fails against the old
+ * routes, which wrote on the session alone.
+ */
+checkAsync("a stolen operator session cannot change a live download page or withdraw access", async () => {
+  const account = { id: "acct-op", handle: "operator", is_operator: 1, created_at: 0, reset_at: null };
+  const env = {
+    SESSION_SECRET: "check-session-secret",
+    AUTH_PEPPER: "check-pepper",
+    RATE_SALT_SEED: "check-seed",
+  } as unknown as Env & Record<string, unknown>;
+  const proof = toBase64Url(new Uint8Array(32).fill(9));
+  const hash = await authHash(env.AUTH_PEPPER, proof);
+  let pageStatus = "live";
+  let writes = 0;
+  env.RATE_LIMIT = {
+    idFromName: (name: string) => name,
+    get: () => ({ fetch: async () => new Response(JSON.stringify({ allowed: true, retryAt: 0 })) }),
+  } as unknown as DurableObjectNamespace;
+  env.DB = {
+    prepare: (sql: string) => ({
+      bind: () => ({
+        first: async () => {
+          if (/FROM accounts WHERE id/.test(sql)) return account;
+          if (/FROM credentials/.test(sql)) return { auth_hash: hash };
+          if (/SELECT visibility, status FROM download_pages/.test(sql)) return { visibility: "public", status: pageStatus };
+          if (/SELECT slug, status FROM download_pages/.test(sql)) return { slug: "p", status: pageStatus };
+          if (/SELECT slug FROM download_pages/.test(sql)) return { slug: "p" };
+          if (/FROM download_files f LEFT JOIN download_pages/.test(sql)) {
+            return { filename: "tool.exe", slug: "p", free: 0, page_status: pageStatus };
+          }
+          return null;
+        },
+        all: async () => ({ results: [] }),
+        run: async () => {
+          writes += 1;
+          return { meta: { changes: 1 } };
+        },
+      }),
+    }),
+    batch: async () => {
+      writes += 1;
+      return [];
+    },
+  } as unknown as D1Database;
+  const cookie = `${SESSION_COOKIE}=${await mintSession(env.SESSION_SECRET, "session", account.id)}`;
+
+  type Route = (request: Request, env: Env) => Promise<Response>;
+  const routes: [string, Route, Record<string, unknown>, boolean][] = [
+    ["savePage", savePage, { slug: "p", title: "New words", visibility: "public", status: "live" }, true],
+    ["saveBlocks", saveBlocks, { slug: "p", blocks: [{ kind: "text", body: "Call this number", group: "" }] }, true],
+    ["saveFile", saveFile, { id: "tool", slug: "p", name: "Tool", blurb: "Run me", free: false }, true],
+    ["revokeCode", revokeCode, { ref: "0123456789ABCDEF" }, false],
+    ["removeGrant", removeGrant, { id: 3 }, false],
+  ];
+  const run = (fn: Route, body: Record<string, unknown>) =>
+    statusOf(() => fn(workerPost("/api/admin/downloads/x", body, { cookie }), env));
+
+  const lines: string[] = [];
+  for (const [name, fn, body, isSave] of routes) {
+    pageStatus = "live";
+    writes = 0;
+    const bare = await run(fn, body);
+    must(bare.status === 401 && writes === 0, `${name} on a live page wrote on the session alone (${bare.status}, ${writes} writes)`);
+    if (isSave) {
+      must(
+        bare.message === RELEASE_WORDING.live,
+        `${name}'s refusal is not RELEASE_WORDING.live, so the editor will not open its password dialog: "${bare.message}"`,
+      );
+    }
+    writes = 0;
+    const proved = await run(fn, { ...body, authSecret: proof });
+    must(proved.status === 200 && writes > 0, `${name} with the right password did not write (${proved.status} ${proved.message})`);
+    if (isSave) {
+      pageStatus = "draft";
+      writes = 0;
+      const draft = await run(fn, name === "savePage" ? { ...body, status: "draft" } : body);
+      must(draft.status === 200 && writes > 0, `${name} on a draft asked for the password or did not write (${draft.status} ${draft.message})`);
+    }
+    lines.push(name);
+  }
+  return `${lines.join(", ")}: refused bare on a live page, written with the password; the three saves stay silent on a draft`;
+});
+
+/*
+ * **Every response carries `Cross-Origin-Resource-Policy`, and `/api/health`
+ * does not cost a D1 query and a Durable Object call per anonymous hit**
+ * (2026-09-24, review item 21). `harden` and `health` are driven — they live in
+ * `worker/hardening.ts` because `index.ts` cannot be imported into this
+ * project (see that file's header) — and the one piece of wiring that matters,
+ * the health route calling `health`, is read from `index.ts`.
+ */
+checkAsync("every response is same-origin by CORP, and /api/health is memoised", async () => {
+  let d1 = 0;
+  let limiter = 0;
+  const env = {
+    SESSION_SECRET: "check-session-secret",
+    AUTH_PEPPER: "check-pepper",
+    RATE_SALT_SEED: "check-seed",
+    TOTP_ENC_KEY: "check-totp",
+    DB: {
+      prepare: () => {
+        d1 += 1;
+        return { first: async () => ({ n: 8 }) };
+      },
+    },
+    RATE_LIMIT: {
+      idFromName: (name: string) => name,
+      get: () => ({
+        fetch: async () => {
+          limiter += 1;
+          return new Response(JSON.stringify({ allowed: true, remaining: 50, retryAt: 0 }));
+        },
+      }),
+    },
+  } as unknown as Env;
+
+  const first = harden(await health(env));
+  const second = harden(await health(env));
+  for (const response of [first, second]) {
+    must(response.status === 200, `/api/health answered ${response.status}`);
+    must(
+      response.headers.get("cross-origin-resource-policy") === "same-origin",
+      `/api/health carries CORP ${response.headers.get("cross-origin-resource-policy")}`,
+    );
+    const body = (await response.json()) as { ok?: boolean; tables?: number };
+    must(body.ok === true && body.tables === 8, `/api/health lost what deploy verification reads: ${JSON.stringify(body)}`);
+  }
+  must(d1 === 1 && limiter === 1, `two health checks cost ${d1} D1 queries and ${limiter} limiter calls — not memoised`);
+
+  // A document with a CSP takes the same header — fonts and bundles are served
+  // down this path too.
+  const doc = harden(new Response("<!doctype html>", { headers: { "content-type": "text/html" } }), "default-src 'self'");
+  must(doc.headers.get("cross-origin-resource-policy") === "same-origin", "a document left without CORP");
+
+  const indexSrc = readFileSync("worker/index.ts", "utf8");
+  must(/case "GET \/api\/health":\s*return health\(env\);/.test(indexSrc), "the health route no longer calls the memoised health()");
+  must(/from "\.\/hardening"/.test(indexSrc), "index.ts no longer takes harden from worker/hardening.ts");
+  return "health and a document both carry CORP same-origin; two health checks cost one probe";
 });
 
 await Promise.all(pending);
