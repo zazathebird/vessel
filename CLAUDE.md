@@ -483,7 +483,10 @@ its reasoning and a *"revisit if"* condition. The load-bearing few:
   stranger read my files."
 - **A session says who you are, never how you proved it.** Every admin route that WRITES demands the
   caller's password (`proven()`), and the downloads editor and site publish draw the same line at
-  **releases**, not writes.
+  **releases** — what somebody else can get *or is told* — not writes: withdrawals (revoke, remove
+  grant) and any save to a page that is **live now** ask; drafts, reorders and new rows do not.
+- **The anonymous sign-in limit is per (address, handle), with a looser per-handle ceiling behind
+  it** — one per-handle bucket at five let any stranger lock the owner out. Do not collapse them.
 - **Refuse, never repair**, and **the last-way-in guards live in the writes' own `WHERE` clauses**,
   not in a check before them — check-then-act lets two concurrent requests each count the other as
   "another way in".

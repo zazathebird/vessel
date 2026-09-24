@@ -13,6 +13,51 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-09-24 — the review's Worker findings: anonymous lockout, a truthful 409, and the release line moves
+
+Five of the 2026-09-24 review's site items (`TODO.md` 10, 16, 17, 18, 21), fixed on a branch and
+**not deployed**. `docs/SECURITY-AUDIT.md` items 50–54 have each fault and fix; what is recorded here
+is what was *decided*.
+
+- **Sign-in rate limiting is two buckets per handle, and the tight one is per (address, handle).**
+  The per-handle `account:` bucket at five was reachable by anybody, so a stranger's six wrong
+  guesses locked the owner out. Options weighed: drop the per-handle bucket (leaves distributed
+  guessing uncapped — rejected); key it on the handle only after a correct password (a check that
+  runs after the password is not a limit on guessing it — rejected); exempt the owner by a
+  remembered device (a new stored field, a §9 change — rejected). Chosen: `pair:` per (client,
+  handle) at five, `account:` per handle at **30**. `gate`'s refund means one address feeds the
+  handle bucket at most six times per window, so it takes five or more addresses to lock an owner
+  out — the distributed attack the bucket exists to cap, now paid for rather than free. 30 is a
+  judgement: low enough that a botnet gets ~30 guesses plus one per backoff period, high enough that
+  no single address or household reaches it. **The `second-factor:` bucket keeps its five, per
+  account, deliberately** — only a password-holder reaches it, and loosening it trades the second
+  factor for availability against exactly the person it exists to stop. **Revisit if** passkey
+  adoption makes password sign-in rare enough to tighten 30, or if a real owner is ever reported
+  locked out by the handle ceiling.
+- **The release line is now "what somebody else can get *or is told*".** The 2026-09-06 line
+  ("releases, not writes") asked for the password on six routes and on saves that *widen*. A stolen
+  cookie could still rewrite a live download page's text and a file's blurb — the instructions a
+  customer follows before running something — and revoke every code and grant. So `revokeCode` and
+  `removeGrant` take the password, and any save to a page that is **live now** asks (its row, its
+  blocks, an existing file's details on it). The client's "no password on every keystroke" still
+  holds where it was about: drafts, reordering, new rows and upload parts are silent, and the editor
+  asks reactively, once per save, through the dialog it already had. This is the caller's decision
+  on the client's behalf (TODO item 18 said "worth his call"); **revisit if** he finds the prompt on
+  live-page typo fixes worse than the exposure, in which case the narrower cut is "live and public
+  only".
+- **`setPassword`'s UNIQUE branch compares before it answers.** Same password as the stored one is
+  still "set"; a different one is a 409. The alternative — overwrite with the loser's password —
+  would be repairing, and would make the winner's "set" the lie instead.
+- **Passkey labels refuse rather than slice**, through `expectDisplayName`.
+- **CORP `same-origin` everywhere, `/api/health` memoised 30s per isolate, no HSTS preload.** No
+  `cache-control` on health: a browser holding the previous deploy's answer is the one staleness
+  deploy verification cannot have. `harden` and `health` moved to `worker/hardening.ts` because
+  `index.ts` pulls `signal.ts` into the scripts typecheck, where workers-types' `WebSocket` loses to
+  DOM's.
+
+Every fix has a driven gate in `scripts/check.ts`; each was break-verified by reverting the fix in
+place and watching its gate fail with the fault's own description.
+
 ## 2026-09-22 — a sixth security pass: two fixes that each finished an earlier one
 
 Five parallel read-only reviews (auth and sessions, downloads, the Worker's front door and admin,

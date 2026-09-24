@@ -80,9 +80,9 @@ Debian box has none); host-script fixes must be written *and tested* on the Thin
 
 ### For the site (needs the PC with the Cloudflare token)
 
-10. **Anonymous lockout of password sign-in** (`worker/accounts.ts` `signin` → `assertAttempt`
-    before the password is checked; `rate-limit.ts` per-handle `account:` bucket). Six bad tries at
-    a known handle block the owner's correct password for 15+ min, renewably. Passkeys still work.
+10. ~~**Anonymous lockout of password sign-in**~~ **Fixed 2026-09-24 on a branch, NOT deployed** —
+    per-(address, handle) bucket at 5 plus a per-handle ceiling at 30 (`SECURITY-AUDIT.md` item 50).
+    Items 16, 17, 18 and the CORP/health half of 21 are in the same commits (items 51–54).
 11. **`/share` step 1 points signed-in users at `/downloads` for the setup script**, which is not
     publicly listed and, until re-uploaded, still carries the other-account `.ssh` hole. Fixed by
     the bundle re-upload (*Needs hardware* item 1), or hold the link back until then.
@@ -92,17 +92,20 @@ Debian box has none); host-script fixes must be written *and tested* on the Thin
 14. `--mx`/`--my` are written on every pointermove without rAF batching, and invalidate the whole
     `.vessel` subtree (`inherits: true`) for 11 layouts that never read them.
 15. `useFocusTrap.ts`'s `FOCUSABLE` does not exclude hidden/`inert` elements.
-16. `setPassword` (`accounts.ts` ~1804) reports `set` on a UNIQUE conflict whose batch rolled back.
-17. Passkey labels skip `expectDisplayName` (bidi/zero-width reach the owner's own list). Info.
-18. A stolen operator cookie can rewrite live download-page text without the password — inside
-    the "releases, not writes" rule, but worth his call given what the page is for.
+16. ~~`setPassword` reports `set` on a UNIQUE conflict~~ **Fixed 2026-09-24, not deployed** — 409
+    unless the stored password is the one sent.
+17. ~~Passkey labels skip `expectDisplayName`~~ **Fixed 2026-09-24, not deployed.**
+18. ~~A stolen operator cookie can rewrite live download-page text~~ **Fixed 2026-09-24, not
+    deployed**: any save to a live page, and revoke/remove-grant, now ask for the password. **Still
+    his call** whether the prompt on a live-page typo fix is worth it — `DECISIONS.md` 2026-09-24
+    names the narrower cut ("live and public only") if he says no.
 19. No linter: the four `eslint-disable … exhaustive-deps` comments suppress nothing. Add
     `eslint-plugin-react-hooks` or delete them. `DownloadEditor.tsx` (2,014 lines) wants splitting.
-20. Doc drift: `check:fast` takes ~43s, not ~4s; `SECURITY-AUDIT.md:1334` says `/api/account/slot`
-    authorises on the session alone (it now requires the password); CLAUDE.md's `OPERATOR_NAV`
-    line omits Share.
-21. Hygiene: no `Cross-Origin-Resource-Policy`, no HSTS `preload`, CAA allows five CAs,
-    `/api/health` is anonymous and uncached (a D1 query + a DO call per hit), no font preload.
+20. Doc drift: `check:fast` takes ~43s, not ~4s; CLAUDE.md's `OPERATOR_NAV` line omits Share.
+    (The `SECURITY-AUDIT.md` `/api/account/slot` line is corrected, 2026-09-24.)
+21. Hygiene: ~~no `Cross-Origin-Resource-Policy`~~ and ~~`/api/health` uncached~~ **fixed
+    2026-09-24, not deployed** (CORP `same-origin`; health memoised 30s per isolate). Left: CAA
+    allows five CAs (dashboard), no font preload. HSTS `preload` deliberately not added.
 22. **MX points at namespro while SPF is `-all` and DMARC `reject`** — mail *sent* as
     @mcclevarty.ca will be rejected. Fine only if he never sends from the domain; confirm which
     address the contact reveal shows.

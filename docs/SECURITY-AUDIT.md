@@ -15,6 +15,77 @@ cited by number elsewhere. Findings are grouped as before: **fixed**, **checked 
 
 ---
 
+## 2026-09-24 — the review's Worker findings (TODO items 10, 16, 17, 18, 21)
+
+From the four parallel reviews of 2026-09-24 (`TODO.md`, *Review of 2026-09-24*). **Fixed on a
+branch, not deployed.** Every fix has a driven gate in `npm run check` that was **break-verified**:
+each fix was reverted in place and its gate went red naming the fault, then restored. `npm run
+test:auth` gained the outside view of each.
+
+### 50. A stranger could lock the owner out of password sign-in (item 10)
+
+`signin` reserved an attempt on a per-handle `account:` bucket (five free) before checking the
+password, and that bucket was reachable by anybody who knew the handle — six wrong passwords from
+anywhere blocked the owner's correct one for fifteen minutes, one request an hour kept it there.
+Passkeys still worked. **Fix** (`buckets` in `worker/accounts.ts`): the anonymous routes now reserve
+on three buckets — `client:` (50, unchanged), `pair:` keyed on the client *and* the handle (five, the
+old tight allowance), and `account:` per handle at `HANDLE_FREE_ATTEMPTS` = 30. `gate` already
+refunds every bucket that said yes when one says no, so a blocked pair stops feeding the handle
+bucket after six: **one address can no longer lock the owner out; five or more in one window can**,
+which is the distributed guess the handle bucket exists to cap. No new stored field — the pair name
+is an HMAC of the daily-rotating client key and the handle, naming a Durable Object (§9 unchanged).
+Applies to password and recovery sign-in, `challenge`'s check, download-code redemption (keyed on
+the code prefix) and TOTP-enrol confirmation. **Deliberately not applied to the `second-factor:`
+bucket**: it is reachable only by somebody who already holds the password, and five tries is what
+makes six digits a second factor — spreading it would buy a password-holder six times the guesses.
+Gate: the real `RateLimiter` class driven through `signin` — one address is blocked at attempt 7,
+the owner from another address signs in, and 32 distinct addresses reach the handle ceiling. Red
+against the old single bucket (the owner got 429).
+
+### 51. `setPassword` said "set" for a password the account did not have (item 16)
+
+The UNIQUE branch (two concurrent set-passwords on one recovery ticket) returned `{status:"set"}`
+unconditionally, reasoning that the winner's answer was the honest one. The loser's batch had rolled
+back, so if the two tabs sent *different* passwords the loser was told a password was set that was
+never written. **Fix**: on the conflict the stored hash is compared with the loser's; equal (a
+double-submit) is still "set", different is a 409 saying another request set a different password.
+Gate: `setPassword` driven over a D1 stub whose batch throws D1's UNIQUE error.
+
+### 52. Passkey labels skipped the display-name filter (item 17)
+
+`passkeys.register` trimmed and sliced the label, so bidi overrides and zero-width characters
+reached the owner's own passkey list — the list they choose which row to *remove* from — and an
+over-long name was cut rather than refused. **Fix**: `passkeyLabel` routes it through
+`expectDisplayName`, the filter machine and drive names already use; blank still means "passkey".
+
+### 53. A stolen operator session could rewrite live download pages and withdraw access (item 18)
+
+Inside the 2026-09-06 "releases, not writes" line, but the line was drawn at *who can get it* and
+missed *what they are told*: with the cookie alone, a live page's title, intro, notice, blocks and a
+file's name, blurb and caveat could be rewritten — the text a customer follows before running what
+they downloaded — and every code revoked and every grant removed. **Fix**: `revokeCode` and
+`removeGrant` take the password (withdrawal is a release in reverse); `savePage`, `saveBlocks` and
+`saveFile` ask whenever the page is **live now** (stored status, so unpublishing asks too), with a
+new `RELEASE_WORDING.live` the editor recognises. Drafts, reordering, new file rows and upload parts
+stay session-only. The editor asks through the existing `ProofDialog`: reactively for the saves,
+and in the gesture for revoke and remove. The status read is check-then-act, like the `widens` read
+beside it — the only race is a stolen cookie against the operator's own password-proved publish in
+the same millisecond. Gate: all five routes driven bare (401, nothing written), with the password
+(written), and — for the saves — on a draft (written, no password).
+
+### 54. Header and health hygiene (item 21)
+
+`Cross-Origin-Resource-Policy: same-origin` is now on every hardened response (`harden`, moved with
+`health` into `worker/hardening.ts` so the gate can import them). Everything the site loads is
+same-origin; unfurlers fetch server-side where CORP is not enforced. `/api/health` memoises its
+answer per isolate for thirty seconds, so an anonymous loop no longer costs a D1 query and a Durable
+Object call per hit; a fresh deploy is a fresh isolate, so the first answer after a deploy is always
+a real probe, and `docs/HANDOFF.md`'s `{"ok":true,"tables":8}` is unchanged. **HSTS `preload` was
+not added** — a one-way door, and not this pass's call. The rest of item 21 (CAA, font preload) is
+dashboard or front-end work and was not in scope.
+
+---
+
 ## 2026-09-07 — the fourth pass
 
 Six of seven reviewers read their slice; the **setup and host scripts slice was never read** (its
@@ -1331,8 +1402,10 @@ re-litigate them:
   token's issue time; migration 0008 and item 15. Still no challenge table.)**
 - **Signup's 409 handle disclosure** — awaiting client sign-off (list item 4); availability is
   inherently probeable.
-- **Sessions survive password change** (TODO #14) and **`/api/account/slot` authorises on the
-  session alone** (TODO #15) — both recorded residual exposures with their trigger conditions.
+- **Sessions survive password change** (TODO #14) — a recorded residual exposure with its trigger
+  condition. **(Corrected 2026-09-24: this line also said `/api/account/slot` authorises on the
+  session alone. It no longer does — `keySlot` demands the password through `assertPassword`, on
+  the `proof:` bucket, and the downloads editor uses it as its password check before an upload.)**
 - **`workers.dev` disabled** — verified live: NXDOMAIN.
 - **Client storage** — no secrets in `localStorage`/`sessionStorage`; only display config. The
   set-password ticket and wrapped slots live in closures, and the wrapping key is a
@@ -1402,6 +1475,8 @@ as "anything carrying account state". One line.
   hit. Comparable cost to the also-unauthenticated `challenge`, discloses only "migrations
   applied" and a rate-limit verdict for a sentinel bucket, and is what deploy verification leans
   on (`docs/HANDOFF.md`). Not worth gating today; revisit if it ever reports more than liveness.
+  **(2026-09-24, item 54: still ungated, now memoised per isolate for thirty seconds, so the
+  per-hit cost is gone.)**
 - **Saved setups (`worker/setups.ts`)** — session-gated, per-account scoped on every query,
   name and code shape-validated and length-capped, table bounded at 50 rows per account, ids
   server-minted. The upsert race it documents is a lost-update on one's own row, not a security

@@ -2649,8 +2649,26 @@ async function main(): Promise<void> {
       slug: editSlug, title: "Edit, not release", visibility: "code", status: "live", authSecret: opProof,
     });
     check("taking a page live with the password saves", published.ok === true);
-    const retitled = await api.adminPageSave({ slug: editSlug, title: "Retitled", visibility: "code", status: "live" });
-    check("editing a live page's title asks for no password", retitled.ok === true);
+    /*
+     * **A save to a page that is live NOW asks, whatever it changes**
+     * (2026-09-24, review item 18). A retitle, a narrowing and an unpublish
+     * were session-only; a stolen cookie could rewrite what customers read on
+     * a live page. Each is driven bare (401, the `live` sentence) and with the
+     * password. A draft stays silent — the last line of this block.
+     */
+    const retitleBare = await refusal(() =>
+      api.adminPageSave({ slug: editSlug, title: "Retitled", visibility: "code", status: "live" }),
+    );
+    check("editing a live page's title with no password is 401", retitleBare?.status === 401, retitleBare?.message);
+    check(
+      "and the refusal is the live-page prompt the editor recognises",
+      retitleBare?.message === "Enter your password to change a page that is live.",
+      retitleBare?.message,
+    );
+    const retitled = await api.adminPageSave({
+      slug: editSlug, title: "Retitled", visibility: "code", status: "live", authSecret: opProof,
+    });
+    check("and with the password it saves", retitled.ok === true);
     const widenBare = await refusal(() =>
       api.adminPageSave({ slug: editSlug, title: "Retitled", visibility: "public", status: "live" }),
     );
@@ -2663,12 +2681,24 @@ async function main(): Promise<void> {
       slug: editSlug, title: "Retitled", visibility: "public", status: "live", authSecret: opProof,
     });
     check("and with the right one saves", widened.ok === true);
-    const narrowed = await api.adminPageSave({ slug: editSlug, title: "Retitled", visibility: "granted", status: "live" });
-    check("narrowing a live page to granted asks for no password", narrowed.ok === true);
-    const unpublished = await api.adminPageSave({ slug: editSlug, title: "Retitled", visibility: "granted", status: "draft" });
-    check("unpublishing asks for no password", unpublished.ok === true);
+    const narrowBare = await refusal(() =>
+      api.adminPageSave({ slug: editSlug, title: "Retitled", visibility: "granted", status: "live" }),
+    );
+    check("narrowing a live page with no password is 401 — it is still a live page", narrowBare?.status === 401);
+    const narrowed = await api.adminPageSave({
+      slug: editSlug, title: "Retitled", visibility: "granted", status: "live", authSecret: opProof,
+    });
+    check("and with the password it saves", narrowed.ok === true);
+    const unpublishBare = await refusal(() =>
+      api.adminPageSave({ slug: editSlug, title: "Retitled", visibility: "granted", status: "draft" }),
+    );
+    check("unpublishing a live page with no password is 401", unpublishBare?.status === 401);
+    const unpublished = await api.adminPageSave({
+      slug: editSlug, title: "Retitled", visibility: "granted", status: "draft", authSecret: opProof,
+    });
+    check("and with the password it saves", unpublished.ok === true);
     const stillDraft = await api.adminPageSave({ slug: editSlug, title: "Retitled", visibility: "public", status: "draft" });
-    check("opening a DRAFT's visibility asks for no password — nothing is live", stillDraft.ok === true);
+    check("editing a DRAFT asks for no password — nothing is live", stillDraft.ok === true);
 
     // The same rule on a file: flipping an existing row free, or moving it,
     // asks; a new row and a details edit do not. No bytes are involved, which
@@ -2701,6 +2731,34 @@ async function main(): Promise<void> {
     check("moving it with the password saves", moved.ok === true);
     const freeNew = await api.adminFileSave({ id: `harness-freenew-${RUN}`, slug: moveSlug, name: "New and free", filename: "new.bin", free: true });
     check("a NEW free row asks for no password — it has no bytes until finishUpload, which asks", freeNew.ok === true);
+
+    /*
+     * The live half of the same rule for a file's details and a page's blocks
+     * (2026-09-24, review item 18): on a live page both are what customers
+     * read, so both ask; on a draft neither does.
+     */
+    await api.adminPageSave({ slug: moveSlug, title: "Elsewhere", visibility: "public", status: "live", authSecret: opProof });
+    const liveFileBare = await refusal(() =>
+      api.adminFileSave({ id: flipId, slug: moveSlug, name: "Run this instead", free: false }),
+    );
+    check("editing a file's details on a live page with no password is 401", liveFileBare?.status === 401, liveFileBare?.message);
+    check(
+      "and the refusal is the live-page prompt",
+      liveFileBare?.message === "Enter your password to change a page that is live.",
+      liveFileBare?.message,
+    );
+    const liveFile = await api.adminFileSave({
+      id: flipId, slug: moveSlug, name: "Flip, renamed again", free: false, authSecret: opProof,
+    });
+    check("and with the password it saves", liveFile.ok === true);
+    const block = [{ kind: "text" as const, body: "Harness words.", group: "" }];
+    const liveBlocksBare = await refusal(() => api.adminBlocksSave(moveSlug, block));
+    check("saving a live page's blocks with no password is 401", liveBlocksBare?.status === 401, liveBlocksBare?.message);
+    const liveBlocks = await api.adminBlocksSave(moveSlug, block, opProof);
+    check("and with the password they save", liveBlocks.ok === true);
+    await api.adminPageSave({ slug: moveSlug, title: "Elsewhere", visibility: "public", status: "draft", authSecret: opProof });
+    const draftBlocks = await api.adminBlocksSave(moveSlug, block);
+    check("a draft's blocks save with no password", draftBlocks.ok === true);
 
     await api.adminPageDelete(moveSlug, opProof);
     await api.adminPageDelete(editSlug, opProof);
@@ -2966,7 +3024,14 @@ async function main(): Promise<void> {
       (doomedRow?.ref ?? "").length === 16,
       `ref length ${(doomedRow?.ref ?? "").length}`,
     );
-    await api.adminDownloadRevoke(doomedRow!.ref);
+    // Revoking is minting in reverse, so it asks (2026-09-24, review item 18).
+    const revokeBare = await fetch("/api/admin/downloads/revoke", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ref: doomedRow!.ref }),
+    }).then((r) => r.status);
+    check("revoking a code with no password is 401", revokeBare === 401, String(revokeBare));
+    await api.adminDownloadRevoke(doomedRow!.ref, opProof);
     asBrowser(stranger);
     const revoked = await api.downloadClaim(doomed.code).then(
       () => null,
@@ -3034,7 +3099,7 @@ async function main(): Promise<void> {
 
     // ---- code-gated ------------------------------------------------------
     asBrowser(opSession);
-    await api.adminPageSave({ slug, title: "Harness page", layout: "list", visibility: "code", status: "live" });
+    await api.adminPageSave({ slug, title: "Harness page", layout: "list", visibility: "code", status: "live", authSecret: opProof });
 
     asBrowser(stranger);
     const locked = await api.downloadPage(slug);
@@ -3062,7 +3127,7 @@ async function main(): Promise<void> {
     const guestSession = ownerSession;
 
     asBrowser(opSession);
-    await api.adminPageSave({ slug, title: "Harness page", layout: "list", visibility: "granted", status: "live" });
+    await api.adminPageSave({ slug, title: "Harness page", layout: "list", visibility: "granted", status: "live", authSecret: opProof });
 
     asBrowser(guestSession);
     const beforeGrant = await refusal(() => api.downloadPage(slug));
@@ -3145,6 +3210,32 @@ async function main(): Promise<void> {
     asBrowser(opSession);
     await api.adminPageDelete(narrowSlug, opProof).catch(() => undefined);
     void savedSlug;
+
+    /*
+     * **Taking access away asks, the same as giving it** (2026-09-24, review
+     * item 18). The guest's whole-page grant on `slug` is removed bare (401,
+     * still admitted) and then with the password — and the outside view is
+     * asserted, because "the route said ok" and "they can no longer read it"
+     * are different claims.
+     */
+    const pageGrant = (await api.adminGrants()).grants.find(
+      (g) => g.handle === guestHandle && g.slug === slug && g.item_id === null,
+    );
+    check("the guest's whole-page grant is listed", Boolean(pageGrant));
+    const removeBare = await fetch("/api/admin/downloads/grant/delete", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: pageGrant?.id }),
+    }).then((r) => r.status);
+    check("removing a grant with no password is 401", removeBare === 401, String(removeBare));
+    asBrowser(guestSession);
+    const stillIn = await api.downloadPage(slug).then(() => true, () => false);
+    check("and the guest is still admitted after the refusal", stillIn);
+    asBrowser(opSession);
+    await api.adminGrantRemove(pageGrant!.id, opProof);
+    asBrowser(guestSession);
+    const shutOut = await refusal(() => api.downloadPage(slug));
+    check("with the password it goes, and the guest is shut out", shutOut?.status === 404, shutOut?.message);
 
     // ---- the operator's own guards ---------------------------------------
     asBrowser(guestSession);
@@ -3510,6 +3601,7 @@ async function main(): Promise<void> {
     await api.adminPageDelete(otherSlug, opProof).catch(() => undefined);
     await api.adminDownloadRevoke(
       (await api.adminDownloadsList()).codes.find((c) => c.label === "harness")?.ref ?? "",
+      opProof,
     ).catch(() => undefined);
   }
 
@@ -3575,6 +3667,23 @@ async function main(): Promise<void> {
     });
     check("while blocked, even the right password is refused", attacker.lastStatus === 429, locked.error);
     check("the refusal says when to come back", /try again in about/i.test(locked.error ?? ""), locked.error);
+
+    /*
+     * **But only from the attacker's address** (2026-09-24, review item 10).
+     * The tight bucket is per (address, handle), so a stranger's guesses no
+     * longer lock the owner out of their own account from anywhere else. The
+     * handle-wide bucket behind it is loose enough that one address cannot
+     * fill it; `npm run check` drives the many-address ceiling.
+     */
+    const ownerElsewhere = new Client(`198.51.100.${1 + Math.floor(Math.random() * 254)}`);
+    const ownerIn = await ownerElsewhere.call("/api/auth/signin", {
+      body: { handle: victim, authSecret: credential.authSecret },
+    });
+    check(
+      "the owner, from another address, still signs in",
+      ownerElsewhere.lastStatus === 200,
+      `status ${ownerElsewhere.lastStatus} ${ownerIn.error ?? ""}`,
+    );
 
     // The signup quota (2026-08-13 audit): account creation counts against a
     // dedicated `signup:` bucket, not only the shared client bucket whose
