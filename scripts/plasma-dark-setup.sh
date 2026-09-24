@@ -279,6 +279,7 @@ case "${ACTION}" in
         if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && [ -S "/run/user/$(id -u)/bus" ]; then
             export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus"
         fi
+        systemctl --user reset-failed plasma-plasmashell.service >/dev/null 2>&1 || true
         systemctl --user restart plasma-plasmashell.service >/dev/null 2>&1 \
             && printf 'plasmashell restarted.\n' \
             || printf 'Log out and back in to see it.\n'
@@ -825,6 +826,12 @@ if [ "${LOOK}" != "ubuntu" ]; then
         # Restart first and WAIT for the bus name to come back before building.
         # Restarting after the panel is built is the other way to get this wrong:
         # the layout is still in the old process and may not have been flushed.
+        # plasma-plasmashell.service allows 3 starts a minute (StartLimitBurst=3),
+        # and building a look costs two: this restart and the opacity write below.
+        # The second look in a row hit the limit on 2026-09-24, systemd refused the
+        # start, and every look after it was built and SAVED with no panel at all.
+        # reset-failed clears the counter; nothing else about the unit changes.
+        systemctl --user reset-failed plasma-plasmashell.service >/dev/null 2>&1 || true
         if systemctl --user restart plasma-plasmashell.service >/dev/null 2>&1; then
             for _ in $(seq 1 30); do
                 "${QD}" org.kde.plasmashell >/dev/null 2>&1 && break
@@ -850,7 +857,13 @@ if [ "${LOOK}" != "ubuntu" ]; then
         fi
 
         # Every look starts from a clean slate, then builds its own panels.
+        # opacity(panel, n) RECORDS the wish instead of assigning panel.opacity,
+        # which is a silent no-op on Plasma 6.3.6 (CLAUDE.md, Plasma traps). The
+        # list is printed at the end of the script and written into plasmashellrc
+        # [PlasmaViews][Panel <id>] panelOpacity below — 1 opaque, 2 translucent.
         JS_HEAD='var ps = panels(); for (var i = 0; i < ps.length; i++) { ps[i].remove(); }
+var OPQ = [];
+function opacity(p, n) { OPQ.push(p.id + "=" + n); }
 function spacer(p) { var s = p.addWidget("org.kde.plasma.panelspacer");
   s.currentConfigGroup = ["Configuration", "General"]; s.writeConfig("expanding", true); return s; }'
 
@@ -863,7 +876,7 @@ p.location = "bottom"; p.height = 56;
 try { p.lengthMode = "fill"; } catch (e) {}
 try { p.alignment = "center"; } catch (e) {}
 try { p.floating = false; } catch (e) {}
-try { p.opacity = "translucent"; } catch (e) {}
+opacity(p, 2);
 p.addWidget("org.kde.plasma.kickerdash");
 spacer(p);
 p.addWidget("org.kde.plasma.icontasks");
@@ -883,7 +896,7 @@ b.location = "bottom"; b.height = 34;
 try { b.lengthMode = "fill"; } catch (e) {}
 try { b.alignment = "center"; } catch (e) {}
 try { b.floating = false; } catch (e) {}
-try { b.opacity = "opaque"; } catch (e) {}
+opacity(b, 1);
 b.addWidget("org.kde.plasma.kickoff");
 b.addWidget("org.kde.plasma.showdesktop");
 spacer(b);
@@ -896,7 +909,7 @@ t.location = "top"; t.height = 28;
 try { t.lengthMode = "fit"; } catch (e) {}
 try { t.alignment = "center"; } catch (e) {}
 try { t.floating = true; } catch (e) {}
-try { t.opacity = "translucent"; } catch (e) {}
+opacity(t, 2);
 t.addWidget("org.kde.plasma.digitalclock");'
             ;;
         osx)
@@ -913,7 +926,7 @@ t.addWidget("org.kde.plasma.digitalclock");'
 m.location = "top"; m.height = 26;
 try { m.lengthMode = "fill"; } catch (e) {}
 try { m.floating = false; } catch (e) {}
-try { m.opacity = "translucent"; } catch (e) {}
+opacity(m, 2);
 m.addWidget("org.kde.plasma.kickoff");
 '"${APPMENU}"'
 spacer(m);
@@ -925,7 +938,7 @@ d.location = "bottom"; d.height = 60;
 try { d.lengthMode = "fit"; } catch (e) {}
 try { d.alignment = "center"; } catch (e) {}
 try { d.floating = true; } catch (e) {}
-try { d.opacity = "translucent"; } catch (e) {}
+opacity(d, 2);
 d.addWidget("org.kde.plasma.icontasks");
 d.addWidget("org.kde.plasma.showdesktop");'
             ;;
@@ -939,7 +952,7 @@ d.addWidget("org.kde.plasma.showdesktop");'
 m.location = "top"; m.height = 28;
 try { m.lengthMode = "fill"; } catch (e) {}
 try { m.floating = false; } catch (e) {}
-try { m.opacity = "opaque"; } catch (e) {}
+opacity(m, 1);
 spacer(m);
 m.addWidget("org.kde.plasma.systemtray");
 m.addWidget("org.kde.plasma.digitalclock");
@@ -949,7 +962,7 @@ d.location = "bottom"; d.height = 52;
 try { d.lengthMode = "fit"; } catch (e) {}
 try { d.alignment = "center"; } catch (e) {}
 try { d.floating = true; } catch (e) {}
-try { d.opacity = "translucent"; } catch (e) {}
+opacity(d, 2);
 d.addWidget("org.kde.plasma.kickerdash");
 d.addWidget("org.kde.plasma.icontasks");'
             ;;
@@ -966,7 +979,7 @@ d.addWidget("org.kde.plasma.icontasks");'
 l.location = "left"; l.height = 56;
 try { l.lengthMode = "fill"; } catch (e) {}
 try { l.floating = false; } catch (e) {}
-try { l.opacity = "translucent"; } catch (e) {}
+opacity(l, 2);
 l.addWidget("org.kde.plasma.kickerdash");
 l.addWidget("org.kde.plasma.icontasks");
 spacer(l);
@@ -976,7 +989,7 @@ var m = new Panel;
 m.location = "top"; m.height = 24;
 try { m.lengthMode = "fill"; } catch (e) {}
 try { m.floating = false; } catch (e) {}
-try { m.opacity = "opaque"; } catch (e) {}
+opacity(m, 1);
 '"${APPMENU}"'
 spacer(m);
 m.addWidget("org.kde.plasma.systemtray");
@@ -990,7 +1003,7 @@ m.addWidget("org.kde.plasma.digitalclock");'
 m.location = "top"; m.height = 32;
 try { m.lengthMode = "fill"; } catch (e) {}
 try { m.floating = false; } catch (e) {}
-try { m.opacity = "opaque"; } catch (e) {}
+opacity(m, 1);
 m.addWidget("org.kde.plasma.kickerdash");
 spacer(m);
 m.addWidget("org.kde.plasma.digitalclock");
@@ -1007,7 +1020,7 @@ m.addWidget("org.kde.plasma.systemtray");'
 b.location = "bottom"; b.height = 40;
 try { b.lengthMode = "fill"; } catch (e) {}
 try { b.floating = false; } catch (e) {}
-try { b.opacity = "opaque"; } catch (e) {}
+opacity(b, 1);
 b.addWidget("org.kde.plasma.kickoff");
 b.addWidget("org.kde.plasma.taskmanager");
 spacer(b);
@@ -1031,7 +1044,7 @@ p.location = "bottom"; p.height = 48;
 try { p.lengthMode = "fill"; } catch (e) {}
 try { p.alignment = "center"; } catch (e) {}
 try { p.floating = false; } catch (e) {}
-try { p.opacity = "translucent"; } catch (e) {}
+opacity(p, 2);
 p.addWidget("org.kde.plasma.kickerdash");
 p.addWidget("org.kde.plasma.showdesktop");
 spacer(p);
@@ -1066,7 +1079,7 @@ p.addWidget("org.kde.plasma.notifications");'
 m.location = "top"; m.height = '"${TOP_H}"';
 try { m.lengthMode = "fill"; } catch (e) {}
 try { m.floating = false; } catch (e) {}
-try { m.opacity = "translucent"; } catch (e) {}
+opacity(m, 2);
 '
             [ "${TOP_LAUNCH}" -eq 1 ] && JS_TOP="${JS_TOP}"'m.addWidget("org.kde.plasma.kickoff");
 '
@@ -1089,7 +1102,7 @@ d.location = "bottom"; d.height = '"${DOCK_H}"';
 try { d.lengthMode = "fit"; } catch (e) {}
 try { d.alignment = "center"; } catch (e) {}
 try { d.floating = true; } catch (e) {}
-try { d.opacity = "translucent"; } catch (e) {}
+opacity(d, 2);
 '
             [ "${DOCK_LAUNCH}" -eq 1 ] && JS_DOCK="${JS_DOCK}"'d.addWidget("org.kde.plasma.kickerdash");
 '
@@ -1106,7 +1119,7 @@ ${JS_DOCK}"
 b.location = "bottom"; b.height = 44;
 try { b.lengthMode = "fill"; } catch (e) {}
 try { b.floating = false; } catch (e) {}
-try { b.opacity = "opaque"; } catch (e) {}
+opacity(b, 1);
 b.addWidget("org.kde.plasma.kickoff");
 b.addWidget("org.kde.plasma.icontasks");
 spacer(b);
@@ -1125,7 +1138,7 @@ b.addWidget("org.kde.plasma.showdesktop");'
 m.location = "top"; m.height = 24;
 try { m.lengthMode = "fill"; } catch (e) {}
 try { m.floating = false; } catch (e) {}
-try { m.opacity = "opaque"; } catch (e) {}
+opacity(m, 1);
 '"${APPMENU}"'
 spacer(m);
 m.addWidget("org.kde.plasma.digitalclock");
@@ -1135,7 +1148,7 @@ var b = new Panel;
 b.location = "bottom"; b.height = 44;
 try { b.lengthMode = "fill"; } catch (e) {}
 try { b.floating = false; } catch (e) {}
-try { b.opacity = "opaque"; } catch (e) {}
+opacity(b, 1);
 b.addWidget("org.kde.plasma.kickoff");
 b.addWidget("org.kde.plasma.icontasks");
 spacer(b);
@@ -1152,7 +1165,7 @@ b.addWidget("org.kde.plasma.systemtray");'
 m.location = "top"; m.height = 26;
 try { m.lengthMode = "fill"; } catch (e) {}
 try { m.floating = false; } catch (e) {}
-try { m.opacity = "opaque"; } catch (e) {}
+opacity(m, 1);
 m.addWidget("org.kde.plasma.pager");
 spacer(m);
 m.addWidget("org.kde.plasma.systemtray");
@@ -1171,15 +1184,37 @@ if (wall.length > 0) {
     ds[j].writeConfig("FillMode", 2);
   }
 }
+print("PANEL_OPACITY " + OPQ.join(" "));
 JSEOF
 )"
 
         if [ "${SHELL_UP}" -eq 1 ] \
-           && "${QD}" org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript \
+           && JS_OUT="$("${QD}" org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript \
              "${JS_HEAD}
 ${JS_BODY}
-${JS_TAIL}" >/dev/null 2>&1; then
+${JS_TAIL}" 2>&1)"; then
             info "panel rebuilt for the ${LOOK} look"
+            # Panel opacity, the way that is actually read. plasmashell must be
+            # STOPPED while the key is written — it rewrites plasmashellrc from
+            # memory on exit — and the pause first lets the new layout flush.
+            OPQ="$(printf '%s\n' "${JS_OUT}" | sed -n 's/^PANEL_OPACITY //p' | tail -1)"
+            if [ -n "${OPQ}" ] && [ -n "${KW}" ]; then
+                sleep 5
+                systemctl --user stop plasma-plasmashell.service >/dev/null 2>&1 || true
+                for pair in ${OPQ}; do
+                    "${KW}" --file plasmashellrc --group PlasmaViews --group "Panel ${pair%%=*}" \
+                            --key panelOpacity "${pair#*=}"
+                done
+                systemctl --user reset-failed plasma-plasmashell.service >/dev/null 2>&1 || true
+                systemctl --user start plasma-plasmashell.service >/dev/null 2>&1 || true
+                for _ in $(seq 1 30); do
+                    "${QD}" org.kde.plasmashell >/dev/null 2>&1 && break
+                    sleep 1
+                done
+                "${QD}" org.kde.plasmashell >/dev/null 2>&1 \
+                    && info "panel opacity written (${OPQ}; 1 opaque, 2 translucent)" \
+                    || warn "plasmashell did not come back after the opacity write. Log out and back in."
+            fi
             # The blur keys above are in the file but KWin has not re-read them.
             # Without this the look only arrives at the next login, which reads
             # as "the script did nothing".
