@@ -5404,17 +5404,15 @@ check("a focus trap never hands focus to what cannot take it", () => {
  * checked and consciously waived. The reason a dependency list is short
  * belongs in prose beside it, which is where each of these already had one.
  *
- * `DownloadEditor.tsx` still carries one and is another crew's file on the day
- * this landed; it is listed rather than silently skipped.
+ * `DownloadEditor.tsx`'s was removed at the merge, the same day.
  */
 check("no lint directive in src/ pretends a linter runs", () => {
-  const PENDING = new Set([join("src", "components", "DownloadEditor.tsx")]);
   const found: string[] = [];
   const walk = (dir: string) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const path = join(dir, entry.name);
       if (entry.isDirectory()) walk(path);
-      else if (/\.(ts|tsx)$/.test(entry.name) && !PENDING.has(path)) {
+      else if (/\.(ts|tsx)$/.test(entry.name)) {
         if (/eslint-disable/.test(readFileSync(path, "utf8"))) found.push(path);
       }
     }
@@ -5425,7 +5423,7 @@ check("no lint directive in src/ pretends a linter runs", () => {
     "an ESLint config exists now — this gate's premise is gone; revisit it rather than deleting it",
   );
   must(found.length === 0, `eslint-disable directives with no linter to obey them: ${found.join(", ")}`);
-  return `none in src/ (${PENDING.size} file pending another crew)`;
+  return "none in src/";
 });
 
 check("the cursor-lean card tilt stays deleted", () => {

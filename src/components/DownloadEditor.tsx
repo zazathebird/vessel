@@ -1101,7 +1101,6 @@ function FileManager({
     reset();
     setFresh(null);
     // `reset` is a stable local closure over setters only; `slug` is the trigger.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug]);
 
   /** Load an existing row into the form. The bytes are left alone unless replaced. */
