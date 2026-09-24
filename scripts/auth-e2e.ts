@@ -1186,7 +1186,17 @@ async function main(): Promise<void> {
     const samePassword = await refusal(() => changePasswordFlow(password, password));
     check("changePassword refuses the unchanged password locally", samePassword?.status === -1);
 
+    // Audit item 58, from outside: a password change ends every session that
+    // began before it — and re-issues the one that made the change.
+    const beforeChange = browser.cookie;
     await changePasswordFlow(password, secondPassword);
+    const meWith = async (cookie: string | null) =>
+      (await nodeFetch(`${BASE}/api/me`, { headers: { cookie: cookie ?? "", "cf-connecting-ip": browser.ip } })).status;
+    check("a session opened before the password change is signed out by it", (await meWith(beforeChange)) === 401);
+    check(
+      "the tab that changed the password stays signed in, on a re-issued session",
+      browser.cookie !== beforeChange && (await meWith(browser.cookie)) === 200,
+    );
     asBrowser(new BrowserSession());
     const stale = await refusal(() => signInFlow(flowsHandle, password));
     check("the old password no longer signs in", stale?.status === 401, stale?.message);
@@ -3016,6 +3026,13 @@ async function main(): Promise<void> {
     // Revocation: minted, revoked, then tried.
     asBrowser(opSession);
     const doomed = await api.adminDownloadMint({ authSecret: opProof, label: "harness-revoked", item: null, slug, maxUses: 5, days: 0 });
+    // A ticket redeemed BEFORE the revoke must die with it (audit item 60).
+    asBrowser(stranger);
+    const doomedTicket = (await api.downloadClaim(doomed.code)).ticket;
+    const beforeRevoke = await fetch(`/api/downloads/file?item=${paidId}&t=${encodeURIComponent(doomedTicket)}`);
+    await beforeRevoke.arrayBuffer();
+    check("control: a ticket downloads before its code is revoked", beforeRevoke.status === 200, String(beforeRevoke.status));
+    asBrowser(opSession);
     const listed = await api.adminDownloadsList();
     const doomedRow = listed.codes.find((c) => c.label === "harness-revoked");
     check("a minted code appears in the list with a handle", Boolean(doomedRow?.ref));
@@ -3041,6 +3058,8 @@ async function main(): Promise<void> {
       "a revoked code is refused, in the same words as every other failure",
       revoked?.status === fabricated?.status && revoked?.message === fabricated?.message,
     );
+    const afterRevoke = await fetch(`/api/downloads/file?item=${paidId}&t=${encodeURIComponent(doomedTicket)}`);
+    check("a ticket redeemed before the revoke stops downloading at once", afterRevoke.status === 403, String(afterRevoke.status));
 
     /*
      * ---- ranges ---------------------------------------------------------

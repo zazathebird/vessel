@@ -13,6 +13,62 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-09-24 (later) — sessions end on a credential change, tickets die with their codes, a replacement stays live
+
+The reviewers' second Worker list, six code items and one runbook, fixed on a branch and **not
+deployed**; `docs/SECURITY-AUDIT.md` items 55–60 have each fault and fix. Two of these were on
+`TODO.md`'s *Needs the client* list (items 2 and 3); the client's instruction for this pass was "fix
+everything", which is taken as the decision.
+
+- **A session epoch, one column on `accounts`** (`sessions_after`, migration 0010, added to §9's
+  inventory). The token already carried when its session first began, inside the MAC and unmoved by
+  refreshes, so no session table was needed — the rejected option in `session.ts` stays rejected.
+  Stamped by a password change, a recovery set-password, an operator password reset and an
+  operator TOTP reset; the request that changed the password is re-issued a fresh session and is
+  the only one that survives. **No "sign out everywhere" route was added** — none existed, and one
+  is an interface decision; the column makes it a two-line route if he wants it. Options weighed:
+  a session table (§9 change and a write per sign-in — rejected, as in 2026-08-12); a per-account
+  secret mixed into the MAC (the same column wearing a key's name, and it makes a lost row an
+  unverifiable session rather than a refused one — rejected). **The kiosk is signed out by its
+  owner's password change**, deliberately, and signs in again as it does after the 12-hour ceiling.
+- **The same events hang up the account's signalling sockets**, through the `/shutdown` fan-out
+  `deleteAccount` already used, now one helper (`hangUpSignalling`) called after the epoch commits
+  so a hung-up socket cannot re-dial. This closes 2026-09-22's "below the bar" line about sockets
+  outliving a password change.
+- **A replacement upload keeps the old file live until the password-proved finish.** Chosen over
+  "ask the password at begin when the row is already uploaded" because it also fixes the honest
+  failure (an abandoned replacement left customers with nothing), and because R2 multipart already
+  gives the atomic swap: nothing is visible until `complete()`. The row's size, type and
+  `uploaded_at` move in one statement after it.
+- **A download ticket names its code and is re-checked against it on every use.** Chosen over
+  binding `uploaded_at` into the MAC: a code is the entitlement, so revocation and deletion — which
+  delete or revoke its row — are what must end the ticket, and a replaced file under a still-valid
+  code is what the customer paid for. Uses and expiry are deliberately not re-checked (the use was
+  spent at redemption; expiry bounds redemption). Only the intersection of the ticket's list and
+  what the code opens now is granted, so a ticket can lose reach and never gain it. Closes the last
+  "below the bar" line of 2026-09-22. Tickets minted before the deploy carry no ref and are refused
+  — at most thirty minutes of customers re-typing a code.
+- **The sign-in `pair:` bucket keys IPv6 on the /48; `client:` stays on the /64.** At /64 one free
+  tunnel-broker /48 was 65,536 pairs, so item 50's lockout came back for anybody with a free IPv6
+  tunnel. /48 for the client bucket too was the reviewer's suggestion and is **not** taken: that
+  bucket is shared by every handle, and `crypto.ts` already records why a /48 there turns an attack
+  into an outage for the neighbours; a `pair:` bucket is per handle, so only strangers guessing at
+  the same account share one. **Item 50's "paid for rather than free" was wrong and is corrected**:
+  six IPv4 addresses or six /48s — two free tunnel-broker sign-ups, or a handful of cloud VMs — is
+  cheap. The honest statement is that a per-handle ceiling can always be filled by somebody willing
+  to spend a little, and **passkey sign-in, which no bucket touches, is the mitigation**.
+  Recovery-code sign-in shares the buckets and `challenge` checks them; that was kept, not loosened:
+  a recovery exit around the ceiling would be a second password door without the ceiling.
+- **`setPassword`'s spent-ticket check moved into every write's WHERE**, both branches, with the
+  losing request answered by the same stored-hash comparison item 51 introduced.
+- **`docs/BREAK-GLASS.md` gained a rotation section.** No key versioning was implemented: none of
+  the four secrets carries a key id today, and adding one to the TOTP ciphertext is a migration
+  of every enrolled secret — not trivial, so written down instead.
+
+Every fix has a driven gate in `scripts/check.ts`, four of them over a real SQLite (`node:sqlite`,
+all ten migrations applied) because the fixes are WHERE clauses a SQL-matching stub cannot
+evaluate; each was break-verified by reverting the fix in place.
+
 ## 2026-09-24 — the review's Worker findings: anonymous lockout, a truthful 409, and the release line moves
 
 Five of the 2026-09-24 review's site items (`TODO.md` 10, 16, 17, 18, 21), fixed on a branch and
@@ -27,7 +83,9 @@ is what was *decided*.
   remembered device (a new stored field, a §9 change — rejected). Chosen: `pair:` per (client,
   handle) at five, `account:` per handle at **30**. `gate`'s refund means one address feeds the
   handle bucket at most six times per window, so it takes five or more addresses to lock an owner
-  out — the distributed attack the bucket exists to cap, now paid for rather than free. 30 is a
+  out — the distributed attack the bucket exists to cap, now paid for rather than free (**corrected
+  in the entry above**: at the /64 one free IPv6 tunnel was enough, and even at the /48 the price is
+  a few free tunnels or cloud VMs, not a botnet). 30 is a
   judgement: low enough that a botnet gets ~30 guesses plus one per backoff period, high enough that
   no single address or household reaches it. **The `second-factor:` bucket keeps its five, per
   account, deliberately** — only a password-holder reaches it, and loosening it trades the second

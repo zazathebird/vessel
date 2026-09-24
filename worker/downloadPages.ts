@@ -39,6 +39,7 @@ import { assertPassword, json, noStore, readJsonLenient, requireAccount } from "
 import { BadRequest } from "./encoding";
 import type { Env } from "./env";
 import { verify } from "./session";
+import { ticketStillOpens } from "./downloads";
 import {
   BLOCK_KINDS,
   CATEGORY_IDS,
@@ -324,11 +325,30 @@ export async function resolveAccess(request: Request, env: Env, url: URL): Promi
   const ticket = url.searchParams.get("t") ?? "";
   if (ticket) {
     const token = await verify(env.SESSION_SECRET, "download", ticket);
-    if (token) {
-      for (const part of token.subject.split(",").filter(Boolean)) {
-        if (part.startsWith("@")) access.ticketPages.add(part.slice(1));
-        else if (part.startsWith("~")) access.ticketVisible.add(part.slice(1));
-        else access.ticketItems.add(part);
+    /*
+     * **A ticket is honoured only while the code that bought it still opens
+     * what it names** (2026-09-24, audit item 60). The subject is `REF|list`;
+     * a subject without a ref is a ticket this Worker did not mint in that
+     * shape and is refused, not read as the old snapshot — refuse, never
+     * repair. What the code opens now comes from `ticketStillOpens`, which asks
+     * `opened`, the function `claim` asked, and only the intersection is
+     * granted: a ticket can lose reach between redemption and use, never gain
+     * it.
+     */
+    const bar = token ? token.subject.indexOf("|") : -1;
+    const now = token && bar > 0 ? await ticketStillOpens(env, token.subject.slice(0, bar)) : null;
+    if (token && now) {
+      const open = new Set(now.open);
+      const visible = new Set(now.visible);
+      const items = new Set(now.items);
+      for (const part of token.subject.slice(bar + 1).split(",").filter(Boolean)) {
+        if (part.startsWith("@")) {
+          if (open.has(part.slice(1))) access.ticketPages.add(part.slice(1));
+        } else if (part.startsWith("~")) {
+          if (visible.has(part.slice(1))) access.ticketVisible.add(part.slice(1));
+        } else if (items.has(part)) {
+          access.ticketItems.add(part);
+        }
       }
     }
   }
@@ -1196,14 +1216,28 @@ export async function deleteFile(request: Request, env: Env): Promise<Response> 
  * the day a file gets big.
  *
  * The row is written by `saveFile` first and `uploaded_at` is set only by
- * `finishUpload`, so a browser that closes mid-upload leaves a row the page
- * hides and the admin screen shows as unfinished.
+ * `finishUpload`, so a browser that closes mid-upload of a NEW file leaves a row
+ * the page hides and the admin screen shows as unfinished.
+ *
+ * **A REPLACEMENT keeps the old file live until `finishUpload` swaps it**
+ * (2026-09-24, audit item 55). `beginUpload` used to set `uploaded_at = NULL`
+ * on the row, which takes an already-published file off its page and makes
+ * every code for it redeem as invalid — and `beginUpload` is session-only, so a
+ * stolen operator cookie could darken every download on the site one begin at
+ * a time, no password asked, with nothing to finish. It also meant an honest
+ * replacement abandoned half-way left customers with nothing. Now `beginUpload`
+ * writes nothing to the row at all: an R2 multipart upload is invisible until
+ * `complete()`, which replaces the object under the key in one step, so the old
+ * bytes are what `file()` serves right up to the password-proved finish, and an
+ * abort — or a tab closed mid-upload — leaves them exactly as they were. The
+ * content type rides on the multipart upload and reaches the row at the finish,
+ * read back from the object with the size.
  */
 export async function beginUpload(request: Request, env: Env): Promise<Response> {
   await operator(request, env);
   const b = await body(request);
   const id = fileId(b.id);
-  const row = await env.DB.prepare("SELECT id, content_type FROM download_files WHERE id = ?")
+  const row = await env.DB.prepare("SELECT id FROM download_files WHERE id = ?")
     .bind(id)
     .first<{ id: string }>();
   if (!row) throw new BadRequest("Save the file's details first.", 404);
@@ -1212,9 +1246,6 @@ export async function beginUpload(request: Request, env: Env): Promise<Response>
   const upload = await env.DOWNLOADS.createMultipartUpload(id, {
     httpMetadata: { contentType },
   });
-  await env.DB.prepare("UPDATE download_files SET content_type = ?, uploaded_at = NULL WHERE id = ?")
-    .bind(contentType, id)
-    .run();
 
   return noStore(json({ uploadId: upload.uploadId }));
 }
@@ -1246,8 +1277,9 @@ export async function uploadPart(request: Request, env: Env, url: URL): Promise<
 export async function finishUpload(request: Request, env: Env): Promise<Response> {
   // The password is asked at the *finish*, not the begin: this is the call that
   // makes the bytes live, and it is the one a replacement upload cannot
-  // complete without. A begin or a part without it leaves an invisible draft,
-  // which is the state a closed tab leaves anyway.
+  // complete without. A begin or a part without it leaves an invisible draft
+  // for a new file, and the old file untouched and live for a replacement —
+  // the state a closed tab leaves anyway (audit item 55).
   const { b } = await proven(request, env, "Enter your password to publish the file.");
   const id = fileId(b.id);
   const uploadId = str(b.uploadId, 200);
@@ -1310,10 +1342,16 @@ export async function finishUpload(request: Request, env: Env): Promise<Response
    * either way. The bytes are cleaned up here rather than left for somebody to
    * notice, and the operator is told the truth: the row is gone.
    */
+  /*
+   * **The swap** (audit item 55). `complete()` above replaced the bytes under
+   * the key in one step; this makes the row describe them — size, type and a
+   * new `uploaded_at` in one statement. Until here a replacement's row still
+   * described the old bytes, which were the ones being served.
+   */
   const written = await env.DB.prepare(
-    "UPDATE download_files SET size_bytes = ?, uploaded_at = ? WHERE id = ?",
+    "UPDATE download_files SET size_bytes = ?, content_type = ?, uploaded_at = ? WHERE id = ?",
   )
-    .bind(head.size, Date.now(), id)
+    .bind(head.size, head.httpMetadata?.contentType || "application/octet-stream", Date.now(), id)
     .run();
   if (!written.meta.changes) {
     await env.DOWNLOADS.delete(id);

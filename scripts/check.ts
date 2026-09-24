@@ -102,15 +102,26 @@ import {
 } from "../src/data/downloads";
 import type { SortableFile } from "../src/data/downloads";
 import { DRAWN_CATEGORIES } from "../src/components/CategoryIcon";
-import { rangePlan, revokeCode } from "../worker/downloads";
-import { readJson, readJsonLenient, setPassword, signin } from "../worker/accounts";
-import { removeGrant, saveBlocks, saveFile, savePage } from "../worker/downloadPages";
+import { claim, file as downloadFile, listCodes, mintCode, rangePlan, revokeCode } from "../worker/downloads";
+import { changePassword, readJson, readJsonLenient, requireAccount, setPassword, signin } from "../worker/accounts";
+import {
+  abortUpload,
+  beginUpload,
+  deletePage,
+  finishUpload,
+  removeGrant,
+  saveBlocks,
+  saveFile,
+  savePage,
+  uploadPart,
+} from "../worker/downloadPages";
+import { resetPassword, resetTotp } from "../worker/admin";
 import { passkeyLabel } from "../worker/passkeys";
 import { RateLimiter } from "../worker/rate-limit";
 import { harden, health } from "../worker/hardening";
 import { RELEASE_WORDING } from "../src/data/downloads";
 import { publishSiteConfig } from "../worker/site-config";
-import { authHash } from "../worker/crypto";
+import { authHash, normaliseIp } from "../worker/crypto";
 import { toBase64Url } from "../worker/encoding";
 import { SESSION_COOKIE, mint as mintSession } from "../worker/session";
 import type { Env } from "../worker/env";
@@ -7224,12 +7235,13 @@ checkAsync("setPassword reports a lost UNIQUE race truthfully", async () => {
           if (/SELECT auth_hash FROM credentials/.test(sql)) return stored === null ? null : { auth_hash: stored };
           return null;
         },
+        all: async () => ({ results: [] }),
         run: async () => ({ meta: { changes: 1 } }),
       }),
     }),
-    batch: async () => {
+    batch: async (statements: unknown[]) => {
       if (batchFails) throw new Error("D1_ERROR: UNIQUE constraint failed: credentials.account_id: SQLITE_CONSTRAINT");
-      return [];
+      return statements.map(() => ({ meta: { changes: 1 } }));
     },
   } as unknown as D1Database;
   const cookie = `${SESSION_COOKIE}=${await mintSession(env.SESSION_SECRET, "session", account.id)}`;
@@ -7439,6 +7451,608 @@ checkAsync("every response is same-origin by CORP, and /api/health is memoised",
   must(/case "GET \/api\/health":\s*return health\(env\);/.test(indexSrc), "the health route no longer calls the memoised health()");
   must(/from "\.\/hardening"/.test(indexSrc), "index.ts no longer takes harden from worker/hardening.ts");
   return "health and a document both carry CORP same-origin; two health checks cost one probe";
+});
+
+/*
+ * ---- The 2026-09-24 follow-up: the reviewers' second Worker list, over a REAL
+ * SQLite ----------------------------------------------------------------------
+ *
+ * The gates above answer D1 by matching SQL text, which can drive a route but
+ * cannot evaluate a WHERE clause — and three of these fixes ARE a WHERE clause
+ * (a guard in the write, an epoch compared at read, a ticket re-checked against
+ * its code's row). A regex stub would have to restate each guard to answer it,
+ * which is the "a gate that re-derives what it checks only confirms its own
+ * copy" failure CLAUDE.md names. So these run against `node:sqlite` with every
+ * file in `migrations/` applied in order: the real schema, the real indexes,
+ * the real foreign keys, the routes' own SQL. A batch is one transaction, as
+ * D1's is. Node without `node:sqlite` (before 22.5) skips them, by name.
+ */
+
+type D1Hooks = { beforeBatch: null | (() => Promise<void>) };
+const sqliteD1 = async (): Promise<{ db: D1Database; raw: import("node:sqlite").DatabaseSync; hooks: D1Hooks }> => {
+  let mod: typeof import("node:sqlite");
+  const quiet = process.emitWarning;
+  try {
+    // The module is "experimental" in Node 22 and says so on stderr once per
+    // process; the warning is about API stability, not about this use.
+    process.emitWarning = ((warning: string | Error, ...rest: unknown[]) => {
+      if (String(warning).includes("SQLite")) return;
+      (quiet as (...a: unknown[]) => void).call(process, warning, ...rest);
+    }) as typeof process.emitWarning;
+    mod = await import("node:sqlite");
+  } catch {
+    return skip("node:sqlite is unavailable (Node 22.5+ has it) — these gates need a real SQLite to evaluate the routes' WHERE clauses");
+  } finally {
+    process.emitWarning = quiet;
+  }
+  const raw = new mod.DatabaseSync(":memory:");
+  for (const name of readdirSync("migrations").filter((f) => f.endsWith(".sql")).sort()) {
+    raw.exec(readFileSync(`migrations/${name}`, "utf8"));
+  }
+  type Value = null | number | bigint | string | Uint8Array;
+  const norm = (v: unknown): Value =>
+    v instanceof ArrayBuffer
+      ? new Uint8Array(v)
+      : typeof v === "boolean"
+        ? v ? 1 : 0
+        : v === undefined
+          ? null
+          : (v as Value);
+  const reads = (sql: string) => /^\s*(SELECT|WITH)\b/i.test(sql) || /\bRETURNING\b/i.test(sql);
+  const runOne = (sql: string, args: Value[]) => {
+    const statement = raw.prepare(sql);
+    if (reads(sql)) {
+      const rows = statement.all(...args);
+      return { results: rows, success: true, meta: { changes: rows.length } };
+    }
+    const result = statement.run(...args);
+    return { results: [], success: true, meta: { changes: Number(result.changes) } };
+  };
+  type Stmt = { sql: string; args: Value[] };
+  const statement = (sql: string, args: Value[] = []) => ({
+    sql,
+    args,
+    bind: (...values: unknown[]) => statement(sql, values.map(norm)),
+    first: async (column?: string) => {
+      const row = (raw.prepare(sql).get(...args) ?? null) as Record<string, unknown> | null;
+      return row && column ? row[column] : row;
+    },
+    all: async () => runOne(sql, args),
+    run: async () => runOne(sql, args),
+  });
+  const hooks: D1Hooks = { beforeBatch: null };
+  const db = {
+    prepare: (sql: string) => statement(sql),
+    batch: async (statements: Stmt[]) => {
+      if (hooks.beforeBatch) await hooks.beforeBatch();
+      raw.exec("BEGIN");
+      try {
+        const out = statements.map((s) => runOne(s.sql, s.args));
+        raw.exec("COMMIT");
+        return out;
+      } catch (error) {
+        raw.exec("ROLLBACK");
+        throw error;
+      }
+    },
+  };
+  return { db: db as unknown as D1Database, raw, hooks };
+};
+
+/** An R2 bucket in memory, with multipart semantics: nothing is visible until `complete`. */
+const memoryBucket = () => {
+  const objects = new Map<string, { bytes: Uint8Array; contentType: string }>();
+  const uploads = new Map<string, { key: string; contentType: string; parts: Map<number, Uint8Array> }>();
+  let next = 0;
+  const bucket = {
+    objects,
+    createMultipartUpload: async (key: string, options?: { httpMetadata?: { contentType?: string } }) => {
+      const uploadId = `upload-${(next += 1)}`;
+      uploads.set(uploadId, { key, contentType: options?.httpMetadata?.contentType ?? "", parts: new Map() });
+      return { key, uploadId };
+    },
+    resumeMultipartUpload: (key: string, uploadId: string) => {
+      const find = () => {
+        const upload = uploads.get(uploadId);
+        if (!upload || upload.key !== key) throw new Error("NoSuchUpload");
+        return upload;
+      };
+      return {
+        uploadPart: async (part: number, bytes: ArrayBuffer) => {
+          find().parts.set(part, new Uint8Array(bytes));
+          return { partNumber: part, etag: `etag-${part}` };
+        },
+        complete: async (parts: { partNumber: number }[]) => {
+          const upload = find();
+          const chunks = parts.map((p) => upload.parts.get(p.partNumber) ?? new Uint8Array());
+          const bytes = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+          let at = 0;
+          for (const c of chunks) {
+            bytes.set(c, at);
+            at += c.length;
+          }
+          objects.set(key, { bytes, contentType: upload.contentType });
+          uploads.delete(uploadId);
+          return {};
+        },
+        abort: async () => void uploads.delete(uploadId),
+      };
+    },
+    head: async (key: string) => {
+      const o = objects.get(key);
+      return o ? { size: o.bytes.length, httpMetadata: { contentType: o.contentType } } : null;
+    },
+    get: async (key: string) => {
+      const o = objects.get(key);
+      if (!o) return null;
+      return {
+        body: o.bytes,
+        size: o.bytes.length,
+        range: { offset: 0, length: o.bytes.length },
+        writeHttpMetadata: () => undefined,
+      };
+    },
+    delete: async (key: string) => void objects.delete(key),
+  };
+  return bucket;
+};
+
+/** The env every D1-backed gate shares: real SQLite, a limiter that always allows, recorded hang-ups. */
+const sqliteEnv = async () => {
+  const { db, raw, hooks } = await sqliteD1();
+  const hungUp: string[] = [];
+  const bucket = memoryBucket();
+  const env = {
+    SESSION_SECRET: "check-session-secret",
+    AUTH_PEPPER: "check-pepper",
+    RATE_SALT_SEED: "check-seed",
+    TOTP_ENC_KEY: "check-totp",
+    DB: db,
+    DOWNLOADS: bucket,
+    RATE_LIMIT: {
+      idFromName: (name: string) => name,
+      get: () => ({ fetch: async () => new Response(JSON.stringify({ allowed: true, remaining: 5, retryAt: 0 })) }),
+    },
+    SIGNAL: {
+      idFromName: (name: string) => name,
+      get: (id: string) => ({
+        fetch: async (url: string) => {
+          if (String(url).endsWith("/shutdown")) hungUp.push(id);
+          return new Response("ok");
+        },
+      }),
+    },
+  } as unknown as Env;
+  /** An account with a password (and, if asked, an unspent recovery code with its slot, and a machine). */
+  const seed = async (o: { id: string; handle: string; secret: string; operator?: boolean; recovery?: boolean; machine?: string }) => {
+    const now = Date.now() - 3_600_000;
+    raw.prepare("INSERT INTO accounts (id, handle, handle_lower, created_at, is_operator) VALUES (?, ?, ?, ?, ?)").run(
+      o.id,
+      o.handle,
+      o.handle.toLowerCase(),
+      now,
+      o.operator ? 1 : 0,
+    );
+    raw.prepare(
+      "INSERT INTO credentials (id, account_id, kind, label, created_at, auth_hash, kdf_salt, kdf_iterations) VALUES (?, ?, 'password', 'password', ?, ?, ?, 600000)",
+    ).run(`${o.id}-pw`, o.id, now, new Uint8Array(await authHash(env.AUTH_PEPPER, o.secret)), new Uint8Array(16).fill(1));
+    raw.prepare("INSERT INTO key_slots (id, account_id, credential_id, wrapped_grant_key, alg, created_at) VALUES (?, ?, ?, ?, 'AES-KW', ?)").run(
+      `${o.id}-pw-slot`,
+      o.id,
+      `${o.id}-pw`,
+      new Uint8Array(40).fill(7),
+      now,
+    );
+    if (o.recovery) addRecovery(o.id, `${o.id}-rec`, null);
+    if (o.machine) {
+      raw.prepare("INSERT INTO machines (id, owner_id, name, agent_pubkey, paired_at) VALUES (?, ?, 'Workshop', ?, ?)").run(
+        o.machine,
+        o.id,
+        new Uint8Array(65).fill(4),
+        now,
+      );
+    }
+  };
+  /** A recovery code with its key slot; `usedAt` set is one that has just been redeemed (its ticket is live). */
+  const addRecovery = (accountId: string, credentialId: string, usedAt: number | null) => {
+    raw.prepare(
+      "INSERT INTO credentials (id, account_id, kind, label, created_at, code_hash, kdf_salt, kdf_iterations, used_at) VALUES (?, ?, 'recovery', 'recovery', ?, ?, ?, 600000, ?)",
+    ).run(credentialId, accountId, Date.now(), new Uint8Array(32).fill(8), new Uint8Array(16).fill(1), usedAt);
+    raw.prepare("INSERT INTO key_slots (id, account_id, credential_id, wrapped_grant_key, alg, created_at) VALUES (?, ?, ?, ?, 'AES-KW', ?)").run(
+      `${credentialId}-slot`,
+      accountId,
+      credentialId,
+      new Uint8Array(40).fill(6),
+      Date.now(),
+    );
+  };
+  const cookie = async (accountId: string, issuedAt = Date.now()) =>
+    `${SESSION_COOKIE}=${await mintSession(env.SESSION_SECRET, "session", accountId, Date.now(), issuedAt)}`;
+  /** The cookie a response set, as a request header. */
+  const setCookie = (response: Response) => {
+    const header = response.headers.get("set-cookie") ?? "";
+    const match = new RegExp(`${SESSION_COOKIE}=([^;]+)`).exec(header);
+    return match ? `${SESSION_COOKIE}=${match[1]}` : "";
+  };
+  const alive = async (cookieHeader: string) =>
+    (
+      await statusOf(async () => {
+        await requireAccount(new Request("https://mcclevarty.ca/api/account/me", { headers: { cookie: cookieHeader } }), env);
+        return new Response(null);
+      })
+    ).status === 200;
+  return { env, raw, hooks, hungUp, bucket, seed, addRecovery, cookie, setCookie, alive };
+};
+
+const tick = () => new Promise((resolve) => setTimeout(resolve, 3));
+const bytes = (n: number, fill: number) => toBase64Url(new Uint8Array(n).fill(fill));
+
+/*
+ * **A password change, an operator password reset and an operator TOTP reset
+ * each end every session the account already holds, and hang up its
+ * signalling sockets** (2026-09-24, audit items 58 and 59; TODO "Needs the
+ * client" item 2). The session that changed the password is re-issued and
+ * survives; the operator's own session survives resetting somebody else. Fails
+ * against a `requireAccount` that ignores `sessions_after` (the stolen cookie
+ * stays signed in) and against any of the three routes without the hang-up.
+ */
+checkAsync("a password change or an operator reset ends every other session and hangs up signalling", async () => {
+  const { env, seed, cookie, setCookie, alive, hungUp } = await sqliteEnv();
+  const ownerSecret = bytes(32, 3);
+  const operatorSecret = bytes(32, 9);
+  await seed({ id: "acct-owner", handle: "owner", secret: ownerSecret, recovery: true, machine: "machine-owner" });
+  await seed({ id: "acct-op", handle: "operator", secret: operatorSecret, operator: true });
+
+  const began = Date.now() - 60_000;
+  const stolen = await cookie("acct-owner", began);
+  const ownerTab = await cookie("acct-owner", began + 1);
+  must(await alive(stolen), "control: a fresh owner session was refused before anything changed");
+
+  // 1. The owner changes their password from their own tab.
+  const changed = await changePassword(
+    workerPost(
+      "/api/account/password",
+      { currentAuthSecret: ownerSecret, authSecret: bytes(32, 4), passwordSlot: bytes(40, 2), iterations: 600_000, slotAlg: "AES-KW" },
+      { cookie: ownerTab },
+    ),
+    env,
+  );
+  must(changed.status === 200, `the password change itself failed (${changed.status})`);
+  const fresh = setCookie(changed);
+  must(fresh !== "", "the password change did not re-issue the session that made it");
+  must(!(await alive(stolen)), "a session opened before the password change is still signed in afterwards");
+  must(!(await alive(ownerTab)), "the pre-change cookie of the tab that changed it still works — only the re-issued one should");
+  must(await alive(fresh), "the session that changed the password was signed out by its own change");
+  must(hungUp.includes("machine-owner"), "the password change left the account's signalling sockets up");
+
+  // 2. The operator resets the owner's password.
+  await tick();
+  hungUp.length = 0;
+  const operatorTab = await cookie("acct-op");
+  const reset = await statusOf(() =>
+    resetPassword(workerPost("/api/admin/reset-password", { id: "acct-owner", authSecret: operatorSecret }, { cookie: operatorTab }), env),
+  );
+  must(reset.status === 200, `the operator reset itself failed (${reset.status} ${reset.message})`);
+  must(!(await alive(fresh)), "an operator password reset left the owner's session signed in");
+  must(await alive(operatorTab), "resetting somebody else's password signed the operator out");
+  must(hungUp.includes("machine-owner"), "the operator reset left the account's signalling sockets up");
+
+  // 3. The owner signs in again; the operator then resets their TOTP.
+  await tick();
+  const later = await cookie("acct-owner");
+  must(await alive(later), "control: a session begun after the reset was refused");
+  await tick();
+  hungUp.length = 0;
+  const totp = await statusOf(() =>
+    resetTotp(workerPost("/api/admin/reset-totp", { id: "acct-owner", authSecret: operatorSecret }, { cookie: operatorTab }), env),
+  );
+  must(totp.status === 200, `the TOTP reset itself failed (${totp.status} ${totp.message})`);
+  must(!(await alive(later)), "an operator TOTP reset left the owner's session signed in");
+  must(hungUp.includes("machine-owner"), "the TOTP reset left the account's signalling sockets up");
+
+  return "password change: stolen session out, changing tab re-issued; operator reset and TOTP reset: owner out, operator in; all three hung up";
+});
+
+/*
+ * **Two set-passwords on one ticket: exactly one writes, and the other is told
+ * the truth — on the UPDATE branch too** (2026-09-24, audit item 57). Both
+ * requests are held at the batch until both have passed every read, so the
+ * race is not left to scheduling: this is the interleaving the pre-check could
+ * not survive. Fails against the unguarded UPDATE, where both wrote and both
+ * were told "set" while the account kept only the later password.
+ */
+checkAsync("setPassword's spent-ticket guard is in the write: a raced ticket sets one password", async () => {
+  const { env, hooks, raw, seed, addRecovery, cookie } = await sqliteEnv();
+  await seed({ id: "acct-set", handle: "setter", secret: bytes(32, 1) });
+  // A session begun after the previous set: each set ends the ones before it
+  // (audit item 58), and a browser would be holding the one it re-issued.
+  const fresh = async () => {
+    await tick();
+    return cookie("acct-set");
+  };
+
+  const race = async (credentialId: string, secrets: string[]) => {
+    const session = await fresh();
+    addRecovery("acct-set", credentialId, Date.now());
+    const ticket = await mintSession(env.SESSION_SECRET, "set-password", `acct-set:${credentialId}`);
+    let waiting: (() => void)[] = [];
+    // Hold each batch until both have arrived: both requests have now passed
+    // the pre-check, and D1 serialises what follows, in arrival order.
+    hooks.beforeBatch = () =>
+      new Promise<void>((resolve) => {
+        waiting.push(resolve);
+        if (waiting.length === secrets.length) {
+          for (const release of waiting) release();
+          waiting = [];
+        }
+      });
+    const outcomes = await Promise.all(
+      secrets.map((authSecret) =>
+        statusOf(() =>
+          setPassword(
+            workerPost(
+              "/api/account/set-password",
+              { ticket, authSecret, passwordSlot: bytes(40, 5), iterations: 600_000, slotAlg: "AES-KW" },
+              { cookie: session },
+            ),
+            env,
+          ),
+        ),
+      ),
+    );
+    hooks.beforeBatch = null;
+    const stored = raw.prepare("SELECT auth_hash FROM credentials WHERE account_id = 'acct-set' AND kind = 'password'").get() as {
+      auth_hash: Uint8Array;
+    };
+    return { outcomes, stored: toBase64Url(stored.auth_hash) };
+  };
+
+  const a = bytes(32, 21);
+  const b = bytes(32, 22);
+  const different = await race("rec-1", [a, b]);
+  const statuses = different.outcomes.map((o) => o.status).sort();
+  must(
+    statuses[0] === 200 && statuses[1] === 409,
+    `two different passwords on one ticket answered ${statuses.join(" and ")} — one of them was told "set" for a password the account does not have`,
+  );
+  const winner = different.outcomes[0].status === 200 ? a : b;
+  must(
+    different.stored === toBase64Url(new Uint8Array(await authHash(env.AUTH_PEPPER, winner))),
+    "the stored password is not the one the request told \"set\" asked for",
+  );
+
+  const same = await race("rec-2", [a, a]);
+  must(
+    same.outcomes.every((o) => o.status === 200),
+    `a double-submit of the same password was refused (${same.outcomes.map((o) => o.status).join(", ")})`,
+  );
+
+  // And the ticket is spent: a third request on it is refused outright.
+  const ticket = await mintSession(env.SESSION_SECRET, "set-password", "acct-set:rec-2");
+  const session = await fresh();
+  const again = await statusOf(() =>
+    setPassword(
+      workerPost(
+        "/api/account/set-password",
+        { ticket, authSecret: bytes(32, 23), passwordSlot: bytes(40, 5), iterations: 600_000, slotAlg: "AES-KW" },
+        { cookie: session },
+      ),
+      env,
+    ),
+  );
+  must(again.status === 401, `a spent ticket set a password again (${again.status})`);
+  return "different passwords: one 200, one 409, the 200's password stored; same password: 200 twice; spent ticket 401";
+});
+
+/*
+ * **Beginning a replacement upload does not take a live file off its page**
+ * (2026-09-24, audit item 55). A stolen operator cookie can begin, send parts
+ * and abort — all session-only — and the customer still gets the old bytes
+ * throughout; only the password-proved finish swaps them. Fails against the
+ * old `beginUpload`, which set `uploaded_at = NULL` and so refused the very
+ * next download.
+ */
+checkAsync("a replacement upload keeps the old file live until the password-proved finish", async () => {
+  const { env, raw, bucket, seed, cookie } = await sqliteEnv();
+  const operatorSecret = bytes(32, 9);
+  await seed({ id: "acct-op", handle: "operator", secret: operatorSecret, operator: true });
+  const now = Date.now() - 60_000;
+  raw.prepare("INSERT INTO download_pages (slug, title, visibility, status, created_at, updated_at) VALUES ('shop', 'Shop', 'public', 'live', ?, ?)").run(now, now);
+  raw.prepare(
+    "INSERT INTO download_files (id, slug, name, filename, free, size_bytes, created_at, uploaded_at) VALUES ('tool', 'shop', 'Tool', 'tool.exe', 1, 3, ?, ?)",
+  ).run(now, now);
+  bucket.objects.set("tool", { bytes: new TextEncoder().encode("OLD"), contentType: "application/octet-stream" });
+
+  const fetchTool = async () => {
+    const url = new URL("https://mcclevarty.ca/api/downloads/file?item=tool");
+    try {
+      return await (await downloadFile(new Request(url), env, url)).text();
+    } catch (error) {
+      return `refused ${(error as BadRequest).status}`;
+    }
+  };
+  must((await fetchTool()) === "OLD", "control: the live file did not download before any upload began");
+
+  const stolen = await cookie("acct-op");
+  const begin = async () => {
+    const response = await beginUpload(workerPost("/api/admin/downloads/upload/begin", { id: "tool", contentType: "application/x-msdownload" }, { cookie: stolen }), env);
+    return ((await response.json()) as { uploadId: string }).uploadId;
+  };
+  const part = async (uploadId: string, body: string) => {
+    const url = new URL(`https://mcclevarty.ca/api/admin/downloads/upload/part?id=tool&upload=${uploadId}&part=1`);
+    const response = await uploadPart(new Request(url, { method: "POST", headers: { cookie: stolen }, body }), env, url);
+    return ((await response.json()) as { etag: string }).etag;
+  };
+
+  const first = await begin();
+  must((await fetchTool()) === "OLD", `beginning a replacement took the live file down: ${await fetchTool()}`);
+  await part(first, "NEW");
+  must((await fetchTool()) === "OLD", "a part in flight replaced the live bytes");
+  await abortUpload(workerPost("/api/admin/downloads/upload/abort", { id: "tool", uploadId: first }, { cookie: stolen }), env);
+  must((await fetchTool()) === "OLD", "an aborted replacement left the file down");
+
+  const second = await begin();
+  const etag = await part(second, "NEW");
+  const unproven = await statusOf(() =>
+    finishUpload(workerPost("/api/admin/downloads/upload/finish", { id: "tool", uploadId: second, parts: [{ part: 1, etag }] }, { cookie: stolen }), env),
+  );
+  must(unproven.status === 401, `finishing a replacement without the password answered ${unproven.status}`);
+  must((await fetchTool()) === "OLD", "a refused finish left the file down");
+
+  const before = (raw.prepare("SELECT uploaded_at FROM download_files WHERE id = 'tool'").get() as { uploaded_at: number }).uploaded_at;
+  const proven = await statusOf(() =>
+    finishUpload(
+      workerPost("/api/admin/downloads/upload/finish", { id: "tool", uploadId: second, parts: [{ part: 1, etag }], authSecret: operatorSecret }, { cookie: stolen }),
+      env,
+    ),
+  );
+  must(proven.status === 200, `the password-proved finish failed (${proven.status} ${proven.message})`);
+  must((await fetchTool()) === "NEW", "the finished replacement is not what downloads");
+  const row = raw.prepare("SELECT uploaded_at, size_bytes, content_type FROM download_files WHERE id = 'tool'").get() as {
+    uploaded_at: number;
+    size_bytes: number;
+    content_type: string;
+  };
+  must(row.uploaded_at > before && row.size_bytes === 3, "the finish did not stamp the row for the new bytes");
+  must(row.content_type === "application/x-msdownload", `the row's content type is ${row.content_type}, not the upload's`);
+  return "begin, part and abort left OLD serving; an unproven finish was refused; the proven finish swapped to NEW";
+});
+
+/*
+ * **A download ticket dies with its code** (2026-09-24, audit item 60, K4).
+ * Revoking the code, or deleting the page — which deletes its codes — ends
+ * every ticket already redeemed, rather than thirty minutes later; and a page
+ * recreated at the same slug inside that window is not opened by the old
+ * customer's ticket. A ticket without a code ref is refused. Fails against the
+ * snapshot ticket, which kept opening all three.
+ */
+checkAsync("a download ticket dies with its code: revoked, or its page deleted and recreated", async () => {
+  const { env, raw, bucket, seed, cookie } = await sqliteEnv();
+  const operatorSecret = bytes(32, 9);
+  await seed({ id: "acct-op", handle: "operator", secret: operatorSecret, operator: true });
+  const operatorTab = await cookie("acct-op");
+  const stage = () => {
+    const now = Date.now() - 60_000;
+    raw.prepare("INSERT INTO download_pages (slug, title, visibility, status, created_at, updated_at) VALUES ('acme', 'Acme', 'code', 'live', ?, ?)").run(now, now);
+    raw.prepare(
+      "INSERT INTO download_files (id, slug, name, filename, free, size_bytes, created_at, uploaded_at) VALUES ('tool', 'acme', 'Tool', 'tool.exe', 0, 4, ?, ?)",
+    ).run(now, now);
+    bucket.objects.set("tool", { bytes: new TextEncoder().encode("PAID"), contentType: "application/octet-stream" });
+  };
+  stage();
+
+  const mint = async (scope: Record<string, string>) => {
+    const response = await mintCode(workerPost("/api/admin/downloads/codes", { ...scope, authSecret: operatorSecret }, { cookie: operatorTab }), env);
+    return ((await response.json()) as { code: string }).code;
+  };
+  const redeem = async (code: string) => {
+    const response = await claim(workerPost("/api/downloads/claim", { code }), env);
+    return ((await response.json()) as { ticket: string }).ticket;
+  };
+  const take = async (ticket: string) => {
+    const url = new URL(`https://mcclevarty.ca/api/downloads/file?item=tool&t=${encodeURIComponent(ticket)}`);
+    return (await statusOf(() => downloadFile(new Request(url), env, url))).status;
+  };
+
+  // 1. A page code: redeemed, then revoked.
+  const pageTicket = await redeem(await mint({ slug: "acme" }));
+  must((await take(pageTicket)) === 200, "control: a fresh page-code ticket did not download");
+  const listed = await listCodes(new Request("https://mcclevarty.ca/api/admin/downloads/codes", { headers: { cookie: operatorTab } }), env);
+  const ref = ((await listed.json()) as { codes: { ref: string }[] }).codes[0].ref;
+  const revoked = await statusOf(() =>
+    revokeCode(workerPost("/api/admin/downloads/codes/revoke", { ref, authSecret: operatorSecret }, { cookie: operatorTab }), env),
+  );
+  must(revoked.status === 200, `the revoke itself failed (${revoked.status})`);
+  must((await take(pageTicket)) === 403, "a ticket still downloads after its code was revoked");
+
+  // 2. A file code: redeemed, then the page deleted and recreated at the same slug.
+  const fileTicket = await redeem(await mint({ item: "tool" }));
+  must((await take(fileTicket)) === 200, "control: a fresh file-code ticket did not download");
+  const deleted = await statusOf(() =>
+    deletePage(workerPost("/api/admin/downloads/page/delete", { slug: "acme", authSecret: operatorSecret }, { cookie: operatorTab }), env),
+  );
+  must(deleted.status === 200, `the page delete itself failed (${deleted.status})`);
+  stage();
+  must((await take(fileTicket)) === 403, "a ticket from a deleted page opened the page recreated at its slug");
+
+  // 3. A ticket that names no code is not read as the old snapshot.
+  const bare = await mintSession(env.SESSION_SECRET, "download", "@acme");
+  must((await take(bare)) === 403, "a ticket with no code ref was honoured");
+  return "revoked code: ticket 403; deleted and recreated page: ticket 403; ref-less ticket 403; both controls 200";
+});
+
+/*
+ * **Rotating /64s inside one /48 cannot lock the owner out** (2026-09-24,
+ * audit item 56). The `pair:` bucket keys IPv6 on the /48, so one tunnel
+ * broker's /48 is one pair, not 65,536 — while the `client:` bucket keeps the
+ * /64 (a /48 there is a neighbour's outage). The real `RateLimiter` answers, as
+ * in the item-10 gate above. Fails against a pair keyed on the /64: forty /64s
+ * fill the handle ceiling and the owner gets 429.
+ */
+checkAsync("forty IPv6 /64s from one /48 cannot fill the handle ceiling", async () => {
+  must(normaliseIp("2001:db8:aa:bb::1") === "2001:db8:aa:bb::/64", `the client cut moved: ${normaliseIp("2001:db8:aa:bb::1")}`);
+  must(normaliseIp("2001:db8:aa:bb::1", 48) === "2001:db8:aa::/48", `the pair cut is ${normaliseIp("2001:db8:aa:bb::1", 48)}`);
+  must(normaliseIp("203.0.113.9", 48) === "203.0.113.9", "an IPv4 address was cut");
+  must(normaliseIp("::ffff:203.0.113.9", 48) === "::ffff:203.0.113.9", "a mapped IPv4 address was cut to a /48");
+
+  const account = { id: "acct-owner", handle: "owner", is_operator: 0, created_at: 0, reset_at: null };
+  const env = {
+    SESSION_SECRET: "check-session-secret",
+    AUTH_PEPPER: "check-pepper",
+    RATE_SALT_SEED: "check-seed",
+  } as unknown as Env & Record<string, unknown>;
+  const right = toBase64Url(new Uint8Array(32).fill(3));
+  const wrong = toBase64Url(new Uint8Array(32).fill(4));
+  const hash = await authHash(env.AUTH_PEPPER, right);
+  const limiters = new Map<string, RateLimiter>();
+  const storage = () => {
+    const m = new Map<string, unknown>();
+    return {
+      get: async (k: string) => structuredClone(m.get(k)),
+      put: async (k: string, v: unknown) => void m.set(k, structuredClone(v)),
+      deleteAll: async () => m.clear(),
+      setAlarm: async () => undefined,
+    };
+  };
+  env.RATE_LIMIT = {
+    idFromName: (name: string) => name,
+    get: (id: string) => {
+      let limiter = limiters.get(id);
+      if (!limiter) {
+        limiter = new RateLimiter({ storage: storage() } as unknown as DurableObjectState);
+        limiters.set(id, limiter);
+      }
+      const one = limiter;
+      return { fetch: (u: string) => one.fetch(new Request(u)) };
+    },
+  } as unknown as DurableObjectNamespace;
+  env.DB = {
+    prepare: (sql: string) => ({
+      bind: (...args: unknown[]) => ({
+        first: async () => (/FROM accounts WHERE handle_lower/.test(sql) && args[0] === "owner" ? account : null),
+        all: async () => ({
+          results: /FROM credentials/.test(sql) && args[0] === account.id ? [{ id: "cred-pw", secret: hash }] : [],
+        }),
+        run: async () => ({ meta: { changes: 1 } }),
+      }),
+    }),
+    batch: async () => [],
+  } as unknown as D1Database;
+  const attempt = (ip: string, authSecret: string) =>
+    statusOf(() => signin(workerPost("/api/auth/signin", { handle: "owner", authSecret }, { "cf-connecting-ip": ip }), env));
+
+  let refused = 0;
+  for (let n = 1; n <= 40; n += 1) {
+    const { status } = await attempt(`2001:db8:aa:${n.toString(16)}::1`, wrong);
+    if (status === 429) refused += 1;
+  }
+  must(refused >= 30, `only ${refused} of 40 guesses from one /48 were refused — the /48 is being counted as many pairs`);
+  const owner = await attempt("198.51.100.7", right);
+  must(
+    owner.status === 200,
+    `the owner's correct password was refused (${owner.status} ${owner.message}) after forty /64s from one /48 — the tunnel-broker lockout is back`,
+  );
+  return `cuts: /64 for the client, /48 for the pair, IPv4 whole; ${refused}/40 guesses from one /48 refused; the owner signed in`;
 });
 
 await Promise.all(pending);

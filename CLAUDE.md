@@ -493,6 +493,12 @@ its reasoning and a *"revisit if"* condition. The load-bearing few:
   grant) and any save to a page that is **live now** ask; drafts, reorders and new rows do not.
 - **The anonymous sign-in limit is per (address, handle), with a looser per-handle ceiling behind
   it** — one per-handle bucket at five let any stranger lock the owner out. Do not collapse them.
+  **The pair's address is the IPv6 /48; the client bucket's stays the /64** — do not harmonise
+  them. Six addresses can still fill the ceiling; passkey sign-in, which no bucket touches, is the
+  mitigation, and the docs say so rather than calling the attack expensive.
+- **A session that began before `accounts.sessions_after` is refused** — a password change, a
+  recovery set-password and an operator password or TOTP reset stamp it and hang up the account's
+  signalling sockets; the request that changed the password is re-issued a *fresh* session.
 - **Refuse, never repair**, and **the last-way-in guards live in the writes' own `WHERE` clauses**,
   not in a check before them — check-then-act lets two concurrent requests each count the other as
   "another way in".
@@ -551,6 +557,9 @@ database table, not TypeScript.** The load-bearing few:
   404 from 403 makes the status code an existence oracle over the whole table.
 - **Deleting a page deletes the codes minted for its FILES as well as for its slug**, because ids are
   re-usable in practice (`suggestFromFilename` derives one and the editor auto-fills it).
+- **A download ticket names its code and is re-checked against it on every use** — revoke or delete
+  ends it at once. **A replacement upload never touches the row until the password-proved finish**;
+  `beginUpload` nulling `uploaded_at` let a stolen cookie take every download offline.
 - **Zero is "no price", never "free"**, and `free` / `price_cents` stay independent in the table.
   **Prices render only when the page has `show_prices` set, which is off by default** — do not flip
   it; the decision is the operator's and the switch is how it stays theirs.
