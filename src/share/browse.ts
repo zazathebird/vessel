@@ -12,7 +12,7 @@
 
 import type { MachineInfo } from "../auth/api";
 import { fromBase64Url, toBase64Url } from "../auth/encoding";
-import { fingerprintFromSdp, signFingerprint, verifyFingerprint } from "./handshake";
+import { PEER_ID, fingerprintFromSdp, signFingerprint, verifyFingerprint } from "./handshake";
 import { shareStore } from "./store";
 import {
   CHANNEL_LABEL,
@@ -228,6 +228,9 @@ export class DriveConnection {
         }
       };
 
+      /** This socket's id, from the object's `hello` — what both signatures bind. */
+      let peerId: string | null = null;
+
       ws.onerror = () => fail("Could not reach the signalling service. Try again shortly.");
       ws.onmessage = async (event) => {
         let frame: Record<string, unknown>;
@@ -241,12 +244,18 @@ export class DriveConnection {
           if (!frame.agentOnline) {
             return fail("That machine is offline — open its sharing tab to bring it back.");
           }
+          // The signature binds this socket's peer id (handshake v2), so the
+          // offer is good on this socket and nowhere else.
+          if (typeof frame.peer !== "string" || !PEER_ID.test(frame.peer)) {
+            return fail("The signalling service sent a greeting this browser cannot use.");
+          }
+          peerId = frame.peer;
           // The ceremony, steps 1–3 (§13): offer out, signed.
           await pc.setLocalDescription(await pc.createOffer());
           const sdp = pc.localDescription?.sdp ?? "";
           const fingerprint = fingerprintFromSdp(sdp);
           if (!fingerprint) return fail("This browser did not produce a usable connection offer.");
-          const signature = await signFingerprint(grantKey, "owner", machine.id, fingerprint);
+          const signature = await signFingerprint(grantKey, "owner", machine.id, peerId, fingerprint);
           ws.send(
             JSON.stringify({
               type: "offer",
@@ -261,12 +270,13 @@ export class DriveConnection {
           const sdp = typeof payload.sdp === "string" ? payload.sdp : "";
           const fingerprint = fingerprintFromSdp(sdp);
           let verified = false;
-          if (fingerprint && typeof payload.signature === "string") {
+          if (fingerprint && peerId && typeof payload.signature === "string") {
             try {
               verified = await verifyFingerprint(
                 fromBase64Url(machine.agentPubkey),
                 "agent",
                 machine.id,
+                peerId,
                 fingerprint,
                 fromBase64Url(payload.signature),
               );

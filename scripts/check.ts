@@ -20,6 +20,14 @@
  * production without passing.
  */
 
+// The agent tab is driven below (`VesselAgent`), and its File System Access
+// types live beside it rather than in the DOM lib.
+/// <reference path="../src/share/fs-types.d.ts" />
+import { AGENT_KEY_HEADER, FRAME_BUDGET, MACHINE_HEADER, MAX_BROWSER_SOCKETS, MachineSignal, PROOF_WINDOW_MS } from "../worker/signal";
+import { generateMachineKeypair, signConnectProof, signFingerprint, verifyConnectProof, verifyFingerprint } from "../src/share/handshake";
+import { MAX_PEERS, VesselAgent } from "../src/share/agent";
+import type { AgentSnapshot } from "../src/share/agent";
+import * as machinesRoute from "../worker/machines";
 import { execFileSync } from "node:child_process";
 import {
   existsSync,
@@ -8240,6 +8248,564 @@ checkAsync("forty IPv6 /64s from one /48 cannot fill the handle ceiling", async 
   );
   return `cuts: /64 for the client, /48 for the pair, IPv4 whole; ${refused}/40 guesses from one /48 refused; the owner signed in`;
 });
+
+/*
+ * ---- Phase-2 sharing, driven (2026-09-24) ----------------------------------
+ *
+ * Five findings from the 2026-09-24 review, each gated by RUNNING the thing:
+ * the signalling Durable Object over a fake of the three runtime pieces it
+ * touches (the socket, the hibernation context, `WebSocketPair`); the agent
+ * tab over a fake WebSocket and a fake `RTCPeerConnection`, with Node's real
+ * `BroadcastChannel` between two agents; and the machines routes over a real
+ * SQLite with every migration applied. `npm run test:auth` drives the same
+ * behaviour against workerd end to end — these are the ones that run on every
+ * edit and every deploy.
+ *
+ * The three touch process globals (`WebSocket`, `location`,
+ * `RTCPeerConnection`, `Response`), so they run one at a time behind
+ * `serially` rather than interleaving with each other.
+ */
+// …and not beside any gate registered before them either: those drive real
+// Worker routes that construct `Response` and read `Date.now`, and a swapped
+// global under one of them fails it for a reason that is not its own (seen at
+// the 2026-09-24 merge: the session-epoch gate read a moved clock). So the
+// lock opens only once every earlier async gate has settled.
+let sharingLock: Promise<unknown> = Promise.allSettled([...pending]);
+const serially = <T>(fn: () => Promise<T>): Promise<T> => {
+  const run = sharingLock.then(fn, fn);
+  sharingLock = run.catch(() => undefined);
+  return run;
+};
+const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
+const until = async (cond: () => boolean, ms = 3_000): Promise<boolean> => {
+  const end = Date.now() + ms;
+  while (!cond()) {
+    if (Date.now() > end) return false;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return true;
+};
+const b64u = (bytes: Uint8Array) => toBase64Url(bytes);
+const unb64u = (text: string) => new Uint8Array(Buffer.from(text, "base64url"));
+const fakeSdp = () => {
+  const hex = [...crypto.getRandomValues(new Uint8Array(32))]
+    .map((b) => b.toString(16).padStart(2, "0").toUpperCase())
+    .join(":");
+  return `v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=fingerprint:sha-256 ${hex}\r\n`;
+};
+
+/** A server-side hibernatable socket, as far as `MachineSignal` uses one. */
+class FakeServerSocket {
+  sent: Record<string, any>[] = [];
+  readyState = 1;
+  code: number | null = null;
+  tags: string[] = [];
+  private att: unknown = null;
+  send(text: string) {
+    if (this.readyState !== 1) throw new Error("closed");
+    this.sent.push(JSON.parse(text));
+  }
+  close(code: number) {
+    this.code = code;
+    this.readyState = 2;
+  }
+  serializeAttachment(value: unknown) {
+    this.att = structuredClone(value);
+  }
+  deserializeAttachment() {
+    return structuredClone(this.att);
+  }
+  types() {
+    return this.sent.map((f) => f.type);
+  }
+}
+
+checkAsync(
+  "the signalling object makes an agent of the machine key, never of a session (N1, N3, N5)",
+  () =>
+    serially(async () => {
+      const sockets: FakeServerSocket[] = [];
+      const ctx = {
+        acceptWebSocket(ws: FakeServerSocket, tags: string[]) {
+          ws.tags = tags;
+          sockets.push(ws);
+        },
+        getWebSockets(tag?: string) {
+          return sockets.filter((s) => !tag || s.tags.includes(tag));
+        },
+      };
+      let stamped = 0;
+      const env = {
+        DB: {
+          prepare: (sql: string) => ({
+            bind: () => ({
+              run: async () => {
+                if (/last_seen/.test(sql)) stamped += 1;
+                return { meta: { changes: 1 } };
+              },
+            }),
+          }),
+        },
+      };
+      const g = globalThis as Record<string, any>;
+      const saved = { pair: g.WebSocketPair, response: g.Response, ws: g.WebSocket, now: Date.now };
+      g.WebSocketPair = class {
+        0 = new FakeServerSocket();
+        1 = new FakeServerSocket();
+      };
+      const RealResponse = saved.response as typeof Response;
+      try {
+        const signal = new MachineSignal(ctx as unknown as DurableObjectState, env as unknown as Env);
+        const machine = "machine-check";
+        const keys = await generateMachineKeypair();
+        const other = await generateMachineKeypair();
+        const key = b64u(keys.publicKeyBytes);
+
+        // `/connect` builds its 101 synchronously; Node's Response refuses 101,
+        // so the subclass stands in for exactly that call and no longer.
+        const connect = async (role: string, headers: Record<string, string> = {}) => {
+          g.Response = class extends RealResponse {
+            constructor(body?: BodyInit | null, init?: ResponseInit & { webSocket?: unknown }) {
+              super(body, init?.status === 101 ? { ...init, status: 200 } : init);
+            }
+          };
+          let pending: Promise<Response>;
+          try {
+            pending = signal.fetch(
+              new Request(`https://signal/connect?role=${role}`, { headers: { upgrade: "websocket", ...headers } }),
+            );
+          } finally {
+            g.Response = RealResponse;
+          }
+          const response = await pending;
+          return { status: response.status, ws: response.status === 200 ? sockets[sockets.length - 1] : null };
+        };
+        const agentHeaders = (k = key) => ({ [AGENT_KEY_HEADER]: k, [MACHINE_HEADER]: machine });
+        const message = (ws: FakeServerSocket | null, frame: unknown) =>
+          signal.webSocketMessage(ws as unknown as WebSocket, typeof frame === "string" ? frame : JSON.stringify(frame));
+        const presence = async () =>
+          ((await signal.fetch(new Request("https://signal/presence"))).json() as Promise<{ agentOnline: boolean }>).then(
+            (p) => p.agentOnline,
+          );
+        const prove = async (ws: FakeServerSocket, privateKey: CryptoKey, nonce = String(ws.sent[0].nonce)) =>
+          message(ws, { type: "prove", signature: b64u(await signConnectProof(privateKey, machine, nonce)) });
+
+        must((await connect("agent")).status === 400, "an agent upgrade without the Worker's key header was not refused");
+
+        // A session alone: a pending socket, challenged, and nothing more.
+        const { ws: a } = await connect("agent", agentHeaders());
+        must(a !== null && a.sent[0]?.type === "challenge", "an agent socket was not challenged on arrival");
+        must(!(await presence()), "an unproven agent socket counted as presence — a cookie makes the machine look online");
+
+        const { ws: browser } = await connect("browser");
+        must(browser!.sent[0]?.type === "hello" && browser!.sent[0].agentOnline === false, "the browser was told an unproven agent is online");
+
+        // The wrong key: refused, and nobody is evicted.
+        const { ws: impostor } = await connect("agent", agentHeaders());
+        await prove(impostor!, other.keyPair.privateKey);
+        must(impostor!.types().includes("proof-refused") && impostor!.code === 4003, "a proof by the wrong key was not refused with 4003");
+
+        // The machine key: accepted, online, stamped.
+        await prove(a!, keys.keyPair.privateKey);
+        must(a!.types().includes("accepted"), `the machine key's proof was not accepted: ${a!.types()}`);
+        must(await presence(), "a proven agent is not presence");
+        must(stamped === 1, `last_seen was stamped ${stamped} times — it belongs to the proof, once`);
+        must(browser!.sent.some((f) => f.type === "agent-status" && f.online === true), "browsers were not told the proven agent arrived");
+
+        // A pending socket is relayed nothing, and a proof is good for one challenge.
+        const { ws: lurker } = await connect("agent", agentHeaders());
+        await message(browser, { type: "offer", payload: { sdp: "x" } });
+        must(a!.sent.some((f) => f.type === "offer" && f.from === browser!.sent[0].peer), "the offer did not reach the proven agent, stamped with the browser's peer id");
+        must(lurker!.types().join() === "challenge", `an unproven agent socket was relayed ${lurker!.types()}`);
+        await prove(lurker!, keys.keyPair.privateKey, String(a!.sent[0].nonce));
+        must(lurker!.code === 4003, "a proof replayed from another socket's challenge was accepted");
+        must(!a!.types().includes("replaced"), "a refused proof evicted the incumbent");
+        const { ws: talker } = await connect("agent", agentHeaders());
+        await message(talker, { type: "answer", to: crypto.randomUUID(), payload: {} });
+        must(talker!.code === 1008, "an unproven agent socket that spoke before proving was not closed with 1008");
+
+        // Too late is refused even with the right key.
+        const { ws: late } = await connect("agent", agentHeaders());
+        Date.now = () => saved.now() + PROOF_WINDOW_MS + 1_000;
+        try {
+          await prove(late!, keys.keyPair.privateKey);
+        } finally {
+          Date.now = saved.now;
+        }
+        must(late!.code === 1008 && !late!.types().includes("accepted"), "a proof after the window was accepted");
+
+        // A second tab with the same key replaces the first (§12 M).
+        const { ws: b } = await connect("agent", agentHeaders());
+        await prove(b!, keys.keyPair.privateKey);
+        must(a!.types().includes("replaced") && a!.code === 4001, "a proven second tab did not replace the first");
+
+        // N3: a frame budget per socket.
+        const { ws: honest } = await connect("browser");
+        for (let i = 0; i < 40; i += 1) await message(honest, { type: "ice", payload: { candidate: `c${i}` } });
+        must(honest!.code === null, `an honest burst of forty frames was closed (${honest!.code})`);
+        const { ws: flood } = await connect("browser");
+        let sent = 0;
+        for (; sent < 400 && flood!.code === null; sent += 1) await message(flood, { type: "ice", payload: { candidate: `c${sent}` } });
+        must(flood!.code === 1008, `400 frames at once were all relayed — no frame budget (closed: ${flood!.code})`);
+        must(sent <= FRAME_BUDGET.browser.burst + 5, `the flood was cut off after ${sent} frames, past the ${FRAME_BUDGET.browser.burst}-frame burst`);
+
+        // N5: a re-key hangs up on the old key, once.
+        const offlineBefore = browser!.sent.filter((f) => f.type === "agent-status" && f.online === false).length;
+        const newKey = b64u((await generateMachineKeypair()).publicKeyBytes);
+        const { ws: stalePending } = await connect("agent", agentHeaders());
+        await signal.fetch(new Request("https://signal/shutdown?reason=rekeyed", { method: "POST", headers: { [AGENT_KEY_HEADER]: newKey } }));
+        must(b!.types().includes("rekeyed") && b!.code === 4005, "a re-key left the old key's agent connected");
+        must(stalePending!.code === 4005, "a re-key left a pending socket that could still prove the old key");
+        must(!(await presence()), "the machine still reads online after a re-key");
+        await signal.webSocketClose(b as unknown as WebSocket);
+        const offlineAfter = browser!.sent.filter((f) => f.type === "agent-status" && f.online === false).length;
+        must(offlineAfter - offlineBefore === 1, `browsers were told the agent left ${offlineAfter - offlineBefore} times on one re-key`);
+
+        must(MAX_BROWSER_SOCKETS === MAX_PEERS, `the object admits ${MAX_BROWSER_SOCKETS} browsing sockets and the agent ${MAX_PEERS} peers — they are one number`);
+        return "pending until proven: no presence, no relay, no eviction; wrong key, replay, late proof and early speech refused; 40-frame burst passes, flood closed 1008; re-key closes the old key once";
+      } finally {
+        g.WebSocketPair = saved.pair;
+        g.Response = saved.response;
+        Date.now = saved.now;
+      }
+    }),
+  15_000,
+);
+
+/** The agent's end of the signalling socket, as `VesselAgent` uses one. */
+class FakeClientSocket {
+  static OPEN = 1;
+  static made: FakeClientSocket[] = [];
+  readyState = 1;
+  sent: Record<string, any>[] = [];
+  onmessage: ((event: { data: string }) => void) | null = null;
+  onclose: (() => void) | null = null;
+  constructor(readonly url: string) {
+    FakeClientSocket.made.push(this);
+  }
+  send(text: string) {
+    this.sent.push(JSON.parse(text));
+  }
+  close() {
+    this.readyState = 3;
+  }
+  deliver(frame: unknown) {
+    this.onmessage?.({ data: JSON.stringify(frame) });
+  }
+  types() {
+    return this.sent.map((f) => f.type);
+  }
+}
+
+class FakePeerConnection {
+  static made: FakePeerConnection[] = [];
+  closed = false;
+  remoteDescription: unknown = null;
+  localDescription: { type: string; sdp: string } | null = null;
+  connectionState = "new";
+  ondatachannel: unknown = null;
+  onicecandidate: unknown = null;
+  onconnectionstatechange: unknown = null;
+  constructor() {
+    FakePeerConnection.made.push(this);
+  }
+  async setRemoteDescription(d: unknown) {
+    if (this.closed) throw new Error("closed");
+    this.remoteDescription = d;
+  }
+  async createAnswer() {
+    return { type: "answer", sdp: fakeSdp() };
+  }
+  async setLocalDescription(d: { type: string; sdp: string }) {
+    this.localDescription = d;
+  }
+  async addIceCandidate() {}
+  close() {
+    this.closed = true;
+  }
+}
+
+checkAsync(
+  "the agent tab proves its key, binds each handshake to its socket, caps and replaces peers, and recovers from being replaced (N1, N2)",
+  () =>
+    serially(async () => {
+      const g = globalThis as Record<string, any>;
+      const saved = { ws: g.WebSocket, location: g.location, pc: g.RTCPeerConnection };
+      if (typeof BroadcastChannel === "undefined") skip("this Node has no BroadcastChannel");
+      g.WebSocket = FakeClientSocket;
+      g.location = { protocol: "https:", host: "check.invalid" };
+      g.RTCPeerConnection = FakePeerConnection;
+      FakeClientSocket.made = [];
+      FakePeerConnection.made = [];
+      const agents: VesselAgent[] = [];
+      try {
+        const machine = "machine-agent-check";
+        const keys = await generateMachineKeypair();
+        const owner = await generateMachineKeypair(); // stands in for the grant key: same curve, same calls
+        const snapshots: AgentSnapshot[] = [];
+        const make = (sink: AgentSnapshot[] = []) => {
+          const agent = new VesselAgent(machine, keys.keyPair, owner.publicKeyBytes, async () => null, (s) => sink.push(s));
+          agents.push(agent);
+          return agent;
+        };
+        const state = (sink: AgentSnapshot[]) => sink[sink.length - 1]?.state;
+        const peers = (sink: AgentSnapshot[]) => sink[sink.length - 1]?.peers ?? 0;
+
+        const a = make(snapshots);
+        a.start();
+        const ws = FakeClientSocket.made[0];
+        must(ws.url.endsWith(`/api/signal/${machine}?role=agent`), `the agent dialled ${ws.url}`);
+        await settle();
+        must(state(snapshots) === "connecting", `an open, unproven socket already read "${state(snapshots)}"`);
+
+        // The challenge is answered with the machine key, over exactly that nonce.
+        const nonce = b64u(crypto.getRandomValues(new Uint8Array(32)));
+        ws.deliver({ type: "challenge", nonce });
+        must(await until(() => ws.types().includes("prove")), "the agent did not answer its challenge");
+        const proof = ws.sent.find((f) => f.type === "prove")!;
+        must(
+          await verifyConnectProof(keys.publicKeyBytes, machine, nonce, unb64u(String(proof.signature))),
+          "the agent's proof does not verify against its own public key over the object's nonce",
+        );
+        ws.deliver({ type: "challenge", nonce: "not-a-nonce" });
+        await settle();
+        must(ws.types().filter((t) => t === "prove").length === 1, "the agent signed a challenge that is not one the object mints");
+        // That refusal dropped the socket for a retry; take the retry's socket through.
+        must(await until(() => FakeClientSocket.made.length === 2, 4_000), "a refused challenge did not lead to a retry");
+        const ws2 = FakeClientSocket.made[1];
+        ws2.deliver({ type: "challenge", nonce });
+        await until(() => ws2.types().includes("prove"));
+        ws2.deliver({ type: "accepted" });
+        must(await until(() => state(snapshots) === "online"), "accepted did not make the agent online");
+
+        // N2: an offer is verified against the socket it arrived on.
+        const offerFrom = async (peer: string, signedFor = peer) => {
+          const sdp = fakeSdp();
+          const fp = sdp.match(/a=fingerprint:(.+)\r/)![1];
+          const signature = await signFingerprint(owner.keyPair.privateKey, "owner", machine, signedFor, fp);
+          ws2.deliver({ type: "offer", from: peer, payload: { sdp, signature: b64u(signature) } });
+        };
+        const p1 = crypto.randomUUID();
+        await offerFrom(p1);
+        must(await until(() => ws2.sent.some((f) => f.type === "answer" && f.to === p1)), "a good offer was not answered");
+        const answer = ws2.sent.find((f) => f.type === "answer" && f.to === p1)!;
+        must(
+          await verifyFingerprint(keys.publicKeyBytes, "agent", machine, p1, String(answer.payload.fingerprint), unb64u(String(answer.payload.signature))),
+          "the agent's answer does not verify bound to the peer it answered",
+        );
+        const p2 = crypto.randomUUID();
+        await offerFrom(p2, p1); // p1's signature, relayed from p2's socket
+        must(await until(() => ws2.sent.some((f) => f.type === "refused" && f.to === p2)), "an offer signed for another socket was not refused");
+        must(peers(snapshots) === 1, `a replayed offer opened a connection (${peers(snapshots)} peers)`);
+
+        const firstPc = FakePeerConnection.made[0];
+        await offerFrom(p1);
+        must(await until(() => ws2.sent.filter((f) => f.type === "answer" && f.to === p1).length === 2), "a second offer from one peer was not answered");
+        must(firstPc.closed, "a second offer from the same peer left the first connection open beside it");
+        must(peers(snapshots) === 1, `one peer holds ${peers(snapshots)} connections`);
+
+        for (let i = 1; i < MAX_PEERS; i += 1) await offerFrom(crypto.randomUUID());
+        must(await until(() => peers(snapshots) === MAX_PEERS), `the agent did not reach ${MAX_PEERS} peers`);
+        const overflow = crypto.randomUUID();
+        await offerFrom(overflow);
+        must(await until(() => ws2.sent.some((f) => f.type === "refused" && f.to === overflow)), `peer ${MAX_PEERS + 1} was not refused`);
+        must(peers(snapshots) === MAX_PEERS, `the agent holds ${peers(snapshots)} peers past its cap of ${MAX_PEERS}`);
+        const madeBefore = FakePeerConnection.made.length;
+        ws2.deliver({ type: "offer", from: "not-a-peer-id", payload: { sdp: fakeSdp(), signature: "x" } });
+        await settle();
+        must(FakePeerConnection.made.length === madeBefore, "an offer from a peer id the object could not have minted was acted on");
+
+        // N1: replaced by a sibling tab of this profile — wait while it lives,
+        // take back over when it goes. No click.
+        const siblingSnaps: AgentSnapshot[] = [];
+        const b = make(siblingSnaps);
+        b.start();
+        const wsB = FakeClientSocket.made[FakeClientSocket.made.length - 1];
+        wsB.deliver({ type: "accepted" });
+        await until(() => state(siblingSnaps) === "online");
+        ws2.deliver({ type: "replaced" });
+        must(await until(() => state(snapshots) === "replaced"), "replaced did not stand the agent down");
+        must(peers(snapshots) === 0, "a replaced agent kept its peer connections");
+        const socketsWhileReplaced = FakeClientSocket.made.length;
+        await new Promise((resolve) => setTimeout(resolve, 4_000));
+        must(state(snapshots) === "replaced" && FakeClientSocket.made.length === socketsWhileReplaced, "the replaced agent reclaimed while its sibling was still the live agent — ping-pong");
+        b.stop();
+        must(await until(() => FakeClientSocket.made.length > socketsWhileReplaced, 4_000), "the replaced agent did not take back over once its sibling closed — the host stays down until somebody clicks");
+        must(state(snapshots) === "connecting", `after reclaiming, the agent reads "${state(snapshots)}"`);
+
+        // Re-keyed elsewhere is terminal: no retry could ever prove the old key.
+        const wsC = FakeClientSocket.made[FakeClientSocket.made.length - 1];
+        wsC.deliver({ type: "proof-refused" });
+        must(await until(() => state(snapshots) === "rekeyed"), "a refused proof did not stand the agent down as re-keyed");
+        const socketsAfterRekey = FakeClientSocket.made.length;
+        await new Promise((resolve) => setTimeout(resolve, 2_600));
+        must(FakeClientSocket.made.length === socketsAfterRekey, "a re-keyed agent kept redialling a key that can never prove");
+
+        return `challenge signed over the object's nonce only; online on accepted; replayed offer refused; same-peer offer replaces; ${MAX_PEERS}-peer cap; replaced waits for its sibling and reclaims when it closes; re-keyed is terminal`;
+      } finally {
+        for (const agent of agents) agent.stop();
+        g.WebSocket = saved.ws;
+        g.location = saved.location;
+        g.RTCPeerConnection = saved.pc;
+      }
+    }),
+  30_000,
+);
+
+/*
+ * A D1 over node:sqlite, with every migration applied — enough of the binding
+ * for the machines routes, and each call yields to the event loop first, as a
+ * network round trip does. That yield is what lets two concurrent requests
+ * interleave between a count and an insert, which is the race being gated.
+ */
+async function sqliteD1Share(): Promise<{ db: D1Database; raw: { prepare(sql: string): { get(...a: unknown[]): unknown; run(...a: unknown[]): unknown } } }> {
+  let sqlite: { DatabaseSync: new (path: string) => any };
+  try {
+    sqlite = (await import("node:sqlite")) as unknown as typeof sqlite;
+  } catch {
+    return skip("node:sqlite is not available in this Node — the machines routes could not be driven");
+  }
+  const raw = new sqlite.DatabaseSync(":memory:");
+  for (const file of readdirSync("migrations").filter((f) => f.endsWith(".sql")).sort()) {
+    raw.exec(readFileSync(join("migrations", file), "utf8"));
+  }
+  const conv = (args: unknown[]) =>
+    args.map((a) => (a instanceof ArrayBuffer ? new Uint8Array(a) : a === undefined ? null : a));
+  const statement = (sql: string, args: unknown[] = []): any => ({
+    bind: (...next: unknown[]) => statement(sql, next),
+    first: async () => {
+      await settle();
+      return raw.prepare(sql).get(...conv(args)) ?? null;
+    },
+    all: async () => {
+      await settle();
+      return { results: raw.prepare(sql).all(...conv(args)) };
+    },
+    run: async () => {
+      await settle();
+      const result = raw.prepare(sql).run(...conv(args));
+      return { meta: { changes: Number(result.changes) } };
+    },
+    exec: () => raw.prepare(sql).run(...conv(args)),
+  });
+  const db = {
+    prepare: (sql: string) => statement(sql),
+    batch: async (statements: { exec(): unknown }[]) => {
+      await settle();
+      raw.exec("BEGIN");
+      try {
+        for (const s of statements) s.exec();
+        raw.exec("COMMIT");
+      } catch (error) {
+        raw.exec("ROLLBACK");
+        throw error;
+      }
+      return [];
+    },
+  };
+  return { db: db as unknown as D1Database, raw };
+}
+
+checkAsync(
+  "the machines routes: caps and drive labels hold in the write under concurrency, and a re-key hangs up on the old key (N5, N6)",
+  () =>
+    serially(async () => {
+    const { db, raw } = await sqliteD1Share();
+    const signalCalls: { id: string; url: string; key: string | null }[] = [];
+    const env = {
+      DB: db,
+      SESSION_SECRET: "check-session-secret",
+      AUTH_PEPPER: "check-pepper",
+      RATE_SALT_SEED: "check-seed",
+      RATE_LIMIT: {
+        idFromName: (name: string) => name,
+        get: () => ({ fetch: async () => new Response(JSON.stringify({ allowed: true, retryAt: 0, remaining: 5 })) }),
+      },
+      SIGNAL: {
+        idFromName: (name: string) => name,
+        get: (id: string) => ({
+          fetch: async (url: string, init?: RequestInit) => {
+            signalCalls.push({ id, url: String(url), key: new Headers(init?.headers).get(AGENT_KEY_HEADER) });
+            return Response.json({ agentOnline: false, status: "closed" });
+          },
+        }),
+      },
+    } as unknown as Env;
+
+    const accountId = "acct-machines-check";
+    const grant = await generateMachineKeypair();
+    raw.prepare("INSERT INTO accounts (id, handle, handle_lower, created_at, grant_pubkey) VALUES (?, ?, ?, ?, ?)").run(
+      accountId, "Machines", "machines", 0, grant.publicKeyBytes,
+    );
+    const authSecret = toBase64Url(new Uint8Array(32).fill(9));
+    raw.prepare(
+      "INSERT INTO credentials (id, account_id, kind, created_at, auth_hash, kdf_salt, kdf_iterations) VALUES (?, ?, 'password', 0, ?, ?, 600000)",
+    ).run("cred-machines-check", accountId, new Uint8Array(await authHash(env.AUTH_PEPPER, authSecret)), new Uint8Array(16));
+    const cookie = `${SESSION_COOKIE}=${await mintSession(env.SESSION_SECRET, "session", accountId)}`;
+    const call = async (route: (r: Request, e: Env) => Promise<Response>, body: unknown): Promise<number | string> => {
+      try {
+        const response = await route(
+          new Request("https://mcclevarty.ca/api/x", {
+            method: "POST",
+            headers: { cookie, "content-type": "application/json", "cf-connecting-ip": "203.0.113.7" },
+            body: JSON.stringify(body),
+          }),
+          env,
+        );
+        return response.status;
+      } catch (error) {
+        return (error as BadRequest).status ?? `threw ${(error as Error).message}`;
+      }
+    };
+    const count = (sql: string, ...args: unknown[]) => Number((raw.prepare(sql).get(...args) as { n: number }).n);
+    const pubkey = async () => b64u((await generateMachineKeypair()).publicKeyBytes);
+
+    // N6: twelve pairings at once may land ten.
+    const pairs = await Promise.all(
+      await Promise.all(
+        Array.from({ length: 12 }, async (_, i) => ({ name: `box ${i}`, agentPubkey: await pubkey(), authSecret })),
+      ).then((bodies) => bodies.map((b) => call(machinesRoute.pair, b))),
+    );
+    const machines = count("SELECT count(*) AS n FROM machines WHERE owner_id = ?", accountId);
+    must(machines === 10, `twelve concurrent pairings left ${machines} machines against a cap of 10 (${JSON.stringify(pairs)}) — the cap is a count before the write`);
+    must(pairs.filter((s) => s === 201).length === 10 && pairs.filter((s) => s === 400).length === 2, `pairings answered ${JSON.stringify(pairs)}`);
+    must(count("SELECT count(*) AS n FROM audit WHERE action = 'machine.paired'") === 10, "a refused pairing still wrote its audit row");
+
+    const machineId = String((raw.prepare("SELECT id FROM machines WHERE owner_id = ? ORDER BY name LIMIT 1").get(accountId) as { id: string }).id);
+
+    // N6: labels are unique per machine, case-insensitively, in the index.
+    must((await call(machinesRoute.driveAdd, { machineId, label: "Invoices" })) === 201, "the first drive was not added");
+    const dup = await call(machinesRoute.driveAdd, { machineId, label: "INVOICES" });
+    must(dup === 409, `a drive label differing only in case was ${dup}, not refused 409`);
+    let indexed = false;
+    try {
+      raw.prepare("INSERT INTO drives (id, machine_id, label, created_at) VALUES ('raw', ?, 'invoices', 0)").run(machineId);
+    } catch {
+      indexed = true;
+    }
+    must(indexed, "the database itself accepts a case-folded duplicate drive label — the uniqueness lives only in the handler");
+
+    // N6: eighteen drive adds at once may land sixteen, counting the one above.
+    const drives = await Promise.all(
+      Array.from({ length: 18 }, (_, i) => call(machinesRoute.driveAdd, { machineId, label: `burst ${i}` })),
+    );
+    const driveRows = count("SELECT count(*) AS n FROM drives WHERE machine_id = ?", machineId);
+    must(driveRows === 16, `eighteen concurrent drive adds left ${driveRows} drives against a cap of 16 (${JSON.stringify(drives)}) — the cap is a count before the write`);
+    must(count("SELECT count(*) AS n FROM audit WHERE action = 'drive.added'") === 16, "a refused drive add still wrote its audit row");
+
+    // N5: a re-key tells the object, with the new key.
+    signalCalls.length = 0;
+    const fresh = await pubkey();
+    const rekey = await call(machinesRoute.pair, { machineId, agentPubkey: fresh, authSecret });
+    must(rekey === 200, `the re-key answered ${rekey}`);
+    const shutdown = signalCalls.find((c) => c.url.includes("/shutdown"));
+    must(!!shutdown && shutdown.id === machineId, "a re-key did not tell the machine's signalling object to hang up — the old key's agent stays online");
+    must(/reason=rekeyed/.test(shutdown!.url) && shutdown!.key === fresh, `the re-key's hang-up does not name the new key (${shutdown!.url}, ${shutdown!.key})`);
+
+    return `12 concurrent pairings → 10; 18 concurrent drive adds → 16 total; case-folded label refused by handler and index; re-key calls /shutdown?reason=rekeyed with the new key`;
+  }),
+  15_000,
+);
 
 await Promise.all(pending);
 

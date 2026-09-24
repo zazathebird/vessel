@@ -27,6 +27,7 @@ import {
 import { newId } from "./crypto";
 import { BadRequest, expectBytes, fromBlob, toBase64Url, toBlob } from "./encoding";
 import type { Env } from "./env";
+import { AGENT_KEY_HEADER } from "./signal";
 
 const NAME_MAX = 40;
 /** Uncompressed P-256 point: 0x04 ‖ x ‖ y — same shape as the grant public key. */
@@ -84,7 +85,9 @@ async function expectAgentPubkey(value: unknown): Promise<Uint8Array> {
   const bytes = expectBytes(value, AGENT_PUBKEY_BYTES, "Agent public key");
   if (bytes[0] !== 0x04) throw new BadRequest("That agent public key is malformed.");
   try {
-    await crypto.subtle.importKey("raw", bytes, { name: "ECDSA", namedCurve: "P-256" }, false, [
+    // `as BufferSource`: the scripts project sees DOM's stricter definition
+    // (tsconfig.scripts.json), since `npm run check` drives this module.
+    await crypto.subtle.importKey("raw", bytes as BufferSource, { name: "ECDSA", namedCurve: "P-256" }, false, [
       "verify",
     ]);
   } catch {
@@ -155,6 +158,17 @@ export async function pair(request: Request, env: Env): Promise<Response> {
       ),
       auditStatement(env, account.id, "machine.rekeyed", machine.id),
     ]);
+    /*
+     * **A re-key hangs up on the old key** (2026-09-24). It replaced the row's
+     * `agent_pubkey` and told the signalling object nothing, so the agent
+     * holding the old key stayed "online" in every machine list — answering
+     * offers every browsing tab would then refuse as a failed identity check,
+     * with nothing to say that the owner had re-keyed it themselves. The object
+     * closes every agent socket admitted under any other key, pending ones
+     * included (a socket opened before this write would otherwise still be
+     * proved against the key it was admitted with), and says `rekeyed`.
+     */
+    await signalShutdown(env, machine.id, toBase64Url(agentPubkey));
     const drives = await machineDrives(env, machine.id);
     return noStore(
       json({
@@ -171,15 +185,6 @@ export async function pair(request: Request, env: Env): Promise<Response> {
 
   const name = expectName(body.name, "machine");
 
-  const count = await env.DB.prepare("SELECT count(*) AS n FROM machines WHERE owner_id = ?")
-    .bind(account.id)
-    .first<{ n: number }>();
-  if ((count?.n ?? 0) >= MACHINES_MAX) {
-    throw new BadRequest(
-      `That is ${MACHINES_MAX} machines paired. Remove one you no longer use first.`,
-    );
-  }
-
   // Case-insensitive like setups: two machines whose names differ by case is a
   // list that looks like a bug. The unique index backstops the race, and since
   // migration 0009 it collates `NOCASE` too — it was binary, so it backstopped
@@ -192,20 +197,39 @@ export async function pair(request: Request, env: Env): Promise<Response> {
     .first();
   if (dup) throw new BadRequest("A machine already has that name. Pick another.", 409);
 
+  /*
+   * **The cap rides in the INSERT's own WHERE** (2026-09-24). It was a count and
+   * then an insert, so concurrent pairings each counted the others' absence and
+   * all landed — a bound on a user-writable table that held only against a
+   * caller polite enough to go one at a time. `INSERT … SELECT … WHERE (count) <
+   * max` is one statement, which SQLite runs whole; zero changes is the refusal,
+   * and the audit row is written only after it — the last-way-in shape
+   * (`docs/INVARIANTS.md`). The name pre-check above is for the message; the
+   * NOCASE unique index is what closes the name race.
+   */
   const id = newId();
+  let inserted = 0;
   try {
-    await env.DB.batch([
-      env.DB.prepare(
-        "INSERT INTO machines (id, owner_id, name, agent_pubkey, paired_at) VALUES (?, ?, ?, ?, ?)",
-      ).bind(id, account.id, name, toBlob(agentPubkey), now),
-      auditStatement(env, account.id, "machine.paired", id),
-    ]);
+    const result = await env.DB.prepare(
+      `INSERT INTO machines (id, owner_id, name, agent_pubkey, paired_at)
+       SELECT ?, ?, ?, ?, ?
+        WHERE (SELECT count(*) FROM machines WHERE owner_id = ?) < ?`,
+    )
+      .bind(id, account.id, name, toBlob(agentPubkey), now, account.id, MACHINES_MAX)
+      .run();
+    inserted = result.meta.changes;
   } catch (error) {
     if (String(error).includes("UNIQUE") || String(error).includes("constraint")) {
       throw new BadRequest("A machine already has that name. Pick another.", 409);
     }
     throw error;
   }
+  if (inserted !== 1) {
+    throw new BadRequest(
+      `That is ${MACHINES_MAX} machines paired. Remove one you no longer use first.`,
+    );
+  }
+  await env.DB.batch([auditStatement(env, account.id, "machine.paired", id)]);
 
   return noStore(
     json(
@@ -322,14 +346,32 @@ export async function remove(request: Request, env: Env): Promise<Response> {
     auditStatement(env, account.id, "machine.removed", machine.id),
   ]);
 
-  try {
-    const stub = env.SIGNAL.get(env.SIGNAL.idFromName(machine.id));
-    await stub.fetch("https://signal/shutdown", { method: "POST" });
-  } catch {
-    // Best-effort: with the row gone, no new socket can be authorised anyway.
-  }
+  await signalShutdown(env, machine.id, null);
 
   return json({ status: "removed" });
+}
+
+/**
+ * Tell a machine's signalling object to hang up — on everyone when the machine
+ * is removed, or (with the new key) on every agent socket admitted under any
+ * other key when it is re-keyed. One helper so the two routes cannot drift.
+ */
+async function signalShutdown(env: Env, machineId: string, newKey: string | null): Promise<void> {
+  try {
+    const stub = env.SIGNAL.get(env.SIGNAL.idFromName(machineId));
+    await stub.fetch(
+      newKey === null ? "https://signal/shutdown" : "https://signal/shutdown?reason=rekeyed",
+      {
+        method: "POST",
+        headers: newKey === null ? {} : { [AGENT_KEY_HEADER]: newKey },
+      },
+    );
+  } catch {
+    // Best-effort. After a removal no new socket can be authorised; after a
+    // re-key no socket can prove the old key's successor, and the old key's
+    // proof is checked against the key it was admitted with — so a socket this
+    // missed stays until it drops, and the next one cannot prove the old key.
+  }
 }
 
 /**
@@ -343,23 +385,41 @@ export async function driveAdd(request: Request, env: Env): Promise<Response> {
   const machine = await ownMachine(env, account, body.machineId);
   const label = expectName(body.label, "drive");
 
-  const count = await env.DB.prepare("SELECT count(*) AS n FROM drives WHERE machine_id = ?")
-    .bind(machine.id)
-    .first<{ n: number }>();
-  if ((count?.n ?? 0) >= DRIVES_MAX) {
+  /*
+   * **Unique per machine, case-insensitively, and capped — both in the write**
+   * (2026-09-24). Two drives called `Invoices` and `invoices` on one machine
+   * render as one name twice in the explorer, which is exactly what
+   * `expectDisplayName` refuses invisible characters to prevent; nothing
+   * refused the visible version. And the cap was a count then an insert, so
+   * concurrent adds all passed the count. Migration 0011's NOCASE unique index
+   * is the guard on the label; the count rides in the INSERT's own WHERE, so
+   * zero changes is the refusal and the audit row follows it — never a
+   * pre-check the write then trusts.
+   */
+  const id = newId();
+  const now = Date.now();
+  let inserted = 0;
+  try {
+    const result = await env.DB.prepare(
+      `INSERT INTO drives (id, machine_id, label, created_at)
+       SELECT ?, ?, ?, ?
+        WHERE (SELECT count(*) FROM drives WHERE machine_id = ?) < ?`,
+    )
+      .bind(id, machine.id, label, now, machine.id, DRIVES_MAX)
+      .run();
+    inserted = result.meta.changes;
+  } catch (error) {
+    if (String(error).includes("UNIQUE") || String(error).includes("constraint")) {
+      throw new BadRequest("A drive on this machine already has that name. Pick another.", 409);
+    }
+    throw error;
+  }
+  if (inserted !== 1) {
     throw new BadRequest(
       `That is ${DRIVES_MAX} drives on this machine. Remove one you no longer share first.`,
     );
   }
-
-  const id = newId();
-  const now = Date.now();
-  await env.DB.batch([
-    env.DB.prepare(
-      "INSERT INTO drives (id, machine_id, label, created_at) VALUES (?, ?, ?, ?)",
-    ).bind(id, machine.id, label, now),
-    auditStatement(env, account.id, "drive.added", id),
-  ]);
+  await env.DB.batch([auditStatement(env, account.id, "drive.added", id)]);
 
   return json({ status: "added", drive: { id, label, createdAt: now } }, { status: 201 });
 }

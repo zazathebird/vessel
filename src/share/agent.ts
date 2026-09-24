@@ -9,12 +9,25 @@
  * validated by `isValidPath` before a handle is touched (§12 S). File bytes
  * flow only over the DTLS data channel, peer to peer.
  *
+ * **The socket is not the agent until it proves the machine key** (2026-09-24).
+ * The object answers the upgrade with a `challenge`; this tab signs it with the
+ * non-extractable machine key and is `accepted` — only then is it online,
+ * relayed offers, and able to replace another tab. `worker/signal.ts` has the
+ * why: a session cookie alone used to be enough to evict this tab for good.
+ *
  * Reads only. There is no write op in protocol v1, so nothing here can modify
  * a file, and the File System Access permission is requested as `read`.
  */
 
 import { fromBase64Url, toBase64Url } from "../auth/encoding";
-import { fingerprintFromSdp, signFingerprint, verifyFingerprint } from "./handshake";
+import {
+  CONNECT_NONCE,
+  PEER_ID,
+  fingerprintFromSdp,
+  signConnectProof,
+  signFingerprint,
+  verifyFingerprint,
+} from "./handshake";
 import { isValidPath } from "./paths";
 import {
   BUFFERED_HIGH,
@@ -47,14 +60,42 @@ import {
  */
 const MAX_ICE_QUEUES = 8;
 
+/**
+ * Live peer connections this tab will hold at once (2026-09-24) — the same
+ * eight `MAX_BROWSER_SOCKETS` allows browsing sockets in `worker/signal.ts`,
+ * since each browsing socket carries one connection. `peers` was unbounded,
+ * and a second offer from the same peer id was added beside the first rather
+ * than replacing it, leaking the first `RTCPeerConnection` for as long as the
+ * tab lived. A newcomer past the cap is refused, never an incumbent evicted:
+ * the incumbent is somebody part-way through a browse.
+ */
+export const MAX_PEERS = 8;
+
+/**
+ * Reconnection backoff for a dropped signalling socket. It was a flat five
+ * seconds for ever; a Worker outage then had every paired host dialling every
+ * five seconds until it came back.
+ */
+const RETRY_MIN_MS = 2_000;
+const RETRY_MAX_MS = 60_000;
+
+/**
+ * How long a replaced tab waits for a sibling tab in this browser profile to
+ * say it is the live agent before concluding nobody is (below, `probe`).
+ */
+const SIBLING_ANSWER_MS = 1_500;
+
 export interface AgentSnapshot {
-  state: "connecting" | "online" | "offline" | "replaced" | "removed" | "stopped";
+  state: "connecting" | "online" | "offline" | "replaced" | "rekeyed" | "removed" | "stopped";
   /** Live peer connections — what the beforeunload guard reads (§12 N). */
   peers: number;
   /** Served this session, shown on the tab (§12 Q's hook). */
   bytesServed: number;
   note: string | null;
 }
+
+/** What tabs of one browser profile say to each other about one machine. */
+type SiblingMessage = { kind: "who" } | { kind: "here" } | { kind: "released" };
 
 export class VesselAgent {
   private ws: WebSocket | null = null;
@@ -65,7 +106,11 @@ export class VesselAgent {
   private state: AgentSnapshot["state"] = "connecting";
   private note: string | null = null;
   private stopped = false;
-  private retryTimer: number | null = null;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private retryDelay = RETRY_MIN_MS;
+  private probeDelay = RETRY_MIN_MS;
+  private siblings: BroadcastChannel | null = null;
+  private heardSibling = false;
 
   constructor(
     private readonly machineId: string,
@@ -88,42 +133,159 @@ export class VesselAgent {
     this.onChange(this.snapshot());
   }
 
+  /** Whether this tab is trying to be, or is, the machine's agent. */
+  private active(): boolean {
+    return (
+      !this.stopped &&
+      (this.state === "connecting" || this.state === "online" || this.state === "offline")
+    );
+  }
+
   start(): void {
     if (this.stopped) return;
+    this.clearTimer();
+    this.listenToSiblings();
     const proto = location.protocol === "https:" ? "wss" : "ws";
     const ws = new WebSocket(`${proto}://${location.host}/api/signal/${this.machineId}?role=agent`);
     this.ws = ws;
     this.state = "connecting";
     this.emit();
 
-    ws.onopen = () => {
-      this.state = "online";
-      this.note = null;
-      this.emit();
-    };
+    // Online is `accepted`, not `onopen`: an open socket that has not proven
+    // the machine key is relayed nothing.
     ws.onmessage = (event) => {
+      if (this.ws !== ws) return;
       void this.handleFrame(String(event.data));
     };
     ws.onclose = () => {
-      if (this.stopped || this.state === "replaced" || this.state === "removed") return;
+      // A socket this tab already let go of — replaced, re-keyed, superseded by
+      // a retry — has nothing left to say about this tab's state.
+      if (this.ws !== ws) return;
+      this.ws = null;
+      if (!this.active()) return;
       // The socket dropped — sleep, network blip, Worker redeploy. Sharing is
       // only real while this tab can be introduced, so keep trying quietly.
       this.state = "offline";
       this.emit();
-      this.retryTimer = window.setTimeout(() => this.start(), 5000);
+      this.scheduleRetry();
     };
   }
 
   /** Stop for good — leaving the page, or told to stand down. */
   stop(finalState: AgentSnapshot["state"] = "stopped"): void {
+    const wasActive = this.active();
     this.stopped = true;
     this.state = finalState;
+    this.clearTimer();
+    this.dropSocket();
+    this.dropPeers();
+    // A sibling waiting behind this tab can take over now rather than at its
+    // next probe. Only an active tab was in anybody's way.
+    if (wasActive) this.tell({ kind: "released" });
+    this.siblings?.close();
+    this.siblings = null;
+    this.emit();
+  }
+
+  private clearTimer(): void {
     if (this.retryTimer !== null) clearTimeout(this.retryTimer);
-    this.ws?.close();
+    this.retryTimer = null;
+  }
+
+  private dropSocket(): void {
+    const ws = this.ws;
+    this.ws = null;
+    try {
+      ws?.close();
+    } catch {
+      // Already closed.
+    }
+  }
+
+  private dropPeers(): void {
     for (const pc of this.peers.values()) pc.close();
     this.peers.clear();
     this.earlyIce.clear();
+  }
+
+  private scheduleRetry(): void {
+    this.clearTimer();
+    const delay = this.retryDelay * (0.75 + Math.random() * 0.5);
+    this.retryDelay = Math.min(RETRY_MAX_MS, this.retryDelay * 2);
+    this.retryTimer = setTimeout(() => this.start(), delay);
+  }
+
+  // Tabs of the same profile ---------------------------------------------------
+
+  /**
+   * `replaced` used to be terminal: the tab stood down and waited for a person
+   * to click "Take over here". On an unattended host that is an outage with no
+   * end — and since 2026-09-24 only a tab holding this machine key can replace
+   * this one, which means a tab of **this same browser profile** (the key is
+   * non-extractable and lives in the profile's IndexedDB). So the question
+   * "should I take back over?" has a local answer: ask the profile's other
+   * tabs. A `BroadcastChannel` reaches exactly those; if one says it is the
+   * live agent, stand down and ask again later; if none does — the replacing
+   * tab was closed, crashed, or never existed — take back over. A replacing
+   * tab that closes says `released`, so the wait is usually zero.
+   *
+   * No ping-pong: only an active tab answers `here`, and a replaced tab never
+   * reclaims while one does. "Take over here" on the replaced tab still works,
+   * and the tab it displaces then waits behind it the same way.
+   */
+  private listenToSiblings(): void {
+    if (this.siblings || typeof BroadcastChannel === "undefined") return;
+    const channel = new BroadcastChannel(`vessel-agent:${this.machineId}`);
+    channel.onmessage = (event: MessageEvent<SiblingMessage>) => {
+      const kind = event.data?.kind;
+      if (kind === "who" && this.active()) this.tell({ kind: "here" });
+      else if (kind === "here") this.heardSibling = true;
+      else if (kind === "released" && this.state === "replaced" && !this.stopped) {
+        this.probeDelay = RETRY_MIN_MS;
+        this.probe(0);
+      }
+    };
+    this.siblings = channel;
+  }
+
+  private tell(message: SiblingMessage): void {
+    try {
+      this.siblings?.postMessage(message);
+    } catch {
+      // A closed channel has nobody to tell.
+    }
+  }
+
+  private standDown(): void {
+    this.state = "replaced";
+    this.note = "Another sharing tab in this browser took over for this machine.";
+    this.clearTimer();
+    this.dropSocket();
+    this.dropPeers();
     this.emit();
+    this.probe(this.probeDelay);
+  }
+
+  /** Ask the profile's other tabs whether one of them is the agent; reclaim if none is. */
+  private probe(after: number): void {
+    this.clearTimer();
+    if (!this.siblings) return; // No channel, no answer: stay put, as before.
+    this.retryTimer = setTimeout(() => {
+      if (this.stopped || this.state !== "replaced") return;
+      this.heardSibling = false;
+      this.tell({ kind: "who" });
+      this.retryTimer = setTimeout(() => {
+        if (this.stopped || this.state !== "replaced") return;
+        if (this.heardSibling) {
+          this.probeDelay = Math.min(RETRY_MAX_MS, this.probeDelay * 2);
+          this.probe(this.probeDelay);
+          return;
+        }
+        this.probeDelay = RETRY_MIN_MS;
+        this.note = null;
+        this.start();
+      }, SIBLING_ANSWER_MS);
+    }, after);
   }
 
   private send(frame: Record<string, unknown>): void {
@@ -139,6 +301,26 @@ export class VesselAgent {
     }
 
     switch (frame.type) {
+      case "challenge": {
+        // Sign only what has the shape the object mints (`signConnectProof`
+        // refuses anything else): the signalling service is not trusted, and
+        // this key must not become a signing oracle for it.
+        const nonce = typeof frame.nonce === "string" ? frame.nonce : "";
+        if (!CONNECT_NONCE.test(nonce)) {
+          this.dropSocketForRetry();
+          return;
+        }
+        const signature = await signConnectProof(this.keyPair.privateKey, this.machineId, nonce);
+        this.send({ type: "prove", signature: toBase64Url(signature) });
+        return;
+      }
+      case "accepted":
+        this.state = "online";
+        this.note = null;
+        this.retryDelay = RETRY_MIN_MS;
+        this.probeDelay = RETRY_MIN_MS;
+        this.emit();
+        return;
       case "offer":
         if (typeof frame.from === "string" && frame.payload && typeof frame.payload === "object") {
           await this.handleOffer(frame.from, frame.payload as Record<string, unknown>);
@@ -160,9 +342,17 @@ export class VesselAgent {
         return;
       }
       case "replaced":
-        // Another tab took over (§12 M). Quiescent, said plainly, no retry.
-        this.note = "Another sharing tab took over for this machine.";
-        this.stop("replaced");
+        // Another tab proved this machine's key (§12 M) — which only a tab of
+        // this profile can. Stand down, and take back over once it is gone.
+        this.standDown();
+        return;
+      case "proof-refused":
+      case "rekeyed":
+        // The row's key is no longer this tab's: re-keyed from another tab or
+        // browser. Retrying could never succeed, so this is terminal, and the
+        // page offers the re-key ceremony instead.
+        this.note = "This machine was re-keyed from another tab or browser, so this tab's key no longer answers for it.";
+        this.stop("rekeyed");
         return;
       case "machine-removed":
         this.note = "This machine was removed from the account.";
@@ -171,6 +361,15 @@ export class VesselAgent {
       default:
         return;
     }
+  }
+
+  /** Let go of a socket that asked for something this tab will not do, and try again later. */
+  private dropSocketForRetry(): void {
+    this.dropSocket();
+    if (!this.active()) return;
+    this.state = "offline";
+    this.emit();
+    this.scheduleRetry();
   }
 
   private queueIce(from: string, candidate: RTCIceCandidateInit): void {
@@ -191,16 +390,26 @@ export class VesselAgent {
     for (const candidate of queued) await pc.addIceCandidate(candidate).catch(() => undefined);
   }
 
+  private refuse(from: string, reason: string): void {
+    this.earlyIce.delete(from);
+    this.send({ type: "refused", to: from, payload: { reason } });
+  }
+
   private async handleOffer(from: string, payload: Record<string, unknown>): Promise<void> {
+    // The object mints peer ids; anything else did not come from it.
+    if (!PEER_ID.test(from)) return;
     const sdp = typeof payload.sdp === "string" ? payload.sdp : "";
     const fingerprint = fingerprintFromSdp(sdp);
     let verified = false;
     if (fingerprint && typeof payload.signature === "string") {
       try {
+        // Bound to `from` (v2): the id of the socket this offer actually
+        // arrived on, so a captured offer replayed from another socket fails.
         verified = await verifyFingerprint(
           this.trustRoot,
           "owner",
           this.machineId,
+          from,
           fingerprint,
           fromBase64Url(payload.signature),
         );
@@ -211,18 +420,33 @@ export class VesselAgent {
     if (!verified) {
       // §12 K: the introduction is not the authentication. No answer is sent,
       // and anything held for that peer is dropped rather than left to expire.
-      this.earlyIce.delete(from);
-      this.send({
-        type: "refused",
-        to: from,
-        payload: { reason: "That connection did not prove it belongs to this account." },
-      });
+      this.refuse(from, "That connection did not prove it belongs to this account.");
+      return;
+    }
+
+    // Synchronous from here to `set`, so two offers racing from one peer cannot
+    // both see an empty slot.
+    const existing = this.peers.get(from);
+    if (existing) {
+      // A second offer from one socket replaces its first connection rather
+      // than leaking it beside the new one.
+      existing.close();
+      this.peers.delete(from);
+    } else if (this.peers.size >= MAX_PEERS) {
+      this.refuse(from, "This machine is already serving as many connections as it allows. Close one and try again.");
       return;
     }
 
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     this.peers.set(from, pc);
     this.emit();
+
+    const forget = () => {
+      pc.close();
+      if (this.peers.get(from) === pc) this.peers.delete(from);
+      this.earlyIce.delete(from);
+      this.emit();
+    };
 
     pc.ondatachannel = ({ channel }) => this.serve(channel);
     pc.onicecandidate = (event) => {
@@ -231,40 +455,42 @@ export class VesselAgent {
       }
     };
     pc.onconnectionstatechange = () => {
-      if (["closed", "failed", "disconnected"].includes(pc.connectionState)) {
-        pc.close();
-        if (this.peers.get(from) === pc) this.peers.delete(from);
-        this.earlyIce.delete(from);
-        this.emit();
-      }
+      if (["closed", "failed", "disconnected"].includes(pc.connectionState)) forget();
     };
 
-    await pc.setRemoteDescription({ type: "offer", sdp });
-    // The peer's candidates were relayed before its offer was; they are
-    // addable from here and not one moment earlier.
-    await this.flushIce(from, pc);
-    await pc.setLocalDescription(await pc.createAnswer());
+    try {
+      await pc.setRemoteDescription({ type: "offer", sdp });
+      // The peer's candidates were relayed before its offer was; they are
+      // addable from here and not one moment earlier.
+      await this.flushIce(from, pc);
+      await pc.setLocalDescription(await pc.createAnswer());
 
-    const mySdp = pc.localDescription?.sdp ?? "";
-    const myFingerprint = fingerprintFromSdp(mySdp);
-    if (!myFingerprint) {
-      pc.close();
-      this.peers.delete(from);
-      this.earlyIce.delete(from);
-      this.emit();
-      return;
+      const mySdp = pc.localDescription?.sdp ?? "";
+      const myFingerprint = fingerprintFromSdp(mySdp);
+      if (!myFingerprint) {
+        forget();
+        return;
+      }
+      const signature = await signFingerprint(
+        this.keyPair.privateKey,
+        "agent",
+        this.machineId,
+        from,
+        myFingerprint,
+      );
+      // Replaced by a newer offer from the same peer while this one was being
+      // answered: that one answers, this one does not.
+      if (this.peers.get(from) !== pc) return;
+      this.send({
+        type: "answer",
+        to: from,
+        payload: { sdp: mySdp, fingerprint: myFingerprint, signature: toBase64Url(signature) },
+      });
+    } catch {
+      // A connection closed under its own setup (superseded, or the page is
+      // stopping) — nothing to answer, and nothing to leak.
+      forget();
     }
-    const signature = await signFingerprint(
-      this.keyPair.privateKey,
-      "agent",
-      this.machineId,
-      myFingerprint,
-    );
-    this.send({
-      type: "answer",
-      to: from,
-      payload: { sdp: mySdp, fingerprint: myFingerprint, signature: toBase64Url(signature) },
-    });
   }
 
   // The file server ------------------------------------------------------------

@@ -21,10 +21,10 @@ import * as downloads from "./downloads";
 import * as pages from "./downloadPages";
 import * as passkeys from "./passkeys";
 import * as setups from "./setups";
-import { BadRequest, readBounded } from "./encoding";
+import { BadRequest, fromBlob, readBounded, toBase64Url } from "./encoding";
 import type { Env } from "./env";
 import { RateLimiter } from "./rate-limit";
-import { MachineSignal } from "./signal";
+import { AGENT_KEY_HEADER, MACHINE_HEADER, MachineSignal } from "./signal";
 import { publishSiteConfig, readSiteConfig, withSiteConfig } from "./site-config";
 import { crawlerFile, withPageMeta } from "./page-meta";
 import { HSTS, harden, health } from "./hardening";
@@ -709,16 +709,18 @@ async function route(
  * Authenticate a signalling upgrade and hand it to the machine's Durable
  * Object (§13). Everything that decides *whether* this caller may reach the
  * object happens here, in front of it: the session, the ownership check, and
- * the role. The object itself trusts what arrives, which is what keeps it an
- * introducer with no knowledge of accounts.
+ * the role. The object knows nothing of accounts; what it does check, since
+ * 2026-09-24, is the one thing a session cannot vouch for — that an agent
+ * socket holds the machine key — against the `agent_pubkey` handed to it here.
  *
  * **Phase 3 widens the reach gate to grantees. It must NOT widen the role
  * gate**, and the comment that used to sit here — "phase 3 widens exactly this
  * gate to grantees; the object does not change" — was false about the half
- * that matters (2026-09-14). `MachineSignal`'s `/connect?role=agent` evicts the
- * incumbent agent unconditionally and makes the newcomer the socket every
- * browsing tab is introduced to; a grantee who passed a widened reach check
- * could therefore install themselves as the machine's agent. Not reachable
+ * that matters (2026-09-14). A proven agent socket evicts the incumbent and
+ * becomes the socket every browsing tab is introduced to. The key proof now
+ * stands between a widened reach check and that position as well, but the
+ * role gate stays: a grantee has no business opening an agent socket at all,
+ * even one it cannot prove. Not reachable
  * today, because today reach *is* ownership — which is exactly what makes a
  * shared check the wrong thing to leave behind. The two are separate statements
  * below, and the role one compares against `account.id` rather than reusing the
@@ -764,10 +766,10 @@ async function signalUpgrade(request: Request, env: Env, url: URL): Promise<Resp
   // the role gate below can ask its own question of the row rather than
   // inheriting this one's answer.
   const machine = await env.DB.prepare(
-    "SELECT id, owner_id FROM machines WHERE id = ? AND owner_id = ?",
+    "SELECT id, owner_id, agent_pubkey FROM machines WHERE id = ? AND owner_id = ?",
   )
     .bind(machineId, account.id)
-    .first<{ id: string; owner_id: string }>();
+    .first<{ id: string; owner_id: string; agent_pubkey: unknown }>();
   if (!machine) throw new BadRequest("No such machine on this account.", 404);
 
   const role = url.searchParams.get("role");
@@ -778,9 +780,9 @@ async function signalUpgrade(request: Request, env: Env, url: URL): Promise<Resp
   /*
    * **The role gate, and it is deliberately redundant today.** Given the WHERE
    * clause above this comparison cannot currently fail — that is the point. The
-   * agent role is not "a way to connect", it is *being* the machine: the object
-   * evicts whatever agent socket is already open and routes every browsing
-   * tab's offer to the newcomer. Answering for somebody's machine is the
+   * agent role is not "a way to connect", it is *being* the machine: once the
+   * newcomer proves the machine key, the object evicts the incumbent and routes
+   * every browsing tab's offer to it. Answering for somebody's machine is the
    * owner's alone, whatever else a grant may come to mean, so it is asserted
    * where the decision is rather than left as a property of a query written for
    * a different question. Written as a comparison against `account.id`, not as
@@ -791,16 +793,28 @@ async function signalUpgrade(request: Request, env: Env, url: URL): Promise<Resp
     throw new BadRequest("Only this machine's owner can connect as its agent.", 403);
   }
 
-  // Connection events, not liveness (§12 N) — liveness is the object's socket
-  // state, asked for by the machine list, persisted nowhere.
+  /*
+   * **A session reaches the object; only the machine key makes an agent**
+   * (2026-09-24). The role gate above says who may *ask* to be the agent; the
+   * object then challenges the socket and admits it only on a signature from
+   * the key whose public half is this row's `agent_pubkey`. The key is handed
+   * over here, from the row, and any copy of either header the caller sent is
+   * deleted first — a header the client could set would let the caller choose
+   * the key its own proof is checked against. `last_seen` moved into the object
+   * with it, stamped on proof rather than on a cookie's say-so.
+   */
+  const headers = new Headers(request.headers);
+  headers.delete(AGENT_KEY_HEADER);
+  headers.delete(MACHINE_HEADER);
   if (role === "agent") {
-    await env.DB.prepare("UPDATE machines SET last_seen = ? WHERE id = ?")
-      .bind(Date.now(), machineId)
-      .run();
+    headers.set(AGENT_KEY_HEADER, toBase64Url(fromBlob(machine.agent_pubkey)));
+    headers.set(MACHINE_HEADER, machine.id);
   }
 
   const stub = env.SIGNAL.get(env.SIGNAL.idFromName(machineId));
-  const response = await stub.fetch(new Request(`https://signal/connect?role=${role}`, request));
+  const response = await stub.fetch(
+    new Request(`https://signal/connect?role=${role}`, { method: "GET", headers }),
+  );
 
   // **The 101 is the only response that may skip `harden`**, because copying a
   // response drops its `webSocket` and every upgrade would hang. Everything else
