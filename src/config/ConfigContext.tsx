@@ -590,7 +590,6 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       setConfig((previous) => ({ ...previous, pal }));
     }
     // Intentionally runs once, on mount.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /*

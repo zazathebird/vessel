@@ -62,7 +62,7 @@ import {
   DEFAULT_RIM,
   GRAVITY,
 } from "../src/fx/duel";
-import { drawFx } from "../src/fx/effects";
+import { drawFx, loadDuelEngine } from "../src/fx/effects";
 import type { FxCache } from "../src/fx/effects";
 import { duelCamera, ORNAMENT_PX } from "../src/components/DuelOrnament";
 import type { DuelCam } from "../src/components/DuelOrnament";
@@ -123,6 +123,11 @@ import { applyLook, themeClasses, themeVars } from "../src/theme";
 import { LOOK_KEYS, validLookPages } from "../src/data/lookSettings";
 import { effectiveStation } from "../src/data/stations";
 import { edgeState } from "../src/hooks/useEdgeFade";
+import { arrowPages } from "../src/hooks/useOperatorRoutes";
+import type { ScrollBox } from "../src/hooks/useOperatorRoutes";
+import { POINTER_LIGHT_LAYOUTS, coalesce, pointerLightWrites } from "../src/hooks/useMotionSystems";
+import { canTakeFocus } from "../src/hooks/useFocusTrap";
+import type { FocusFacts } from "../src/hooks/useFocusTrap";
 import type { Band } from "../src/config/bands";
 import { PRESETS } from "../src/data/presets";
 
@@ -2530,13 +2535,15 @@ check("duel: the pacing rides on the fight, not on a global", () => {
     ["src/components/DuelOrnament.tsx", "the hero slot"],
     ["src/components/DuelSettingsEditor.tsx", "the editor's preview"],
     ["src/components/DuelBench.tsx", "the bench"],
+    // Since 2026-09-24 — it used to ride the global, via `FxCanvas`.
+    ["src/fx/duelEffect.ts", "the full-bleed background"],
   ] as const) {
     must(
       /\bst\.tuning\s*=/.test(readFileSync(file, "utf8")),
       `${what} never assigns st.tuning — its fight will run at whatever another host last set`,
     );
   }
-  return "3 hosts assign their own; two fights hold different tunings without bleeding";
+  return "4 hosts assign their own; two fights hold different tunings without bleeding";
 });
 
 /*
@@ -4223,6 +4230,104 @@ check("the duel's Size reaches the camera and never cuts a fighter off", () => {
 });
 
 
+/*
+ * **The duel engine is a lazy chunk, and the gates below drive it through
+ * `drawFx`** (2026-09-24). `effects.ts` reaches the engine only by a dynamic
+ * `import()` on a duel's first frame, and draws the palette ground until it
+ * arrives — so without this await every duel gate below would be driving an
+ * empty effect. Awaited through the page's own loader rather than by importing
+ * `duelEffect.ts` here, so a broken loader fails the suite.
+ */
+await loadDuelEngine();
+
+/*
+ * The duel engine stays out of the entry bundle.
+ *
+ * Duels are operator-only, enforced where they are drawn — so no visitor's page
+ * ever runs one, and until 2026-09-24 every visitor downloaded the engine
+ * anyway: `effects.ts` and `FxCanvas.tsx` imported `./duel` statically, and
+ * `duelSettings.ts` (the published-config validator, in the entry by necessity)
+ * imported every costume to check a fighter id. ~60 kB minified, a fifth of
+ * the entry. The fix is three seams — `roster.ts` for what the validator needs,
+ * `loadDuelEngine` for the background, `lazy()` for the ornament — and any one
+ * static import put back undoes all of it with no visible symptom.
+ *
+ * **Driven, not read**: esbuild bundles the real entry with code splitting,
+ * which follows static and dynamic imports the way the production build does,
+ * and the metafile says which source files land in the chunks the entry loads
+ * before it runs. A source scan for `from "./duel"` would miss the next route
+ * in — a new component importing `BLADE_COLORS`, say.
+ */
+check("the duel engine is not in the entry bundle — only an operator fetches it", () => {
+  const out = mkdtempSync(join(tmpdir(), "vessel-entry-"));
+  try {
+    const meta = join(out, "meta.json");
+    execFileSync(
+      "node_modules/.bin/esbuild",
+      [
+        "src/main.tsx",
+        "--bundle",
+        "--splitting",
+        "--format=esm",
+        "--jsx=automatic",
+        "--loader:.css=empty",
+        `--outdir=${join(out, "js")}`,
+        `--metafile=${meta}`,
+        "--log-level=error",
+      ],
+      { stdio: "pipe" },
+    );
+    type Output = {
+      entryPoint?: string;
+      bytes: number;
+      inputs: Record<string, unknown>;
+      imports: { path: string; kind: string }[];
+    };
+    const outputs = (JSON.parse(readFileSync(meta, "utf8")) as { outputs: Record<string, Output> }).outputs;
+    const entry = Object.keys(outputs).find((k) => outputs[k].entryPoint === "src/main.tsx");
+    must(entry !== undefined, "esbuild produced no output for src/main.tsx — has the entry moved?");
+
+    // Everything the entry loads before it runs: its own file and the chunks it
+    // imports statically, transitively. Dynamic imports are the lazy edges.
+    const loaded = new Set<string>();
+    const walk = (key: string) => {
+      if (loaded.has(key)) return;
+      loaded.add(key);
+      for (const i of outputs[key].imports) {
+        if (i.kind === "import-statement" && outputs[i.path]) walk(i.path);
+      }
+    };
+    walk(entry!);
+    const inEntry = new Set([...loaded].flatMap((k) => Object.keys(outputs[k].inputs)));
+    const anywhere = new Set(Object.values(outputs).flatMap((o) => Object.keys(o.inputs)));
+
+    const engine = [
+      "src/fx/duel.ts",
+      "src/fx/fighters.ts",
+      "src/fx/duelEffect.ts",
+      "src/components/DuelOrnament.tsx",
+    ];
+    // Not vacuous: every one of them still ships, just not in the entry.
+    for (const f of engine) must(anywhere.has(f), `${f} is in no chunk at all — the gate would pass on nothing`);
+    const leaked = engine.filter((f) => inEntry.has(f));
+    must(
+      leaked.length === 0,
+      `${leaked.join(", ")} landed in the entry bundle — a static import of the duel engine is back, and every visitor downloads it`,
+    );
+    // The validator's half has to be in the entry, and has to stay a leaf.
+    must(inEntry.has("src/fx/roster.ts"), "roster.ts is not in the entry — has the validator stopped reading it?");
+    must(
+      !/^import\s+(?!type\b)/m.test(readFileSync("src/fx/roster.ts", "utf8")),
+      "roster.ts has a runtime import — it is in every visitor's entry and must stay a leaf",
+    );
+
+    const kb = Math.round([...loaded].reduce((n, k) => n + outputs[k].bytes, 0) / 1024);
+    return `entry loads ${loaded.size} chunks (${kb} KB unminified), none holding the ${engine.length} engine files`;
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+  }
+});
+
 /**
  * A recording 2D context, for driving the real effects from node.
  *
@@ -5100,6 +5205,221 @@ check("a page's look override reaches the page, and only that page", () => {
   );
 
   return "override merges, guards resolve on the merge, all three call sites go through the seam";
+});
+
+/*
+ * Arrow paging stands down wherever an arrow key already means something.
+ *
+ * 2026-09-24 review, item 13: `useOperatorRoutes` paged the site on a bare
+ * ArrowLeft/Right for every visitor, including with focus inside Deck's grid
+ * (`overflow-x: auto`), where the same key scrolls the cards — so one press
+ * both scrolled the deck and navigated off it. And audit finding 3: paging
+ * stood down under the panel but not under the door.
+ *
+ * Driven, over plain objects shaped like elements: the decision is one pure
+ * function and the hook's only paging branch asks it. The two traps it must
+ * not fall into are modelled explicitly — `.v-stage`, whose `overflow-x`
+ * computes to `auto` on every layout without overflowing (testing the style
+ * alone would switch paging off site-wide), and overflowing content under
+ * `overflow-x: hidden`, which takes no arrow key.
+ */
+check("arrow keys page the site only where an arrow key means nothing else", () => {
+  type Box = ScrollBox & { ox: string };
+  const box = (scrollWidth: number, clientWidth: number, ox: string, parentElement: Box | null): Box => ({
+    scrollWidth,
+    clientWidth,
+    ox,
+    parentElement,
+  });
+  const ox = (el: ScrollBox) => (el as Box).ox;
+  const body = box(1280, 1280, "visible", null);
+  const stage = box(1280, 1280, "auto", body); // scrolls vertically; overflow-x computes to auto
+  const deck = box(3600, 1100, "auto", stage); // Deck's grid
+  const inDeck = box(300, 300, "visible", deck);
+  const inStage = box(300, 300, "visible", stage);
+  const clipped = box(300, 300, "visible", box(3600, 1100, "hidden", stage));
+  const closed = { panelOpen: false, doorOpen: false };
+
+  must(arrowPages("arrowright", closed, ["arrowright"], body, ox), "a bare ArrowRight with nothing focused no longer pages");
+  must(arrowPages("arrowleft", closed, ["arrowleft"], null, ox), "a keystroke with no element target no longer pages");
+  must(
+    arrowPages("arrowright", closed, ["arrowright"], inStage, ox),
+    "focus inside the stage stopped paging — the stage's computed overflow-x: auto is being read as a sideways scroller",
+  );
+  must(
+    !arrowPages("arrowright", closed, ["arrowright"], inDeck, ox),
+    "ArrowRight inside Deck's sideways-scrolling grid pages the site as well as scrolling the cards",
+  );
+  must(!arrowPages("arrowleft", closed, ["arrowleft"], deck, ox), "ArrowLeft on the scroller itself pages the site");
+  must(
+    arrowPages("arrowright", closed, ["arrowright"], clipped, ox),
+    "overflow under overflow-x: hidden takes no arrow key, and should not stop paging",
+  );
+  must(
+    !arrowPages("arrowright", { panelOpen: false, doorOpen: true }, ["arrowright"], body, ox),
+    "ArrowRight pages the site behind the open door",
+  );
+  must(
+    !arrowPages("arrowright", { panelOpen: true, doorOpen: false }, ["arrowright"], body, ox),
+    "ArrowRight pages the site behind the open panel",
+  );
+  must(
+    !arrowPages("arrowleft", closed, ["arrowup", "arrowup", "arrowdown", "arrowdown", "arrowleft"], body, ox),
+    "a half-typed konami pages the site",
+  );
+  must(!arrowPages("arrowup", closed, ["arrowup"], body, ox), "ArrowUp pages the site");
+
+  // The page asks it: the hook's only route to `go(NAV[…])` is behind it, and
+  // the live state it hands over carries the door.
+  const src = readFileSync("src/hooks/useOperatorRoutes.ts", "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/[^\n]*/g, "");
+  must(
+    /if \(arrowPages\(key, live\.current, keys, event\.target\)\) \{\s*const i = NAV\.findIndex/.test(src),
+    "useOperatorRoutes no longer pages through arrowPages — the gate above is testing a function the page does not call",
+  );
+  must((src.match(/go\(NAV\[/g) ?? []).length === 1, "useOperatorRoutes pages from a second place arrowPages does not guard");
+  must(/live\.current = \{[^}]*\bdoorOpen\b/.test(src), "the live state handed to arrowPages no longer carries doorOpen");
+  return "pages from the body and the stage; not in a sideways scroller, under the door or panel, or mid-konami";
+});
+
+/*
+ * The shared pointer light is written once a frame, and only where it is read.
+ *
+ * 2026-09-24 review, item 14: `--mx` / `--my` are `@property … inherits: true`
+ * on `.vessel`, so each write invalidates the whole page's style — and they were
+ * written, with a forced layout, on every pointermove (up to 1000Hz), on all
+ * fourteen layouts, for a light three of them draw.
+ *
+ * The readers are derived from the stylesheets, not restated: a layout that
+ * starts reading the light without being listed would sit unlit, and one
+ * listed that stopped would pay for nothing. The batching is driven through a
+ * fake scheduler.
+ */
+check("the pointer light is written once a frame, and only where a layout reads it", () => {
+  const css = readdirSync("src/styles")
+    .filter((f) => f.endsWith(".css"))
+    .map((f) => readFileSync(join("src/styles", f), "utf8"))
+    .join("\n")
+    .replace(/\/\*[\s\S]*?\*\//g, "");
+  const readers = new Set<string>();
+  for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    if (!/var\(\s*--m[xy]\b/.test(m[2])) continue;
+    const named = [...m[1].matchAll(/\.layout-([a-z-]+)/g)].map((l) => l[1]);
+    must(named.length > 0, `a rule reads --mx/--my without naming a layout: ${m[1].trim()} — every layout would need the light`);
+    for (const l of named) readers.add(l);
+  }
+  must(readers.size > 0, "no stylesheet reads --mx/--my — the gate would pass on nothing");
+  const listed = new Set<string>(POINTER_LIGHT_LAYOUTS);
+  const unlit = [...readers].filter((l) => !listed.has(l));
+  const idle = [...listed].filter((l) => !readers.has(l));
+  must(unlit.length === 0, `${unlit.join(", ")} read --mx/--my but POINTER_LIGHT_LAYOUTS omits them — the light never moves there`);
+  must(idle.length === 0, `POINTER_LIGHT_LAYOUTS lists ${idle.join(", ")}, which no stylesheet reads — a whole-page style invalidation per frame for nothing`);
+
+  for (const { id } of LAYOUTS) {
+    must(pointerLightWrites(id, false) === readers.has(id), `pointerLightWrites("${id}") disagrees with the stylesheets`);
+    must(!pointerLightWrites(id, true), `the pointer light is written in calm on ${id}`);
+  }
+
+  // Coalescing, driven: fifty events, one frame, the latest position.
+  const queue: (() => void)[] = [];
+  const cancelled: number[] = [];
+  const flushed: number[] = [];
+  const frame = coalesce<number>(
+    (run) => queue.push(run),
+    (id) => cancelled.push(id),
+    (v) => flushed.push(v),
+  );
+  for (let i = 0; i < 50; i += 1) frame.push(i);
+  must(queue.length === 1, `50 pointer events scheduled ${queue.length} frames`);
+  queue.shift()!();
+  must(flushed.length === 1 && flushed[0] === 49, `one frame flushed [${flushed.join(",")}], expected [49]`);
+  frame.push(50);
+  must(queue.length === 1, "the next event after a frame did not schedule another");
+  frame.cancel();
+  must(cancelled.length === 1, "cancel did not unschedule the pending frame");
+
+  // The page does it that way: the handler only records, and the write is gated.
+  const src = readFileSync("src/hooks/useMotionSystems.ts", "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/[^\n]*/g, "");
+  must(
+    /const onMove = \(event: PointerEvent\) => frame\.push\(\{ x: event\.clientX, y: event\.clientY \}\);/.test(src),
+    "the pointermove handler does more than record the position — it is measuring or writing per event again",
+  );
+  must(/coalesce<[^>]*>\(\s*\(run\) => requestAnimationFrame\(run\)/.test(src), "the pointer is no longer batched to animation frames");
+  must(
+    /if \(writes\) \{\s*host\.style\.setProperty\("--mx"/.test(src) &&
+      /const lights = pointerLightWrites\(layout, config\.calm\)/.test(src),
+    "the --mx/--my write is no longer gated on pointerLightWrites of the adapted layout",
+  );
+  return `${readers.size} layouts read the light (${[...readers].join(", ")}); 50 events → 1 frame; none in calm`;
+});
+
+/*
+ * A focus trap never hands focus to something that cannot take it.
+ *
+ * 2026-09-24 review, item 15: `FOCUSABLE` matched hidden, `inert` and disabled
+ * elements, so the trap's first focus or its Tab wrap could land on something
+ * invisible — or on nothing, leaving focus outside the dialog it promised to
+ * hold. Driven over plain facts; the DOM half is four browser queries.
+ */
+check("a focus trap never hands focus to what cannot take it", () => {
+  const ok: FocusFacts = { disabled: false, inert: false, rendered: true, visible: true };
+  must(canTakeFocus(ok), "an ordinary visible control cannot take focus");
+  must(!canTakeFocus({ ...ok, disabled: true }), "a disabled control can take focus");
+  must(!canTakeFocus({ ...ok, inert: true }), "a control inside an inert subtree can take focus");
+  must(!canTakeFocus({ ...ok, rendered: false }), "a hidden / display:none control can take focus");
+  must(!canTakeFocus({ ...ok, visible: false }), "a visibility:hidden control can take focus");
+
+  const src = readFileSync("src/hooks/useFocusTrap.ts", "utf8");
+  const selector = src.match(/const FOCUSABLE =\s*'([^']+)'/);
+  must(selector !== null, "FOCUSABLE has moved — the gate cannot find the selector");
+  for (const tag of ["button", "input", "select", "textarea"]) {
+    must(selector![1].includes(`${tag}:not([disabled])`), `FOCUSABLE matches a disabled <${tag}>`);
+  }
+  must(
+    /querySelectorAll<HTMLElement>\(FOCUSABLE\)[^;]*?\.filter\(\(el\) =>\s*canTakeFocus\(factsOf\(el\)\)/s.test(src),
+    "the trap's item list no longer filters through canTakeFocus — first focus and Tab wrap can land on a hidden element",
+  );
+  const facts = src.slice(src.indexOf("function factsOf"), src.indexOf("function factsOf") + 900);
+  for (const probe of [':disabled', 'closest("[inert]")', "getClientRects()", "visibility"]) {
+    must(facts.includes(probe), `factsOf no longer asks the browser ${probe}`);
+  }
+  return "disabled, inert, unrendered and invisible controls are all refused, and the trap asks";
+});
+
+/*
+ * No `eslint-disable` directive in `src/`, because no linter runs.
+ *
+ * 2026-09-24 review, item 19: the `// eslint-disable-next-line
+ * react-hooks/exhaustive-deps` comments suppressed nothing — there is no ESLint
+ * in this repository, nothing installs or configures one — and a directive that suppresses nothing reads as a promise that a rule was
+ * checked and consciously waived. The reason a dependency list is short
+ * belongs in prose beside it, which is where each of these already had one.
+ *
+ * `DownloadEditor.tsx` still carries one and is another crew's file on the day
+ * this landed; it is listed rather than silently skipped.
+ */
+check("no lint directive in src/ pretends a linter runs", () => {
+  const PENDING = new Set([join("src", "components", "DownloadEditor.tsx")]);
+  const found: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) walk(path);
+      else if (/\.(ts|tsx)$/.test(entry.name) && !PENDING.has(path)) {
+        if (/eslint-disable/.test(readFileSync(path, "utf8"))) found.push(path);
+      }
+    }
+  };
+  walk("src");
+  must(
+    !existsSync(".eslintrc") && !existsSync(".eslintrc.json") && !existsSync("eslint.config.js"),
+    "an ESLint config exists now — this gate's premise is gone; revisit it rather than deleting it",
+  );
+  must(found.length === 0, `eslint-disable directives with no linter to obey them: ${found.join(", ")}`);
+  return `none in src/ (${PENDING.size} file pending another crew)`;
 });
 
 check("the cursor-lean card tilt stays deleted", () => {

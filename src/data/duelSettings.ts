@@ -29,8 +29,13 @@
  * purpose: a full copy per page would mean seventeen places to update when the
  * site default changes, and sixteen of them would silently go stale.
  */
-import type { FighterStyle } from "../fx/fighters";
-import { DUEL_POOLS, FIGHTERS } from "../fx/fighters";
+/*
+ * From `roster`, never from `fighters` or `duel`: this file is in every
+ * visitor's entry bundle (it validates published config), and the engine is a
+ * lazy chunk only an operator ever loads. Gated.
+ */
+import type { FighterStyle } from "../fx/roster";
+import { DUEL_POOLS, SIDES } from "../fx/roster";
 import type { PageId } from "./pageIds";
 import { PATHS } from "./pageIds";
 
@@ -175,7 +180,7 @@ function num(v: unknown, lo: number, hi: number): number | null {
 }
 
 function style(v: unknown): FighterStyle | null {
-  return typeof v === "string" && Object.prototype.hasOwnProperty.call(FIGHTERS, v)
+  return typeof v === "string" && Object.prototype.hasOwnProperty.call(SIDES, v)
     ? (v as FighterStyle)
     : null;
 }
@@ -216,14 +221,14 @@ export function validDuelSettings(raw: unknown): DuelSettings {
      * and silently swapping one fighter for a legal opponent would be the
      * repair this file exists not to do.
      */
-    if (a && b && FIGHTERS[a].side !== FIGHTERS[b].side) out.pin = [a, b];
+    if (a && b && SIDES[a] !== SIDES[b]) out.pin = [a, b];
   }
 
   for (const side of ["good", "evil"] as const) {
     const v = r[side];
     if (!Array.isArray(v)) continue;
     const ids = v.map(style).filter((s): s is FighterStyle => s !== null);
-    const ofSide = ids.filter((s) => FIGHTERS[s].side === side);
+    const ofSide = ids.filter((s) => SIDES[s] === side);
     // An empty allow-list is refused rather than honoured: it would mean "no
     // fighter may appear on this side", and the honest rendering of that is
     // nothing at all. Null — the whole side — is the safe reading.

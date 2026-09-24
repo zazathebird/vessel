@@ -1,8 +1,21 @@
+import { Suspense, lazy } from "react";
+
 import { useConfig } from "../config/ConfigContext";
 import { NAV } from "../data/pageIds";
 import type { LayoutId } from "../data/catalog";
 import { DEFAULT_ORNAMENT } from "../data/ornaments";
-import { DuelOrnament } from "./DuelOrnament";
+
+/*
+ * Lazy, because it carries the whole duel engine and the duels are
+ * operator-only: a visitor's ornament can never be one, so a visitor never
+ * fetches this chunk (2026-09-24). Suspends to nothing — the slot is already
+ * an empty square for a frame or two, which is what a missing ornament is on
+ * five layouts anyway. `npm run check` fails if the entry bundle carries the
+ * engine again.
+ */
+const DuelOrnament = lazy(() =>
+  import("./DuelOrnament").then((m) => ({ default: m.DuelOrnament })),
+);
 
 /**
  * The hero ornament slot.
@@ -105,7 +118,9 @@ export function Ornament({ layout }: { layout: LayoutId }) {
       {(ornament === "duel" || ornament === "duelholy") && (
         // The one ornament that is a canvas rather than CSS — an endless run of
         // little lightsword matches. See docs/DUEL.md and DuelOrnament.tsx.
-        <DuelOrnament pairing={ornament} />
+        <Suspense fallback={null}>
+          <DuelOrnament pairing={ornament} />
+        </Suspense>
       )}
 
       {layout === "radial" && (

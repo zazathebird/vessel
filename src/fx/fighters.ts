@@ -60,33 +60,17 @@
  * hook through a recording context, so the number cannot drift from the drawing.
  */
 
-/** The roster's ids. Not a wire format — no share code or stored config names a
- *  fighter — so this may be reordered or added to freely. */
-export type FighterStyle =
-  | "hooded"
-  | "caped"
-  | "horned"
-  | "maned"
-  | "crowned"
-  | "cowled"
-  | "ronin"
-  | "gladiator"
-  | "plague"
-  | "golem"
-  | "nosferatu"
-  | "musketeer"
-  | "valkyrie"
-  | "executioner"
-  | "witch"
-  | "sentinel"
-  | "prophet"
-  | "luchador"
-  | "astronaut"
-  | "gunslinger"
-  | "viking"
-  | "pharaoh"
-  | "anubis"
-  | "ringmaster";
+import { DUEL_POOLS, SIDES } from "./roster";
+import type { Alignment, DuelPool, FighterStyle } from "./roster";
+
+/*
+ * The ids, the sides and the pools live in `./roster`, which is a few hundred
+ * bytes with no drawing in it — so the published-config validator, which is in
+ * every visitor's entry bundle, can check a fighter id without dragging this
+ * file (and `duel.ts` behind it) into that bundle. See the note there.
+ */
+export type { Alignment, DuelPool, FighterStyle } from "./roster";
+export { DUEL_POOLS, SIDES } from "./roster";
 
 /**
  * The one deliberate literal-colour exception on the site (client request,
@@ -171,9 +155,6 @@ export const BLADE_COLORS: Record<FighterStyle, string> = {
   ringmaster: "#ff3b30",
 };
 
-/** Which end of the fight a costume belongs to. Decides the blade colour and,
- *  through the pools, guarantees every match is one of each. */
-export type Alignment = "good" | "evil";
 
 /**
  * Everything a costume is handed about the body it is dressing, in body-local
@@ -582,7 +563,7 @@ function solid(
  * which now takes `--only` and `--px`) and none of them was visible in a
  * single duel, because in a single duel you are never comparing.
  */
-export const FIGHTERS: Record<FighterStyle, FighterKind> = {
+const COSTUMES: Record<FighterStyle, Omit<FighterKind, "side">> = {
   /**
    * The hood, kept exactly as it was: a peak over the skull. It is the oldest
    * mark here and the one the client has already seen and not objected to.
@@ -591,7 +572,6 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
    */
   hooded: {
     label: "The Hermit",
-    side: "good",
     prop: { shoulder: 1.02, weight: 1.06, hunch: 1.4, head: 0.92, build: 0 },
     // Sat into a wide, low guard: the oldest fighter here, and the only one who
     // has nothing to prove by standing tall.
@@ -678,7 +658,6 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
    */
   maned: {
     label: "The Apprentice",
-    side: "good",
     prop: { shoulder: 0.94, weight: 0.9, hunch: 0, head: 0.94, build: 0 },
     // The long lunge, with the back heel already off the floor: the youngest
     // fighter on the roster stands like someone about to move first.
@@ -741,7 +720,6 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
    */
   caped: {
     label: "The Mask",
-    side: "evil",
     prop: { shoulder: 1.36, weight: 1.34, hunch: 0.6, head: 1.16, build: 1 },
     // Planted: the widest feet on the roster, hips low, nothing about it
     // suggesting movement. Heaviness is a stance before it is a stroke width.
@@ -820,7 +798,6 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
    */
   horned: {
     label: "The Devil",
-    side: "evil",
     prop: { shoulder: 1.12, weight: 1.1, hunch: 3.4, head: 0.96, build: 0.5 },
     // The deepest crouch here, wide and forward-leaning: an animal stance, and
     // the one that most obviously is not a swordsman's.
@@ -907,7 +884,6 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
    */
   crowned: {
     label: "The Crown",
-    side: "evil",
     prop: { shoulder: 1.3, weight: 1.26, hunch: 0, head: 1.04, build: 0.85 },
     // Stands over the fight rather than in it: knees straight, feet apart but
     // square. The heavy build without the low hips is what separates this from
@@ -979,7 +955,6 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
    */
   cowled: {
     label: "The Hollow",
-    side: "evil",
     prop: { shoulder: 1, weight: 1.02, hunch: 4.6, head: 1, build: 0 },
     // Hunched over a narrow base, hips low: the silhouette of something that
     // does not stand up straight. `hunch` carries the cowl forward past the
@@ -1072,7 +1047,6 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
    */
   ronin: {
     label: "The Ronin",
-    side: "good",
     prop: { shoulder: 1.08, weight: 1.1, hunch: 0.4, head: 0.94, build: 0.4 },
     // Sunk into a wide, deep guard with both feet flat: the stance a swordsman
     // takes when the fight is expected to be long.
@@ -1124,7 +1098,6 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
    */
   gladiator: {
     label: "The Gladiator",
-    side: "good",
     prop: { shoulder: 1.18, weight: 1.2, hunch: 0.8, head: 1.1, build: 0.7 },
     stance: { settle: 3, spread: 12, heel: 0 },
     headroom: 34,
@@ -1187,7 +1160,6 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
    */
   plague: {
     label: "The Plague Doctor",
-    side: "evil",
     prop: { shoulder: 1, weight: 1, hunch: 2.2, head: 0.98, build: 0 },
     stance: { settle: 2, spread: 11, heel: 0 },
     headroom: 28,
@@ -1252,7 +1224,6 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
    */
   golem: {
     label: "The Golem",
-    side: "evil",
     prop: { shoulder: 1.42, weight: 1.5, hunch: 0, head: 1.24, build: 1 },
     // Hips deep and feet wide apart, heels down. Nothing about this stance is
     // ready to move, which is the point of it.
@@ -1296,7 +1267,6 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
    */
   nosferatu: {
     label: "The Nosferatu",
-    side: "evil",
     prop: { shoulder: 0.86, weight: 0.84, hunch: 3.8, head: 1.02, build: 0 },
     // The narrowest shoulders and the deepest stoop, feet close. Everything
     // about it is vertical, which is what the wide fighters are measured
@@ -1352,7 +1322,6 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
    */
   musketeer: {
     label: "The Musketeer",
-    side: "good",
     prop: { shoulder: 1.04, weight: 0.96, hunch: 0, head: 1, build: 0 },
     // Front foot forward, back heel up, hips high: the only stance here that
     // is on its toes.
@@ -1407,7 +1376,6 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
    */
   valkyrie: {
     label: "The Valkyrie",
-    side: "good",
     prop: { shoulder: 1.04, weight: 1, hunch: 0, head: 0.98, build: 0.3 },
     stance: { settle: -3, spread: 11, heel: 3 },
     headroom: 23,
@@ -1482,7 +1450,6 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
    */
   executioner: {
     label: "The Executioner",
-    side: "evil",
     prop: { shoulder: 1.32, weight: 1.36, hunch: 0.4, head: 1.06, build: 1 },
     stance: { settle: 4, spread: 13, heel: 0 },
     headroom: 17,
@@ -1535,7 +1502,6 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
    */
   witch: {
     label: "The Witch",
-    side: "evil",
     prop: { shoulder: 0.94, weight: 0.88, hunch: 3, head: 0.92, build: 0 },
     stance: { settle: 3, spread: 12, heel: 0 },
     headroom: 31,
@@ -1575,7 +1541,6 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
    */
   sentinel: {
     label: "The Sentinel",
-    side: "good",
     prop: { shoulder: 1.24, weight: 1.26, hunch: 0, head: 1, build: 0.9 },
     // Square and vertical, hips barely settled. It is standing a post.
     stance: { settle: 1, spread: 10, heel: 0 },
@@ -1625,7 +1590,6 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
    */
   prophet: {
     label: "The Prophet",
-    side: "good",
     prop: { shoulder: 1.04, weight: 1.08, hunch: -0.6, head: 1, build: 0.3 },
     stance: { settle: -2, spread: 7, heel: 0 },
     headroom: 29,
@@ -1695,7 +1659,6 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
    */
   luchador: {
     label: "The Luchador",
-    side: "good",
     prop: { shoulder: 1.26, weight: 1.24, hunch: 0, head: 1.06, build: 0.95 },
     stance: { settle: 3, spread: 13, heel: 0 },
     headroom: 26,
@@ -1746,7 +1709,6 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
    */
   astronaut: {
     label: "The Astronaut",
-    side: "good",
     prop: { shoulder: 1.22, weight: 1.3, hunch: 0, head: 1.3, build: 0.85 },
     stance: { settle: 4, spread: 11, heel: 0 },
     headroom: 20,
@@ -1808,7 +1770,6 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
    */
   gunslinger: {
     label: "The Gunslinger",
-    side: "good",
     prop: { shoulder: 1.06, weight: 1, hunch: 0.6, head: 0.98, build: 0.2 },
     stance: { settle: 2, spread: 13, heel: 0 },
     headroom: 21,
@@ -1857,7 +1818,6 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
    */
   pharaoh: {
     label: "The Pharaoh",
-    side: "evil",
     prop: { shoulder: 1.08, weight: 1.08, hunch: 0, head: 1, build: 0.4 },
     stance: { settle: -1, spread: 9, heel: 0 },
     headroom: 18,
@@ -1960,7 +1920,6 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
    */
   viking: {
     label: "The Viking",
-    side: "good",
     prop: { shoulder: 1.3, weight: 1.3, hunch: 0.4, head: 1.02, build: 0.9 },
     stance: { settle: 4, spread: 14, heel: 0 },
     headroom: 17,
@@ -2087,7 +2046,6 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
    */
   anubis: {
     label: "The Anubis",
-    side: "evil",
     prop: { shoulder: 1.1, weight: 1.06, hunch: 0, head: 0.94, build: 0.5 },
     stance: { settle: 1, spread: 11, heel: 0 },
     headroom: 30,
@@ -2169,7 +2127,6 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
    */
   ringmaster: {
     label: "The Ringmaster",
-    side: "evil",
     prop: { shoulder: 1.14, weight: 1.04, hunch: 0, head: 0.96, build: 0.35 },
     stance: { settle: -2, spread: 11, heel: 4 },
     headroom: 30,
@@ -2249,67 +2206,19 @@ export const FIGHTERS: Record<FighterStyle, FighterKind> = {
 };
 
 /**
- * The two sides, derived from the roster rather than typed out.
+ * The roster: every costume above, with its side read from `SIDES`.
  *
- * They used to be four hand-written ids per pool, which is how four of the
- * eight costumes came to be unreachable without anybody noticing: the list and
- * the roster were two places that had to agree, and the gate that caught it
- * only exists because they stopped. Deriving from `FIGHTERS[].side` — the same
- * field the blade-colour carve-out is checked against — means a fighter is
- * rollable the moment it is declared, and the only way to withhold one is to
- * delete it.
+ * **The side is declared once, in `./roster`, and nowhere in this file**
+ * (2026-09-24). It used to be a `side:` field on each costume, and moving the
+ * validator's half out of the entry bundle would otherwise have meant two
+ * tables that must agree — exactly the shape that once made four costumes
+ * unreachable. So the costume literal carries no side at all and this is the
+ * one join: `FIGHTERS[id].side` still works everywhere it is read, and it
+ * cannot disagree with the pools, because both come from the same table.
  */
-const ROSTER_GOOD = (Object.keys(FIGHTERS) as FighterStyle[]).filter(
-  (s) => FIGHTERS[s].side === "good",
-);
-const ROSTER_EVIL = (Object.keys(FIGHTERS) as FighterStyle[]).filter(
-  (s) => FIGHTERS[s].side === "evil",
-);
-
-/**
- * Which fighters each duel draws from. Every pool is one side against the
- * other, so a match is always good against evil and the blade colours always
- * disagree — that half is load-bearing and unchanged.
- *
- * **This block used to be attached to `ROSTER_GOOD`**, three declarations above
- * the thing it describes, which is how the eight-fighter arithmetic in it
- * survived two roster changes with a corrected paragraph sitting directly
- * underneath it. It is on `DUEL_POOLS` now, and the numbers are the roster's.
- *
- * **Both pools are the whole roster (2026-08-27, client).** They used to be a
- * themed four each — the order's fight and the war in heaven — and the cost of
- * that was measured rather than argued: with two good and two evil per pool,
- * **four of the eight costumes were unreachable for any given visitor**, only
- * four of the twenty-eight pairs could ever occur, and **72.7% of match resets
- * brought back at least one fighter from the previous match** (23.9% returned
- * the identical pair). The ornament id *is* the pool key and the ornament is
- * published site config, so which half of the roster a visitor could see was
- * fixed for everyone. The client's report was "only a couple characters get
- * chosen ever, always starts with the same characters", and he was right.
- *
- * Merged, and then grown to twenty-four on 2026-08-28: **every fighter is
- * reachable from every pool**, which is 144 pairs and 288 rolled orderings a
- * side rather than four, a per-fighter appearance rate of ~8.3% rather than the
- * ~52% two-of-four gave the lucky half, and back-to-back identical pairings at
- * about 0.7% rather than 24%.
- *
- * **What the merge gave up, stated because it was a real reason.** The roster
- * note above says confusable fighters were kept in different pools so they
- * never meet. That protection is gone, and it is replaced by `NEVER_MEET`
- * rather than by splitting the roster in half again — a blunt instrument that
- * cost four costumes to solve a problem which, once somebody actually measured
- * it, was three pairs.
- */
-export const DUEL_POOLS: Record<DuelPool, { good: FighterStyle[]; evil: FighterStyle[] }> = {
-  duel: {
-    good: ROSTER_GOOD,
-    evil: ROSTER_EVIL,
-  },
-  duelholy: {
-    good: ROSTER_GOOD,
-    evil: ROSTER_EVIL,
-  },
-};
+export const FIGHTERS: Record<FighterStyle, FighterKind> = Object.fromEntries(
+  (Object.keys(COSTUMES) as FighterStyle[]).map((id) => [id, { ...COSTUMES[id], side: SIDES[id] }]),
+) as Record<FighterStyle, FighterKind>;
 
 /**
  * Pairs that must never be drawn together because they read alike at ornament
@@ -2364,8 +2273,6 @@ function forbidden(a: FighterStyle, b: FighterStyle): boolean {
     ([x, y]) => (x === a && y === b) || (x === b && y === a),
   );
 }
-
-export type DuelPool = "duel" | "duelholy";
 
 /**
  * Roll a pairing, and roll which end of the arena each fighter walks on from.
