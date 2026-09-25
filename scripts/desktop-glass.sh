@@ -19,7 +19,8 @@
 #                                      default) measured 82% solid and looked opaque.
 #   Konsole Halo Opacity=0.70          Lives in the .colorscheme, not the .profile (see
 #                                      konsole-profiles.sh for why).
-#   Plasma dialogs/panel 0.85 -> 0.6   Start menu, panel and popups. A LOCAL copy of breeze-dark
+#   Plasma panel 0.85 -> 0.6,          Panel; start menu and tray popups.
+#   dialogs 0.85 -> 0.45               A LOCAL copy of breeze-dark
 #                                      in ~/.local/share/plasma/desktoptheme/ shadows the system
 #                                      one; /usr/share is never touched.
 #   KWin BlurStrength=6                At 15 (the max) blur smeared anything under a window into
@@ -32,7 +33,9 @@
 #                                      Excluded by class regex: browsers and the kiosk (the
 #                                      sharing agent), media and remote-desktop viewers, and the
 #                                      Qt apps Kvantum already glasses (which would go double).
-#   Menus/dialogs (translucency effect) 80 / 85, for GTK popups Kvantum does not draw.
+#   Kvantum reduce_menu_opacity=40     Qt menus.
+#   Menus/dialogs (translucency effect) 72 / 85 — every app's menus, GTK included. Kept above
+#                                      ~70 because this one fades the menu text too.
 #
 # WHAT WILL SILENTLY UNDO IT
 #   plasma-vibes.sh (--apply or --restore) and plasma-dark-setup.sh both rewrite kwinrc's blur

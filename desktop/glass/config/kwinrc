@@ -18,13 +18,13 @@ DimPanels=false
 Strength=18
 
 [Effect-translucency]
-ComboboxPopups=80
+ComboboxPopups=72
 Decoration=100
 Dialogs=85
-DropdownMenus=80
+DropdownMenus=72
 Inactive=88
 MoveResize=80
-PopupMenus=80
+PopupMenus=72
 
 [NightColor]
 Active=true

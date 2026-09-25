@@ -15,10 +15,12 @@ The target it was tuned to: a folder icon sitting under a Dolphin window can jus
 |---|---|---|
 | Qt app glass | `kvantum/KvDebianGlass/` | `reduce_window_opacity=45` (~55% solid) |
 | Terminal | `konsole/Halo.colorscheme` | `Opacity=0.70` |
-| Start menu, panel, popups | `plasma-theme/breeze-dark/` (local override) | background 0.85 → 0.6 |
+| Panel | `plasma-theme/breeze-dark/` (local override) | background 0.85 → 0.6 |
+| Start menu, tray popups | same, `translucent/dialogs` | background 0.85 → 0.45 |
+| Qt menus | `kvantum/KvDebianGlass/` | `reduce_menu_opacity=40` |
 | Blur | `config/kwinrc` `[Effect-blur]` | `BlurStrength=6` |
 | Everything else (QML, GTK) | `config/kwinrulesrc` `[glass-everywhere]` | forced 85% active / 78% inactive |
-| Menus and dialogs | `config/kwinrc` `[Effect-translucency]` | 80 / 85 |
+| Menus (all apps) and dialogs | `config/kwinrc` `[Effect-translucency]` | 72 / 85 |
 
 It also carries the host's user-level behaviour as of the same day: `powerdevilrc` (never dim,
 blank or suspend), `kscreenlockerrc` (no autolock) and `kwalletrc` (KWallet off — autologin can
