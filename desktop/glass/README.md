@@ -20,6 +20,11 @@ The target it was tuned to: a folder icon sitting under a Dolphin window can jus
 | Everything else (QML, GTK) | `config/kwinrulesrc` `[glass-everywhere]` | forced 85% active / 78% inactive |
 | Menus and dialogs | `config/kwinrc` `[Effect-translucency]` | 80 / 85 |
 
+It also carries the host's user-level behaviour as of the same day: `powerdevilrc` (never dim,
+blank or suspend), `kscreenlockerrc` (no autolock) and `kwalletrc` (KWallet off — autologin can
+never unlock it). The system half of never-idle — logind `IdleAction=ignore`, the masked sleep
+targets, the dconf lock — is `thinkcentre-setup.sh`'s and needs sudo.
+
 Browsers, the `vessel-kiosk` window, media players and remote-desktop viewers are excluded
 from the window rule by class regex — the kiosk is the sharing agent, and a see-through video is
 just a worse video.

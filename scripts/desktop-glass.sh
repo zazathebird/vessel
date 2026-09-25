@@ -58,6 +58,12 @@ FILES=(
     "config/plasmarc|${HOME}/.config/plasmarc"
     "config/plasmashellrc|${HOME}/.config/plasmashellrc"
     "config/plasma-org.kde.plasma.desktop-appletsrc|${HOME}/.config/plasma-org.kde.plasma.desktop-appletsrc"
+    # Behaviour, not looks: never dim, blank, lock or suspend, and no KWallet (autologin can
+    # never unlock it, so it only prompts). The system half — logind, the masked sleep targets,
+    # dconf — belongs to thinkcentre-setup.sh and needs sudo; this is only the user half.
+    "config/powerdevilrc|${HOME}/.config/powerdevilrc"
+    "config/kscreenlockerrc|${HOME}/.config/kscreenlockerrc"
+    "config/kwalletrc|${HOME}/.config/kwalletrc"
 )
 
 have() { command -v "$1" >/dev/null 2>&1; }
@@ -108,7 +114,9 @@ check() {
     echo "    glass-everywhere rule:   $(grep -q '^\[glass-everywhere\]' "${HOME}/.config/kwinrulesrc" 2>/dev/null && echo present || echo MISSING)"
     echo "    plasma theme override:   $([ -d "${HOME}/.local/share/plasma/desktoptheme/breeze-dark/translucent" ] && echo present || echo MISSING)"
     if [ -n "${DISPLAY:-}" ] && have qdbus6; then
-        echo "    compositing active:      $(qdbus6 org.kde.KWin /Compositor org.kde.kwin.Compositing.active 2>/dev/null || echo '?')"
+        echo "    auto-suspend:            $([ -n "${KREAD}" ] && "${KREAD}" --file powerdevilrc --group AC --group SuspendAndShutdown --key AutoSuspendAction)   (want 0 = never)"
+    echo "    KWallet enabled:         $([ -n "${KREAD}" ] && "${KREAD}" --file kwalletrc --group Wallet --key Enabled)   (want false)"
+    echo "    compositing active:      $(qdbus6 org.kde.KWin /Compositor org.kde.kwin.Compositing.active 2>/dev/null || echo '?')"
     fi
 }
 
