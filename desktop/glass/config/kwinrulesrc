@@ -1,0 +1,24 @@
+[General]
+count=2
+rules=vessel-kiosk,glass-everywhere
+
+[glass-everywhere]
+Description=Glass everywhere — whole-window translucency for apps Kvantum cannot reach (QML, GTK). Excludes browsers, kiosk, media/remote viewers, and Qt apps already glassed by Kvantum.
+opacityactive=85
+opacityactiverule=2
+opacityinactive=78
+opacityinactiverule=2
+types=289
+wmclass=(?i)^(?!.*\\b(chromium|chrome|google-chrome|firefox|firefox-esr|vessel-kiosk|brave|konqueror|falkon|vlc|mpv|totem|parole|dragon|dragonplayer|xfreerdp|xfreerdp3|freerdp|vncviewer|krfb|gimp|dolphin|konsole|kate|kwrite|ark|okular|gwenview|kcalc|kfind|kvantummanager|plasmashell|krunner|spectacle|xdg-desktop-portal-kde)\\b).*$
+wmclasscomplete=true
+wmclassmatch=3
+
+[vessel-kiosk]
+Description=Vessel sharing kiosk — keep it on the second workspace
+desktops=7fbd030d-36c6-4bc3-bf46-37c401d3a375
+desktopsrule=2
+minimize=false
+minimizerule=2
+wmclass=vessel-kiosk
+wmclasscomplete=false
+wmclassmatch=1

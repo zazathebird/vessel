@@ -3,7 +3,7 @@
 # konsole-profiles.sh — the terminal look for the sharing host.
 #
 # Writes a Konsole colour scheme and a matching profile for each entry in the table below,
-# sets one of them as the default, and turns on translucency at 86%.
+# sets one of them as the default, and turns on translucency at 70%.
 #
 # It touches nothing outside ~/.local/share/konsole and ~/.config/konsolerc, needs no sudo,
 # and is idempotent: run it as often as you like. `--list` prints what it would write and
@@ -25,7 +25,7 @@ set -euo pipefail
 
 SCHEME_DIR="${HOME}/.local/share/konsole"
 KONSOLERC="${HOME}/.config/konsolerc"
-OPACITY="0.86"
+OPACITY="0.70"
 FONT_FAMILY="Hack"
 FONT_SIZE="11"
 DEFAULT_PROFILE="Ubuntu"
