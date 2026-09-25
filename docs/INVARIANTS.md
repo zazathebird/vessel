@@ -366,29 +366,49 @@ move above the health check, start the Worker.
   password prompt in front of a list is a password typed carelessly. One helper rather than four
   inline calls, so the fifth admin write inherits the proof.
 
-  **The downloads editor and the site publish follow the same rule, drawn at RELEASES, not writes**
-  (the client's decision). Six routes ask: `mintCode`, `addGrant`, `finishUpload`, `deletePage`,
-  `deleteFile`, `publishSiteConfig` — each changes what somebody *else* can get, and `finishUpload`
-  is the worst write on the site, since a stolen cookie could put replacement bytes under a program's
-  existing link. Every save, block edit, reorder, upload begin and part stays session-only, because
-  the editor saves often. **Gated in both directions** — so do not "harden" `saveFile` into a prompt,
-  and do not "simplify" `finishUpload` out of one.
+  **The downloads editor and the site publish follow the same rule, drawn at RELEASES — what
+  somebody else can get *or is told* — not at writes** (the client's decision, 2026-09-06; moved to
+  include "is told" and withdrawals on 2026-09-24, review item 18). Eight routes ask: `mintCode`,
+  `addGrant`, `finishUpload`, `deletePage`, `deleteFile`, `publishSiteConfig`, and the two
+  withdrawals `revokeCode` and `removeGrant` — `finishUpload` is the worst write on the site, since a
+  stolen cookie could put replacement bytes under a program's existing link. Drafts, reorders, new
+  file rows, upload begin and parts stay session-only. **Gated in both directions** — so do not
+  "harden" a draft save into a prompt, and do not "simplify" `finishUpload` out of one.
 
-  **And two of the saves ask when — and only when — they WIDEN**: `savePage` when a page goes `live`
-  or a live page's visibility opens (`granted` < `code` < `unlisted` < `public`), `saveFile` when an
-  existing row flips `free` on or changes page. The question is asked of the *transition*, never the
-  route — `proven()` asks unconditionally and must not be used there — so a title edit, a narrowing,
-  an unpublish and a new row stay silent. `RELEASE_WORDING` in `src/data/downloads.ts` is read by
-  both the Worker and the editor, which recognises the prompt by its prefix and retries with proof.
+  **And three of the saves ask when — and only when — they WIDEN or the page is LIVE NOW**:
+  `savePage` when a page goes `live`, a live page's visibility opens (`granted` < `code` <
+  `unlisted` < `public`), or the page is already live (so a retitle, a narrowing and an unpublish of
+  a live page ask too — that text is what customers read); `saveBlocks` when the page is live;
+  `saveFile` when an existing row flips `free` on, changes page, or sits on a live page. The
+  question is asked of the *state and transition*, never the route — `proven()` asks
+  unconditionally and must not be used there — so a draft's edits and a new row stay silent.
+  `RELEASE_WORDING` in `src/data/downloads.ts` (`page`, `file`, `live`) is read by both the Worker
+  and the editor, which recognises the prompt by its prefix and retries with proof.
 - **The rate-limit bucket is keyed on a NORMALISED address, IPv6 cut to the /64** (`crypto.ts`).
   Keyed on the whole string, rotating inside one /64 — which every residential and VPS allocation
   hands you for free — produced **zero** 429s over 72 attempts. **/64 and not /48 deliberately**:
   one /48 can span hundreds of unrelated households, so cutting there turns a stuffing run into an
-  outage for real visitors. `X-Forwarded-For` is still never read — do not start.
-- **`recordSuccess` resets the account bucket and only *decays* the client bucket** by one — wiping
-  it on success hands an attacker a free reset. Client allowance 50, account 5, because one address
-  is a household behind NAT. **Signup has a third bucket** (allowance 12), sized just above the
-  harness's eight signups per run: shrink it and the harness locks itself out.
+  outage for real visitors. **The one exception is the per-handle `pair:` bucket, keyed on the /48**
+  (2026-09-24, audit item 56): at the /64 one free tunnel-broker /48 was 65,536 pairs and refilled
+  the handle ceiling; a `pair:` bucket is per handle, so the only people sharing one at /48 are
+  strangers guessing at the same account. **Do not "harmonise" either cut into the other.**
+  `X-Forwarded-For` is still never read — do not start.
+- **`recordSuccess` resets the per-handle buckets and only *decays* the client bucket** by one —
+  wiping it on success hands an attacker a free reset. Client allowance 50, because one address is a
+  household behind NAT. **Signup has its own bucket** (allowance 12), sized just above the harness's
+  eight signups per run: shrink it and the harness locks itself out.
+- **The anonymous per-handle limit is two buckets, and the tight one is per (address, handle)**
+  (2026-09-24, review item 10). `pair:` (client + handle) allows 5; `account:` (handle alone)
+  allows 30. **Do not collapse them back into one per-handle bucket at 5**: that bucket is reachable
+  by anybody who knows a handle, and six wrong guesses from anywhere locked the owner out. `gate`
+  refunds the buckets that said yes when one says no, so one address feeds `account:` at most six
+  times — that refund is load-bearing here too. `proof:` (signed-in re-proof) and
+  `second-factor:` (only reachable with the password) stay single buckets at 5, deliberately.
+  Gated by driving the real `RateLimiter` through `signin`. **Say the cost honestly**: six IPv4
+  addresses or six /48s in one window still lock password *and recovery* sign-in for a handle —
+  a few free tunnels or cloud VMs, not a botnet. **Passkey sign-in is the mitigation**, since no
+  bucket touches it; `challenge` checks the same buckets as `signin` so both screens give one
+  retry time, and recovery is deliberately not an exit around the ceiling.
 - **Rate limiting reserves and checks in one round-trip** — `/check` then `/fail` let N concurrent
   sign-ins all pass before any failure landed. **`challenge` deliberately stays on `/check`**: asking
   for a salt is not a failable attempt, and counting it would let anyone lock an owner out. It is the
@@ -406,8 +426,16 @@ move above the health check, start the Worker.
   of ten per abandoned attempt, for the person recovery exists for.
 - **Authorisation for set-password is a ticket, not the session.** **The ticket is single-use on the
   server, not just in the client** — its subject carries the redeemed credential and `setPassword`
-  requires that credential's key slot to still exist. Clearing it in `flows.ts` is a courtesy, not
-  the enforcement.
+  requires that credential's key slot to still exist, **inside every write's own WHERE** (audit
+  item 57), with the statement that deletes the slot last. The read ahead of the batch is only the
+  friendly early answer. Clearing it in `flows.ts` is a courtesy, not the enforcement.
+- **A session that began before `accounts.sessions_after` is refused** (migration 0010, audit item
+  58). A password change, a recovery set-password, an operator password reset and an operator TOTP
+  reset stamp it inside their own batches, then hang up the account's signalling sockets
+  (`hangUpSignalling`, after the commit, so a re-dial presents a refused session). The request that
+  changed the password is re-issued a **fresh** session — never a refresh, which carries the old
+  `issuedAt` the epoch just refused. The comparison is strictly less-than so that re-issue stands.
+  **Still no session table**: the token already carries when its session first began.
 - **Change-password reuses the salt** — recovery codes derive against the password's salt, so
   rolling it would silently kill all ten.
 - **A passkey sign-in has no TOTP stage and no rate limiting.** User verification is the passkey's
@@ -464,7 +492,8 @@ move above the health check, start the Worker.
   the `Q = d·G` import check bind the public key to the password), stores *that*, and refuses a pair
   response that disagrees. Storing the response's `grantPubkey` is the server saying "trust this".
   `worker/signal.ts` is **an introducer, not a pipe**: it relays SDP/ICE without reading payloads,
-  persists nothing, and all authentication happens in `signalUpgrade` *before* the object is reached.
+  persists nothing, and the session and ownership checks happen in `signalUpgrade` *before* the
+  object is reached. The one check the object makes itself is the agent's key proof, below.
   **The upgrade path bypasses `harden()` deliberately** — copying a 101 response drops its
   `webSocket` and hangs every connection.
 - **Pairing and re-keying demand the password**; rename, remove and the drive routes are
@@ -472,9 +501,27 @@ move above the health check, start the Worker.
 - **File paths travel as arrays of components, never strings** (`src/share/paths.ts`) — the agent
   walks handles component by component, so there is no parser to have a traversal bug in. **Refuse,
   never repair.**
-- **One agent socket per machine; a newcomer replaces the incumbent**, which is sent `replaced`. The
-  frame is the contract — local workerd delivers the server-side close lazily, so nothing may depend
-  on the close code reaching the replaced tab.
+- **A session opens an agent socket; only the machine key makes it the agent** (2026-09-24). The
+  object challenges every agent socket and admits it on a signature over its own nonce by the key
+  whose public half is `agent_pubkey`, which **the Worker hands over after deleting any
+  client-supplied copy of the header**. Until then the socket is not presence, is relayed nothing,
+  evicts nobody and stamps no `last_seen`. **Do not "simplify" admission back to the upgrade** — a
+  stolen cookie then evicts an unattended host for good and hears every owner offer.
+- **One proven agent socket per machine; a newly proven one replaces the incumbent**, which is sent
+  `replaced`. The frame is the contract — local workerd delivers the server-side close lazily, so
+  nothing may depend on the close code reaching the replaced tab. **`replaced` is not terminal**:
+  only a tab of the same profile can prove the key, so the replaced tab asks that profile's tabs
+  (`BroadcastChannel`) and takes back over once none claims to be the agent. Only an *active* tab
+  answers, which is what stops two tabs ping-ponging. `rekeyed` / `proof-refused` **are** terminal.
+- **The handshake binds the signalling peer id** (v2): the offer's signature covers the id the
+  object minted for that socket, and the agent verifies against the `from` the object stamped, so a
+  captured offer fails from any other socket. **A second offer from one peer replaces its first
+  connection**; live peers are capped at `MAX_PEERS`, which must equal `MAX_BROWSER_SOCKETS` (gated).
+- **Every signalling socket has a frame budget** (`FRAME_BUDGET`), kept in the hibernation
+  attachment; exhaustion closes 1008. **A re-key hangs up on the old key** (`/shutdown?reason=rekeyed`
+  with the new key), pending sockets included.
+- **The machine and drive caps live in the INSERT's own WHERE**, and drive labels are unique per
+  machine case-insensitively in the index (migration 0011) — the last-way-in shape again.
 - **STUN only; no TURN** until the client approves the spend. A hard-NAT pair fails with an honest
   message, not silently.
 
@@ -530,6 +577,32 @@ wrong machine is worse than not running.
   the machine nobody is standing at. The real host runs Plasma, so `scripts/plasma-dark-setup.sh`
   pins the X11 session and writes the SDDM autologin `thinkcentre-setup.sh` cannot — that script only
   knows LightDM, and **its warning about autologin is expected on this box, not a failure**.
+- **On Plasma, PowerDevil — not `xset` — decides whether the screen blanks, and its keys live in
+  NESTED groups.** `powerdevilrc` is `[AC][Display]` (`TurnOffDisplayWhenIdle`,
+  `DimDisplayWhenIdle`) and `[AC][SuspendAndShutdown]` (`AutoSuspendAction`), upper-camel, per
+  PowerDevil's own `PowerDevilProfileSettings.kcfg`. A flat `[AC]` is read by nothing, silently —
+  that shipped once. `--verify` reads them back through `kreadconfig6` and an unset key FAILS,
+  since PowerDevil's default is to blank. Gated by executing the builder's writes into a
+  throwaway config and reading them back.
+- **`--verify`'s "graphical session" is filtered on `Type` (x11/wayland), not `Class` alone** — an
+  SSH login is `Class=user` too, and `--verify` is usually run over SSH. **SDDM's autologin is read
+  the way SDDM reads it**: packaged drop-ins, `/etc/sddm.conf.d` sorted, then `/etc/sddm.conf`,
+  later wins, `[Autologin]` only. Both driven by the gate.
+- **`rdp-separate-user.sh` makes a password login on 3389, so sudo and loosening `/home/user` are
+  opt-in** (`--with-sudo`, `--share-home`), and **no filename ever reaches a shell string** — the
+  old `xargs -I{} sh -c` ran a crafted filename as root. `--undo` follows the `--undo` rule: it
+  reverses only what its record says, restores modes without following links, and never deletes
+  the RDP user's home.
+- **Nothing that script does as root acts on a NAME under `/home/user`** (2026-09-24). uid 1000
+  can swap any of it mid-run: `chmod -R` follows a command-line symlink, and an undo that tested
+  only the leaf for a link chmod'd a file outside the home through a swapped ancestor. Every
+  change goes through `fs_tool` (python3): paths opened one component at a time with
+  `O_NOFOLLOW`, changes made on the opened inode via `/proc/self/fd`, and the undo also demands
+  the recorded dev:inode — a hardlink swapped in at a recorded name is left alone. **Without
+  python3 it changes nothing**; the shell cannot hold a directory open. Files made after the
+  snapshot are swept out of the share group before `groupdel`. Every `mv` is `mv -T` (a plain
+  `mv` as root into a user-owned directory moves the file INTO any directory link planted at the
+  destination). All gated, break-verified.
 - **The Chromium profile IS the pairing** — the persisted directory handle from
   `showDirectoryPicker()` lives in its IndexedDB. That is why the kiosk is a systemd *user* service
   and never a system one, and why the launcher must never gain `--user-data-dir` or `--incognito`: a
@@ -545,7 +618,17 @@ wrong machine is worse than not running.
   somebody's files. The timer is `Persistent=false` deliberately — a missed week waits for the next
   one rather than firing at an arbitrary moment after a boot.
 - **The Chromium managed policy is the answer to autologin**, which is not optional: a host that
-  stops sharing when the power flickers is not a host. **Both scripts write it.**
+  stops sharing when the power flickers is not a host. **Both scripts write it.** On the
+  ThinkCentre it has ONE definition, `chromium_policy_json`, and `--verify` rebuilds it from the
+  kiosk URL and compares **every** key on disk — it used to read three, so a policy with
+  `URLBlocklist` or `DeveloperToolsAvailability` deleted verified green. **Do not restate the key
+  list in `--verify`.**
+- **`--verify` judges the kiosk by what it shows, not by `is-active`** (`kiosk_liveness`). The
+  launcher is active while it polls for a display, so a box whose autologin failed verified green.
+  Ten minutes after a boot, an active unit with no graphical session, or no browser, FAILS; a box
+  set up since its last boot (unit file newer than `btime`) is still a note. **And the autologin
+  user must be `$USER`** — the account whose profile holds the pairing — in every display-manager
+  branch.
   `DefaultFileSystemReadGuardSetting` stays at "ask" (3) because that prompt *is* the folder picker
   the machine exists to answer; write is blocked, since §8 shares read-only.
 - **`sudo docker`, never the `docker` group** — group membership is root-equivalent and this box
@@ -560,7 +643,10 @@ wrong machine is worse than not running.
   one accepted value is permanent. Resolving only when the *full* target already exists is false on
   exactly the normal first run: `--store /srv/data/vessel` with `/srv/data` a symlink to `/etc` was
   compared as typed, matched no blocked prefix, and `prepare_store` then followed the link and handed
-  `/etc/vessel` to the autologin desktop user. **A component that exists but is not a directory is
+  `/etc/vessel` to the autologin desktop user. **Nobody's home, not the home itself, no dot-folder,
+  nothing under `/opt` or `/snap`** (2026-09-24) — `/home/other`, `$HOME` and `/opt/google/chrome`
+  were all accepted and chowned. **A remembered value is judged like a typed one and a refusal
+  names the file**, which must be a plain file, not a link. **A component that exists but is not a directory is
   refused, never carried into the tail** — a dangling symlink names a target that is not there yet
   and `mkdir -p` follows it, so `-L` is tested beside `-e`. **The gate drives `parse_args`, not
   `canon_store`**: driving the resolver alone stays green when the caller stops consulting it, and
@@ -676,6 +762,17 @@ wrong machine is worse than not running.
     `dirname $HOME`, never `/`) because a root account's home is `/root` and refusing everything under
     `/` would refuse `/mnt` and `/media`. `$HOME` is canonicalised before the comparison, or a
     symlinked ancestor makes it refuse the user's *own* files.
+  - **No dot-component, anywhere on the canonical path** (2026-09-24) — and on Windows no
+    `AppData`, on the Mac no `Library`, anywhere. Every dot-directory entry was a finite list keyed
+    to THIS home: `~/.claude`, `~/.wine`, `~/.azure`, `%USERPROFILE%\.config` passed, and so did a
+    copied home on a backup disk (`/media/backup/home/bob/.ssh`), which no `$HOME` entry can name.
+    The explicit entries stay; the structural rule only refuses more. `%USERPROFILE%\AppData`
+    itself was shareable while Local and Roaming were blocked — the blocked-leaf shape again.
+  - **A drive letter is resolved or refused** (Windows, 2026-09-24). `subst X: ...\.ssh` and
+    `net use Y: \\localhost\C$` are letters that are not reparse points, so the walk never saw
+    them. `Get-DriveMapping` carries a SUBST across and walks again, and THROWS for a network
+    letter or anything it cannot classify, which the walk refuses. Driven with stubs;
+    **`subst.exe`'s output format is assumed, not yet seen on a real Windows box.**
   - **Prefix-match, not exact-match**, and **a blocked directory must have no shareable ancestor.**
     `$HOME` blocked with no children blocked left `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.config` and
     `~/Library` shareable — precisely the paths Chrome blocks with block-all-children semantics.
@@ -701,7 +798,9 @@ wrong machine is worse than not running.
 - **Junctions need no administrator; symbolic links do.** That is why Windows uses a junction. **A
   script that demands administrator for its safe half teaches people to give administrator to
   scripts.**
-- **`CHECKSUMS.txt` and the readable `.txt` copies are generated, never typed.** A checksum in a
+- **`CHECKSUMS.txt` and the readable `.txt` copies are generated, never typed** — and `dist-setup/`
+  is gated byte for byte against a fresh run of `setup-bundle.sh`, so a script fixed here and not
+  re-bundled fails the check rather than shipping the old hole under a matching checksum. A checksum in a
   document is wrong the first time a script changes, and the person who suffers is the one who checks
   properly, sees a mismatch, and concludes they were handed something tampered with. **The `.txt`
   downloads rather than opening** — `worker/downloads.ts` forces `attachment` and `octet-stream`
@@ -747,6 +846,13 @@ with per-person access.
 - **A draft and a `granted` page both 404; a `code` page says it exists.** Somebody holding a code
   has to be told where to type it, whereas the existence of a page named after a customer is itself
   the thing being kept quiet.
+- **A download ticket names the code that bought it and dies with it** (audit item 60). The subject
+  is `REF|list` inside the MAC; `resolveAccess` re-reads the code on every use (`ticketStillOpens`:
+  present, not revoked, and `opened` still naming it) and grants only the intersection. Revoke and
+  delete end tickets at once, a slug or id recreated inside the thirty minutes is not opened by an
+  old ticket, and a ref-less ticket is refused. **Uses and expiry are not re-checked** — the use was
+  the redemption, and expiry bounds redemption — so do not "tighten" that into a mid-download
+  refusal.
 - **Every refusal from the byte route is the same refusal, including "no such id"** — one `denied`
   object thrown from all three places. Distinguishing 404 from 403 makes the status code an existence
   oracle over the whole table, unauthenticated and unthrottled, and ids are lowercase-kebab named
@@ -783,10 +889,14 @@ with per-person access.
   `ByteString` conversion, so one character above U+00FF throws — not a 400 on upload but a **500 on
   every click, for ever**, on a row that saved cleanly. `Réparation.exe` is an ordinary name here, so
   it is encoded (RFC 5987); what `saveFile` refuses is control characters, quotes and backslashes.
-- **An upload writes the row before the bytes and marks it usable after** — `uploaded_at` is null in
-  between and a page hides those rows, so a half-dead upload leaves an invisible draft rather than a
-  link that 404s at a customer. **The size is read from the object with `head`, never from the
-  browser.**
+- **An upload writes the row before the bytes and marks it usable after** — for a NEW file
+  `uploaded_at` is null in between and a page hides those rows, so a half-dead upload leaves an
+  invisible draft rather than a link that 404s at a customer. **A REPLACEMENT keeps the old file
+  live until the finish** (audit item 55): `beginUpload` writes nothing to the row, the multipart
+  upload is invisible until `complete()` swaps the object, and `finishUpload` — password-proved —
+  then sets size, type and `uploaded_at` in one statement. **Do not null `uploaded_at` at begin**:
+  begin is session-only, so that line let a stolen cookie take every download offline. **The size
+  is read from the object with `head`, never from the browser.**
 - **The upload is multipart even for a small file** — one path that always works beats two where the
   second is discovered by a 413 on the day a file gets big.
 - **A replacement upload writes its bytes before its metadata; a new file is the other way round.** A
@@ -945,6 +1055,10 @@ All deliberate. Add to this list rather than silently diverging.
     and the scroll-velocity boost are untouched. **`transform` on `.v-block` stays reserved** — the
     CSS rules that keep entrances and layouts off it cost nothing and keep the property free. Gated:
     no script under `src/` outside the canvas effects may write a perspective or rotate.
+16. **The screensaver waits ten minutes, not sixty seconds** (client, 2026-09-24: "make the
+    Screensaver timeout like 10 minutes"). SPEC § Screensaver says sixty seconds without a click; the
+    timer in `ConfigContext`'s `poke` is `600_000`. Nothing else about it changed: clicks and keys
+    reset it, movement does not, calm disables it, the panel, door and `holdSaver` hold it off.
 
 ## FX and canvas internals
 

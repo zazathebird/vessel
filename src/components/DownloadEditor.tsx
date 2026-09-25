@@ -64,6 +64,7 @@ import {
   PLATFORMS,
   PLATFORM_LABEL,
   PROOF_PREFIX,
+  RELEASE_WORDING,
   SORT_LABEL,
   categoryOf,
   formatPrice,
@@ -151,6 +152,13 @@ export function DownloadEditor() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   /** The save the Worker asked a password for, held while the dialog is up. */
   const [publishProof, setPublishProof] = useState<Draft | null>(null);
+  /**
+   * Which sentence the Worker asked with — a widening (`RELEASE_WORDING.page`)
+   * or an edit to a page that is already live (`RELEASE_WORDING.live`) — so the
+   * dialog says what is actually happening rather than "this changes who can
+   * see the page" over a typo fix.
+   */
+  const [publishWhy, setPublishWhy] = useState("");
   const [pages, setPages] = useState<DownloadPageSummary[]>([]);
   const [slug, setSlug] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft>(EMPTY);
@@ -235,11 +243,14 @@ export function DownloadEditor() {
       const saved = await api.adminPageSave(authSecret ? { ...next, authSecret } : next);
       pageSaved = true;
       // `uid` is the editor's own; the wire format is the three fields it has
-      // always been.
+      // always been. The proof rides along when there is one: a live page's
+      // blocks ask for it exactly as its row does (2026-09-24), and the row is
+      // always saved first, so its refusal is the one that opens the dialog.
       if (draft.layout === "blocks")
         await api.adminBlocksSave(
           saved.slug,
           blocks.map(({ kind, body, group }) => ({ kind, body, group })),
+          authSecret ?? undefined,
         );
       setPublishProof(null);
       await refreshPages();
@@ -247,6 +258,7 @@ export function DownloadEditor() {
       say(next.status === "live" && draft.status !== "live" ? "Published. It's live now." : "Saved.");
     } catch (thrown) {
       if (!password && needsProof(thrown)) {
+        setPublishWhy((thrown as ApiError).message);
         setPublishProof(next);
         return;
       }
@@ -667,17 +679,32 @@ export function DownloadEditor() {
       {publishProof ? (
         <ProofDialog
           title={
-            draft.status === "live"
-              ? `Open up ${publishProof.title || publishProof.slug}?`
-              : `Publish ${publishProof.title || publishProof.slug}?`
+            publishWhy === RELEASE_WORDING.live
+              ? `Save changes to ${publishProof.title || publishProof.slug}?`
+              : draft.status === "live"
+                ? `Open up ${publishProof.title || publishProof.slug}?`
+                : `Publish ${publishProof.title || publishProof.slug}?`
           }
           consequence={
-            <p>
-              This changes who can see the page, so it asks for your password. Saving the words on
-              it does not.
-            </p>
+            publishWhy === RELEASE_WORDING.live ? (
+              <p>
+                This page is live, so customers read what you save here — changing it asks for your
+                password. Saving a draft does not.
+              </p>
+            ) : (
+              <p>
+                This changes who can see the page, so it asks for your password. Saving the words on
+                a draft does not.
+              </p>
+            )
           }
-          confirmLabel={draft.status === "live" ? "Save and open it up" : "Publish"}
+          confirmLabel={
+            publishWhy === RELEASE_WORDING.live
+              ? "Save"
+              : draft.status === "live"
+                ? "Save and open it up"
+                : "Publish"
+          }
           busyLabel="Publishing…"
           busy={busy}
           error={error}
@@ -1048,6 +1075,8 @@ function FileManager({
    * has the password typed and sends it.
    */
   const [saveProof, setSaveProof] = useState(false);
+  /** The Worker's sentence for it: a widening, or any edit on a live page (2026-09-24). */
+  const [saveWhy, setSaveWhy] = useState("");
 
   const patch = (p: Partial<FileDraft>) => setForm((f) => ({ ...f, ...p }));
 
@@ -1072,7 +1101,6 @@ function FileManager({
     reset();
     setFresh(null);
     // `reset` is a stable local closure over setters only; `slug` is the trigger.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug]);
 
   /** Load an existing row into the form. The bytes are left alone unless replaced. */
@@ -1240,6 +1268,7 @@ function FileManager({
       // No bytes and no password typed, and the Worker wants one: this save
       // widens who can get the file. Ask, then retry through `saveWithProof`.
       if (!file && needsProof(thrown)) {
+        setSaveWhy((thrown as ApiError).message);
         setSaveProof(true);
         return;
       }
@@ -1409,12 +1438,23 @@ function FileManager({
 
       {saveProof ? (
         <ProofDialog
-          title={`Change who can get ${form.name || form.id}?`}
+          title={
+            saveWhy === RELEASE_WORDING.live
+              ? `Save changes to ${form.name || form.id}?`
+              : `Change who can get ${form.name || form.id}?`
+          }
           consequence={
-            <p>
-              Making a file free, or moving it to another page, changes who can download it — so
-              it asks for your password. Editing its details does not.
-            </p>
+            saveWhy === RELEASE_WORDING.live ? (
+              <p>
+                This file is on a live page, so customers read its details before they download it
+                — changing them asks for your password.
+              </p>
+            ) : (
+              <p>
+                Making a file free, or moving it to another page, changes who can download it — so
+                it asks for your password.
+              </p>
+            )
           }
           confirmLabel="Save"
           busyLabel="Saving…"
@@ -1819,6 +1859,8 @@ function GrantManager({
   const [busy, setBusy] = useState(false);
   /** Admitting somebody to a page is a release, so it asks (2026-09-06). */
   const [password, setPassword] = useState("");
+  /** The grant awaiting the password before it is taken away. */
+  const [removing, setRemoving] = useState<DownloadGrantRow | null>(null);
   const { me } = useSession();
   const handle = me?.account?.handle ?? "";
 
@@ -1832,6 +1874,7 @@ function GrantManager({
   useEffect(() => {
     setScope("");
     setError(null);
+    setRemoving(null);
   }, [slug]);
 
   async function add(event: React.FormEvent) {
@@ -1871,13 +1914,21 @@ function GrantManager({
     }
   }
 
-  /** Revoking, with the same in-flight guard and the same error line as `add`. */
-  async function remove(id: number) {
+  /**
+   * Revoking, with the same in-flight guard and the same error line as `add` —
+   * and, since 2026-09-24, the same password (review item 18: taking access
+   * away is a release in reverse). Asked in the proof dialog rather than from
+   * the form's password box, which sits below the list and belongs to "Give
+   * access".
+   */
+  async function remove(id: number, typed: string) {
     if (busy) return;
     setBusy(true);
     setError(null);
     try {
-      await api.adminGrantRemove(id);
+      const { authSecret } = await derivePassword(handle, typed);
+      await api.adminGrantRemove(id, authSecret);
+      setRemoving(null);
       onChanged();
     } catch (thrown) {
       // The route genuinely refuses — 401 on a lapsed session, 404 when the row
@@ -1916,7 +1967,10 @@ function GrantManager({
               type="button"
               className="v-btn v-btn-danger"
               disabled={busy}
-              onClick={() => void remove(g.id)}
+              onClick={() => {
+                setError(null);
+                setRemoving(g);
+              }}
             >
               Remove
             </button>
@@ -1924,6 +1978,29 @@ function GrantManager({
         ))}
         {mine.length === 0 ? <li className="v-field-hint">Nobody named yet.</li> : null}
       </ul>
+
+      {removing ? (
+        <ProofDialog
+          title={`Take ${removing.handle}'s access away?`}
+          consequence={
+            <p>
+              They stop being able to open{" "}
+              {removing.slug === null ? "everything" : removing.item_id ? "that file" : "this page"}{" "}
+              the next time they look. Taking access away asks for your password, the same as
+              giving it.
+            </p>
+          }
+          confirmLabel="Remove access"
+          busyLabel="Removing…"
+          busy={busy}
+          error={error}
+          onConfirm={(typed) => void remove(removing.id, typed)}
+          onClose={() => {
+            setRemoving(null);
+            setError(null);
+          }}
+        />
+      ) : null}
 
       <form className="v-dledit-form" onSubmit={add}>
         <div className="v-dledit-row">

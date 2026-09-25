@@ -303,7 +303,11 @@ export const api = {
    * decision): mint, grant, finish-upload, delete page, delete file, and
    * `publishSiteConfig` above. Required arguments rather than optional ones, for
    * the reason the admin calls give — a caller cannot omit it and meet the 401
-   * in production. Saves, edits, ordering and upload parts stay session-only.
+   * in production. Revoking a code and removing a grant joined them on
+   * 2026-09-24 (review item 18): withdrawing is a release in reverse. Saves to a
+   * LIVE page — its row, its blocks, a file's details — ask too, reactively
+   * (`RELEASE_WORDING.live`), so their proof is optional here. Drafts, ordering
+   * and upload parts stay session-only.
    */
   adminDownloadMint: (body: {
     label: string;
@@ -313,8 +317,8 @@ export const api = {
     days: number;
     authSecret: string;
   }) => post<{ code: string }>("/api/admin/downloads/mint", body),
-  adminDownloadRevoke: (ref: string) =>
-    post<{ ok: true }>("/api/admin/downloads/revoke", { ref }),
+  adminDownloadRevoke: (ref: string, authSecret: string) =>
+    post<{ ok: true }>("/api/admin/downloads/revoke", { ref, authSecret }),
 
   adminPageSave: (body: Record<string, unknown>) =>
     post<{ ok: true; slug: string }>("/api/admin/downloads/page", body),
@@ -322,8 +326,12 @@ export const api = {
     post<{ ok: true }>("/api/admin/downloads/page/delete", { slug, authSecret }),
   adminPageOrder: (slugs: string[]) =>
     post<{ ok: true }>("/api/admin/downloads/page/order", { slugs }),
-  adminBlocksSave: (slug: string, blocks: DownloadBlock[]) =>
-    post<{ ok: true }>("/api/admin/downloads/blocks", { slug, blocks }),
+  adminBlocksSave: (slug: string, blocks: DownloadBlock[], authSecret?: string) =>
+    post<{ ok: true }>("/api/admin/downloads/blocks", {
+      slug,
+      blocks,
+      ...(authSecret ? { authSecret } : {}),
+    }),
   adminFileSave: (body: Record<string, unknown>) =>
     post<{ ok: true; id: string }>("/api/admin/downloads/file", body),
   adminFileDelete: (id: string, authSecret: string) =>
@@ -355,8 +363,8 @@ export const api = {
     days: number;
     authSecret: string;
   }) => post<{ ok: true }>("/api/admin/downloads/grant", body),
-  adminGrantRemove: (id: number) =>
-    post<{ ok: true }>("/api/admin/downloads/grant/delete", { id }),
+  adminGrantRemove: (id: number, authSecret: string) =>
+    post<{ ok: true }>("/api/admin/downloads/grant/delete", { id, authSecret }),
 };
 
 /**

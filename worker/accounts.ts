@@ -202,6 +202,13 @@ export interface AccountRow {
   is_operator: number;
   created_at: number;
   reset_at: number | null;
+  /**
+   * The session epoch (migration 0010): a session that began before this is
+   * refused. Optional in the type only because the sign-in and passkey lookups
+   * that build an `AccountRow` never need it; `accountById`, which
+   * `requireAccount` reads, always selects it.
+   */
+  sessions_after?: number;
 }
 
 // Request plumbing ------------------------------------------------------------
@@ -467,10 +474,60 @@ export async function buckets(
   // literal is a bucket name and not an address, so nothing is written down
   // either way.
   const ip = request.headers.get("cf-connecting-ip") ?? "local";
-  const names = [`client:${await clientKey(ip, env.RATE_SALT_SEED)}`];
+  const client = await clientKey(ip, env.RATE_SALT_SEED);
+  const names = [`client:${client}`];
   if (handleLower) {
     const key = toHex(await hmac(env.RATE_SALT_SEED, handleLower));
-    names.push(kind === "proof" ? `proof:${key}` : `account:${key}`);
+    if (kind === "proof") {
+      names.push(`proof:${key}`);
+    } else {
+      /*
+       * **Two buckets per handle on the anonymous routes, and the tight one is
+       * per (client, handle)** (2026-09-24, review item 10).
+       *
+       * This pushed `account:${key}` alone, at five attempts, and that bucket
+       * is reachable by anybody who knows a handle. Six wrong passwords from
+       * anywhere blocked the owner's *correct* password for fifteen minutes,
+       * and one request an hour held it there — a lockout any stranger could
+       * cause without guessing anything. The `proof` split above closed the
+       * same attack on the signed-in routes; this is the sign-in half.
+       *
+       * - `pair:` is keyed on the client *and* the handle, and keeps the tight
+       *   allowance of five. One address guessing at one handle is throttled
+       *   exactly as before — and it is throttled *alone*: the owner, from
+       *   anywhere else, never shares its bucket.
+       * - `account:` is still per handle, so guessing distributed across many
+       *   addresses stays capped, but at `HANDLE_FREE_ATTEMPTS`, sized so no
+       *   single address can fill it: `gate` refunds every bucket that said
+       *   yes when one says no, so a blocked pair stops feeding the handle
+       *   bucket at six.
+       *
+       * **The pair's "address" is the IPv6 /48, not the /64 the client bucket
+       * uses** (2026-09-24, audit item 56). Keyed on the /64, one free
+       * tunnel-broker /48 is 65,536 separate pairs, and six of them fill the
+       * handle ceiling: the lockout item 10 closed, reopened for anybody with a
+       * free IPv6 tunnel. At /48 it takes six /48s or six IPv4 addresses in one
+       * window — **cheap, not free, and not "a botnet"**: two free
+       * tunnel-broker sign-ups, or six cloud VMs for a few minutes, re-armed
+       * about hourly. That is the honest price of a per-handle ceiling, which
+       * cannot tell the owner's correct password from a stranger's wrong one
+       * before it has been checked. **Passkey sign-in is the mitigation** — it
+       * has no rate limiting (a failed attempt means forging a P-256
+       * signature), so an owner with a passkey is never locked out by this.
+       * Recovery-code sign-in goes through this same route and these same
+       * buckets, and `challenge` checks them too, so a locked handle is locked
+       * for password and recovery alike, with one retry time on both screens.
+       *
+       * The pair name is an HMAC of the already-HMAC'd, daily-rotating /48 key
+       * and the handle, so it names a Durable Object and nothing else; no
+       * address and no handle is stored, and §9's inventory is unchanged. For
+       * IPv4 the /48 key and the client key are the same string. `client:`
+       * stays index 0 — `recordSuccess` and `signup` depend on it.
+       */
+      const neighbourhood = await clientKey(ip, env.RATE_SALT_SEED, Date.now(), 48);
+      names.push(`pair:${toHex(await hmac(env.RATE_SALT_SEED, `${neighbourhood}:${handleLower}`))}`);
+      names.push(`account:${key}`);
+    }
   }
   return names;
 }
@@ -487,6 +544,17 @@ export async function buckets(
 const CLIENT_FREE_ATTEMPTS = 50;
 const ACCOUNT_FREE_ATTEMPTS = 5;
 /**
+ * The per-handle ceiling on the anonymous routes, across every address
+ * (2026-09-24). Six times what one address can put into it before its own
+ * `pair:` bucket blocks (five free, plus the one that crosses), so a single
+ * stranger can never lock the owner out. Six IPv4 addresses or six IPv6 /48s
+ * inside one window can — two free tunnel-broker accounts, or a handful of
+ * cloud VMs: cheap, not free — and that is the distributed guess this bucket
+ * caps. Past it the backoff is the shared one: doubling, to the hour ceiling.
+ * Passkey sign-in is untouched by all of it; see `buckets`.
+ */
+const HANDLE_FREE_ATTEMPTS = 30;
+/**
  * Account creations from one address before backoff (2026-08-13 audit). Signup
  * used to lean on the client bucket alone, whose allowance of fifty is sized
  * for a household's sign-in typos — as a creation quota it let one script mint
@@ -497,12 +565,17 @@ const ACCOUNT_FREE_ATTEMPTS = 5;
  */
 const SIGNUP_FREE_ATTEMPTS = 12;
 
-function freeFor(name: string): number {
+export function freeFor(name: string): number {
   if (name.startsWith("client:")) return CLIENT_FREE_ATTEMPTS;
   if (name.startsWith("signup:")) return SIGNUP_FREE_ATTEMPTS;
-  // `account:` and `proof:` both land here, and deliberately share the figure:
-  // they are two buckets so that one cannot be filled by the other (see
-  // `buckets`), not because a re-proof deserves a looser allowance.
+  // The anonymous per-handle ceiling — see `buckets`. Loose because it is
+  // shared with every stranger; `pair:` below is the tight one.
+  if (name.startsWith("account:")) return HANDLE_FREE_ATTEMPTS;
+  // `pair:` and `proof:` land here, and deliberately share the figure: they are
+  // separate buckets so that one cannot be filled by the other (see `buckets`),
+  // not because a re-proof deserves a looser allowance. `second-factor:` lands
+  // here too and must: it is reachable only by somebody who already holds the
+  // password, and five is what makes six digits a real second factor.
   return ACCOUNT_FREE_ATTEMPTS;
 }
 
@@ -664,7 +737,7 @@ export function auditStatement(env: Env, actorId: string | null, action: string,
 
 async function accountById(env: Env, id: string): Promise<AccountRow | null> {
   return env.DB.prepare(
-    "SELECT id, handle, is_operator, created_at, reset_at FROM accounts WHERE id = ?",
+    "SELECT id, handle, is_operator, created_at, reset_at, sessions_after FROM accounts WHERE id = ?",
   )
     .bind(id)
     .first<AccountRow>();
@@ -689,7 +762,82 @@ export async function requireAccount(request: Request, env: Env): Promise<Accoun
 
   const account = await accountById(env, token.subject);
   if (!account) throw new BadRequest("Sign in to do that.", 401);
+
+  /*
+   * **A session that began before the account's epoch is over** (2026-09-24,
+   * TODO "Needs the client" item 2, audit item 58). `issuedAt` is when the
+   * session FIRST began — inside the MAC and carried unchanged across every
+   * refresh (`session.ts`) — so a stolen cookie cannot refresh its way past
+   * this. A password change, an operator password reset and an operator TOTP
+   * reset stamp `sessions_after` (`endSessionsStatement`); the request that
+   * changed the password is re-issued a fresh session in its own response.
+   * Strictly less-than, so that re-issued session — minted in the same
+   * millisecond or later — stands.
+   */
+  if (token.issuedAt < (account.sessions_after ?? 0)) throw new BadRequest("Sign in to do that.", 401);
   return account;
+}
+
+/**
+ * End every session this account holds that began before `at` — the statement,
+ * so it rides in the same transactional batch as the credential change that
+ * warrants it (audit item 58).
+ *
+ * `MAX` so the epoch only ever moves forward: two isolates whose clocks
+ * disagree by a millisecond must not let a later event re-open a window an
+ * earlier one closed.
+ */
+export function endSessionsStatement(env: Env, accountId: string, at: number) {
+  return env.DB.prepare("UPDATE accounts SET sessions_after = MAX(sessions_after, ?) WHERE id = ?").bind(
+    at,
+    accountId,
+  );
+}
+
+/**
+ * The account's machine ids — read BEFORE anything that could cascade them
+ * away (`admin.deleteAccount`).
+ */
+export async function ownedMachineIds(env: Env, accountId: string): Promise<string[]> {
+  const { results } = await env.DB.prepare("SELECT id FROM machines WHERE owner_id = ?")
+    .bind(accountId)
+    .all<{ id: string }>();
+  return results.map((row) => row.id);
+}
+
+/**
+ * **Hang up every live signalling socket on these machines** (audit item 59,
+ * the K2 half of the session epoch).
+ *
+ * A signalling socket is authenticated once, at the upgrade, and never again —
+ * so ending the sessions alone left every open agent and browsing socket
+ * relaying, exactly as `deleteAccount` found in 2026-09-14. This is that
+ * route's own fan-out, moved here so every event that ends sessions uses the
+ * one copy: the signalling object's existing `/shutdown`, which is what
+ * `machines.remove()` already calls. **Call it AFTER the epoch has committed**:
+ * a socket that reconnects then presents a session `requireAccount` now
+ * refuses, so the hang-up cannot be dialled around.
+ *
+ * Best-effort and bounded by `MACHINES_MAX`: a Durable Object hiccup must not
+ * fail a credential change that has already committed. The owner's own agent
+ * (the kiosk) is hung up too — deliberately — with `reason=signed-out`, which
+ * closes without `machine-removed`: the kiosk keeps retrying and is admitted
+ * again once that browser is signed back in. It does not forget its pairing.
+ */
+export async function hangUpSignalling(
+  env: Env,
+  machineIds: string[],
+  why: "signed-out" | "removed" = "signed-out",
+): Promise<void> {
+  // `removed` is for machines that are actually gone (account deletion): the
+  // object tells every socket so and the kiosk offers to forget the pairing.
+  const url = why === "removed" ? "https://signal/shutdown" : "https://signal/shutdown?reason=signed-out";
+  await Promise.allSettled(
+    machineIds.map(async (id) => {
+      const stub = env.SIGNAL.get(env.SIGNAL.idFromName(id));
+      await stub.fetch(url, { method: "POST" });
+    }),
+  );
 }
 
 /**
@@ -995,6 +1143,15 @@ export async function challenge(request: Request, env: Env): Promise<Response> {
 
   // Checked but not consumed: asking for a salt is not a failable attempt, and
   // counting it would let anyone lock an owner out by requesting theirs.
+  //
+  // **The same three buckets `signin` reserves on, deliberately** (2026-09-24).
+  // This route cannot know whether a password or a recovery code follows, and
+  // both go through `signin` and those buckets — so a handle whose `account:`
+  // ceiling is full is refused here with the retry time `signin` would give,
+  // before the browser spends a second on PBKDF2 for an attempt that cannot be
+  // made. Recovery is not an exit from that lockout, and must not be made one
+  // by loosening only this check: the owner's way past it is a passkey, which
+  // no bucket touches (`buckets`, and `docs/INVARIANTS.md`).
   await assertAllowed(env, await buckets(request, env, handleLower));
 
   // **The salt comes from any credential that has one, not only the password.**
@@ -1635,19 +1792,28 @@ export async function changePassword(request: Request, env: Env): Promise<Respon
   await recordSuccess(env, names);
 
   const nextHash = new Uint8Array(await authHash(env.AUTH_PEPPER, toBase64Url(nextSecret)));
+  const now = Date.now();
+  const machines = await ownedMachineIds(env, account.id);
 
   await env.DB.batch([
     env.DB.prepare(
       "UPDATE credentials SET auth_hash = ?, kdf_iterations = ?, last_used_at = ? WHERE id = ?",
-    ).bind(toBlob(nextHash), iterations, Date.now(), credential.id),
+    ).bind(toBlob(nextHash), iterations, now, credential.id),
     env.DB.prepare(
       "UPDATE key_slots SET wrapped_grant_key = ?, alg = ? WHERE credential_id = ?",
     ).bind(toBlob(slot), alg, credential.id),
     env.DB.prepare("UPDATE accounts SET reset_at = NULL WHERE id = ?").bind(account.id),
+    // Every other session ends with the old password (audit item 58) …
+    endSessionsStatement(env, account.id, now),
     auditStatement(env, account.id, "auth.password.changed", null),
   ]);
+  // … and so does every signalling socket, now that no old session can re-dial.
+  await hangUpSignalling(env, machines);
 
-  return json({ status: "changed" });
+  // … except this one: the owner stays signed in where they made the change.
+  // A fresh session, not a refresh — a refresh carries the old `issuedAt`,
+  // which the epoch just refused.
+  return withSession(env, account.id, noStore(json({ status: "changed" })));
 }
 
 /**
@@ -1703,6 +1869,11 @@ export async function setPassword(request: Request, env: Env): Promise<Response>
   // holds the session could set the password repeatedly, which is the property
   // `TokenPurpose` in `./session` already claims ("a one-shot capability for the
   // next request") and did not have.
+  //
+  // **This read is the friendly early answer, not the enforcement** (2026-09-24,
+  // audit item 57). Two concurrent requests on one ticket both pass it before
+  // either writes; the same test rides in every write's own WHERE clause below,
+  // and zero changes there is the refusal.
   const unspent = await env.DB.prepare(
     "SELECT 1 AS ok FROM key_slots WHERE credential_id = ? AND account_id = ?",
   )
@@ -1719,12 +1890,28 @@ export async function setPassword(request: Request, env: Env): Promise<Response>
 
   const nextHash = new Uint8Array(await authHash(env.AUTH_PEPPER, toBase64Url(nextSecret)));
   const now = Date.now();
+  const machines = await ownedMachineIds(env, account.id);
 
   const existing = await env.DB.prepare(
     "SELECT id FROM credentials WHERE account_id = ? AND kind = 'password'",
   )
     .bind(account.id)
     .first<{ id: string }>();
+
+  /*
+   * **"The ticket is unspent" is true at write time or nothing is written**
+   * (2026-09-24, audit item 57). The redeemed recovery code's key slot is the
+   * unspent marker, and the last statement of this batch deletes it — so every
+   * statement before that one carries the same EXISTS, and a second request on
+   * the same ticket, serialised behind the first by D1, finds it gone and
+   * changes nothing. Checked only by the read above, the UPDATE branch was
+   * check-then-act: two concurrent requests both passed it and both wrote, the
+   * later password silently replacing the earlier while both were told "set".
+   * The INSERT branch had the UNIQUE index to fall back on (item 51); the
+   * UPDATE branch had nothing. Now neither leans on the index alone.
+   */
+  const unspentGuard = "EXISTS (SELECT 1 FROM key_slots WHERE credential_id = ? AND account_id = ?)";
+  const guardArgs = [redeemedCredentialId, account.id];
 
   // As in `changePassword`, the credential and its slot move together or not at
   // all: a new auth hash beside an old slot is a password that signs in and then
@@ -1734,10 +1921,11 @@ export async function setPassword(request: Request, env: Env): Promise<Response>
   if (existing) {
     statements.push(
       env.DB.prepare(
-        "UPDATE credentials SET auth_hash = ?, kdf_iterations = ?, last_used_at = ? WHERE id = ?",
-      ).bind(toBlob(nextHash), iterations, now, existing.id),
-      env.DB.prepare("UPDATE key_slots SET wrapped_grant_key = ?, alg = ? WHERE credential_id = ?")
-        .bind(toBlob(slot), alg, existing.id),
+        `UPDATE credentials SET auth_hash = ?, kdf_iterations = ?, last_used_at = ? WHERE id = ? AND ${unspentGuard}`,
+      ).bind(toBlob(nextHash), iterations, now, existing.id, ...guardArgs),
+      env.DB.prepare(
+        `UPDATE key_slots SET wrapped_grant_key = ?, alg = ? WHERE credential_id = ? AND ${unspentGuard}`,
+      ).bind(toBlob(slot), alg, existing.id, ...guardArgs),
     );
   } else {
     const saltRow = await env.DB.prepare(
@@ -1752,7 +1940,8 @@ export async function setPassword(request: Request, env: Env): Promise<Response>
     const credentialId = newId();
     statements.push(
       env.DB.prepare(
-        "INSERT INTO credentials (id, account_id, kind, label, created_at, last_used_at, auth_hash, kdf_salt, kdf_iterations) VALUES (?, ?, 'password', 'password', ?, ?, ?, ?, ?)",
+        `INSERT INTO credentials (id, account_id, kind, label, created_at, last_used_at, auth_hash, kdf_salt, kdf_iterations)
+         SELECT ?, ?, 'password', 'password', ?, ?, ?, ?, ? WHERE ${unspentGuard}`,
       ).bind(
         credentialId,
         account.id,
@@ -1761,56 +1950,85 @@ export async function setPassword(request: Request, env: Env): Promise<Response>
         toBlob(nextHash),
         toBlob(fromBlob(saltRow.salt)),
         iterations,
+        ...guardArgs,
       ),
       env.DB.prepare(
-        "INSERT INTO key_slots (id, account_id, credential_id, wrapped_grant_key, alg, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-      ).bind(newId(), account.id, credentialId, toBlob(slot), alg, now),
+        `INSERT INTO key_slots (id, account_id, credential_id, wrapped_grant_key, alg, created_at)
+         SELECT ?, ?, ?, ?, ?, ? WHERE ${unspentGuard}`,
+      ).bind(newId(), account.id, credentialId, toBlob(slot), alg, now, ...guardArgs),
     );
   }
 
   statements.push(
+    // The operator reset that set this, if any, has now been answered by the
+    // owner choosing their own password, so the notice on their account stops —
+    // and every other session ends with the password it was opened under
+    // (audit item 58). Guarded, so a losing request moves neither.
+    env.DB.prepare(
+      `UPDATE accounts SET reset_at = NULL, sessions_after = MAX(sessions_after, ?) WHERE id = ? AND ${unspentGuard}`,
+    ).bind(now, account.id, ...guardArgs),
+    // Guarded too, so the audit never records a set the guard refused.
+    env.DB.prepare(
+      `INSERT INTO audit (id, actor_id, action, target, at) SELECT ?, ?, 'auth.password.set', NULL, ? WHERE ${unspentGuard}`,
+    ).bind(newId(), account.id, now, ...guardArgs),
     // A spent recovery code cannot sign in — `findCredentials` filters on
     // `used_at IS NULL` — so the slot it left behind is ciphertext nothing can
     // ever reach. `completeSignIn` keeps it deliberately, because until this
     // moment it was the only copy of the grant key the browser could still open.
     // That copy has now been re-sealed under the new password, so the dead one
-    // goes.
+    // goes. **Last, because it spends the ticket**: the guard above reads the
+    // very slot this deletes.
     env.DB.prepare(
       "DELETE FROM key_slots WHERE credential_id IN (SELECT id FROM credentials WHERE account_id = ? AND kind = 'recovery' AND used_at IS NOT NULL)",
     ).bind(account.id),
-    // The operator reset that set this, if any, has now been answered by the
-    // owner choosing their own password. The notice on their account stops.
-    env.DB.prepare("UPDATE accounts SET reset_at = NULL WHERE id = ?").bind(account.id),
-    auditStatement(env, account.id, "auth.password.set", null),
   );
 
   /**
-   * The UNIQUE violation is caught, because losing this race must not look like
-   * a failure (2026-08-14 review).
+   * The answer a request that lost a race gets **has to be true** (2026-09-24,
+   * review item 16, and for the UPDATE branch audit item 57).
    *
-   * Two concurrent set-passwords on one ticket both find no existing password
-   * row and both build an INSERT. A commits; B violates
-   * `idx_credentials_one_password`, which is not a `BadRequest`, so `index.ts`
-   * turns it into a generic 500 — on the screen that says "do not close this
-   * page until it succeeds", for the person whose recovery code is already
-   * spent. Retrying then fails differently: A's batch has already deleted the
-   * redeemed credential's key slot, so the ticket check refuses and tells them
-   * to burn a second of their ten codes. For an operation that *succeeded*.
-   *
-   * `signup` and `passkeys.register` already catch their own UNIQUE this way.
-   * No privilege is involved — both requests are the same legitimate ticket
-   * holder — so the honest answer is the one the winner got.
+   * Two ways to lose. On the INSERT branch both requests may find no password
+   * row and both build an INSERT; the second violates
+   * `idx_credentials_one_password` inside its batch, which rolls back. On
+   * either branch the second may instead find the ticket already spent by the
+   * guard and write nothing at all. Either way nothing this request sent was
+   * written, so the stored hash is compared with this request's: equal means
+   * the account holds exactly the password asked for (a double-submit) and
+   * "set" is true; different means it was not set, and the caller is told so —
+   * 409, naming what happened, so nobody burns a recovery code retrying
+   * something that cannot succeed. Refuse, never repair: this password is not
+   * written over the other, because that request was also told "set".
    */
-  try {
-    await env.DB.batch(statements);
-  } catch (error) {
-    if (String(error).includes("UNIQUE") || String(error).includes("constraint")) {
+  const lostRace = async (): Promise<Response> => {
+    const stored = await env.DB.prepare(
+      "SELECT auth_hash FROM credentials WHERE account_id = ? AND kind = 'password'",
+    )
+      .bind(account.id)
+      .first<{ auth_hash: unknown }>();
+    if (stored && timingSafeEqual(nextHash, fromBlob(stored.auth_hash))) {
       return json({ status: "set" });
     }
-    throw error;
-  }
+    throw new BadRequest(
+      "Another request set this account's password a moment ago, and it was not the one you just typed. Sign in with the password that was set there.",
+      409,
+    );
+  };
 
-  return json({ status: "set" });
+  let results: D1Result[];
+  try {
+    results = await env.DB.batch(statements);
+  } catch (error) {
+    if (!String(error).includes("UNIQUE") && !String(error).includes("constraint")) throw error;
+    return lostRace();
+  }
+  if ((results[0]?.meta?.changes ?? 0) === 0) return lostRace();
+
+  // After the epoch has committed, so a hung-up socket cannot re-dial on an
+  // old session.
+  await hangUpSignalling(env, machines);
+
+  // The one session that survives the epoch is the one that set the password.
+  return withSession(env, account.id, noStore(json({ status: "set" })));
 }
 
 // Two-factor enrolment --------------------------------------------------------

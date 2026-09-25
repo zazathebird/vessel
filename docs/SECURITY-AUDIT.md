@@ -15,6 +15,169 @@ cited by number elsewhere. Findings are grouped as before: **fixed**, **checked 
 
 ---
 
+## 2026-09-24 (later) — the reviewers' second Worker list (items 55–60)
+
+Each finding was re-verified against the code before it was fixed. **Fixed on a branch, not
+deployed.** Migration **0010** must be applied before the Worker that reads it (`npm run
+db:migrate:remote`, then `npm run deploy`). Four of the six gates run the real routes over a real
+SQLite (`node:sqlite` with every migration applied), because the fixes are WHERE clauses; every gate
+was **break-verified** by reverting its fix in place.
+
+### 55. `beginUpload` took a live file off its page on the session alone (medium)
+
+`beginUpload` set `uploaded_at = NULL` on the row before any bytes moved, and it is session-only —
+so a stolen operator cookie could darken every published download, one begin per file, and every
+code for those files then redeemed as invalid (`opened`'s `quiet` rule). An honest replacement that
+failed half-way left customers with nothing. Item 53 described begin and parts as "session-only" as
+if they could not hurt a live page; this one could. **Fix**: `beginUpload` writes nothing to the row.
+An R2 multipart upload is invisible until `complete()`, which swaps the object in one step, so the
+old bytes serve until the password-proved `finishUpload`, which then sets size, content type and
+`uploaded_at` in one statement. An abort or a closed tab leaves the old file exactly as it was. Gate:
+begin, a part, abort, and an unproven finish all leave the old bytes downloadable; the proven finish
+serves the new ones. Red against the old begin at its first download.
+
+### 56. IPv6 /64 rotation refilled item 50's lockout (low–medium)
+
+Item 50's `pair:` bucket was keyed on the client key, which cuts IPv6 at the /64 — and one free
+tunnel-broker /48 is 65,536 /64s, so six of them filled the per-handle ceiling (30) and locked the
+owner out of password and recovery sign-in, re-armed about hourly. **Fix**: the pair is keyed on the
+/48 (`normaliseIp(ip, 48)`); IPv4 is unchanged. The `client:` bucket stays at the /64 on
+`crypto.ts`'s documented reasoning (it is shared by every handle; a /48 there is the neighbours'
+outage). **Item 50's wording was wrong** and is corrected there: locking an owner out takes six IPv4
+addresses or six /48s in one window — two free tunnel-broker sign-ups or a handful of cloud VMs —
+which is cheap, not "paid for" in any sense that stops anybody. **Passkey sign-in is the
+mitigation**: no bucket touches it. Recovery-code sign-in shares these buckets and `challenge` checks
+them, deliberately. Gate: forty /64s from one /48 guessing at one handle — 34 refused, and the owner
+signs in from elsewhere; red against a /64 pair key (the owner gets 429).
+
+### 57. `setPassword`'s UPDATE branch checked the ticket before the write (low)
+
+The unspent-slot check ran as a read ahead of the batch, so two concurrent set-passwords on one
+ticket for an account that still had a password row both passed it and both wrote — the second
+password silently replaced the first while both requests were told "set". Item 51 fixed the
+INSERT branch's answer; this branch had no index to fall back on. **Fix**: every statement before
+the one that spends the ticket carries `EXISTS (the redeemed slot)` in its own WHERE (the INSERT
+branch's inserts become `INSERT … SELECT … WHERE` the same guard), the audit row too, and zero
+changes goes to item 51's truthful comparison. Gate: two requests held at the batch until both have
+passed every read — different passwords give one 200 and one 409 with the 200's password stored; the
+same password gives two 200s; a third request on the spent ticket is 401. Red against the unguarded
+UPDATE (200 and 200).
+
+### 58. Sessions survived a password change and an operator reset (TODO *Needs the client* 2)
+
+Stateless tokens, no session table (§9), so nothing ended a session early: a stolen cookie outlived
+the owner changing their password, an operator password reset and an operator TOTP reset, for up to
+the twelve-hour ceiling. **Fix**: `accounts.sessions_after` (migration 0010, `NOT NULL DEFAULT 0`, so
+every existing token passes and applying it signs nobody out), stamped by `changePassword`,
+`setPassword`, `admin.resetPassword` and `admin.resetTotp` inside their own batches (and, for the two
+guarded routes, inside their guards); `requireAccount` refuses a token whose first-issued time is
+earlier. The token already carried that time inside its MAC. The request that changed the password
+is re-issued a fresh session. §9's inventory lists the column. Gate: a stolen session and the
+changing tab's own old cookie are refused after a password change while the re-issued one works;
+the owner is signed out by an operator reset and a TOTP reset while the operator is not. Red when
+`requireAccount` ignores the column.
+
+### 59. The same events left signalling sockets up (K2)
+
+A signalling socket is authenticated once at the upgrade, so ending sessions alone left open agent
+and browsing sockets relaying. **Fix**: the four events call `hangUpSignalling` — `deleteAccount`'s
+existing `/shutdown` fan-out, moved into `accounts.ts` so there is one copy — after the epoch has
+committed, so a re-dial presents a refused session. No change to `signal.ts`, `machines.ts` or
+`index.ts`. Gate: the item-58 gate records `/shutdown` for the owner's machine on each of the three
+events; red with the helper emptied.
+
+### 60. A download ticket outlived its code (K4)
+
+The `download` ticket was a thirty-minute snapshot of what a code opened. Revoking the code, or
+deleting its page or file, did not end tickets already redeemed — and slugs and file ids are
+re-usable, so a page recreated at the same slug inside that window opened to the old customer's
+ticket. **Fix**: the ticket's subject is `REF|list` (the code's 16-hex revoke handle, inside the
+MAC); `resolveAccess` re-reads the code on every use (`ticketStillOpens`: row present and not
+revoked, then the same `opened` `claim` asked) and grants only the intersection. Revoke and delete
+now end the ticket at once; a ticket without a ref is refused. Uses and expiry are not re-checked,
+deliberately (`docs/DECISIONS.md`). Gate: a revoked page code's ticket, and a file code's ticket
+after its page is deleted and recreated at the same slug, both 403; a ref-less ticket 403; both
+controls 200. Red against the snapshot ticket.
+
+**Secret rotation** (review note N4) is documented, not implemented: `docs/BREAK-GLASS.md`,
+*Rotating a secret*.
+
+---
+
+## 2026-09-24 — the review's Worker findings (TODO items 10, 16, 17, 18, 21)
+
+From the four parallel reviews of 2026-09-24 (`TODO.md`, *Review of 2026-09-24*). **Fixed on a
+branch, not deployed.** Every fix has a driven gate in `npm run check` that was **break-verified**:
+each fix was reverted in place and its gate went red naming the fault, then restored. `npm run
+test:auth` gained the outside view of each.
+
+### 50. A stranger could lock the owner out of password sign-in (item 10)
+
+`signin` reserved an attempt on a per-handle `account:` bucket (five free) before checking the
+password, and that bucket was reachable by anybody who knew the handle — six wrong passwords from
+anywhere blocked the owner's correct one for fifteen minutes, one request an hour kept it there.
+Passkeys still worked. **Fix** (`buckets` in `worker/accounts.ts`): the anonymous routes now reserve
+on three buckets — `client:` (50, unchanged), `pair:` keyed on the client *and* the handle (five, the
+old tight allowance), and `account:` per handle at `HANDLE_FREE_ATTEMPTS` = 30. `gate` already
+refunds every bucket that said yes when one says no, so a blocked pair stops feeding the handle
+bucket after six: **one address can no longer lock the owner out; six in one window can**,
+which is the distributed guess the handle bucket exists to cap. (**Corrected by item 56**: six
+addresses is cheap — and at the /64 this pair was first keyed on, one free IPv6 tunnel was enough.
+The pair is now keyed on the /48, and passkey sign-in is the real mitigation.) No new stored field — the pair name
+is an HMAC of the daily-rotating client key and the handle, naming a Durable Object (§9 unchanged).
+Applies to password and recovery sign-in, `challenge`'s check, download-code redemption (keyed on
+the code prefix) and TOTP-enrol confirmation. **Deliberately not applied to the `second-factor:`
+bucket**: it is reachable only by somebody who already holds the password, and five tries is what
+makes six digits a second factor — spreading it would buy a password-holder six times the guesses.
+Gate: the real `RateLimiter` class driven through `signin` — one address is blocked at attempt 7,
+the owner from another address signs in, and 32 distinct addresses reach the handle ceiling. Red
+against the old single bucket (the owner got 429).
+
+### 51. `setPassword` said "set" for a password the account did not have (item 16)
+
+The UNIQUE branch (two concurrent set-passwords on one recovery ticket) returned `{status:"set"}`
+unconditionally, reasoning that the winner's answer was the honest one. The loser's batch had rolled
+back, so if the two tabs sent *different* passwords the loser was told a password was set that was
+never written. **Fix**: on the conflict the stored hash is compared with the loser's; equal (a
+double-submit) is still "set", different is a 409 saying another request set a different password.
+Gate: `setPassword` driven over a D1 stub whose batch throws D1's UNIQUE error.
+
+### 52. Passkey labels skipped the display-name filter (item 17)
+
+`passkeys.register` trimmed and sliced the label, so bidi overrides and zero-width characters
+reached the owner's own passkey list — the list they choose which row to *remove* from — and an
+over-long name was cut rather than refused. **Fix**: `passkeyLabel` routes it through
+`expectDisplayName`, the filter machine and drive names already use; blank still means "passkey".
+
+### 53. A stolen operator session could rewrite live download pages and withdraw access (item 18)
+
+Inside the 2026-09-06 "releases, not writes" line, but the line was drawn at *who can get it* and
+missed *what they are told*: with the cookie alone, a live page's title, intro, notice, blocks and a
+file's name, blurb and caveat could be rewritten — the text a customer follows before running what
+they downloaded — and every code revoked and every grant removed. **Fix**: `revokeCode` and
+`removeGrant` take the password (withdrawal is a release in reverse); `savePage`, `saveBlocks` and
+`saveFile` ask whenever the page is **live now** (stored status, so unpublishing asks too), with a
+new `RELEASE_WORDING.live` the editor recognises. Drafts, reordering, new file rows and upload parts
+stay session-only. (**Item 55**: `beginUpload`, also session-only, was not harmless — it took a live
+file down. It now writes nothing to the row.) The editor asks through the existing `ProofDialog`: reactively for the saves,
+and in the gesture for revoke and remove. The status read is check-then-act, like the `widens` read
+beside it — the only race is a stolen cookie against the operator's own password-proved publish in
+the same millisecond. Gate: all five routes driven bare (401, nothing written), with the password
+(written), and — for the saves — on a draft (written, no password).
+
+### 54. Header and health hygiene (item 21)
+
+`Cross-Origin-Resource-Policy: same-origin` is now on every hardened response (`harden`, moved with
+`health` into `worker/hardening.ts` so the gate can import them). Everything the site loads is
+same-origin; unfurlers fetch server-side where CORP is not enforced. `/api/health` memoises its
+answer per isolate for thirty seconds, so an anonymous loop no longer costs a D1 query and a Durable
+Object call per hit; a fresh deploy is a fresh isolate, so the first answer after a deploy is always
+a real probe, and `docs/HANDOFF.md`'s `{"ok":true,"tables":8}` is unchanged. **HSTS `preload` was
+not added** — a one-way door, and not this pass's call. The rest of item 21 (CAA, font preload) is
+dashboard or front-end work and was not in scope.
+
+---
+
 ## 2026-09-07 — the fourth pass
 
 Six of seven reviewers read their slice; the **setup and host scripts slice was never read** (its
@@ -1331,8 +1494,10 @@ re-litigate them:
   token's issue time; migration 0008 and item 15. Still no challenge table.)**
 - **Signup's 409 handle disclosure** — awaiting client sign-off (list item 4); availability is
   inherently probeable.
-- **Sessions survive password change** (TODO #14) and **`/api/account/slot` authorises on the
-  session alone** (TODO #15) — both recorded residual exposures with their trigger conditions.
+- **Sessions survive password change** (TODO #14) — a recorded residual exposure with its trigger
+  condition. **(Corrected 2026-09-24: this line also said `/api/account/slot` authorises on the
+  session alone. It no longer does — `keySlot` demands the password through `assertPassword`, on
+  the `proof:` bucket, and the downloads editor uses it as its password check before an upload.)**
 - **`workers.dev` disabled** — verified live: NXDOMAIN.
 - **Client storage** — no secrets in `localStorage`/`sessionStorage`; only display config. The
   set-password ticket and wrapped slots live in closures, and the wrapping key is a
@@ -1402,6 +1567,8 @@ as "anything carrying account state". One line.
   hit. Comparable cost to the also-unauthenticated `challenge`, discloses only "migrations
   applied" and a rate-limit verdict for a sentinel bucket, and is what deploy verification leans
   on (`docs/HANDOFF.md`). Not worth gating today; revisit if it ever reports more than liveness.
+  **(2026-09-24, item 54: still ungated, now memoised per isolate for thirty seconds, so the
+  per-hit cost is gone.)**
 - **Saved setups (`worker/setups.ts`)** — session-gated, per-account scoped on every query,
   name and code shape-validated and length-capped, table bounded at 50 rows per account, ids
   server-minted. The upsert race it documents is a lost-update on one's own row, not a security

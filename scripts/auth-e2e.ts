@@ -65,6 +65,7 @@ import {
   fingerprintFromSdp,
   generateMachineKeypair,
   normalizeFingerprint,
+  signConnectProof,
   signFingerprint,
   verifyFingerprint,
 } from "../src/share/handshake";
@@ -411,6 +412,25 @@ async function wsRefusedStatus(
     const match = /status (\d+)/.exec((error as Error).message);
     return match ? Number(match[1]) : -2;
   }
+}
+
+/**
+ * Open an agent socket and answer its challenge with `privateKey`, through the
+ * real `signConnectProof` — what `src/share/agent.ts` does on `challenge`.
+ * Resolves with the socket and the frame that followed the proof (`accepted`
+ * for the machine key, `proof-refused` for any other).
+ */
+async function agentOpen(
+  machineId: string,
+  cookie: string | null,
+  privateKey: CryptoKey,
+): Promise<{ socket: SignalSocket; verdict: Record<string, any> }> {
+  const socket = await wsOpen(machineId, "agent", cookie);
+  const challenge = await socket.next();
+  if (challenge.type !== "challenge") return { socket, verdict: challenge };
+  const signature = await signConnectProof(privateKey, machineId, String(challenge.nonce));
+  socket.send({ type: "prove", signature: toBase64Url(signature) });
+  return { socket, verdict: await socket.next() };
 }
 
 /** A plausible SDP with a random DTLS fingerprint, for driving the ceremony. */
@@ -1186,7 +1206,17 @@ async function main(): Promise<void> {
     const samePassword = await refusal(() => changePasswordFlow(password, password));
     check("changePassword refuses the unchanged password locally", samePassword?.status === -1);
 
+    // Audit item 58, from outside: a password change ends every session that
+    // began before it — and re-issues the one that made the change.
+    const beforeChange = browser.cookie;
     await changePasswordFlow(password, secondPassword);
+    const meWith = async (cookie: string | null) =>
+      (await nodeFetch(`${BASE}/api/me`, { headers: { cookie: cookie ?? "", "cf-connecting-ip": browser.ip } })).status;
+    check("a session opened before the password change is signed out by it", (await meWith(beforeChange)) === 401);
+    check(
+      "the tab that changed the password stays signed in, on a re-issued session",
+      browser.cookie !== beforeChange && (await meWith(browser.cookie)) === 200,
+    );
     asBrowser(new BrowserSession());
     const stale = await refusal(() => signInFlow(flowsHandle, password));
     check("the old password no longer signs in", stale?.status === 401, stale?.message);
@@ -2098,6 +2128,7 @@ async function main(): Promise<void> {
   let ownerGrantKey!: CryptoKey;
   let rekeyedKeys!: Awaited<ReturnType<typeof generateMachineKeypair>>;
   let strangerCookie: string | null = null;
+  let ownerAuthSecret = ""; // for the live re-key in the signalling section
   {
     await signUpFlow(ownerHandle, password);
 
@@ -2113,6 +2144,7 @@ async function main(): Promise<void> {
       salt: fromBase64Url(kdf.salt),
       iterations: kdf.iterations,
     });
+    ownerAuthSecret = derived.authSecret;
     const wrongDerived = await deriveFromPassword("wrong password entirely", {
       salt: fromBase64Url(kdf.salt),
       iterations: kdf.iterations,
@@ -2197,6 +2229,11 @@ async function main(): Promise<void> {
     check("a drive adds — a label, never a path", drive.status === "added" && drive.drive.label === "Invoices");
     const driveGhost = await refusal(() => api.driveAdd("no-such-machine", "x"));
     check("a drive on an unknown machine is a 404", driveGhost?.status === 404, driveGhost?.message);
+    // N6 (2026-09-24): two drives rendering as one name on one machine is what
+    // `expectDisplayName` refuses in its invisible form; migration 0011 refuses
+    // the visible form, case-insensitively, and the handler says 409.
+    const driveDup = await refusal(() => api.driveAdd(machine1Id, "INVOICES"));
+    check("a duplicate drive label on one machine is refused, case-insensitively", driveDup?.status === 409, driveDup?.message);
 
     const listed = (await api.machinesList()).machines;
     const m1 = listed.find((m) => m.id === machine1Id)!;
@@ -2242,6 +2279,30 @@ async function main(): Promise<void> {
     strangerCookie = strangerSession.cookie;
 
     asBrowser(ownerSession);
+
+    /*
+     * N6 (2026-09-24): the drive cap rides in the INSERT's own WHERE. Eighteen
+     * adds at once against an empty machine: exactly sixteen may land. The
+     * count-then-insert this replaced let concurrent adds each count the others'
+     * absence; whether local workerd interleaves them is not guaranteed, so the
+     * deterministic break of this is `npm run check`'s driven race — this is the
+     * real database agreeing.
+     */
+    const burst = await Promise.all(
+      Array.from({ length: 18 }, (_, i) =>
+        api.driveAdd(machine2Id, `burst ${i}`).then(
+          () => "added",
+          (error: unknown) => (error instanceof ApiError ? error.status : -1),
+        ),
+      ),
+    );
+    const burstDrives = (await api.machinesList()).machines.find((m) => m.id === machine2Id)!.drives.length;
+    check(
+      "eighteen concurrent drive adds land exactly sixteen — the cap holds in the write",
+      burst.filter((r) => r === "added").length === 16 && burstDrives === 16 && burst.filter((r) => r === 400).length === 2,
+      `${JSON.stringify(burst)} → ${burstDrives} drives`,
+    );
+
     const m2gone = await api.machineRemove(machine2Id);
     check("a machine removes", m2gone.status === "removed");
     const m2goneTwice = await refusal(() => api.machineRemove(machine2Id));
@@ -2376,11 +2437,79 @@ async function main(): Promise<void> {
     // pass is not a check. The scheme test is the POST routes' and shared by
     // construction; see `foreignOrigin` in worker/index.ts.
 
-    // The agent tab arrives.
-    const agent = await wsOpen(machine1Id, "agent", cookie);
+    /*
+     * N1 (2026-09-24): a session opens an agent socket and buys nothing with it.
+     * The object challenges; only the machine key's signature makes the socket
+     * the agent. Before this, a stolen cookie's one `?role=agent` evicted the
+     * real agent for good and was relayed every owner offer, ICE and all.
+     */
+    const lurker = await wsOpen(machine1Id, "agent", cookie);
+    const lurkerChallenge = await lurker.next();
+    check(
+      "an agent socket is challenged before it is anything",
+      lurkerChallenge.type === "challenge" && /^[A-Za-z0-9_-]{43}$/.test(String(lurkerChallenge.nonce)),
+      JSON.stringify(lurkerChallenge),
+    );
+    const beforeProof = (await api.machinesList()).machines.find((m) => m.id === machine1Id)!;
+    check("an unproven agent socket is not presence", beforeProof.online === false);
+    check("an unproven agent socket does not stamp last_seen", beforeProof.lastSeen === null, String(beforeProof.lastSeen));
+
+    // The agent tab arrives and proves the machine key.
+    const { socket: agent, verdict: agentVerdict } = await agentOpen(
+      machine1Id,
+      cookie,
+      rekeyedKeys.keyPair.privateKey,
+    );
+    check("the machine key's proof is accepted", agentVerdict.type === "accepted", JSON.stringify(agentVerdict));
     const withAgent = (await api.machinesList()).machines.find((m) => m.id === machine1Id)!;
     check("presence reads from the socket, not a table", withAgent.online === true);
-    check("last_seen is stamped on agent connect", withAgent.lastSeen !== null);
+    check("last_seen is stamped when the agent proves itself", withAgent.lastSeen !== null);
+
+    // An impostor with the owner's session and any other key: refused, and the
+    // real agent is not so much as told about it.
+    const strangerKeys = await generateMachineKeypair();
+    const { socket: impostor, verdict: impostorVerdict } = await agentOpen(
+      machine1Id,
+      cookie,
+      strangerKeys.keyPair.privateKey,
+    );
+    const impostorClose = await impostor.next();
+    check(
+      "a session with the wrong key is refused as the agent",
+      impostorVerdict.type === "proof-refused" && impostorClose.type === "__closed" && impostorClose.code === 4003,
+      `${JSON.stringify(impostorVerdict)} ${JSON.stringify(impostorClose)}`,
+    );
+    const agentUndisturbed = await agent.next(800);
+    check("the real agent is not replaced by a refused proof", agentUndisturbed.type === "__timeout", JSON.stringify(agentUndisturbed));
+
+    // A captured proof is good for its own socket's challenge and no other.
+    const captured = await wsOpen(machine1Id, "agent", cookie);
+    const capturedChallenge = await captured.next();
+    const capturedProof = await signConnectProof(
+      rekeyedKeys.keyPair.privateKey,
+      machine1Id,
+      String(capturedChallenge.nonce),
+    );
+    const replayer = await wsOpen(machine1Id, "agent", cookie);
+    await replayer.next(); // its own, different challenge
+    replayer.send({ type: "prove", signature: toBase64Url(capturedProof) });
+    const replayVerdict = await replayer.next();
+    const replayClose = await replayer.next();
+    check(
+      "a proof replayed onto another socket is refused",
+      replayVerdict.type === "proof-refused" && replayClose.code === 4003,
+      `${JSON.stringify(replayVerdict)} ${JSON.stringify(replayClose)}`,
+    );
+    captured.close();
+
+    // A pending socket that speaks before proving is ended, not tolerated.
+    lurker.send({ type: "answer", to: crypto.randomUUID(), payload: {} });
+    const lurkerClose = await lurker.next();
+    check(
+      "an unproven agent socket that sends anything but a proof is closed",
+      lurkerClose.type === "__closed" && lurkerClose.code === 1008,
+      JSON.stringify(lurkerClose),
+    );
 
     // The owner's browsing tab arrives and is told the agent is there.
     const browserTab = await wsOpen(machine1Id, "browser", cookie);
@@ -2391,12 +2520,19 @@ async function main(): Promise<void> {
       JSON.stringify(hello),
     );
 
+    // A second pending agent socket, open while the ceremony runs: it must be
+    // relayed nothing.
+    const eavesdropper = await wsOpen(machine1Id, "agent", cookie);
+    await eavesdropper.next(); // its challenge
+
     // The connect ceremony (§13), with the real src/share crypto on both ends.
+    // v2 binds the browsing socket's peer id, from its `hello`.
     const offerSdp = fakeSdp();
     const ownerSignature = await signFingerprint(
       ownerGrantKey,
       "owner",
       machine1Id,
+      String(hello.peer),
       offerSdp.fingerprint,
     );
     browserTab.send({
@@ -2415,33 +2551,68 @@ async function main(): Promise<void> {
       JSON.stringify(offer).slice(0, 120),
     );
 
+    check(
+      "the object stamps the offer with the peer id it told the browser",
+      offer.from === hello.peer,
+      `${offer.from} vs ${hello.peer}`,
+    );
+    const leakToPending = await eavesdropper.next(800);
+    check(
+      "an unproven agent socket is relayed nothing",
+      leakToPending.type === "__timeout",
+      JSON.stringify(leakToPending).slice(0, 80),
+    );
+    eavesdropper.close();
+
     const rootBytes = fromBase64Url(ownerGrantPubkey);
     const fingerprint = fingerprintFromSdp(String(offer.payload.sdp))!;
     const signature = fromBase64Url(String(offer.payload.signature));
     check(
       "the agent verifies the owner's signed fingerprint against its trust root",
-      await verifyFingerprint(rootBytes, "owner", machine1Id, fingerprint, signature),
+      await verifyFingerprint(rootBytes, "owner", machine1Id, String(offer.from), fingerprint, signature),
     );
     const tampered = signature.slice();
     tampered[7] ^= 0xff;
     check(
       "a tampered signature is refused",
-      !(await verifyFingerprint(rootBytes, "owner", machine1Id, fingerprint, tampered)),
+      !(await verifyFingerprint(rootBytes, "owner", machine1Id, String(offer.from), fingerprint, tampered)),
     );
     check(
       "a signature for another machine is refused",
-      !(await verifyFingerprint(rootBytes, "owner", "other-machine", fingerprint, signature)),
+      !(await verifyFingerprint(rootBytes, "owner", "other-machine", String(offer.from), fingerprint, signature)),
     );
     check(
       "an owner signature cannot be replayed as an agent's",
-      !(await verifyFingerprint(rootBytes, "agent", machine1Id, fingerprint, signature)),
+      !(await verifyFingerprint(rootBytes, "agent", machine1Id, String(offer.from), fingerprint, signature)),
     );
+    // N2 (2026-09-24): the same offer relayed from another socket arrives
+    // stamped with that socket's id, and fails.
+    const replayTab = await wsOpen(machine1Id, "browser", cookie);
+    const replayHello = await replayTab.next();
+    replayTab.send({ type: "offer", payload: offer.payload });
+    const replayedOffer = await agent.next();
+    check(
+      "a captured offer replayed from another socket fails verification there",
+      replayedOffer.type === "offer" &&
+        replayedOffer.from === replayHello.peer &&
+        !(await verifyFingerprint(
+          rootBytes,
+          "owner",
+          machine1Id,
+          String(replayedOffer.from),
+          fingerprintFromSdp(String(replayedOffer.payload.sdp))!,
+          fromBase64Url(String(replayedOffer.payload.signature)),
+        )),
+      JSON.stringify(replayedOffer).slice(0, 100),
+    );
+    replayTab.close();
 
     const answerSdp = fakeSdp();
     const agentSignature = await signFingerprint(
       rekeyedKeys.keyPair.privateKey,
       "agent",
       machine1Id,
+      String(offer.from),
       answerSdp.fingerprint,
     );
     agent.send({
@@ -2461,6 +2632,7 @@ async function main(): Promise<void> {
         fromBase64Url(machine1Pubkey),
         "agent",
         machine1Id,
+        String(hello.peer),
         String(answer.payload.fingerprint),
         fromBase64Url(String(answer.payload.signature)),
       ),
@@ -2491,11 +2663,12 @@ async function main(): Promise<void> {
     const agentGone = (await api.machinesList()).machines.find((m) => m.id === machine1Id)!;
     check("presence reads offline once the socket is gone", agentGone.online === false);
 
-    // It returns; then a second tab takes over (§12 M).
-    const agentBack = await wsOpen(machine1Id, "agent", cookie);
+    // It returns; then a second tab takes over (§12 M) — a second tab holding
+    // the same machine key, which since 2026-09-24 means the same profile.
+    const { socket: agentBack } = await agentOpen(machine1Id, cookie, rekeyedKeys.keyPair.privateKey);
     const online = await browserTab.next();
     check("browsers are told when the agent returns", online.type === "agent-status" && online.online === true);
-    const usurper = await wsOpen(machine1Id, "agent", cookie);
+    const { socket: usurper } = await agentOpen(machine1Id, cookie, rekeyedKeys.keyPair.privateKey);
     const replaced = await agentBack.next();
     check("a second agent tab replaces the first, which is told", replaced.type === "replaced", JSON.stringify(replaced));
     const stillOnline = await browserTab.next();
@@ -2549,6 +2722,109 @@ async function main(): Promise<void> {
       garbledClose.type === "__closed" && garbledClose.code === 1003,
       JSON.stringify(garbledClose),
     );
+
+    /*
+     * N3 (2026-09-24): a per-socket frame budget beside the per-frame size cap.
+     * A browsing tab's honest burst — an offer and a trickle of candidates,
+     * several connections' worth — passes; a flood is closed with 1008.
+     */
+    const honest = await wsOpen(machine1Id, "browser", cookie);
+    await honest.next(); // its hello
+    for (let i = 0; i < 40; i += 1) honest.send({ type: "ice", payload: { candidate: `candidate:${i}` } });
+    let honestReplies = 0;
+    let honestClosed: Record<string, any> | null = null;
+    for (let i = 0; i < 40; i += 1) {
+      const frame = await honest.next(2000);
+      if (frame.type === "__closed" || frame.type === "__timeout") {
+        honestClosed = frame;
+        break;
+      }
+      honestReplies += 1;
+    }
+    check(
+      "a browsing tab's honest burst of forty frames is not throttled",
+      honestReplies === 40 && honestClosed === null,
+      `${honestReplies} replies, ${JSON.stringify(honestClosed)}`,
+    );
+    honest.close();
+
+    const flood = await wsOpen(machine1Id, "browser", cookie);
+    await flood.next(); // its hello
+    for (let i = 0; i < 400; i += 1) flood.send({ type: "ice", payload: { candidate: `candidate:${i}` } });
+    let floodEnd: Record<string, any> = { type: "__timeout" };
+    let floodReplies = 0;
+    for (let i = 0; i < 450; i += 1) {
+      const frame = await flood.next(3000);
+      if (frame.type === "__closed" || frame.type === "__timeout") {
+        floodEnd = frame;
+        break;
+      }
+      floodReplies += 1;
+    }
+    // Local workerd delivers a server-side close lazily (the `replaced` note
+    // below says the same), so the close code is asserted when it arrives and
+    // the relay stopping is asserted either way: every one of the 400 would be
+    // answered without the budget, and a closed socket answers nothing more.
+    flood.send({ type: "ice", payload: { candidate: "after" } });
+    const afterFlood = floodEnd.type === "__closed" ? floodEnd : await flood.next(1500);
+    check(
+      "a flood of frames on one socket is cut off, and closed with 1008",
+      floodReplies < 200 &&
+        (afterFlood.type === "__timeout" || (afterFlood.type === "__closed" && afterFlood.code === 1008)),
+      `${floodReplies} of 400 answered, then ${JSON.stringify(afterFlood)}`,
+    );
+    flood.close();
+
+    /*
+     * N5 (2026-09-24): re-keying while the agent is live hangs up on the old
+     * key. It used to leave the old agent "online", answering offers every
+     * browsing tab then refused as a failed identity check.
+     */
+    const { socket: liveOld } = await agentOpen(machine1Id, cookie, rekeyedKeys.keyPair.privateKey);
+    const liveOnline = await browserTab.next();
+    check("the agent is back before the re-key", liveOnline.type === "agent-status" && liveOnline.online === true);
+    const liveKeys = await generateMachineKeypair();
+    const liveRekey = await api.machinePair({
+      machineId: machine1Id,
+      agentPubkey: toBase64Url(liveKeys.publicKeyBytes),
+      authSecret: ownerAuthSecret,
+    });
+    check("a live machine re-keys", liveRekey.status === "rekeyed");
+    const toldRekeyed = await liveOld.next();
+    const oldClosed = await liveOld.next();
+    check(
+      "the old key's agent is told it was re-keyed, and closed",
+      toldRekeyed.type === "rekeyed" && oldClosed.type === "__closed" && oldClosed.code === 4005,
+      `${JSON.stringify(toldRekeyed)} ${JSON.stringify(oldClosed)}`,
+    );
+    const rekeyOffline = await browserTab.next();
+    check(
+      "browsers are told the agent left on a re-key",
+      rekeyOffline.type === "agent-status" && rekeyOffline.online === false,
+      JSON.stringify(rekeyOffline),
+    );
+    check(
+      "presence reads offline after a re-key",
+      (await api.machinesList()).machines.find((m) => m.id === machine1Id)!.online === false,
+    );
+    const { socket: staleKey, verdict: staleVerdict } = await agentOpen(
+      machine1Id,
+      cookie,
+      rekeyedKeys.keyPair.privateKey,
+    );
+    check("the old key can no longer prove itself", staleVerdict.type === "proof-refused", JSON.stringify(staleVerdict));
+    staleKey.close();
+    const { socket: newAgent, verdict: newVerdict } = await agentOpen(
+      machine1Id,
+      cookie,
+      liveKeys.keyPair.privateKey,
+    );
+    check("the new key proves itself", newVerdict.type === "accepted", JSON.stringify(newVerdict));
+    const newOnline = await browserTab.next();
+    check("and browsers see it arrive", newOnline.type === "agent-status" && newOnline.online === true, JSON.stringify(newOnline));
+    newAgent.close();
+    const newOffline = await browserTab.next();
+    check("and leave", newOffline.type === "agent-status" && newOffline.online === false, JSON.stringify(newOffline));
 
     // Removing the machine hangs up on everyone, immediately.
     const removal = await api.machineRemove(machine1Id);
@@ -2649,8 +2925,26 @@ async function main(): Promise<void> {
       slug: editSlug, title: "Edit, not release", visibility: "code", status: "live", authSecret: opProof,
     });
     check("taking a page live with the password saves", published.ok === true);
-    const retitled = await api.adminPageSave({ slug: editSlug, title: "Retitled", visibility: "code", status: "live" });
-    check("editing a live page's title asks for no password", retitled.ok === true);
+    /*
+     * **A save to a page that is live NOW asks, whatever it changes**
+     * (2026-09-24, review item 18). A retitle, a narrowing and an unpublish
+     * were session-only; a stolen cookie could rewrite what customers read on
+     * a live page. Each is driven bare (401, the `live` sentence) and with the
+     * password. A draft stays silent — the last line of this block.
+     */
+    const retitleBare = await refusal(() =>
+      api.adminPageSave({ slug: editSlug, title: "Retitled", visibility: "code", status: "live" }),
+    );
+    check("editing a live page's title with no password is 401", retitleBare?.status === 401, retitleBare?.message);
+    check(
+      "and the refusal is the live-page prompt the editor recognises",
+      retitleBare?.message === "Enter your password to change a page that is live.",
+      retitleBare?.message,
+    );
+    const retitled = await api.adminPageSave({
+      slug: editSlug, title: "Retitled", visibility: "code", status: "live", authSecret: opProof,
+    });
+    check("and with the password it saves", retitled.ok === true);
     const widenBare = await refusal(() =>
       api.adminPageSave({ slug: editSlug, title: "Retitled", visibility: "public", status: "live" }),
     );
@@ -2663,12 +2957,24 @@ async function main(): Promise<void> {
       slug: editSlug, title: "Retitled", visibility: "public", status: "live", authSecret: opProof,
     });
     check("and with the right one saves", widened.ok === true);
-    const narrowed = await api.adminPageSave({ slug: editSlug, title: "Retitled", visibility: "granted", status: "live" });
-    check("narrowing a live page to granted asks for no password", narrowed.ok === true);
-    const unpublished = await api.adminPageSave({ slug: editSlug, title: "Retitled", visibility: "granted", status: "draft" });
-    check("unpublishing asks for no password", unpublished.ok === true);
+    const narrowBare = await refusal(() =>
+      api.adminPageSave({ slug: editSlug, title: "Retitled", visibility: "granted", status: "live" }),
+    );
+    check("narrowing a live page with no password is 401 — it is still a live page", narrowBare?.status === 401);
+    const narrowed = await api.adminPageSave({
+      slug: editSlug, title: "Retitled", visibility: "granted", status: "live", authSecret: opProof,
+    });
+    check("and with the password it saves", narrowed.ok === true);
+    const unpublishBare = await refusal(() =>
+      api.adminPageSave({ slug: editSlug, title: "Retitled", visibility: "granted", status: "draft" }),
+    );
+    check("unpublishing a live page with no password is 401", unpublishBare?.status === 401);
+    const unpublished = await api.adminPageSave({
+      slug: editSlug, title: "Retitled", visibility: "granted", status: "draft", authSecret: opProof,
+    });
+    check("and with the password it saves", unpublished.ok === true);
     const stillDraft = await api.adminPageSave({ slug: editSlug, title: "Retitled", visibility: "public", status: "draft" });
-    check("opening a DRAFT's visibility asks for no password — nothing is live", stillDraft.ok === true);
+    check("editing a DRAFT asks for no password — nothing is live", stillDraft.ok === true);
 
     // The same rule on a file: flipping an existing row free, or moving it,
     // asks; a new row and a details edit do not. No bytes are involved, which
@@ -2701,6 +3007,34 @@ async function main(): Promise<void> {
     check("moving it with the password saves", moved.ok === true);
     const freeNew = await api.adminFileSave({ id: `harness-freenew-${RUN}`, slug: moveSlug, name: "New and free", filename: "new.bin", free: true });
     check("a NEW free row asks for no password — it has no bytes until finishUpload, which asks", freeNew.ok === true);
+
+    /*
+     * The live half of the same rule for a file's details and a page's blocks
+     * (2026-09-24, review item 18): on a live page both are what customers
+     * read, so both ask; on a draft neither does.
+     */
+    await api.adminPageSave({ slug: moveSlug, title: "Elsewhere", visibility: "public", status: "live", authSecret: opProof });
+    const liveFileBare = await refusal(() =>
+      api.adminFileSave({ id: flipId, slug: moveSlug, name: "Run this instead", free: false }),
+    );
+    check("editing a file's details on a live page with no password is 401", liveFileBare?.status === 401, liveFileBare?.message);
+    check(
+      "and the refusal is the live-page prompt",
+      liveFileBare?.message === "Enter your password to change a page that is live.",
+      liveFileBare?.message,
+    );
+    const liveFile = await api.adminFileSave({
+      id: flipId, slug: moveSlug, name: "Flip, renamed again", free: false, authSecret: opProof,
+    });
+    check("and with the password it saves", liveFile.ok === true);
+    const block = [{ kind: "text" as const, body: "Harness words.", group: "" }];
+    const liveBlocksBare = await refusal(() => api.adminBlocksSave(moveSlug, block));
+    check("saving a live page's blocks with no password is 401", liveBlocksBare?.status === 401, liveBlocksBare?.message);
+    const liveBlocks = await api.adminBlocksSave(moveSlug, block, opProof);
+    check("and with the password they save", liveBlocks.ok === true);
+    await api.adminPageSave({ slug: moveSlug, title: "Elsewhere", visibility: "public", status: "draft", authSecret: opProof });
+    const draftBlocks = await api.adminBlocksSave(moveSlug, block);
+    check("a draft's blocks save with no password", draftBlocks.ok === true);
 
     await api.adminPageDelete(moveSlug, opProof);
     await api.adminPageDelete(editSlug, opProof);
@@ -2958,6 +3292,13 @@ async function main(): Promise<void> {
     // Revocation: minted, revoked, then tried.
     asBrowser(opSession);
     const doomed = await api.adminDownloadMint({ authSecret: opProof, label: "harness-revoked", item: null, slug, maxUses: 5, days: 0 });
+    // A ticket redeemed BEFORE the revoke must die with it (audit item 60).
+    asBrowser(stranger);
+    const doomedTicket = (await api.downloadClaim(doomed.code)).ticket;
+    const beforeRevoke = await fetch(`/api/downloads/file?item=${paidId}&t=${encodeURIComponent(doomedTicket)}`);
+    await beforeRevoke.arrayBuffer();
+    check("control: a ticket downloads before its code is revoked", beforeRevoke.status === 200, String(beforeRevoke.status));
+    asBrowser(opSession);
     const listed = await api.adminDownloadsList();
     const doomedRow = listed.codes.find((c) => c.label === "harness-revoked");
     check("a minted code appears in the list with a handle", Boolean(doomedRow?.ref));
@@ -2966,7 +3307,14 @@ async function main(): Promise<void> {
       (doomedRow?.ref ?? "").length === 16,
       `ref length ${(doomedRow?.ref ?? "").length}`,
     );
-    await api.adminDownloadRevoke(doomedRow!.ref);
+    // Revoking is minting in reverse, so it asks (2026-09-24, review item 18).
+    const revokeBare = await fetch("/api/admin/downloads/revoke", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ref: doomedRow!.ref }),
+    }).then((r) => r.status);
+    check("revoking a code with no password is 401", revokeBare === 401, String(revokeBare));
+    await api.adminDownloadRevoke(doomedRow!.ref, opProof);
     asBrowser(stranger);
     const revoked = await api.downloadClaim(doomed.code).then(
       () => null,
@@ -2976,6 +3324,8 @@ async function main(): Promise<void> {
       "a revoked code is refused, in the same words as every other failure",
       revoked?.status === fabricated?.status && revoked?.message === fabricated?.message,
     );
+    const afterRevoke = await fetch(`/api/downloads/file?item=${paidId}&t=${encodeURIComponent(doomedTicket)}`);
+    check("a ticket redeemed before the revoke stops downloading at once", afterRevoke.status === 403, String(afterRevoke.status));
 
     /*
      * ---- ranges ---------------------------------------------------------
@@ -3034,7 +3384,7 @@ async function main(): Promise<void> {
 
     // ---- code-gated ------------------------------------------------------
     asBrowser(opSession);
-    await api.adminPageSave({ slug, title: "Harness page", layout: "list", visibility: "code", status: "live" });
+    await api.adminPageSave({ slug, title: "Harness page", layout: "list", visibility: "code", status: "live", authSecret: opProof });
 
     asBrowser(stranger);
     const locked = await api.downloadPage(slug);
@@ -3062,7 +3412,7 @@ async function main(): Promise<void> {
     const guestSession = ownerSession;
 
     asBrowser(opSession);
-    await api.adminPageSave({ slug, title: "Harness page", layout: "list", visibility: "granted", status: "live" });
+    await api.adminPageSave({ slug, title: "Harness page", layout: "list", visibility: "granted", status: "live", authSecret: opProof });
 
     asBrowser(guestSession);
     const beforeGrant = await refusal(() => api.downloadPage(slug));
@@ -3145,6 +3495,32 @@ async function main(): Promise<void> {
     asBrowser(opSession);
     await api.adminPageDelete(narrowSlug, opProof).catch(() => undefined);
     void savedSlug;
+
+    /*
+     * **Taking access away asks, the same as giving it** (2026-09-24, review
+     * item 18). The guest's whole-page grant on `slug` is removed bare (401,
+     * still admitted) and then with the password — and the outside view is
+     * asserted, because "the route said ok" and "they can no longer read it"
+     * are different claims.
+     */
+    const pageGrant = (await api.adminGrants()).grants.find(
+      (g) => g.handle === guestHandle && g.slug === slug && g.item_id === null,
+    );
+    check("the guest's whole-page grant is listed", Boolean(pageGrant));
+    const removeBare = await fetch("/api/admin/downloads/grant/delete", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: pageGrant?.id }),
+    }).then((r) => r.status);
+    check("removing a grant with no password is 401", removeBare === 401, String(removeBare));
+    asBrowser(guestSession);
+    const stillIn = await api.downloadPage(slug).then(() => true, () => false);
+    check("and the guest is still admitted after the refusal", stillIn);
+    asBrowser(opSession);
+    await api.adminGrantRemove(pageGrant!.id, opProof);
+    asBrowser(guestSession);
+    const shutOut = await refusal(() => api.downloadPage(slug));
+    check("with the password it goes, and the guest is shut out", shutOut?.status === 404, shutOut?.message);
 
     // ---- the operator's own guards ---------------------------------------
     asBrowser(guestSession);
@@ -3510,6 +3886,7 @@ async function main(): Promise<void> {
     await api.adminPageDelete(otherSlug, opProof).catch(() => undefined);
     await api.adminDownloadRevoke(
       (await api.adminDownloadsList()).codes.find((c) => c.label === "harness")?.ref ?? "",
+      opProof,
     ).catch(() => undefined);
   }
 
@@ -3575,6 +3952,23 @@ async function main(): Promise<void> {
     });
     check("while blocked, even the right password is refused", attacker.lastStatus === 429, locked.error);
     check("the refusal says when to come back", /try again in about/i.test(locked.error ?? ""), locked.error);
+
+    /*
+     * **But only from the attacker's address** (2026-09-24, review item 10).
+     * The tight bucket is per (address, handle), so a stranger's guesses no
+     * longer lock the owner out of their own account from anywhere else. The
+     * handle-wide bucket behind it is loose enough that one address cannot
+     * fill it; `npm run check` drives the many-address ceiling.
+     */
+    const ownerElsewhere = new Client(`198.51.100.${1 + Math.floor(Math.random() * 254)}`);
+    const ownerIn = await ownerElsewhere.call("/api/auth/signin", {
+      body: { handle: victim, authSecret: credential.authSecret },
+    });
+    check(
+      "the owner, from another address, still signs in",
+      ownerElsewhere.lastStatus === 200,
+      `status ${ownerElsewhere.lastStatus} ${ownerIn.error ?? ""}`,
+    );
 
     // The signup quota (2026-08-13 audit): account creation counts against a
     // dedicated `signup:` bucket, not only the shared client bucket whose

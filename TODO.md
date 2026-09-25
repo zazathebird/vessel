@@ -39,24 +39,130 @@ break-verified — the fix was confirmed by watching the test fail against the o
 `../debian-desktop/BLUEPRINT.md` §3 is the argument; §6 is that machine's own task list, and it is
 newer than the host section below.
 
+**2026-09-23 (not yet deployed):** `/gallery` and `/changelog` removed as filler, and `/work` and
+`/guestbook` removed because the client confirmed their case studies and quotes were invented by an
+earlier model session (routes 17 → 13, nav 7 → 4 pills, 404 says "seven", every photo gone; all four
+archived in `docs/RETIRED-PAGES.md`), `/scams` reorganised into five runs with its repeats
+merged, `/setup`'s two closing blocks merged, `/about`'s parts list cut. `npm run check` 91 green.
+
 ---
+
+## Review of 2026-09-24 — four parallel reviews, findings not yet fixed
+
+Security 8.5, live hygiene 9, code quality 7, performance 6–8, accessibility 8. No Critical/High in
+the site. **Where each item runs:** site fixes run on the PC that has the Cloudflare token (the
+Debian box has none); host-script fixes must be written *and tested* on the ThinkCentre.
+
+### For the ThinkCentre session (host scripts — test on the box)
+
+**Items 1–5, 7 and 9 were FIXED IN THE REPO on 2026-09-24 (a different machine, nothing run on the
+box).** Each fixed host-script item has a gate in `npm run check` that drives the real function and
+was break-verified (it fails with the fix reverted). What only the box can confirm is listed under
+*Confirm on the box* below; until then treat the fixes as written, not as proven.
+
+1. **FIXED in repo — confirm on the box.** ~~`plasma-dark-setup.sh:1356,1361` writes PowerDevil keys with `--group AC`.~~ Plasma 6 reads
+   `[AC][Display]` and `[AC][SuspendAndShutdown]`, so the display-off fix is probably ignored and
+   the kiosk still blanks. Check: `kreadconfig6 --file powerdevilrc --group AC --group Display --key
+   TurnOffDisplayWhenIdle`, then leave it idle 20 min. `--verify` never reads powerdevilrc — add it.
+   *Now:* nested `[AC][Display]` / `[AC][SuspendAndShutdown]` per PowerDevil's own
+   `PowerDevilProfileSettings.kcfg`; stale flat keys deleted; `--verify` reads all four idle keys
+   back and FAILS on any that would blank. `docs/HOST-BUILD-LOG.md` wall 7 has the on-box steps.
+2. **FIXED in repo.** ~~`graphical_session_id` in `thinkcentre-setup.sh` picks the first `Class=user` session~~, and
+   SSH sessions are `Class=user` too (`Type=tty`). `--verify` over SSH can FAIL a healthy box.
+   Filter on `Type` x11/wayland or a non-empty `Seat`.
+3. **FIXED in repo** (`sddm_value`, last file wins, `[Autologin]` only). ~~The SDDM config loop keeps the *first* `User=`/`Session=`;~~ SDDM lets later files win, and the
+   loop ignores sections. Low.
+4. **FIXED in repo — never run on the box in this form.** No `sh -c`; sudo is `--with-sudo`
+   (and it refuses a user already in `sudo` without it); loosening `/home/user` is `--share-home`;
+   `--undo` reverses only what `/var/lib/vessel-rdp-user/` records. Was:
+   ~~**`scripts/rdp-separate-user.sh` — do not run as written.** Lines ~427-431 paste `{}` into a
+   `sh -c` string run as root (a filename in /home/user with `'` or `$(…)` executes); it makes a
+   sudo-capable user that logs in by password over xrdp with no lockout; it loosens /home/user
+   700 → 750; it has no `--undo`.~~
+5. **FIXED** (644 in git, gated). ~~**Both `attic-*.DO-NOT-RUN` files are mode 755.** The GDM one disables SDDM. `chmod -x` them.~~
+6. **`plasma-vibes.sh` and `konsole-profiles.sh` are looks, not host** — by BLUEPRINT §3 they
+   belong in `../debian-desktop`, and they are a second look system nobody documents or gates.
+7. **FIXED in the docs** (the GitHub step below). **Use a repo-scoped deploy key**, not the account-wide SSH-keys page — an always-on kiosk box with
+   RDP should not hold write access to the whole GitHub account.
+8. The Share operator tab has never been seen in a browser on the phone band (header may scroll).
+9. **FIXED** (lines below corrected; the Share tab is still unseen — item 8). Stale lines left by the 09-11 commits: "Share tab UNVERIFIED, never built" and "two commits
+   unpushed, nothing deployed" (both deployed 2026-09-23 as Worker 3d1133a5); "green at 77" (91);
+   `REMOTE-ACCESS.md`'s xrdp/freerdp state not re-checked since 09-11.
+
+#### Confirm on the box (after pulling the 2026-09-24 fixes)
+
+- [ ] `./scripts/plasma-dark-setup.sh --no-install` as `user` in the desktop session; then the
+      three `kreadconfig6 … --group AC --group Display|SuspendAndShutdown` reads say
+      `false` / `false` / `0`, and `~/.config/powerdevilrc` has no flat `[AC]` keys left.
+- [ ] **The 20-minute idle test**: touch nothing, no remote session attached, 20+ minutes; the
+      screen is lit, undimmed, unlocked, kiosk showing. Repeat once after a logout/login.
+- [ ] `./scripts/thinkcentre-setup.sh --verify` **over SSH while the desktop is logged in**:
+      `graphical session type` is `ok x11` (not `tty`), `pointer hidden` is checked, the four new
+      idle lines are `ok`, and autologin/session read `user` / `plasmax11`.
+- [ ] `ls /etc/sddm.conf.d/ /usr/lib/sddm/sddm.conf.d/` — if anything sorts after
+      `10-vessel.conf`, `--verify` now reports what SDDM will really use; make sure that is right.
+- [ ] Before any RDP work: `sudo bash scripts/rdp-separate-user.sh --help` reads right; then run it
+      (plain, no flags unless wanted), log in over xrdp as the new user, and confirm `id` shows no
+      `sudo`. Then `sudo bash scripts/rdp-separate-user.sh --undo` on a throwaway run if you want
+      to prove the undo, and re-run.
+- [ ] `ls -l scripts/attic-*` shows no `x` after the pull.
+- [ ] The deploy key: add `~/.ssh/id_ed25519.pub` as a deploy key on the one repository (see
+      the GitHub step under *Open, raised by the client*), `ssh -T git@github.com` names the repo.
+
+### For the site (needs the PC with the Cloudflare token)
+
+10. ~~**Anonymous lockout of password sign-in**~~ **Fixed 2026-09-24 on a branch, NOT deployed** —
+    per-(address, handle) bucket at 5 plus a per-handle ceiling at 30 (`SECURITY-AUDIT.md` item 50).
+    Items 16, 17, 18 and the CORP/health half of 21 are in the same commits (items 51–54).
+    **Follow-up, same day, also NOT deployed** (items 55–60): the pair bucket keys IPv6 on the /48
+    (a /64 key let one free tunnel refill the lockout; passkeys remain the real mitigation); session
+    epoch + signalling hang-up on password change / operator resets; replacement uploads stay live;
+    download tickets die with their code; `setPassword`'s UPDATE branch guarded in the write;
+    `BREAK-GLASS.md` gained secret rotation. **Deploy order: `npm run db:migrate:remote` (0010)
+    first, then `npm run deploy`.**
+11. **`/share` step 1 points signed-in users at `/downloads` for the setup script**, which is not
+    publicly listed and, until re-uploaded, still carries the other-account `.ssh` hole. Fixed by
+    the bundle re-upload (*Needs hardware* item 1), or hold the link back until then.
+12. **The duel engine (~60 KB min / 16 KB gz) ships to every visitor** — `src/fx/effects.ts`
+    imports it statically. Lazy-load it; it is operator-only.
+13. **Arrow keys page the site inside Deck's sideways-scrolling grid** (`useOperatorRoutes.ts`).
+14. `--mx`/`--my` are written on every pointermove without rAF batching, and invalidate the whole
+    `.vessel` subtree (`inherits: true`) for 11 layouts that never read them.
+15. `useFocusTrap.ts`'s `FOCUSABLE` does not exclude hidden/`inert` elements.
+16. ~~`setPassword` reports `set` on a UNIQUE conflict~~ **Fixed 2026-09-24, not deployed** — 409
+    unless the stored password is the one sent.
+17. ~~Passkey labels skip `expectDisplayName`~~ **Fixed 2026-09-24, not deployed.**
+18. ~~A stolen operator cookie can rewrite live download-page text~~ **Fixed 2026-09-24, not
+    deployed**: any save to a live page, and revoke/remove-grant, now ask for the password. **Still
+    his call** whether the prompt on a live-page typo fix is worth it — `DECISIONS.md` 2026-09-24
+    names the narrower cut ("live and public only") if he says no.
+19. No linter: the four `eslint-disable … exhaustive-deps` comments suppress nothing. Add
+    `eslint-plugin-react-hooks` or delete them. `DownloadEditor.tsx` (2,014 lines) wants splitting.
+20. Doc drift: `check:fast` takes ~43s, not ~4s; CLAUDE.md's `OPERATOR_NAV` line omits Share.
+    (The `SECURITY-AUDIT.md` `/api/account/slot` line is corrected, 2026-09-24.)
+21. Hygiene: ~~no `Cross-Origin-Resource-Policy`~~ and ~~`/api/health` uncached~~ **fixed
+    2026-09-24, not deployed** (CORP `same-origin`; health memoised 30s per isolate). Left: CAA
+    allows five CAs (dashboard), no font preload. HSTS `preload` deliberately not added.
+22. **MX points at namespro while SPF is `-all` and DMARC `reject`** — mail *sent* as
+    @mcclevarty.ca will be rejected. Fine only if he never sends from the domain; confirm which
+    address the contact reveal shows.
 
 ## Needs the client — decisions, not work
 
 1. **The four duel sliders** (circling, rest, impact, patience) still carry defaults. Size works,
    `rest` is a real multiplier, the preview follows the selected page. His eye is the one thing
    that cannot be substituted for.
-2. **Sessions survive a password change and an operator reset** (audit item 5). Closing it is one
-   column on `accounts` and a check in `requireAccount` — a §9 inventory change, so his call.
-3. **`beginUpload` hides a live file before the password is asked** (audit item 6). Keeping the
-   old bytes live until `finishUpload` is the fix.
+2. ~~**Sessions survive a password change and an operator reset**~~ **Fixed 2026-09-24 on a branch,
+   NOT deployed** ("fix everything"): `accounts.sessions_after`, migration 0010 — **apply it before
+   deploying** — §9 updated; the same events hang up signalling sockets (`SECURITY-AUDIT.md` 58–59).
+3. ~~**`beginUpload` hides a live file before the password is asked**~~ **Fixed 2026-09-24 on a
+   branch, NOT deployed**: the old bytes stay live until `finishUpload` (`SECURITY-AUDIT.md` 55).
 4. **Eight copy facts only he can supply** (2026-08-26; each renders the safe reading meanwhile):
    the "pay once, nothing renews" promise (now cut — wanted back permanently?); Contact's "within
    a day"; the two guestbook numbers; `work`'s "two years" (now "ever since"); the per-machine
    record line (cut); the years figure ("over twenty" everywhere, one phrase to change); the Kevin
-   joke on home (adjacent to the accent framing he declined for `/scams`); and **whether `/work`'s
-   six case studies and the five guestbook quotes are real** — the most important one, because a
-   fabricated case study is evidence of capability that has to go.
+   joke on home (adjacent to the accent framing he declined for `/scams`);. (`/work` and the
+   guestbook are answered: both were invented and both are removed, 2026-09-23.)
 5. **Was the first machine he took apart a 486?** It is `/about`'s origin story.
 6. **`design/SPEC-SHARING.md` is a DRAFT awaiting sign-off.**
 7. **Unattended remote access** — for CUSTOMER machines, self-hosted RustDesk or MeshCentral, never
@@ -124,29 +230,22 @@ boots SDDM into Plasma **on X11**, `usbcore.autosuspend=-1` is live in `/proc/cm
 8. **Remote access is broken until someone runs the fix** — `docs/REMOTE-ACCESS.md` is the full
    record. xrdp is installed but `disabled`; `freerdp-shadow-cli3` held 3389 on 2026-09-11 but is
    not a systemd unit, so **after the next reboot there is no RDP server at all** and SSH on 22 is
-   the only way in. Two halves, and they are different tools: `scripts/rdp-separate-user.sh` plus
+   the only way in (**all as of 2026-09-11 — unchecked since**). Two halves, and they are different tools: `scripts/rdp-separate-user.sh` plus
    `systemctl enable --now xrdp xrdp-sesman` gives a *second* desktop that survives reboot;
    shadow-over-RDP or `krfb` gives the *live kiosk screen* and still needs a user unit and
    `loginctl enable-linger user` to persist. `/home/user/.xsession` is still present and is still
    the black-screen bug — the fix script removes it. Do not reach for GNOME/GDM; it would break
    the kiosk's autologin.
-9. **Checked over SSH 2026-09-12 and found ABSENT on that box:** `claude` is not installed and
-   there is no `~/project/website` clone, so `claude-code-setup.sh --with-repo` never ran or did
-   not stick — nothing on the host can read any of this. `krfb` is absent too, so the
-   remote-viewing half of the X11 rationale is unrealised and that desktop can only be
-   photographed, not watched.
-10. **It is not certain `thinkcentre-setup.sh` has ever been run there at all** — only a loose
-   `~/Downloads/thinkcentre-setup.sh` was found. Item 1 above assumes it has; establish that
-   first. **`../debian-desktop/BLUEPRINT.md` §6 is the live version of this list.**
 
 ## Open, raised by the client 2026-09-08
 
-0. **THE SHARE TAB IS COMMITTED BUT UNVERIFIED — DO NOT ASSUME IT WORKS.** `npm run check` has
-   never run against it, it has never been built, and it has never been seen in a browser.
+0. **THE SHARE TAB HAS STILL NEVER BEEN SEEN IN A BROWSER.** It has since passed `npm run check`,
+   been built, and was **deployed on 2026-09-23 as Worker 3d1133a5** — but nobody has looked at
+   it, on the phone band least of all (review item 8: the header may scroll).
    Three files changed: `src/data/pageIds.ts` (adds `{ id: "share", label: "Share" }` to
    `OPERATOR_NAV`), `src/components/Footer.tsx` (a `me`-gated `share` link beside
-   `account`/`admin`), and `scripts/check.ts` (a new three-nav reachability gate). **Run
-   `npm run check` and look at the page before deploying any of it.**
+   `account`/`admin`), and `scripts/check.ts` (a new three-nav reachability gate). **Look at the
+   page, signed in, desk and phone band.**
 
    **FIXED 2026-09-08: the dependency install works on this box.** A plain
    `npm ci --no-audit --no-fund` added 110 packages in 5s, `node_modules/.bin` is populated, and
@@ -160,7 +259,8 @@ boots SDDM into Plasma **on X11**, `usbcore.autosuspend=-1` is live in `/proc/cm
    which `.profile` already puts on PATH. Debian's own `nodejs` package is untouched, so nothing
    system-wide changed and removing the two directories reverts it. The tarball was checksummed
    against nodejs.org's published SHASUMS256 before unpacking. `npm ci` then added 108 packages on
-   npm 10.9.8 and `npm run check` is green at 77; `wrangler 4.122.0` starts.
+   npm 10.9.8 and `npm run check` was green at 77 (91 by 2026-09-23, 96 on 2026-09-24);
+   `wrangler 4.122.0` starts.
 
    **What this box still has NO credentials for, and what that blocks:**
    - **Cloudflare** — `wrangler whoami` says *not authenticated*; there is no `~/.config/.wrangler`
@@ -174,13 +274,19 @@ boots SDDM into Plasma **on X11**, `usbcore.autosuspend=-1` is live in `/proc/cm
      with *"could not read Username"* because a non-interactive shell has nowhere to prompt.
      **An ed25519 key was generated for this host on 2026-09-08** at `~/.ssh/id_ed25519`
      (`ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFI5Xt0LfDVlig346cZ/bG58bsvQcZdU2WeMGOSC3UJ8
-     thinkcentre-host-20260908`). It is **not yet on the account** — `ssh -T git@github.com` answers
-     *Permission denied (publickey)*. Paste it at github.com/settings/ssh/new, then
-     `git remote set-url origin git@github.com:zazathebird/vessel.git` and the push needs nothing
-     typed ever again on this box.
+     thinkcentre-host-20260908`). It is **not yet on GitHub** — `ssh -T git@github.com` answers
+     *Permission denied (publickey)*. **Add it as a DEPLOY KEY on this one repository** —
+     the repo's *Settings → Deploy keys → Add deploy key* — **not** on the account's SSH-keys page.
+     An account key opens every repository the account can reach, from an always-on box that
+     autologins to a desktop and takes RDP; a deploy key opens one. Tick **Allow write access**
+     only because this box commits and pushes (it did on 2026-09-11); if it ever stops being a
+     place work is done, remove the key and re-add it read-only, which is all a pull needs. A key
+     can be a deploy key on only one repo, so a second repo on this box needs its own key. Then
+     `git remote set-url origin git@github.com:zazathebird/vessel.git`.
 
-   **Two commits are unpushed** as of 2026-09-11: `ae2ef52` (the host blanking fix) and the
-   share-page steps commit. Both are green under `npm run check`. Nothing is deployed.
+   ~~**Two commits are unpushed** as of 2026-09-11~~ — `ae2ef52` (the host blanking fix) and the
+   share-page steps commit both reached `main` and were **deployed 2026-09-23 as Worker
+   3d1133a5**. (The blanking fix itself turned out to write the wrong group — review item 1.)
 
    The old note is kept below because the symptom was real and may come back:
 
@@ -237,6 +343,33 @@ boots SDDM into Plasma **on X11**, `usbcore.autosuspend=-1` is live in `/proc/cm
    password is a liability**: it prompts at every boot with nobody there. Either disable KWallet
    outright or give it a blank-password Blowfish wallet. Not done; the sudo prompt was routed
    around it with a `kdialog --password` askpass instead.
+
+## Needs hardware or a human eye — cannot be done from here
+
+1. **Publish the setup bundle, and check whether it was ever published at all.** `launch.bat`
+   changed (audit item 45); `dist-setup/` is rebuilt and its `CHECKSUMS.txt` is current, the
+   published one is not. Downloads editor, existing ids, password at each finish.
+   `docs/DOWNLOADS.md`.
+
+   **2026-09-08: no setup page is publicly listed.** `GET /api/downloads/pages` unauthenticated
+   returns exactly one page — slug `downloads`, title "Scripts", the Windows cleanup tool — with
+   **zero files on it**. That listing withholds `unlisted`, `granted` and draft pages
+   (`worker/downloadPages.ts:357`), so this is not proof the bundle is absent; it is proof that a
+   customer standing on `/share` cannot reach it. **`/share` now links to `/downloads`**, so the
+   setup page has to be `public` and `live` for that link to lead anywhere. If it should be
+   unlisted instead, the share page needs the address hardcoded rather than the index — say which,
+   and it is a one-line change in `SetupChecklist`.
+
+4. **`thinkcentre-setup.sh` should learn SDDM.** `plasma-dark-setup.sh` writes the autologin
+   today, which means the knowledge lives in two scripts. Fold it back in once the host is up.
+5. **Checked over SSH 2026-09-12 and found ABSENT on that box:** `claude` is not installed and
+   there is no `~/project/website` clone, so `claude-code-setup.sh --with-repo` never ran or did
+   not stick — nothing on the host can read any of this. `krfb` is absent too, so the
+   remote-viewing half of the X11 rationale is unrealised and that desktop can only be
+   photographed, not watched.
+6. **It is not certain `thinkcentre-setup.sh` has ever been run there at all** — only a loose
+   `~/Downloads/thinkcentre-setup.sh` was found. Item 1 above assumes it has; establish that
+   first. **`../debian-desktop/BLUEPRINT.md` §6 is the live version of this list.**
 
 ## The site-wide debug audit — 45 findings, 17 fixed, 28 open
 
@@ -421,15 +554,6 @@ wants one, per this project's own discipline.
    macOS script was still allowing `/Users/someone-else/.ssh` even after the 09-15 fix. The rebuilt
    bundle carries the fix. **What is left is the upload itself**, which needs a signed-in
    session: downloads editor, existing ids, password at each finish. `docs/DOWNLOADS.md`.
-
-   **2026-09-08: no setup page is publicly listed.** `GET /api/downloads/pages` unauthenticated
-   returns exactly one page — slug `downloads`, title "Scripts", the Windows cleanup tool — with
-   **zero files on it**. That listing withholds `unlisted`, `granted` and draft pages
-   (`worker/downloadPages.ts:357`), so this is not proof the bundle is absent; it is proof that a
-   customer standing on `/share` cannot reach it. **`/share` now links to `/downloads`**, so the
-   setup page has to be `public` and `live` for that link to lead anywhere. If it should be
-   unlisted instead, the share page needs the address hardcoded rather than the index — say which,
-   and it is a one-line change in `SetupChecklist`.
 2. **On a real Pi**: does Raspberry Pi OS add its own archive to unattended-upgrades' origins? If
    so Chromium is replaced under the running kiosk, which `pi-setup.sh` says cannot happen.
 3. **`scripts/macos-share-setup.sh` has never run on a Mac.** `choose_folders` exists now; only the
@@ -462,9 +586,6 @@ wants one, per this project's own discipline.
 - **A republish may be needed for the withdrawn circles to fully go** — hidden is unlisted, not
   invalid; check the published row names none of Lens/Valve/Aperture/Orrery.
 - **Photo slots hold Wikimedia placeholders** (`docs/PHOTOS.md`) — swap for his own, same treatment.
-- **The gallery describes a video that does not exist**, and its drive-shelf block says forty drives
-  while the alt text describes the five in the photograph. Both defensible, both worth a real clip
-  and a real count.
 
 ## Traps recorded, not work
 
@@ -479,3 +600,31 @@ wants one, per this project's own discipline.
 
 **Starting a session?** `docs/HANDOFF.md` has the paste-ready prompt, the deploy verification block,
 and the list of things that cannot be verified from this side.
+
+## Ideas only — run past me by the client 2026-09-24, not planned
+
+1. **Login history on the account page** ("IP, timestamp, OS"). The account page already exists
+   (`/signin` signed in: password, passkeys, TOTP, change password). **IP and user-agent collide
+   with SPEC-ACCOUNTS §9** — "No raw IP address is stored, anywhere" and the inventory's explicit
+   exclusion of IPs and user-agent strings — and with Contact's "nothing about you is stored".
+   Recommended shape, pending his answer: a **sessions list** with sign-in time, a coarse device
+   label derived at sign-in ("Windows · Chrome", never the raw UA), which credential was used,
+   and "sign out this one / all others" (the `sessions_after` epoch already does the latter);
+   the current request's IP shown live but never stored. Any stored field is a §9 spec change.
+   **Follow-up idea (client, same day): the log lives on THEIR machine.** The Worker is the only
+   party that sees every sign-in (an intruder signs in from their own browser, so a browser-kept
+   log never sees them), so the Worker emits each event to the owner's paired agent, which appends
+   to a file in a folder they choose. While the agent is offline, events queue **encrypted to a
+   per-machine ECDH key** (the agent's current key is ECDSA, signing only) and are deleted on
+   delivery — the operator cannot read the queue. Opt-in per field via a checklist (sign-ins,
+   device label, IP, failed attempts incl. attacker IPs, credential changes, file access), all
+   off by default. §9 gains an honest line for the opaque queue. Order: sessions list first →
+   phase 2 seen working → this. **Client's own verdict: an attacker's IP is nearly always Tor or a
+   VPN, so logging IPs is close to pointless** — drop IP from any version of this; the device
+   label, time and credential type are what would actually catch an intrusion.
+2. **Customisable file browser** (`/machines` explorer). Per-user look and behaviour: view mode,
+   density, sort, icon style, colours from the palette set, what a double-click does, hidden-file
+   visibility. Today one choice persists in localStorage (`vessel.explorer.v1`). Decide: per
+   browser (localStorage, zero spec impact) or per account (a prefs field in D1 — not personal
+   data, but a §9 inventory line). Build after phase 2 has been seen working by eye (pairing
+   has never happened on the real box).

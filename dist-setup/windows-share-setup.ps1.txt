@@ -414,6 +414,52 @@ function Select-FoldersInteractively {
     then aimed at under the share root. The identity checked and the identity
     shared were simply different, permanently; it was never a race.
 #>
+# WHAT A DRIVE LETTER REALLY IS (2026-09-24). A letter is not always a volume:
+#
+#   subst X: C:\Users\me\.ssh        X:\ IS the .ssh folder, and X:\keys is inside it
+#   net use Y: \\localhost\C$        Y:\Users\me is the profile, over the loopback share
+#
+# Neither is a reparse point, so the component walk below never sees them, and
+# `X:\keys` matched nothing in either list. The UNC refusal at the top of
+# Test-ShareableFolder was one `net use` away from being decoration.
+#
+# Returns '' for an ordinary local volume, the substituted folder for a SUBST
+# letter (the caller carries the rest of the path across and walks again), and
+# THROWS for anything else — a network letter, a letter .NET cannot classify, a
+# path with no letter at all, or a subst table that could not be read. The
+# caller turns a throw into a refusal: a letter nobody could explain is not
+# compared as though it were a disk.
+#
+# The two questions it asks the machine are their own functions so the gate can
+# answer them under pwsh on Linux, where there are no drive letters to ask about.
+function Get-SubstTable {
+    $exe = Join-Path $env:SystemRoot 'System32\subst.exe'
+    if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw "subst.exe is not at $exe" }
+    @(& $exe)
+}
+
+function Get-DriveKind {
+    param([string] $Letter)
+    ([System.IO.DriveInfo]::new($Letter + ':')).DriveType.ToString()
+}
+
+function Get-DriveMapping {
+    param([string] $Full)
+    if ($Full -notmatch '^([A-Za-z]):') { throw "no drive letter in $Full" }
+    $letter = $Matches[1].ToUpperInvariant()
+    foreach ($line in @(Get-SubstTable)) {
+        # `X:\: => C:\Users\me\.ssh` — subst's own format, one letter per line.
+        if ("$line" -match '^\s*([A-Za-z]):\\: => (.+?)\s*$' -and $Matches[1].ToUpperInvariant() -eq $letter) {
+            return $Matches[2]
+        }
+    }
+    $kind = Get-DriveKind $letter
+    if ($kind -ne 'Fixed' -and $kind -ne 'Removable') {
+        throw "drive ${letter}: is a $kind drive, not a disk in this machine"
+    }
+    return ''
+}
+
 function Test-ShareableFolder {
     param([string] $Path, [ref] $Resolved)
 
@@ -489,6 +535,19 @@ function Test-ShareableFolder {
                 return "That folder is a chain of links this script will not follow: $Path"
             }
 
+            # The drive letter first, every round: a SUBST letter is a link the
+            # reparse walk cannot see, and a junction's target may name one.
+            # Get-DriveMapping throws for anything it cannot vouch for, and the
+            # catch below refuses.
+            $mapped = Get-DriveMapping $full
+            if ($mapped) {
+                if ($mapped.StartsWith('\\')) {
+                    return "That drive letter is a network share, which cannot be shared from here: $Path"
+                }
+                $full = [System.IO.Path]::GetFullPath($mapped.TrimEnd('\') + $full.Substring(2)).TrimEnd('\')
+                continue
+            }
+
             $parts = $full -split '\\'
             $acc = $parts[0] + '\'
             $substituted = $false
@@ -526,7 +585,7 @@ function Test-ShareableFolder {
             if (-not $substituted) { break }
         }
     } catch {
-        return "Could not work out where that folder really is, so it will not be shared: $Path"
+        return "Could not work out where that folder really is, so it will not be shared: $Path`n      ($($_.Exception.Message))"
     }
 
     # And again, now the links have been followed: a junction whose TARGET is a
@@ -610,6 +669,13 @@ function Test-ShareableFolder {
         $env:ProgramData,
         $env:LOCALAPPDATA,
         $env:APPDATA,
+        # AppData ITSELF (2026-09-24). Local and Roaming were blocked and their
+        # parent was not, so `%USERPROFILE%\AppData` — which contains both, and
+        # LocalLow beside them — was shareable: the blocked-leaf-under-a-
+        # shareable-ancestor shape once more. The component rule below refuses
+        # any folder called AppData anywhere; this entry says it for this
+        # profile in the list where people look.
+        (Join-Path $env:USERPROFILE 'AppData'),
         (Join-Path $env:USERPROFILE '.ssh'),
         (Join-Path $env:USERPROFILE '.aws'),
         (Join-Path $env:USERPROFILE '.gnupg'),
@@ -621,6 +687,26 @@ function Test-ShareableFolder {
         (Join-Path $env:LOCALAPPDATA 'Microsoft'),
         (Join-Path $env:LOCALAPPDATA 'Mozilla')
     ) | Where-Object { $_ } | ForEach-Object { $_.TrimEnd('\') }
+
+    # NO HIDDEN FOLDER, AND NO APPDATA, ANYWHERE ON THE PATH (2026-09-24).
+    #
+    # The dot-directory entries above are a finite list, and the secrets are
+    # not: %USERPROFILE%\.config, .azure, .claude, .wine, .m2 and .electrum all
+    # passed it. So the rule is structural rather than a longer list — any
+    # component beginning with a dot is where a program keeps its state, and is
+    # refused wherever it sits, including in a copied profile on a backup disk
+    # (`D:\Backup\Users\bob\.ssh`), which no entry keyed to %USERPROFILE% can
+    # name. AppData gets the same treatment for the same reason:
+    # `D:\Backup\Users\bob\AppData\Roaming\Mozilla` is bob's saved passwords.
+    # The explicit entries stay; this can only ever refuse more.
+    foreach ($part in ($full -split '\\')) {
+        if ($part.StartsWith('.')) {
+            return "That folder is hidden, or inside a hidden folder ($part) — that is where programs keep keys and passwords, so it will not be shared: $full"
+        }
+        if ($part -ieq 'AppData') {
+            return "That folder is inside AppData, where programs keep their passwords and sessions, so it will not be shared: $full"
+        }
+    }
 
     # A PROFILE FOLDER IS NEVER SHAREABLE, WHOEVER OWNS IT (2026-09-15).
     #

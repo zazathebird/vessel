@@ -20,6 +20,14 @@
  * production without passing.
  */
 
+// The agent tab is driven below (`VesselAgent`), and its File System Access
+// types live beside it rather than in the DOM lib.
+/// <reference path="../src/share/fs-types.d.ts" />
+import { AGENT_KEY_HEADER, FRAME_BUDGET, MACHINE_HEADER, MAX_BROWSER_SOCKETS, MachineSignal, PROOF_WINDOW_MS } from "../worker/signal";
+import { generateMachineKeypair, signConnectProof, signFingerprint, verifyConnectProof, verifyFingerprint } from "../src/share/handshake";
+import { MAX_PEERS, VesselAgent } from "../src/share/agent";
+import type { AgentSnapshot } from "../src/share/agent";
+import * as machinesRoute from "../worker/machines";
 import { execFileSync } from "node:child_process";
 import {
   existsSync,
@@ -29,6 +37,7 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -62,7 +71,7 @@ import {
   DEFAULT_RIM,
   GRAVITY,
 } from "../src/fx/duel";
-import { drawFx } from "../src/fx/effects";
+import { drawFx, duelRetryDue, loadDuelEngine } from "../src/fx/effects";
 import type { FxCache } from "../src/fx/effects";
 import { duelCamera, ORNAMENT_PX } from "../src/components/DuelOrnament";
 import type { DuelCam } from "../src/components/DuelOrnament";
@@ -101,10 +110,26 @@ import {
 } from "../src/data/downloads";
 import type { SortableFile } from "../src/data/downloads";
 import { DRAWN_CATEGORIES } from "../src/components/CategoryIcon";
-import { rangePlan } from "../worker/downloads";
-import { readJson, readJsonLenient } from "../worker/accounts";
+import { claim, file as downloadFile, listCodes, mintCode, rangePlan, revokeCode } from "../worker/downloads";
+import { changePassword, readJson, readJsonLenient, requireAccount, setPassword, signin } from "../worker/accounts";
+import {
+  abortUpload,
+  beginUpload,
+  deletePage,
+  finishUpload,
+  removeGrant,
+  saveBlocks,
+  saveFile,
+  savePage,
+  uploadPart,
+} from "../worker/downloadPages";
+import { resetPassword, resetTotp } from "../worker/admin";
+import { passkeyLabel } from "../worker/passkeys";
+import { RateLimiter } from "../worker/rate-limit";
+import { harden, health } from "../worker/hardening";
+import { RELEASE_WORDING } from "../src/data/downloads";
 import { publishSiteConfig } from "../worker/site-config";
-import { authHash } from "../worker/crypto";
+import { authHash, normaliseIp } from "../worker/crypto";
 import { toBase64Url } from "../worker/encoding";
 import { SESSION_COOKIE, mint as mintSession } from "../worker/session";
 import type { Env } from "../worker/env";
@@ -123,6 +148,11 @@ import { applyLook, themeClasses, themeVars } from "../src/theme";
 import { LOOK_KEYS, validLookPages } from "../src/data/lookSettings";
 import { effectiveStation } from "../src/data/stations";
 import { edgeState } from "../src/hooks/useEdgeFade";
+import { arrowPages, pagingTarget } from "../src/hooks/useOperatorRoutes";
+import type { ScrollBox } from "../src/hooks/useOperatorRoutes";
+import { POINTER_LIGHT_LAYOUTS, coalesce, pointerLightWrites } from "../src/hooks/useMotionSystems";
+import { canTakeFocus } from "../src/hooks/useFocusTrap";
+import type { FocusFacts } from "../src/hooks/useFocusTrap";
 import type { Band } from "../src/config/bands";
 import { PRESETS } from "../src/data/presets";
 
@@ -2530,13 +2560,15 @@ check("duel: the pacing rides on the fight, not on a global", () => {
     ["src/components/DuelOrnament.tsx", "the hero slot"],
     ["src/components/DuelSettingsEditor.tsx", "the editor's preview"],
     ["src/components/DuelBench.tsx", "the bench"],
+    // Since 2026-09-24 — it used to ride the global, via `FxCanvas`.
+    ["src/fx/duelEffect.ts", "the full-bleed background"],
   ] as const) {
     must(
       /\bst\.tuning\s*=/.test(readFileSync(file, "utf8")),
       `${what} never assigns st.tuning — its fight will run at whatever another host last set`,
     );
   }
-  return "3 hosts assign their own; two fights hold different tunings without bleeding";
+  return "4 hosts assign their own; two fights hold different tunings without bleeding";
 });
 
 /*
@@ -3793,7 +3825,7 @@ check("a share code carries the look and never the duel", () => {
       zoom: 1.4,
       tuning: { ...DEFAULT_DUEL_TUNING, rest: 0.5 },
     },
-    duelPages: { work: { bars: false } },
+    duelPages: { now: { bars: false } },
   };
 
   // 1. Encoding must not smuggle the duel in. A code is hyphen-separated
@@ -3817,7 +3849,7 @@ check("a share code carries the look and never the duel", () => {
   const after = { ...loud, ...(shared as object) } as Config;
   must(after.duel.pin?.[0] === "hooded", "applying a share code dropped the pinned pairing");
   must(after.duel.tuning.rest === 0.5, "applying a share code reset the pacing");
-  must(after.duelPages.work?.bars === false, "applying a share code dropped a page override");
+  must(after.duelPages.now?.bars === false, "applying a share code dropped a page override");
   // And it must still have done its actual job.
   must(after.pal === loud.pal && after.layout === loud.layout, "the code lost the look");
   return `7 fields, ${code.length} chars, duel settings untouched by a round trip`;
@@ -3992,12 +4024,12 @@ check("the duel settings publish, refuse rubbish, and default to a no-op", () =>
   //    resolved object would freeze today's values onto sixteen pages that
   //    nobody would think to revisit.
   const site = { ...DEFAULT_DUEL_SETTINGS, zoom: 1.4, tuning: { ...DEFAULT_DUEL_TUNING, rest: 2 } };
-  const pages = validDuelPages({ work: { bars: false }, nosuchpage: { bars: false } });
+  const pages = validDuelPages({ now: { bars: false }, nosuchpage: { bars: false } });
   must(!("nosuchpage" in pages), "an unknown page id survived validation");
-  must(Object.keys(pages.work ?? {}).length === 1, "a partial override was widened");
-  const onWork = resolveDuel(site, pages, "work");
-  must(onWork.bars === false, "the override did not apply");
-  must(onWork.zoom === 1.4 && onWork.tuning.rest === 2, "the override froze the site default");
+  must(Object.keys(pages.now ?? {}).length === 1, "a partial override was widened");
+  const onNow = resolveDuel(site, pages, "now");
+  must(onNow.bars === false, "the override did not apply");
+  must(onNow.zoom === 1.4 && onNow.tuning.rest === 2, "the override froze the site default");
   must(resolveDuel(site, pages, "about").bars === true, "an override leaked onto another page");
 
   // 5. A restriction can never empty a side. An ornament that draws no fighter
@@ -4041,8 +4073,8 @@ check("the duel settings publish, refuse rubbish, and default to a no-op", () =>
  * **`tuning` was one key holding four.** `DuelPageSettings` was
  * `Partial<DuelSettings>`, whose `tuning` is the whole four-knob object, so the
  * editor could not express "this page disagrees about Patience" and wrote all
- * four. Reproduced in a signed-in browser: Patience on `/work`, then the site's
- * Circling 1.00 → 2.50, and `/work` read 1.00 for ever — while the editor's own
+ * four. Reproduced in a signed-in browser: Patience on `/now`, then the site's
+ * Circling 1.00 → 2.50, and `/now` read 1.00 for ever — while the editor's own
  * summary said *"work sets 1 of its own: tuning"*. That is precisely the
  * "sixteen of them would silently go stale" failure the sparse map exists to
  * prevent, one level down. The old gate only ever exercised a `{ bars: false }`
@@ -4051,8 +4083,8 @@ check("the duel settings publish, refuse rubbish, and default to a no-op", () =>
  * **`validDuelPages` repaired where it promised to refuse.** It validated the
  * whole object and kept every key *present in the input*, taking its value from
  * the validated result — so a refused field survived as an override pinned to
- * the global default. `{ work: { zoom: 99 } }` became `{ work: { zoom: 1 } }`,
- * and a site at 1.4 then rendered `/work` at 1.0 with nothing reporting a
+ * the global default. `{ now: { zoom: 99 } }` became `{ now: { zoom: 1 } }`,
+ * and a site at 1.4 then rendered `/now` at 1.0 with nothing reporting a
  * refusal. Worse for a list: an emptying allow-list is refused, and the refusal
  * became an explicit `good: null` cancelling the site's roster restriction on
  * that page.
@@ -4066,59 +4098,59 @@ check("a page override is partial to the knob, and a refused field is dropped", 
   };
 
   // 1. One knob, and only that knob, stops tracking the site.
-  const onePages = validDuelPages({ work: { tuning: { patience: 2.5 } } });
+  const onePages = validDuelPages({ now: { tuning: { patience: 2.5 } } });
   must(
-    JSON.stringify(onePages.work?.tuning) === JSON.stringify({ patience: 2.5 }),
-    `a one-knob override came back as ${JSON.stringify(onePages.work?.tuning)}`,
+    JSON.stringify(onePages.now?.tuning) === JSON.stringify({ patience: 2.5 }),
+    `a one-knob override came back as ${JSON.stringify(onePages.now?.tuning)}`,
   );
-  const onWork = resolveDuel(site, onePages, "work");
-  must(onWork.tuning.patience === 2.5, "the page's own knob did not apply");
+  const onNow = resolveDuel(site, onePages, "now");
+  must(onNow.tuning.patience === 2.5, "the page's own knob did not apply");
   must(
-    onWork.tuning.circling === 2.5 && onWork.tuning.rest === 1.5,
-    `the other knobs froze at ${JSON.stringify(onWork.tuning)} instead of tracking the site`,
+    onNow.tuning.circling === 2.5 && onNow.tuning.rest === 1.5,
+    `the other knobs froze at ${JSON.stringify(onNow.tuning)} instead of tracking the site`,
   );
 
   // 2. Moving the site moves every knob the page has not spoken about.
   const moved = { ...site, tuning: { ...site.tuning, circling: 0.5 } };
   must(
-    resolveDuel(moved, onePages, "work").tuning.circling === 0.5,
+    resolveDuel(moved, onePages, "now").tuning.circling === 0.5,
     "a page that never mentioned circling did not follow the site",
   );
 
   // 3. A refused field is dropped, so the page keeps following the site.
   for (const [label, raw] of [
-    ["an out-of-band number", { work: { zoom: 99 } }],
-    ["an emptying allow-list", { work: { good: [] } }],
-    ["a wrong-side allow-list", { work: { good: ["ringmaster"] } }],
-    ["a half-valid allow-list", { work: { good: ["ronin", "nonsense"] } }],
-    ["an out-of-band knob", { work: { tuning: { rest: -1 } } }],
-    ["a non-numeric knob", { work: { tuning: { impact: "fast" } } }],
+    ["an out-of-band number", { now: { zoom: 99 } }],
+    ["an emptying allow-list", { now: { good: [] } }],
+    ["a wrong-side allow-list", { now: { good: ["ringmaster"] } }],
+    ["a half-valid allow-list", { now: { good: ["ronin", "nonsense"] } }],
+    ["an out-of-band knob", { now: { tuning: { rest: -1 } } }],
+    ["a non-numeric knob", { now: { tuning: { impact: "fast" } } }],
     // A key the validated object INHERITS rather than owns (2026-09-07). The
     // walk used `key in full`, which is true of `constructor`, so a published
     // `{ tuning: { constructor: 1 } }` indexed `DUEL_BANDS.constructor` and
     // destructured a function as a pair: a TypeError inside `loadConfig`, on
     // every visitor's first render, from one field. Parsed from JSON so the
     // `__proto__` case is an own property, as it is off the wire.
-    ["a prototype key in tuning", JSON.parse('{"work":{"tuning":{"constructor":1}}}')],
-    ["a prototype key in the override", JSON.parse('{"work":{"constructor":1,"__proto__":{"zoom":2}}}')],
-    ["a dunder key in tuning", JSON.parse('{"work":{"tuning":{"__proto__":{"rest":2}}}}')],
+    ["a prototype key in tuning", JSON.parse('{"now":{"tuning":{"constructor":1}}}')],
+    ["a prototype key in the override", JSON.parse('{"now":{"constructor":1,"__proto__":{"zoom":2}}}')],
+    ["a dunder key in tuning", JSON.parse('{"now":{"tuning":{"__proto__":{"rest":2}}}}')],
   ] as const) {
     const pages = validDuelPages(raw);
     must(
-      pages.work === undefined,
-      `${label} survived as ${JSON.stringify(pages.work)} instead of being dropped`,
+      pages.now === undefined,
+      `${label} survived as ${JSON.stringify(pages.now)} instead of being dropped`,
     );
     must(
-      JSON.stringify(resolveDuel(site, pages, "work")) === JSON.stringify(site),
-      `${label} changed what /work resolves to`,
+      JSON.stringify(resolveDuel(site, pages, "now")) === JSON.stringify(site),
+      `${label} changed what /now resolves to`,
     );
   }
 
   // 4. And a good value beside a refused one still lands, alone.
-  const mixed = validDuelPages({ work: { zoom: 1.2, rim: 99 } });
+  const mixed = validDuelPages({ now: { zoom: 1.2, rim: 99 } });
   must(
-    JSON.stringify(mixed.work) === JSON.stringify({ zoom: 1.2 }),
-    `a mixed override came back as ${JSON.stringify(mixed.work)}`,
+    JSON.stringify(mixed.now) === JSON.stringify({ zoom: 1.2 }),
+    `a mixed override came back as ${JSON.stringify(mixed.now)}`,
   );
   return "one knob stays one knob, 9 refused fields dropped, the good half of a mixed override kept";
 });
@@ -4222,6 +4254,104 @@ check("the duel's Size reaches the camera and never cuts a fighter off", () => {
   return `${frames} frames at Size 0.6/1/1.6, none clipped, 1.6 larger on ${grew}; 3 hosts pass it through`;
 });
 
+
+/*
+ * **The duel engine is a lazy chunk, and the gates below drive it through
+ * `drawFx`** (2026-09-24). `effects.ts` reaches the engine only by a dynamic
+ * `import()` on a duel's first frame, and draws the palette ground until it
+ * arrives — so without this await every duel gate below would be driving an
+ * empty effect. Awaited through the page's own loader rather than by importing
+ * `duelEffect.ts` here, so a broken loader fails the suite.
+ */
+await loadDuelEngine();
+
+/*
+ * The duel engine stays out of the entry bundle.
+ *
+ * Duels are operator-only, enforced where they are drawn — so no visitor's page
+ * ever runs one, and until 2026-09-24 every visitor downloaded the engine
+ * anyway: `effects.ts` and `FxCanvas.tsx` imported `./duel` statically, and
+ * `duelSettings.ts` (the published-config validator, in the entry by necessity)
+ * imported every costume to check a fighter id. ~60 kB minified, a fifth of
+ * the entry. The fix is three seams — `roster.ts` for what the validator needs,
+ * `loadDuelEngine` for the background, `lazy()` for the ornament — and any one
+ * static import put back undoes all of it with no visible symptom.
+ *
+ * **Driven, not read**: esbuild bundles the real entry with code splitting,
+ * which follows static and dynamic imports the way the production build does,
+ * and the metafile says which source files land in the chunks the entry loads
+ * before it runs. A source scan for `from "./duel"` would miss the next route
+ * in — a new component importing `BLADE_COLORS`, say.
+ */
+check("the duel engine is not in the entry bundle — only an operator fetches it", () => {
+  const out = mkdtempSync(join(tmpdir(), "vessel-entry-"));
+  try {
+    const meta = join(out, "meta.json");
+    execFileSync(
+      "node_modules/.bin/esbuild",
+      [
+        "src/main.tsx",
+        "--bundle",
+        "--splitting",
+        "--format=esm",
+        "--jsx=automatic",
+        "--loader:.css=empty",
+        `--outdir=${join(out, "js")}`,
+        `--metafile=${meta}`,
+        "--log-level=error",
+      ],
+      { stdio: "pipe" },
+    );
+    type Output = {
+      entryPoint?: string;
+      bytes: number;
+      inputs: Record<string, unknown>;
+      imports: { path: string; kind: string }[];
+    };
+    const outputs = (JSON.parse(readFileSync(meta, "utf8")) as { outputs: Record<string, Output> }).outputs;
+    const entry = Object.keys(outputs).find((k) => outputs[k].entryPoint === "src/main.tsx");
+    must(entry !== undefined, "esbuild produced no output for src/main.tsx — has the entry moved?");
+
+    // Everything the entry loads before it runs: its own file and the chunks it
+    // imports statically, transitively. Dynamic imports are the lazy edges.
+    const loaded = new Set<string>();
+    const walk = (key: string) => {
+      if (loaded.has(key)) return;
+      loaded.add(key);
+      for (const i of outputs[key].imports) {
+        if (i.kind === "import-statement" && outputs[i.path]) walk(i.path);
+      }
+    };
+    walk(entry!);
+    const inEntry = new Set([...loaded].flatMap((k) => Object.keys(outputs[k].inputs)));
+    const anywhere = new Set(Object.values(outputs).flatMap((o) => Object.keys(o.inputs)));
+
+    const engine = [
+      "src/fx/duel.ts",
+      "src/fx/fighters.ts",
+      "src/fx/duelEffect.ts",
+      "src/components/DuelOrnament.tsx",
+    ];
+    // Not vacuous: every one of them still ships, just not in the entry.
+    for (const f of engine) must(anywhere.has(f), `${f} is in no chunk at all — the gate would pass on nothing`);
+    const leaked = engine.filter((f) => inEntry.has(f));
+    must(
+      leaked.length === 0,
+      `${leaked.join(", ")} landed in the entry bundle — a static import of the duel engine is back, and every visitor downloads it`,
+    );
+    // The validator's half has to be in the entry, and has to stay a leaf.
+    must(inEntry.has("src/fx/roster.ts"), "roster.ts is not in the entry — has the validator stopped reading it?");
+    must(
+      !/^import\s+(?!type\b)/m.test(readFileSync("src/fx/roster.ts", "utf8")),
+      "roster.ts has a runtime import — it is in every visitor's entry and must stay a leaf",
+    );
+
+    const kb = Math.round([...loaded].reduce((n, k) => n + outputs[k].bytes, 0) / 1024);
+    return `entry loads ${loaded.size} chunks (${kb} KB unminified), none holding the ${engine.length} engine files`;
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+  }
+});
 
 /**
  * A recording 2D context, for driving the real effects from node.
@@ -5006,10 +5136,10 @@ check("a page's look override reaches the page, and only that page", () => {
   const peat = PALETTES.findIndex((p) => p.id === LOW_CONTRAST[0]);
   const cfg: Config = {
     ...DEFAULT_CONFIG,
-    page: "work",
+    page: "now",
     calm: false,
     grain: false,
-    lookPages: { work: { pal: peat, layout: "ledger", fx: "plasma", grain: true, slots: true } },
+    lookPages: { now: { pal: peat, layout: "ledger", fx: "plasma", grain: true, slots: true } },
   };
 
   // The merge itself: named dials override, unnamed dials track the site.
@@ -5102,6 +5232,247 @@ check("a page's look override reaches the page, and only that page", () => {
   return "override merges, guards resolve on the merge, all three call sites go through the seam";
 });
 
+/*
+ * Arrow paging stands down wherever an arrow key already means something.
+ *
+ * 2026-09-24 review, item 13: `useOperatorRoutes` paged the site on a bare
+ * ArrowLeft/Right for every visitor, including with focus inside Deck's grid
+ * (`overflow-x: auto`), where the same key scrolls the cards — so one press
+ * both scrolled the deck and navigated off it. And audit finding 3: paging
+ * stood down under the panel but not under the door.
+ *
+ * Driven, over plain objects shaped like elements: the decision is one pure
+ * function and the hook's only paging branch asks it. The two traps it must
+ * not fall into are modelled explicitly — `.v-stage`, whose `overflow-x`
+ * computes to `auto` on every layout without overflowing (testing the style
+ * alone would switch paging off site-wide), and overflowing content under
+ * `overflow-x: hidden`, which takes no arrow key.
+ */
+check("arrow keys page the site only where an arrow key means nothing else", () => {
+  type Box = ScrollBox & { ox: string };
+  const box = (scrollWidth: number, clientWidth: number, ox: string, parentElement: Box | null): Box => ({
+    scrollWidth,
+    clientWidth,
+    ox,
+    parentElement,
+  });
+  const ox = (el: ScrollBox) => (el as Box).ox;
+  const body = box(1280, 1280, "visible", null);
+  const stage = box(1280, 1280, "auto", body); // scrolls vertically; overflow-x computes to auto
+  const deck = box(3600, 1100, "auto", stage); // Deck's grid
+  const inDeck = box(300, 300, "visible", deck);
+  const inStage = box(300, 300, "visible", stage);
+  const clipped = box(300, 300, "visible", box(3600, 1100, "hidden", stage));
+  const closed = { panelOpen: false, doorOpen: false };
+
+  must(arrowPages("arrowright", closed, ["arrowright"], body, ox), "a bare ArrowRight with nothing focused no longer pages");
+  must(arrowPages("arrowleft", closed, ["arrowleft"], null, ox), "a keystroke with no element target no longer pages");
+  must(
+    arrowPages("arrowright", closed, ["arrowright"], inStage, ox),
+    "focus inside the stage stopped paging — the stage's computed overflow-x: auto is being read as a sideways scroller",
+  );
+  must(
+    !arrowPages("arrowright", closed, ["arrowright"], inDeck, ox),
+    "ArrowRight inside Deck's sideways-scrolling grid pages the site as well as scrolling the cards",
+  );
+  must(!arrowPages("arrowleft", closed, ["arrowleft"], deck, ox), "ArrowLeft on the scroller itself pages the site");
+  must(
+    arrowPages("arrowright", closed, ["arrowright"], clipped, ox),
+    "overflow under overflow-x: hidden takes no arrow key, and should not stop paging",
+  );
+  must(
+    !arrowPages("arrowright", { panelOpen: false, doorOpen: true }, ["arrowright"], body, ox),
+    "ArrowRight pages the site behind the open door",
+  );
+  must(
+    !arrowPages("arrowright", { panelOpen: true, doorOpen: false }, ["arrowright"], body, ox),
+    "ArrowRight pages the site behind the open panel",
+  );
+  must(
+    !arrowPages("arrowleft", closed, ["arrowup", "arrowup", "arrowdown", "arrowdown", "arrowleft"], body, ox),
+    "a half-typed konami pages the site",
+  );
+  must(!arrowPages("arrowup", closed, ["arrowup"], body, ox), "ArrowUp pages the site");
+
+  // The page asks it: the hook's only route to `go(NAV[…])` is behind it, and
+  // the live state it hands over carries the door.
+  const src = readFileSync("src/hooks/useOperatorRoutes.ts", "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/[^\n]*/g, "");
+  must(
+    /if \(arrowPages\(key, live\.current, keys, judged\)\) \{\s*const i = NAV\.findIndex/.test(src),
+    "useOperatorRoutes no longer pages through arrowPages — the gate above is testing a function the page does not call",
+  );
+  must((src.match(/go\(NAV\[/g) ?? []).length === 1, "useOperatorRoutes pages from a second place arrowPages does not guard");
+  must(/live\.current = \{[^}]*\bdoorOpen\b/.test(src), "the live state handed to arrowPages no longer carries doorOpen");
+  return "pages from the body and the stage; not in a sideways scroller, under the door or panel, or mid-konami";
+});
+
+check("a key with nothing focused is judged against what the pointer went down on", () => {
+  // Second-run review 2026-09-24: clicking a non-focusable spot in Deck's row
+  // leaves focus on <body>, Chrome still arrow-scrolls the clicked row, and
+  // the site paged as well. The judged target must be the pointer's.
+  const isDoc = (t: string) => t === "body";
+  must(pagingTarget<string>("body", "deck-card", isDoc) === "deck-card", "a body-targeted key ignored the last pointerdown");
+  must(pagingTarget<string>("link", "deck-card", isDoc) === "link", "a focused element was overridden by the pointer");
+  must(pagingTarget<string>("body", null, isDoc) === "body", "with no pointer history the body stopped being the target");
+  const src = readFileSync("src/hooks/useOperatorRoutes.ts", "utf8");
+  must(/arrowPages\(key, live\.current, keys, judged\)/.test(src), "onKey no longer hands arrowPages the pointer-aware target");
+  must(/lastPointer = event\.target/.test(src), "pointerdown no longer records its target");
+  return "body keys judged by the last pointerdown; focused elements by themselves";
+});
+
+check("a duel chunk that fails to load backs off and cannot blank the site", () => {
+  // Second-run review 2026-09-24: the lazy duel ornament sat in a bare
+  // <Suspense> outside every route boundary (a 404'd chunk unmounted the whole
+  // tree), and a failed load retried every frame, silently.
+  const orn = readFileSync("src/components/Ornament.tsx", "utf8");
+  must(!/<Suspense\b/.test(orn), "Ornament.tsx wraps a lazy chunk in a bare Suspense again");
+  must(/<Lazy>\s*<DuelOrnament/.test(orn), "the duel ornament is no longer inside Lazy's error boundary");
+  must(duelRetryDue(performance.now()), "a fresh tab is not allowed to fetch the engine");
+  const fx = readFileSync("src/fx/effects.ts", "utf8");
+  must(/if \(duelRetryDue\(performance\.now\(\)\)\) loadDuelEngine\(\)/.test(fx), "lazyDuel fetches without consulting the backoff");
+  must(/duelRetryAt = performance\.now\(\) \+ Math\.min\(60_000/.test(fx), "a failed load no longer schedules a backed-off retry");
+  return "Lazy boundary around the ornament; failed loads back off, capped at a minute";
+});
+
+/*
+ * The shared pointer light is written once a frame, and only where it is read.
+ *
+ * 2026-09-24 review, item 14: `--mx` / `--my` are `@property … inherits: true`
+ * on `.vessel`, so each write invalidates the whole page's style — and they were
+ * written, with a forced layout, on every pointermove (up to 1000Hz), on all
+ * fourteen layouts, for a light three of them draw.
+ *
+ * The readers are derived from the stylesheets, not restated: a layout that
+ * starts reading the light without being listed would sit unlit, and one
+ * listed that stopped would pay for nothing. The batching is driven through a
+ * fake scheduler.
+ */
+check("the pointer light is written once a frame, and only where a layout reads it", () => {
+  const css = readdirSync("src/styles")
+    .filter((f) => f.endsWith(".css"))
+    .map((f) => readFileSync(join("src/styles", f), "utf8"))
+    .join("\n")
+    .replace(/\/\*[\s\S]*?\*\//g, "");
+  const readers = new Set<string>();
+  for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    if (!/var\(\s*--m[xy]\b/.test(m[2])) continue;
+    const named = [...m[1].matchAll(/\.layout-([a-z-]+)/g)].map((l) => l[1]);
+    must(named.length > 0, `a rule reads --mx/--my without naming a layout: ${m[1].trim()} — every layout would need the light`);
+    for (const l of named) readers.add(l);
+  }
+  must(readers.size > 0, "no stylesheet reads --mx/--my — the gate would pass on nothing");
+  const listed = new Set<string>(POINTER_LIGHT_LAYOUTS);
+  const unlit = [...readers].filter((l) => !listed.has(l));
+  const idle = [...listed].filter((l) => !readers.has(l));
+  must(unlit.length === 0, `${unlit.join(", ")} read --mx/--my but POINTER_LIGHT_LAYOUTS omits them — the light never moves there`);
+  must(idle.length === 0, `POINTER_LIGHT_LAYOUTS lists ${idle.join(", ")}, which no stylesheet reads — a whole-page style invalidation per frame for nothing`);
+
+  for (const { id } of LAYOUTS) {
+    must(pointerLightWrites(id, false) === readers.has(id), `pointerLightWrites("${id}") disagrees with the stylesheets`);
+    must(!pointerLightWrites(id, true), `the pointer light is written in calm on ${id}`);
+  }
+
+  // Coalescing, driven: fifty events, one frame, the latest position.
+  const queue: (() => void)[] = [];
+  const cancelled: number[] = [];
+  const flushed: number[] = [];
+  const frame = coalesce<number>(
+    (run) => queue.push(run),
+    (id) => cancelled.push(id),
+    (v) => flushed.push(v),
+  );
+  for (let i = 0; i < 50; i += 1) frame.push(i);
+  must(queue.length === 1, `50 pointer events scheduled ${queue.length} frames`);
+  queue.shift()!();
+  must(flushed.length === 1 && flushed[0] === 49, `one frame flushed [${flushed.join(",")}], expected [49]`);
+  frame.push(50);
+  must(queue.length === 1, "the next event after a frame did not schedule another");
+  frame.cancel();
+  must(cancelled.length === 1, "cancel did not unschedule the pending frame");
+
+  // The page does it that way: the handler only records, and the write is gated.
+  const src = readFileSync("src/hooks/useMotionSystems.ts", "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/[^\n]*/g, "");
+  must(
+    /const onMove = \(event: PointerEvent\) => frame\.push\(\{ x: event\.clientX, y: event\.clientY \}\);/.test(src),
+    "the pointermove handler does more than record the position — it is measuring or writing per event again",
+  );
+  must(/coalesce<[^>]*>\(\s*\(run\) => requestAnimationFrame\(run\)/.test(src), "the pointer is no longer batched to animation frames");
+  must(
+    /if \(writes\) \{\s*host\.style\.setProperty\("--mx"/.test(src) &&
+      /const lights = pointerLightWrites\(layout, config\.calm\)/.test(src),
+    "the --mx/--my write is no longer gated on pointerLightWrites of the adapted layout",
+  );
+  return `${readers.size} layouts read the light (${[...readers].join(", ")}); 50 events → 1 frame; none in calm`;
+});
+
+/*
+ * A focus trap never hands focus to something that cannot take it.
+ *
+ * 2026-09-24 review, item 15: `FOCUSABLE` matched hidden, `inert` and disabled
+ * elements, so the trap's first focus or its Tab wrap could land on something
+ * invisible — or on nothing, leaving focus outside the dialog it promised to
+ * hold. Driven over plain facts; the DOM half is four browser queries.
+ */
+check("a focus trap never hands focus to what cannot take it", () => {
+  const ok: FocusFacts = { disabled: false, inert: false, rendered: true, visible: true };
+  must(canTakeFocus(ok), "an ordinary visible control cannot take focus");
+  must(!canTakeFocus({ ...ok, disabled: true }), "a disabled control can take focus");
+  must(!canTakeFocus({ ...ok, inert: true }), "a control inside an inert subtree can take focus");
+  must(!canTakeFocus({ ...ok, rendered: false }), "a hidden / display:none control can take focus");
+  must(!canTakeFocus({ ...ok, visible: false }), "a visibility:hidden control can take focus");
+
+  const src = readFileSync("src/hooks/useFocusTrap.ts", "utf8");
+  const selector = src.match(/const FOCUSABLE =\s*'([^']+)'/);
+  must(selector !== null, "FOCUSABLE has moved — the gate cannot find the selector");
+  for (const tag of ["button", "input", "select", "textarea"]) {
+    must(selector![1].includes(`${tag}:not([disabled])`), `FOCUSABLE matches a disabled <${tag}>`);
+  }
+  must(
+    /querySelectorAll<HTMLElement>\(FOCUSABLE\)[^;]*?\.filter\(\(el\) =>\s*canTakeFocus\(factsOf\(el\)\)/s.test(src),
+    "the trap's item list no longer filters through canTakeFocus — first focus and Tab wrap can land on a hidden element",
+  );
+  const facts = src.slice(src.indexOf("function factsOf"), src.indexOf("function factsOf") + 900);
+  for (const probe of [':disabled', 'closest("[inert]")', "getClientRects()", "visibility"]) {
+    must(facts.includes(probe), `factsOf no longer asks the browser ${probe}`);
+  }
+  return "disabled, inert, unrendered and invisible controls are all refused, and the trap asks";
+});
+
+/*
+ * No `eslint-disable` directive in `src/`, because no linter runs.
+ *
+ * 2026-09-24 review, item 19: the `// eslint-disable-next-line
+ * react-hooks/exhaustive-deps` comments suppressed nothing — there is no ESLint
+ * in this repository, nothing installs or configures one — and a directive that suppresses nothing reads as a promise that a rule was
+ * checked and consciously waived. The reason a dependency list is short
+ * belongs in prose beside it, which is where each of these already had one.
+ *
+ * `DownloadEditor.tsx`'s was removed at the merge, the same day.
+ */
+check("no lint directive in src/ pretends a linter runs", () => {
+  const found: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) walk(path);
+      else if (/\.(ts|tsx)$/.test(entry.name)) {
+        if (/eslint-disable/.test(readFileSync(path, "utf8"))) found.push(path);
+      }
+    }
+  };
+  walk("src");
+  must(
+    !existsSync(".eslintrc") && !existsSync(".eslintrc.json") && !existsSync("eslint.config.js"),
+    "an ESLint config exists now — this gate's premise is gone; revisit it rather than deleting it",
+  );
+  must(found.length === 0, `eslint-disable directives with no linter to obey them: ${found.join(", ")}`);
+  return "none in src/";
+});
+
 check("the cursor-lean card tilt stays deleted", () => {
   /*
    * Client, 2026-09-22: "this page jiggle/jitter/twitch needs to be killed and
@@ -5131,7 +5502,7 @@ check("the cursor-lean card tilt stays deleted", () => {
 
 check("a page look override refuses rubbish and never repairs it", () => {
   // Identity with what came in: a valid partial survives exactly as sent.
-  const good = { work: { pal: 3, layout: "ledger", grain: false }, about: { fx: "plasma" } };
+  const good = { now: { pal: 3, layout: "ledger", grain: false }, about: { fx: "plasma" } };
   must(
     JSON.stringify(validLookPages(good)) === JSON.stringify(good),
     "a valid override did not round-trip identically",
@@ -5139,21 +5510,21 @@ check("a page look override refuses rubbish and never repairs it", () => {
 
   // A refused field is DROPPED — an override pinned to a default is a working
   // override shadowing whatever the site later says, the validDuelPages bug.
-  const mixed = validLookPages({ work: { pal: 999, layout: "nope", grain: "yes", fx: "plasma" } });
+  const mixed = validLookPages({ now: { pal: 999, layout: "nope", grain: "yes", fx: "plasma" } });
   must(
-    JSON.stringify(mixed) === JSON.stringify({ work: { fx: "plasma" } }),
+    JSON.stringify(mixed) === JSON.stringify({ now: { fx: "plasma" } }),
     `refused fields were kept or repaired: ${JSON.stringify(mixed)}`,
   );
 
   // An override emptied by refusals is dropped whole — {} and absence must
   // mean the same thing, or the panel's override count lies.
-  must(!("work" in validLookPages({ work: { pal: -1 } })), "an emptied override survived as {}");
+  must(!("now" in validLookPages({ now: { pal: -1 } })), "an emptied override survived as {}");
 
   // Unknown pages and non-object shapes are dropped, never guessed at.
   must(Object.keys(validLookPages({ nothome: { pal: 1 } })).length === 0, "an unknown page key survived");
   must(Object.keys(validLookPages("0-7-5")).length === 0, "a string was accepted as a look map");
   must(Object.keys(validLookPages([{ pal: 1 }])).length === 0, "an array was accepted as a look map");
-  must(Object.keys(validLookPages({ work: [3] })).length === 0, "an array was accepted as an override");
+  must(Object.keys(validLookPages({ now: [3] })).length === 0, "an array was accepted as an override");
 
   // A hidden catalogue entry is stored-valid: hidden is unlisted, not invalid.
   must(
@@ -6017,7 +6388,7 @@ check("the setup scripts REFUSE, driven against a real home directory", () => {
   // fails, DEFS comes back empty and every verdict reads BROKEN.
   const probeScript = String.raw`
 set -uo pipefail
-SRC="$1"; FIX="$2"; SIB="$3"; OS="$4"
+SRC="$1"; FIX="$2"; SIB="$3"; OS="$4"; shift 4
 # fold_case asks uname, so a Linux run never folds and a folding bug is
 # invisible to it. The Darwin run answers for the Mac.
 [ "$OS" = Darwin ] && uname() { echo Darwin; }
@@ -6032,7 +6403,7 @@ DEFS="$(awk '
 HOME="$FIX"; SHARE_ROOT="$FIX/Shared"
 eval "$DEFS"
 for p in "$FIX" "$FIX/.ssh" "$FIX/.gnupg" "$FIX/.config" "$FIX/.local" \
-         "$FIX/.local/share" /etc / "$FIX/Documents" "$SIB" "$SIB/.ssh" "$SIB/Documents"; do
+         "$FIX/.local/share" /etc / "$FIX/Documents" "$SIB" "$SIB/.ssh" "$SIB/Documents" "$@"; do
   r="$(check_folder "$p" 2>/dev/null | head -1)"
   case "$r" in OK*) v=ALLOWED ;; NO*) v=refused ;; *) v=BROKEN ;; esac
   printf '%s\t%s\n' "$v" "$p"
@@ -6040,6 +6411,19 @@ done
 `;
 
   const root = mkdtempSync(join(tmpdir(), "vessel-blocklist-"));
+  /*
+   * A COPIED HOME ON A BACKUP DISK, in its own temporary tree so it sits inside
+   * none of the account containers — on the Linux run `dirname "$HOME"` is
+   * `root` itself, and a backup under it would be refused as "somebody else's
+   * account" whether or not the rule under test exists. Every dot-directory
+   * entry is keyed to THIS home, so before 2026-09-24 `backup/home/bob/.ssh`
+   * matched nothing, and neither did `~/.claude`, `~/.wine` or `~/.azure`: the
+   * list was finite and the secrets are not.
+   */
+  const backup = realpathSync(mkdtempSync(join(tmpdir(), "vessel-backup-")));
+  for (const d of ["home/bob/.ssh/keys", "home/bob/Documents", "Users/bob/Library/Keychains", "Users/bob/Pictures"]) {
+    mkdirSync(join(backup, d), { recursive: true });
+  }
   let driven = 0;
   try {
     /*
@@ -6058,16 +6442,25 @@ done
     // shape that shattered the list.
     for (const home of ["plain", "bob smith"]) {
       const fix = join(base, home);
-      for (const d of [".ssh", ".gnupg", ".config", ".local/share/keyrings", "Documents", "Shared"]) {
+      for (const d of [".ssh", ".gnupg", ".config", ".local/share/keyrings", "Documents", "Shared",
+                       ".claude", ".wine/drive_c", ".azure", "Pictures"]) {
         mkdirSync(join(fix, d), { recursive: true });
       }
+      // An innocent name that is a link into a dot-folder: refused because the
+      // path compared is the canonical one, not the one typed.
+      if (!existsSync(join(fix, "notes"))) symlinkSync(join(fix, ".claude"), join(fix, "notes"));
       // A second account beside it, in the same container — which is what
       // `dirname "$HOME"` resolves to here, so the containment rule can be
       // driven in a throwaway tree instead of only on a real /home.
       const sibling = join(base, `${home}-neighbour`);
       for (const d of [".ssh", "Documents"]) mkdirSync(join(sibling, d), { recursive: true });
       for (const file of files) {
-        const out = execFileSync("bash", ["-c", probeScript, "probe", file, fix, sibling, os], {
+        const extra = [
+          `${fix}/.claude`, `${fix}/.wine/drive_c`, `${fix}/.azure`, `${fix}/notes`, `${fix}/Pictures`,
+          `${backup}/home/bob/.ssh`, `${backup}/home/bob/.ssh/keys`, `${backup}/home/bob/Documents`,
+          `${backup}/Users/bob/Library/Keychains`, `${backup}/Users/bob/Library`, `${backup}/Users/bob/Pictures`,
+        ];
+        const out = execFileSync("bash", ["-c", probeScript, "probe", file, fix, sibling, os, ...extra], {
           encoding: "utf8",
         });
         const verdict = new Map<string, string>();
@@ -6106,19 +6499,49 @@ done
           driven += 1;
         }
 
+        /*
+         * THE STRUCTURAL RULE (2026-09-24): a dot-component anywhere refuses,
+         * under this home or on a backup disk, and on the Mac so does any
+         * `Library`. Each of these was ALLOWED by the finite lists.
+         */
+        const structural: [string, string][] = [
+          [`${fix}/.claude`, "~/.claude (agent credentials) — no entry named it"],
+          [`${fix}/.wine/drive_c`, "~/.wine — a whole Windows profile, no entry named it"],
+          [`${fix}/.azure`, "~/.azure (cloud credentials) — no entry named it"],
+          [`${fix}/notes`, "an innocently named link into ~/.claude"],
+          [`${backup}/home/bob/.ssh`, "another home's .ssh on a backup disk — every entry is keyed to THIS home"],
+          [`${backup}/home/bob/.ssh/keys`, "inside another home's .ssh on a backup disk"],
+        ];
+        if (file.includes("macos")) {
+          structural.push(
+            [`${backup}/Users/bob/Library/Keychains`, "a copied Mac home's Keychains on a backup disk"],
+            [`${backup}/Users/bob/Library`, "a copied Mac home's Library on a backup disk"],
+          );
+        }
+        for (const [p, why] of structural) {
+          must(
+            verdict.get(p) === "refused",
+            `${file} (${os}): ${p.replace(fix, "~").replace(backup, "BACKUP")} is ${verdict.get(p) ?? "unresolved"} with HOME="${home}" — ${why}`,
+          );
+          driven += 1;
+        }
+
         // And it must still be usable: an ordinary folder has to pass, or the
         // safe answer is "refuse everything" and nobody can share anything.
-        must(
-          verdict.get(`${fix}/Documents`) === "ALLOWED",
-          `${file} (${os}): an ordinary folder is refused with HOME="${home}" — the blocklist has become a wall`,
-        );
-        driven += 1;
+        for (const p of [`${fix}/Documents`, `${fix}/Pictures`, `${backup}/home/bob/Documents`, `${backup}/Users/bob/Pictures`]) {
+          must(
+            verdict.get(p) === "ALLOWED",
+            `${file} (${os}): an ordinary folder (${p.replace(fix, "~").replace(backup, "BACKUP")}) is ${verdict.get(p) ?? "unresolved"} with HOME="${home}" — the blocklist has become a wall`,
+          );
+          driven += 1;
+        }
       }
     }
   } finally {
     rmSync(root, { recursive: true, force: true });
+    rmSync(backup, { recursive: true, force: true });
   }
-  return `${driven} verdicts from the real check_folder, over 2 scripts x 2 home directories (one with a space), and the macOS script again as Darwin`;
+  return `${driven} verdicts from the real check_folder, over 2 scripts x 2 home directories (one with a space), and the macOS script again as Darwin; dot-folders and Library refused anywhere, a backup disk included`;
 });
 
 /*
@@ -6186,11 +6609,22 @@ check("the Windows script resolves EVERY path component, not just the leaf", () 
   const root = mkdtempSync(join(tmpdir(), "vessel-pwsh-"));
   try {
     const harness = join(root, "resolve.ps1");
+    /*
+     * The walk asks Get-DriveMapping about the drive letter on every round, and
+     * there are no drive letters here. The stub answers the one question the
+     * walk asks — "is this letter a SUBST, and of what?" — from VESSEL_SUBST,
+     * for paths spelled `X:...`, which are passed through without GetFullPath
+     * (on Linux that would make `X:` a relative directory name). The REAL
+     * Get-DriveMapping is driven by the gate after this one.
+     */
     writeFileSync(
       harness,
       "param([string] $Path)\n" +
         "$SEP = [string][System.IO.Path]::DirectorySeparatorChar\n" +
-        "$full = [System.IO.Path]::GetFullPath($Path).TrimEnd([char]$SEP)\n" +
+        "function Get-DriveMapping { param([string] $Full)\n" +
+        "  if ($Full.StartsWith('X:')) { if ($env:VESSEL_SUBST -eq 'THROW') { throw 'unexplained letter' }; return $env:VESSEL_SUBST }\n" +
+        "  return '' }\n" +
+        "$full = if ($Path.StartsWith('X:')) { $Path } else { [System.IO.Path]::GetFullPath($Path).TrimEnd([char]$SEP) }\n" +
         "function Test-It {\n" +
         block +
         "\n  return $full\n}\nTest-It\n",
@@ -6198,6 +6632,7 @@ check("the Windows script resolves EVERY path component, not just the leaf", () 
     );
 
     const real = realpathSync(root);
+    const sep = "/";
     mkdirSync(join(root, "home", "me", "Documents"), { recursive: true });
     mkdirSync(join(root, "home", "me", ".ssh"), { recursive: true });
     // The shipped Windows aliases, reproduced in shape: an ancestor link, a
@@ -6207,8 +6642,11 @@ check("the Windows script resolves EVERY path component, not just the leaf", () 
     symlinkSync(join(root, "home", "me", "Documents"), join(root, "home", "me", "leaflink"));
     symlinkSync(join(root, "nowhere-at-all"), join(root, "dangling"));
 
-    const run = (p: string) =>
-      execFileSync("pwsh", ["-NoProfile", "-File", harness, p], { encoding: "utf8" }).trim();
+    const run = (p: string, subst = "") =>
+      execFileSync("pwsh", ["-NoProfile", "-File", harness, p], {
+        encoding: "utf8",
+        env: { ...process.env, VESSEL_SUBST: subst },
+      }).trim();
 
     const cases: [string, string, string][] = [
       ["an ancestor link", join(root, "Documents and Settings", "me", "Documents"), join(real, "home/me/Documents")],
@@ -6236,7 +6674,31 @@ check("the Windows script resolves EVERY path component, not just the leaf", () 
     );
     driven += 1;
 
-    return `${driven} verdicts from the real resolver: ancestor, chained, leaf and unresolvable links`;
+    /*
+     * A SUBST LETTER (2026-09-24, review item 13). `subst X: C:\Users\me\.ssh`
+     * makes `X:\keys` a path into .ssh that is not a reparse point anywhere, so
+     * the walk never resolved it and the blocklist compared `X:\keys` as typed.
+     * The walk now asks about the letter every round and carries the rest of
+     * the path across; a subst whose target is itself behind a link must come
+     * out fully resolved, and a letter nobody can explain must be refused.
+     */
+    const substCases: [string, string, string, string][] = [
+      ["a SUBST letter onto .ssh", `X:${sep}keys`, join(real, "home", "me", ".ssh"), join(real, "home/me/.ssh/keys")],
+      ["a SUBST letter onto a link", `X:${sep}me${sep}Documents`, join(root, "Documents and Settings"), join(real, "home/me/Documents")],
+    ];
+    mkdirSync(join(root, "home", "me", ".ssh", "keys"), { recursive: true });
+    for (const [what, input, target, want] of substCases) {
+      const got = run(input, target);
+      must(got === want, `${what}: the resolver returned "${got}" where the real folder is "${want}" — the letter was compared as typed`);
+      driven += 1;
+    }
+    const unc = run(`X:${sep}Users`, "\\\\localhost\\C$");
+    must(unc.startsWith("That drive letter is a network share"), `a SUBST onto a UNC path was not refused: "${unc}"`);
+    const unexplained = run(`X:${sep}keys`, "THROW");
+    must(unexplained.startsWith("Could not work out"), `a drive letter that could not be explained was not refused: "${unexplained}"`);
+    driven += 2;
+
+    return `${driven} verdicts from the real resolver: ancestor, chained, leaf and unresolvable links; SUBST letters resolved, a UNC subst and an unexplained letter refused`;
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -6301,6 +6763,7 @@ check("the Windows script REFUSES the folders that matter, driven under pwsh", (
     ["$bad + '\\'", "$bad + $SEP"],
     ["$profileParent + '\\'", "$profileParent + $SEP"],
     ["$profileRoot + '\\'", "$profileRoot + $SEP"],
+    ["($full -split '\\\\')", "($full -split ([regex]::Escape($SEP)))"],
   ];
   for (const [a, b] of subs) {
     must(block.includes(a), `the blocklist no longer contains ${a} — this gate is testing nothing`);
@@ -6327,6 +6790,10 @@ check("the Windows script REFUSES the folders that matter, driven under pwsh", (
       ["Users", "me", "AppData", "Local", "Google", "Chrome"],
       ["Users", "me", "AppData", "Local", "Packages"],
       ["Users", "other"], ["Users", "other", ".ssh"], ["Users", "other", "Documents"],
+      ["Users", "me", "AppData", "LocalLow", "Vendor"], ["Users", "me", ".config"], ["Users", "me", ".azure"],
+      ["Users", "me", ".claude"], ["Users", "me", "Pictures"],
+      ["Backup", "Users", "bob", ".ssh"], ["Backup", "Users", "bob", "AppData", "Roaming", "Mozilla"],
+      ["Backup", "Users", "bob", "Documents"],
     ]) mkdirSync(join(real, ...d), { recursive: true });
 
     const harness = join(root, "block.ps1");
@@ -6388,9 +6855,26 @@ check("the Windows script REFUSES the folders that matter, driven under pwsh", (
       ["the Windows directory", join(real, "Windows"), false],
       ["Program Files", join(real, "Program Files"), false],
       ["ProgramData", join(real, "ProgramData"), false],
+      /*
+       * 2026-09-24. AppData ITSELF was shareable — Local and Roaming were
+       * blocked and their parent, which holds both and LocalLow, was not. And
+       * the dot-directory entries were a finite list: .config, .azure and
+       * .claude all passed, as did a copied profile on a backup disk, which no
+       * entry keyed to %USERPROFILE% can name.
+       */
+      ["%USERPROFILE%\\AppData ITSELF", join(profile, "AppData"), false],
+      ["%USERPROFILE%\\AppData\\LocalLow", join(profile, "AppData", "LocalLow"), false],
+      ["%USERPROFILE%\\AppData\\LocalLow\\Vendor", join(profile, "AppData", "LocalLow", "Vendor"), false],
+      ["%USERPROFILE%\\.config", join(profile, ".config"), false],
+      ["%USERPROFILE%\\.azure", join(profile, ".azure"), false],
+      ["%USERPROFILE%\\.claude", join(profile, ".claude"), false],
+      ["a backup profile's .ssh", join(real, "Backup", "Users", "bob", ".ssh"), false],
+      ["a backup profile's AppData\\Roaming\\Mozilla", join(real, "Backup", "Users", "bob", "AppData", "Roaming", "Mozilla"), false],
       // The converse. A blocklist that refuses everything is not a blocklist,
       // and Documents is the folder the whole feature exists to share.
       ["Documents", join(profile, "Documents"), true],
+      ["Pictures", join(profile, "Pictures"), true],
+      ["a backup profile's Documents", join(real, "Backup", "Users", "bob", "Documents"), true],
     ];
 
     let driven = 0;
@@ -6408,7 +6892,80 @@ check("the Windows script REFUSES the folders that matter, driven under pwsh", (
       if (!shouldAllow) refused += 1;
     }
 
-    return `${driven} verdicts from the real Test-ShareableFolder blocklist under pwsh: ${refused} refused (the five dot-directories themselves, both app-data roots, the profile and its parent), Documents still shareable`;
+    return `${driven} verdicts from the real Test-ShareableFolder blocklist under pwsh: ${refused} refused (dot-directories and AppData anywhere, a backup profile, the profile and its parent), Documents still shareable`;
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/*
+ * What a drive letter really is, driven under pwsh (2026-09-24, review item
+ * 13). `subst X: C:\Users\me\.ssh` and `net use Y: \\localhost\C$` are drive
+ * letters that are not disks, and neither is a reparse point, so the component
+ * walk could not see them. The real Get-DriveMapping is sliced out and run with
+ * its two questions to the machine — the subst table and the drive type —
+ * answered by stubs, since pwsh on Linux has no drive letters to ask about.
+ * What cannot be proven here is the format of subst.exe's output on a real
+ * Windows install; the pattern is `X:\: => C:\target`, as documented.
+ */
+check("the Windows script explains every drive letter or refuses it, driven under pwsh", () => {
+  let hasPwsh = true;
+  try {
+    execFileSync("pwsh", ["-NoProfile", "-Command", "exit 0"], { stdio: "pipe" });
+  } catch {
+    hasPwsh = false;
+  }
+  if (!hasPwsh) skip("no `pwsh` here (snap install powershell --classic), so Get-DriveMapping was not driven");
+
+  const src = readFileSync("scripts/windows-share-setup.ps1", "utf8").replace(/^\uFEFF/, "");
+  const from = src.indexOf("function Get-DriveMapping {");
+  must(from >= 0, "Get-DriveMapping is gone from windows-share-setup.ps1");
+  const to = src.indexOf("\n}\n", from);
+  must(to > from, "could not find the end of Get-DriveMapping");
+  const fn = src.slice(from, to + 3);
+  // The walk must still ask it, every round, inside the fail-closed try.
+  const walkFrom = src.indexOf("    try {\n        $rounds = 0");
+  must(walkFrom >= 0, "the reparse walk is gone from windows-share-setup.ps1");
+  const walk = src.slice(walkFrom, src.indexOf("        return \"Could not work out where that folder really is", walkFrom));
+  must(/\$mapped = Get-DriveMapping \$full/.test(walk), "the reparse walk no longer asks Get-DriveMapping about the drive letter");
+
+  const root = mkdtempSync(join(tmpdir(), "vessel-drive-"));
+  try {
+    const harness = join(root, "drive.ps1");
+    writeFileSync(
+      harness,
+      "param([string] $Full)\n" +
+        "$ErrorActionPreference = 'Stop'\nSet-StrictMode -Version 2.0\n" +
+        "function Get-SubstTable { if ($env:T_SUBST -eq 'THROW') { throw 'subst.exe missing' }; @($env:T_SUBST -split ';') }\n" +
+        "function Get-DriveKind { param([string] $Letter) if ($env:T_KIND -eq 'THROW') { throw 'no such drive' }; $env:T_KIND }\n" +
+        fn +
+        "\ntry { $r = Get-DriveMapping $Full; \"OK[$r]\" } catch { 'THROW' }\n",
+      "utf8",
+    );
+    const ask = (full: string, subst: string, kind: string) =>
+      execFileSync("pwsh", ["-NoProfile", "-File", harness, full], {
+        encoding: "utf8",
+        env: { ...process.env, T_SUBST: subst, T_KIND: kind },
+      }).trim();
+    const table = "X:\\: => C:\\Users\\me\\.ssh;Q:\\: => D:\\Photos";
+    const cases: [string, string, string, string, string][] = [
+      ["a SUBST letter", "X:\\keys", table, "Fixed", "OK[C:\\Users\\me\\.ssh]"],
+      ["a SUBST letter typed in lower case", "x:\\keys", table, "Fixed", "OK[C:\\Users\\me\\.ssh]"],
+      ["an ordinary fixed disk", "C:\\Users\\me\\Documents", table, "Fixed", "OK[]"],
+      ["a USB stick", "E:\\Photos", table, "Removable", "OK[]"],
+      ["a mapped network letter (net use)", "Y:\\Users\\me", table, "Network", "THROW"],
+      ["a letter with no volume", "Z:\\x", table, "NoRootDirectory", "THROW"],
+      ["a drive type that could not be read", "C:\\x", table, "THROW", "THROW"],
+      ["a subst table that could not be read", "C:\\x", "THROW", "Fixed", "THROW"],
+      ["a path with no drive letter", "relative\\x", table, "Fixed", "THROW"],
+    ];
+    let driven = 0;
+    for (const [what, full, subst, kind, want] of cases) {
+      const got = ask(full, subst, kind);
+      must(got === want, `${what}: Get-DriveMapping said ${got}, expected ${want} — a letter that is not a disk must be resolved or refused`);
+      driven += 1;
+    }
+    return `${driven} drive letters through the real Get-DriveMapping: SUBST resolved, network and unexplained letters refused, and the walk still asks it`;
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -6653,32 +7210,43 @@ check("the release-shaped operator writes demand the password, and the edits do 
     ["worker/downloadPages.ts", "addGrant"],
     ["worker/downloads.ts", "mintCode"],
     ["worker/site-config.ts", "publishSiteConfig"],
+    // Withdrawals, since 2026-09-24 (review item 18) — a release in reverse.
+    ["worker/downloadPages.ts", "removeGrant"],
+    ["worker/downloads.ts", "revokeCode"],
   ];
   for (const [file, name] of releases) {
     must(asks(bodyOf(files[file], name)), `${file}: ${name} no longer demands the password`);
   }
   /*
    * The two saves that can BE a release ask only when they widen (2026-09-06,
-   * second pass — audit item 34): `assertPassword` under an `if (widens)`
-   * guard, never `proven()`, which asks unconditionally and is the
-   * prompt-on-every-keystroke the client refused. `npm run test:auth` drives the
-   * transition both ways; this is the shape that fails at edit time when the
-   * guard is dropped or the call is.
+   * second pass — audit item 34) **or when the page is live now** (2026-09-24,
+   * review item 18): `assertPassword` under an `if (widens || live)` guard,
+   * never `proven()`, which asks unconditionally and is the prompt on every
+   * draft save the client refused. The driven gate below ("a stolen operator
+   * session cannot change a live download page…") is the behaviour; this is
+   * the shape that fails at edit time when the guard is dropped or the call is.
    */
   for (const name of ["savePage", "saveFile"]) {
     const src = bodyOf(files["worker/downloadPages.ts"], name);
     must(!/\bproven\(/.test(src), `${name} uses proven() — that asks on every save`);
     must(
-      /if \(widens\) await assertPassword\(/.test(src),
-      `${name} no longer asks for the password when a save widens what somebody else can get`,
+      /if \(widens \|\| live\) \{\s*await assertPassword\(/.test(src),
+      `${name} no longer asks for the password when a save widens, or touches a live page`,
     );
     must(
       (src.match(/\bassertPassword\(/g) ?? []).length === 1,
-      `${name} calls assertPassword outside the widening guard`,
+      `${name} calls assertPassword outside the widening/live guard`,
+    );
+  }
+  {
+    const src = bodyOf(files["worker/downloadPages.ts"], "saveBlocks");
+    must(!/\bproven\(/.test(src), "saveBlocks uses proven() — a draft's blocks would ask");
+    must(
+      /if \(page\.status === "live"\) \{\s*await assertPassword\(/.test(src),
+      "saveBlocks no longer asks for the password on a live page",
     );
   }
   const edits: [keyof typeof files, string][] = [
-    ["worker/downloadPages.ts", "saveBlocks"],
     ["worker/downloadPages.ts", "beginUpload"],
     ["worker/downloadPages.ts", "uploadPart"],
     ["worker/downloadPages.ts", "reorderPages"],
@@ -6690,7 +7258,7 @@ check("the release-shaped operator writes demand the password, and the edits do 
   // And the helper itself has to reach assertPassword, or `proven` is a name.
   must(/async function proven\([\s\S]*?assertPassword\(/.test(files["worker/downloadPages.ts"]), "proven() does not call assertPassword");
 
-  return `${releases.length} releases ask, 2 saves ask only when they widen, ${edits.length} edits do not`;
+  return `${releases.length} releases ask, 3 saves ask only when they widen or the page is live, ${edits.length} edits do not`;
 });
 
 /*
@@ -6711,6 +7279,1544 @@ check("the Windows script refuses a -BrowserProfile that is not a profile folder
   must(/if \(\$BrowserProfile -and \$BrowserProfile -notmatch[^\n]*\n[^\n]*Write-Fail[^\n]*\n\s*exit 1/.test(src), "the guard does not exit");
   return "quotes and flags in -BrowserProfile are refused before the task is written";
 });
+
+/*
+ * ---- The 2026-09-24 review's Worker fixes, driven -------------------------
+ *
+ * Each of these calls the real route over a stub `env`, the shape the
+ * published-config gate above established: D1 answers `prepare().bind()` by
+ * matching the SQL, and nothing more. Every gate carries a control proving the
+ * stub reaches the write, so a refusal is the route refusing and not the stub
+ * failing to get there.
+ */
+
+/** A request to a Worker route, JSON body, from a given address. */
+const workerPost = (path: string, body: unknown, headers: Record<string, string> = {}) =>
+  new Request(`https://mcclevarty.ca${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...headers },
+    body: JSON.stringify(body),
+  });
+
+/** Run a route and reduce it to its status — a thrown `BadRequest` is its status. */
+const statusOf = async (run: () => Promise<Response>): Promise<{ status: number; message: string }> => {
+  try {
+    const response = await run();
+    return { status: response.status, message: "" };
+  } catch (error) {
+    return { status: (error as BadRequest).status ?? -1, message: (error as Error).message };
+  }
+};
+
+/*
+ * **A stranger cannot lock the owner out of password sign-in, and distributed
+ * guessing against one handle is still capped** (2026-09-24, review item 10).
+ * The limiter here is the real `RateLimiter` Durable Object class over an
+ * in-memory storage, one instance per bucket name, exactly as the namespace
+ * hands them out — so this is the real backoff arithmetic answering, not a
+ * stub that says yes. It fails against the old single `account:` bucket at
+ * step two: the owner, from their own address, got 429 after a stranger's six
+ * wrong guesses.
+ */
+checkAsync("a stranger cannot lock the owner out of sign-in; guessing across addresses is still capped", async () => {
+  const account = { id: "acct-owner", handle: "owner", is_operator: 0, created_at: 0, reset_at: null };
+  const env = {
+    SESSION_SECRET: "check-session-secret",
+    AUTH_PEPPER: "check-pepper",
+    RATE_SALT_SEED: "check-seed",
+  } as unknown as Env & Record<string, unknown>;
+  const right = toBase64Url(new Uint8Array(32).fill(3));
+  const wrong = toBase64Url(new Uint8Array(32).fill(4));
+  const hash = await authHash(env.AUTH_PEPPER, right);
+
+  const limiters = new Map<string, RateLimiter>();
+  const storage = () => {
+    const m = new Map<string, unknown>();
+    return {
+      get: async (k: string) => structuredClone(m.get(k)),
+      put: async (k: string, v: unknown) => void m.set(k, structuredClone(v)),
+      deleteAll: async () => m.clear(),
+      setAlarm: async () => undefined,
+    };
+  };
+  env.RATE_LIMIT = {
+    idFromName: (name: string) => name,
+    get: (id: string) => {
+      let limiter = limiters.get(id);
+      if (!limiter) {
+        limiter = new RateLimiter({ storage: storage() } as unknown as DurableObjectState);
+        limiters.set(id, limiter);
+      }
+      const one = limiter;
+      return { fetch: (u: string) => one.fetch(new Request(u)) };
+    },
+  } as unknown as DurableObjectNamespace;
+  env.DB = {
+    prepare: (sql: string) => ({
+      bind: (...args: unknown[]) => ({
+        first: async () => (/FROM accounts WHERE handle_lower/.test(sql) && args[0] === "owner" ? account : null),
+        all: async () => ({
+          results: /FROM credentials/.test(sql) && args[0] === account.id ? [{ id: "cred-pw", secret: hash }] : [],
+        }),
+        run: async () => ({ meta: { changes: 1 } }),
+      }),
+    }),
+    batch: async () => [],
+  } as unknown as D1Database;
+
+  const attempt = (ip: string, authSecret: string) =>
+    statusOf(() =>
+      signin(workerPost("/api/auth/signin", { handle: "owner", authSecret }, { "cf-connecting-ip": ip }), env),
+    );
+
+  // 1. One stranger, one address, guessing: throttled after the tight allowance.
+  let strangerBlockedAt = -1;
+  for (let n = 1; n <= 12 && strangerBlockedAt < 0; n += 1) {
+    const { status } = await attempt("203.0.113.50", wrong);
+    if (status === 429) strangerBlockedAt = n;
+    else must(status === 401, `a wrong password answered ${status}, not 401`);
+  }
+  must(strangerBlockedAt > 1 && strangerBlockedAt <= 7, `one address guessing was blocked at attempt ${strangerBlockedAt} — the per-address allowance is five`);
+
+  // 2. The owner, from their own address, is not locked out by it.
+  const owner = await attempt("198.51.100.7", right);
+  must(
+    owner.status === 200,
+    `the owner's correct password was refused (${owner.status} ${owner.message}) after a stranger's ${strangerBlockedAt} guesses — anonymous lockout is back`,
+  );
+
+  // 3. Guessing spread across many addresses still meets a ceiling on the handle.
+  let spreadBlockedAt = -1;
+  for (let n = 1; n <= 80 && spreadBlockedAt < 0; n += 1) {
+    const { status } = await attempt(`192.0.2.${n}`, wrong);
+    if (status === 429) spreadBlockedAt = n;
+  }
+  must(spreadBlockedAt > 0, "80 addresses guessing at one handle were never refused — distributed guessing is uncapped");
+  must(spreadBlockedAt > 7, `the handle-wide ceiling engaged at ${spreadBlockedAt} — no looser than one address's, so one stranger could reach it`);
+  // And that ceiling binds everyone, the owner included: the honest cost.
+  const capped = await attempt("198.51.100.8", right);
+  must(capped.status === 429, `past the handle-wide ceiling the right password still got ${capped.status}`);
+
+  return `one address blocked at ${strangerBlockedAt}; the owner elsewhere signed in; ${spreadBlockedAt} addresses reached the handle ceiling`;
+});
+
+/*
+ * **`setPassword` tells the loser of a UNIQUE race the truth** (2026-09-24,
+ * review item 16). The batch is made to fail the way D1 fails on
+ * `idx_credentials_one_password`; the stored password is then either the one
+ * this request asked for (a double-submit: "set" is true) or another (409).
+ * It fails against the old unconditional `{ status: "set" }`.
+ */
+checkAsync("setPassword reports a lost UNIQUE race truthfully", async () => {
+  const account = { id: "acct-set", handle: "setter", is_operator: 0, created_at: 0, reset_at: null };
+  const env = {
+    SESSION_SECRET: "check-session-secret",
+    AUTH_PEPPER: "check-pepper",
+    RATE_SALT_SEED: "check-seed",
+  } as unknown as Env & Record<string, unknown>;
+  const mine = toBase64Url(new Uint8Array(32).fill(5));
+  const theirs = toBase64Url(new Uint8Array(32).fill(6));
+  let stored: unknown = null;
+  let batchFails = true;
+  env.DB = {
+    prepare: (sql: string) => ({
+      bind: () => ({
+        first: async () => {
+          if (/FROM accounts WHERE id/.test(sql)) return account;
+          if (/FROM key_slots/.test(sql)) return { ok: 1 };
+          if (/SELECT id FROM credentials/.test(sql)) return null;
+          if (/SELECT kdf_salt/.test(sql)) return { salt: new Uint8Array(16).fill(1) };
+          if (/SELECT auth_hash FROM credentials/.test(sql)) return stored === null ? null : { auth_hash: stored };
+          return null;
+        },
+        all: async () => ({ results: [] }),
+        run: async () => ({ meta: { changes: 1 } }),
+      }),
+    }),
+    batch: async (statements: unknown[]) => {
+      if (batchFails) throw new Error("D1_ERROR: UNIQUE constraint failed: credentials.account_id: SQLITE_CONSTRAINT");
+      return statements.map(() => ({ meta: { changes: 1 } }));
+    },
+  } as unknown as D1Database;
+  const cookie = `${SESSION_COOKIE}=${await mintSession(env.SESSION_SECRET, "session", account.id)}`;
+  const set = async () => {
+    const ticket = await mintSession(env.SESSION_SECRET, "set-password", `${account.id}:cred-rec`);
+    return statusOf(() =>
+      setPassword(
+        workerPost(
+          "/api/account/set-password",
+          {
+            ticket,
+            authSecret: mine,
+            passwordSlot: toBase64Url(new Uint8Array(40).fill(2)),
+            iterations: 600_000,
+            slotAlg: "AES-KW",
+          },
+          { cookie },
+        ),
+        env,
+      ),
+    );
+  };
+
+  batchFails = false;
+  const control = await set();
+  must(control.status === 200, `the uncontended set was refused (${control.status} ${control.message}) — the stub is not reaching the write`);
+
+  batchFails = true;
+  stored = await authHash(env.AUTH_PEPPER, mine);
+  const same = await set();
+  must(same.status === 200, `a double-submit of the same password was refused (${same.status} ${same.message})`);
+
+  stored = await authHash(env.AUTH_PEPPER, theirs);
+  const other = await set();
+  must(
+    other.status === 409,
+    `a request whose password was NOT written was told ${other.status} — "set" for a password the account does not have`,
+  );
+  return "uncontended 200; same password in the race 200; a different password in the race 409";
+});
+
+/*
+ * **Passkey labels go through `expectDisplayName`** (2026-09-24, review item
+ * 17). `passkeyLabel` is driven; that `register` uses it is read from the
+ * source, because the ceremony around it needs a real authenticator.
+ */
+check("passkey labels refuse bidi, zero-width and over-long names, and register uses the refusal", () => {
+  must(passkeyLabel(undefined) === "passkey" && passkeyLabel("   ") === "passkey", "an absent label is not the default");
+  must(passkeyLabel("  Work laptop ") === "Work laptop", "an ordinary label did not survive");
+  const refuses = (label: string) => {
+    try {
+      passkeyLabel(label);
+      return false;
+    } catch (error) {
+      return (error as BadRequest).status === 400;
+    }
+  };
+  must(refuses("Lap‮top"), "a right-to-left override was stored");
+  must(refuses("a​b"), "a zero-width space was stored");
+  must(refuses("x".repeat(41)), "a 41-character label was cut rather than refused");
+  const src = readFileSync("worker/passkeys.ts", "utf8");
+  must(/const label = passkeyLabel\(body\.label\);/.test(src), "register no longer takes its label through passkeyLabel");
+  return "default, ordinary, bidi, zero-width and over-long all behave; register is wired";
+});
+
+/*
+ * **A stolen operator session cannot change a live download page or withdraw
+ * anybody's access without the password** (2026-09-24, review item 18). Every
+ * live-page save and both withdrawals are driven three ways: no proof (401 with
+ * the sentence the editor recognises, nothing written), the right proof
+ * (written), and — for the saves — a draft page with no proof (written, which
+ * is the control and the "drafts stay silent" half). Fails against the old
+ * routes, which wrote on the session alone.
+ */
+checkAsync("a stolen operator session cannot change a live download page or withdraw access", async () => {
+  const account = { id: "acct-op", handle: "operator", is_operator: 1, created_at: 0, reset_at: null };
+  const env = {
+    SESSION_SECRET: "check-session-secret",
+    AUTH_PEPPER: "check-pepper",
+    RATE_SALT_SEED: "check-seed",
+  } as unknown as Env & Record<string, unknown>;
+  const proof = toBase64Url(new Uint8Array(32).fill(9));
+  const hash = await authHash(env.AUTH_PEPPER, proof);
+  let pageStatus = "live";
+  let writes = 0;
+  env.RATE_LIMIT = {
+    idFromName: (name: string) => name,
+    get: () => ({ fetch: async () => new Response(JSON.stringify({ allowed: true, retryAt: 0 })) }),
+  } as unknown as DurableObjectNamespace;
+  env.DB = {
+    prepare: (sql: string) => ({
+      bind: () => ({
+        first: async () => {
+          if (/FROM accounts WHERE id/.test(sql)) return account;
+          if (/FROM credentials/.test(sql)) return { auth_hash: hash };
+          if (/SELECT visibility, status FROM download_pages/.test(sql)) return { visibility: "public", status: pageStatus };
+          if (/SELECT slug, status FROM download_pages/.test(sql)) return { slug: "p", status: pageStatus };
+          if (/SELECT slug FROM download_pages/.test(sql)) return { slug: "p" };
+          if (/FROM download_files f LEFT JOIN download_pages/.test(sql)) {
+            return { filename: "tool.exe", slug: "p", free: 0, page_status: pageStatus };
+          }
+          return null;
+        },
+        all: async () => ({ results: [] }),
+        run: async () => {
+          writes += 1;
+          return { meta: { changes: 1 } };
+        },
+      }),
+    }),
+    batch: async () => {
+      writes += 1;
+      return [];
+    },
+  } as unknown as D1Database;
+  const cookie = `${SESSION_COOKIE}=${await mintSession(env.SESSION_SECRET, "session", account.id)}`;
+
+  type Route = (request: Request, env: Env) => Promise<Response>;
+  const routes: [string, Route, Record<string, unknown>, boolean][] = [
+    ["savePage", savePage, { slug: "p", title: "New words", visibility: "public", status: "live" }, true],
+    ["saveBlocks", saveBlocks, { slug: "p", blocks: [{ kind: "text", body: "Call this number", group: "" }] }, true],
+    ["saveFile", saveFile, { id: "tool", slug: "p", name: "Tool", blurb: "Run me", free: false }, true],
+    ["revokeCode", revokeCode, { ref: "0123456789ABCDEF" }, false],
+    ["removeGrant", removeGrant, { id: 3 }, false],
+  ];
+  const run = (fn: Route, body: Record<string, unknown>) =>
+    statusOf(() => fn(workerPost("/api/admin/downloads/x", body, { cookie }), env));
+
+  const lines: string[] = [];
+  for (const [name, fn, body, isSave] of routes) {
+    pageStatus = "live";
+    writes = 0;
+    const bare = await run(fn, body);
+    must(bare.status === 401 && writes === 0, `${name} on a live page wrote on the session alone (${bare.status}, ${writes} writes)`);
+    if (isSave) {
+      must(
+        bare.message === RELEASE_WORDING.live,
+        `${name}'s refusal is not RELEASE_WORDING.live, so the editor will not open its password dialog: "${bare.message}"`,
+      );
+    }
+    writes = 0;
+    const proved = await run(fn, { ...body, authSecret: proof });
+    must(proved.status === 200 && writes > 0, `${name} with the right password did not write (${proved.status} ${proved.message})`);
+    if (isSave) {
+      pageStatus = "draft";
+      writes = 0;
+      const draft = await run(fn, name === "savePage" ? { ...body, status: "draft" } : body);
+      must(draft.status === 200 && writes > 0, `${name} on a draft asked for the password or did not write (${draft.status} ${draft.message})`);
+    }
+    lines.push(name);
+  }
+  return `${lines.join(", ")}: refused bare on a live page, written with the password; the three saves stay silent on a draft`;
+});
+
+/*
+ * **Every response carries `Cross-Origin-Resource-Policy`, and `/api/health`
+ * does not cost a D1 query and a Durable Object call per anonymous hit**
+ * (2026-09-24, review item 21). `harden` and `health` are driven — they live in
+ * `worker/hardening.ts` because `index.ts` cannot be imported into this
+ * project (see that file's header) — and the one piece of wiring that matters,
+ * the health route calling `health`, is read from `index.ts`.
+ */
+checkAsync("every response is same-origin by CORP, and /api/health is memoised", async () => {
+  let d1 = 0;
+  let limiter = 0;
+  const env = {
+    SESSION_SECRET: "check-session-secret",
+    AUTH_PEPPER: "check-pepper",
+    RATE_SALT_SEED: "check-seed",
+    TOTP_ENC_KEY: "check-totp",
+    DB: {
+      prepare: () => {
+        d1 += 1;
+        return { first: async () => ({ n: 8 }) };
+      },
+    },
+    RATE_LIMIT: {
+      idFromName: (name: string) => name,
+      get: () => ({
+        fetch: async () => {
+          limiter += 1;
+          return new Response(JSON.stringify({ allowed: true, remaining: 50, retryAt: 0 }));
+        },
+      }),
+    },
+  } as unknown as Env;
+
+  const first = harden(await health(env));
+  const second = harden(await health(env));
+  for (const response of [first, second]) {
+    must(response.status === 200, `/api/health answered ${response.status}`);
+    must(
+      response.headers.get("cross-origin-resource-policy") === "same-origin",
+      `/api/health carries CORP ${response.headers.get("cross-origin-resource-policy")}`,
+    );
+    const body = (await response.json()) as { ok?: boolean; tables?: number };
+    must(body.ok === true && body.tables === 8, `/api/health lost what deploy verification reads: ${JSON.stringify(body)}`);
+  }
+  must(d1 === 1 && limiter === 1, `two health checks cost ${d1} D1 queries and ${limiter} limiter calls — not memoised`);
+
+  // A document with a CSP takes the same header — fonts and bundles are served
+  // down this path too.
+  const doc = harden(new Response("<!doctype html>", { headers: { "content-type": "text/html" } }), "default-src 'self'");
+  must(doc.headers.get("cross-origin-resource-policy") === "same-origin", "a document left without CORP");
+
+  const indexSrc = readFileSync("worker/index.ts", "utf8");
+  must(/case "GET \/api\/health":\s*return health\(env\);/.test(indexSrc), "the health route no longer calls the memoised health()");
+  must(/from "\.\/hardening"/.test(indexSrc), "index.ts no longer takes harden from worker/hardening.ts");
+  return "health and a document both carry CORP same-origin; two health checks cost one probe";
+});
+
+/*
+ * ---- The 2026-09-24 follow-up: the reviewers' second Worker list, over a REAL
+ * SQLite ----------------------------------------------------------------------
+ *
+ * The gates above answer D1 by matching SQL text, which can drive a route but
+ * cannot evaluate a WHERE clause — and three of these fixes ARE a WHERE clause
+ * (a guard in the write, an epoch compared at read, a ticket re-checked against
+ * its code's row). A regex stub would have to restate each guard to answer it,
+ * which is the "a gate that re-derives what it checks only confirms its own
+ * copy" failure CLAUDE.md names. So these run against `node:sqlite` with every
+ * file in `migrations/` applied in order: the real schema, the real indexes,
+ * the real foreign keys, the routes' own SQL. A batch is one transaction, as
+ * D1's is. Node without `node:sqlite` (before 22.5) skips them, by name.
+ */
+
+type D1Hooks = { beforeBatch: null | (() => Promise<void>) };
+const sqliteD1 = async (): Promise<{ db: D1Database; raw: import("node:sqlite").DatabaseSync; hooks: D1Hooks }> => {
+  let mod: typeof import("node:sqlite");
+  const quiet = process.emitWarning;
+  try {
+    // The module is "experimental" in Node 22 and says so on stderr once per
+    // process; the warning is about API stability, not about this use.
+    process.emitWarning = ((warning: string | Error, ...rest: unknown[]) => {
+      if (String(warning).includes("SQLite")) return;
+      (quiet as (...a: unknown[]) => void).call(process, warning, ...rest);
+    }) as typeof process.emitWarning;
+    mod = await import("node:sqlite");
+  } catch {
+    return skip("node:sqlite is unavailable (Node 22.5+ has it) — these gates need a real SQLite to evaluate the routes' WHERE clauses");
+  } finally {
+    process.emitWarning = quiet;
+  }
+  const raw = new mod.DatabaseSync(":memory:");
+  for (const name of readdirSync("migrations").filter((f) => f.endsWith(".sql")).sort()) {
+    raw.exec(readFileSync(`migrations/${name}`, "utf8"));
+  }
+  type Value = null | number | bigint | string | Uint8Array;
+  const norm = (v: unknown): Value =>
+    v instanceof ArrayBuffer
+      ? new Uint8Array(v)
+      : typeof v === "boolean"
+        ? v ? 1 : 0
+        : v === undefined
+          ? null
+          : (v as Value);
+  const reads = (sql: string) => /^\s*(SELECT|WITH)\b/i.test(sql) || /\bRETURNING\b/i.test(sql);
+  const runOne = (sql: string, args: Value[]) => {
+    const statement = raw.prepare(sql);
+    if (reads(sql)) {
+      const rows = statement.all(...args);
+      return { results: rows, success: true, meta: { changes: rows.length } };
+    }
+    const result = statement.run(...args);
+    return { results: [], success: true, meta: { changes: Number(result.changes) } };
+  };
+  type Stmt = { sql: string; args: Value[] };
+  const statement = (sql: string, args: Value[] = []) => ({
+    sql,
+    args,
+    bind: (...values: unknown[]) => statement(sql, values.map(norm)),
+    first: async (column?: string) => {
+      const row = (raw.prepare(sql).get(...args) ?? null) as Record<string, unknown> | null;
+      return row && column ? row[column] : row;
+    },
+    all: async () => runOne(sql, args),
+    run: async () => runOne(sql, args),
+  });
+  const hooks: D1Hooks = { beforeBatch: null };
+  const db = {
+    prepare: (sql: string) => statement(sql),
+    batch: async (statements: Stmt[]) => {
+      if (hooks.beforeBatch) await hooks.beforeBatch();
+      raw.exec("BEGIN");
+      try {
+        const out = statements.map((s) => runOne(s.sql, s.args));
+        raw.exec("COMMIT");
+        return out;
+      } catch (error) {
+        raw.exec("ROLLBACK");
+        throw error;
+      }
+    },
+  };
+  return { db: db as unknown as D1Database, raw, hooks };
+};
+
+/** An R2 bucket in memory, with multipart semantics: nothing is visible until `complete`. */
+const memoryBucket = () => {
+  const objects = new Map<string, { bytes: Uint8Array; contentType: string }>();
+  const uploads = new Map<string, { key: string; contentType: string; parts: Map<number, Uint8Array> }>();
+  let next = 0;
+  const bucket = {
+    objects,
+    createMultipartUpload: async (key: string, options?: { httpMetadata?: { contentType?: string } }) => {
+      const uploadId = `upload-${(next += 1)}`;
+      uploads.set(uploadId, { key, contentType: options?.httpMetadata?.contentType ?? "", parts: new Map() });
+      return { key, uploadId };
+    },
+    resumeMultipartUpload: (key: string, uploadId: string) => {
+      const find = () => {
+        const upload = uploads.get(uploadId);
+        if (!upload || upload.key !== key) throw new Error("NoSuchUpload");
+        return upload;
+      };
+      return {
+        uploadPart: async (part: number, bytes: ArrayBuffer) => {
+          find().parts.set(part, new Uint8Array(bytes));
+          return { partNumber: part, etag: `etag-${part}` };
+        },
+        complete: async (parts: { partNumber: number }[]) => {
+          const upload = find();
+          const chunks = parts.map((p) => upload.parts.get(p.partNumber) ?? new Uint8Array());
+          const bytes = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+          let at = 0;
+          for (const c of chunks) {
+            bytes.set(c, at);
+            at += c.length;
+          }
+          objects.set(key, { bytes, contentType: upload.contentType });
+          uploads.delete(uploadId);
+          return {};
+        },
+        abort: async () => void uploads.delete(uploadId),
+      };
+    },
+    head: async (key: string) => {
+      const o = objects.get(key);
+      return o ? { size: o.bytes.length, httpMetadata: { contentType: o.contentType } } : null;
+    },
+    get: async (key: string) => {
+      const o = objects.get(key);
+      if (!o) return null;
+      return {
+        body: o.bytes,
+        size: o.bytes.length,
+        range: { offset: 0, length: o.bytes.length },
+        writeHttpMetadata: () => undefined,
+      };
+    },
+    delete: async (key: string) => void objects.delete(key),
+  };
+  return bucket;
+};
+
+/** The env every D1-backed gate shares: real SQLite, a limiter that always allows, recorded hang-ups. */
+const sqliteEnv = async () => {
+  const { db, raw, hooks } = await sqliteD1();
+  const hungUp: string[] = [];
+  const bucket = memoryBucket();
+  const env = {
+    SESSION_SECRET: "check-session-secret",
+    AUTH_PEPPER: "check-pepper",
+    RATE_SALT_SEED: "check-seed",
+    TOTP_ENC_KEY: "check-totp",
+    DB: db,
+    DOWNLOADS: bucket,
+    RATE_LIMIT: {
+      idFromName: (name: string) => name,
+      get: () => ({ fetch: async () => new Response(JSON.stringify({ allowed: true, remaining: 5, retryAt: 0 })) }),
+    },
+    SIGNAL: {
+      idFromName: (name: string) => name,
+      get: (id: string) => ({
+        fetch: async (url: string) => {
+          // Counted only as a SIGNED-OUT hang-up: a bare /shutdown tells the
+          // kiosk its machine was removed and stops it for good (pre-deploy
+          // review, 2026-09-24), which is wrong for a credential change.
+          const u = new URL(String(url));
+          if (u.pathname === "/shutdown" && u.searchParams.get("reason") === "signed-out") hungUp.push(id);
+          return new Response("ok");
+        },
+      }),
+    },
+  } as unknown as Env;
+  /** An account with a password (and, if asked, an unspent recovery code with its slot, and a machine). */
+  const seed = async (o: { id: string; handle: string; secret: string; operator?: boolean; recovery?: boolean; machine?: string }) => {
+    const now = Date.now() - 3_600_000;
+    raw.prepare("INSERT INTO accounts (id, handle, handle_lower, created_at, is_operator) VALUES (?, ?, ?, ?, ?)").run(
+      o.id,
+      o.handle,
+      o.handle.toLowerCase(),
+      now,
+      o.operator ? 1 : 0,
+    );
+    raw.prepare(
+      "INSERT INTO credentials (id, account_id, kind, label, created_at, auth_hash, kdf_salt, kdf_iterations) VALUES (?, ?, 'password', 'password', ?, ?, ?, 600000)",
+    ).run(`${o.id}-pw`, o.id, now, new Uint8Array(await authHash(env.AUTH_PEPPER, o.secret)), new Uint8Array(16).fill(1));
+    raw.prepare("INSERT INTO key_slots (id, account_id, credential_id, wrapped_grant_key, alg, created_at) VALUES (?, ?, ?, ?, 'AES-KW', ?)").run(
+      `${o.id}-pw-slot`,
+      o.id,
+      `${o.id}-pw`,
+      new Uint8Array(40).fill(7),
+      now,
+    );
+    if (o.recovery) addRecovery(o.id, `${o.id}-rec`, null);
+    if (o.machine) {
+      raw.prepare("INSERT INTO machines (id, owner_id, name, agent_pubkey, paired_at) VALUES (?, ?, 'Workshop', ?, ?)").run(
+        o.machine,
+        o.id,
+        new Uint8Array(65).fill(4),
+        now,
+      );
+    }
+  };
+  /** A recovery code with its key slot; `usedAt` set is one that has just been redeemed (its ticket is live). */
+  const addRecovery = (accountId: string, credentialId: string, usedAt: number | null) => {
+    raw.prepare(
+      "INSERT INTO credentials (id, account_id, kind, label, created_at, code_hash, kdf_salt, kdf_iterations, used_at) VALUES (?, ?, 'recovery', 'recovery', ?, ?, ?, 600000, ?)",
+    ).run(credentialId, accountId, Date.now(), new Uint8Array(32).fill(8), new Uint8Array(16).fill(1), usedAt);
+    raw.prepare("INSERT INTO key_slots (id, account_id, credential_id, wrapped_grant_key, alg, created_at) VALUES (?, ?, ?, ?, 'AES-KW', ?)").run(
+      `${credentialId}-slot`,
+      accountId,
+      credentialId,
+      new Uint8Array(40).fill(6),
+      Date.now(),
+    );
+  };
+  const cookie = async (accountId: string, issuedAt = Date.now()) =>
+    `${SESSION_COOKIE}=${await mintSession(env.SESSION_SECRET, "session", accountId, Date.now(), issuedAt)}`;
+  /** The cookie a response set, as a request header. */
+  const setCookie = (response: Response) => {
+    const header = response.headers.get("set-cookie") ?? "";
+    const match = new RegExp(`${SESSION_COOKIE}=([^;]+)`).exec(header);
+    return match ? `${SESSION_COOKIE}=${match[1]}` : "";
+  };
+  const alive = async (cookieHeader: string) =>
+    (
+      await statusOf(async () => {
+        await requireAccount(new Request("https://mcclevarty.ca/api/account/me", { headers: { cookie: cookieHeader } }), env);
+        return new Response(null);
+      })
+    ).status === 200;
+  return { env, raw, hooks, hungUp, bucket, seed, addRecovery, cookie, setCookie, alive };
+};
+
+const tick = () => new Promise((resolve) => setTimeout(resolve, 3));
+const bytes = (n: number, fill: number) => toBase64Url(new Uint8Array(n).fill(fill));
+
+/*
+ * **A password change, an operator password reset and an operator TOTP reset
+ * each end every session the account already holds, and hang up its
+ * signalling sockets** (2026-09-24, audit items 58 and 59; TODO "Needs the
+ * client" item 2). The session that changed the password is re-issued and
+ * survives; the operator's own session survives resetting somebody else. Fails
+ * against a `requireAccount` that ignores `sessions_after` (the stolen cookie
+ * stays signed in) and against any of the three routes without the hang-up.
+ */
+checkAsync("a password change or an operator reset ends every other session and hangs up signalling", async () => {
+  const { env, seed, cookie, setCookie, alive, hungUp } = await sqliteEnv();
+  const ownerSecret = bytes(32, 3);
+  const operatorSecret = bytes(32, 9);
+  await seed({ id: "acct-owner", handle: "owner", secret: ownerSecret, recovery: true, machine: "machine-owner" });
+  await seed({ id: "acct-op", handle: "operator", secret: operatorSecret, operator: true });
+
+  const began = Date.now() - 60_000;
+  const stolen = await cookie("acct-owner", began);
+  const ownerTab = await cookie("acct-owner", began + 1);
+  must(await alive(stolen), "control: a fresh owner session was refused before anything changed");
+
+  // 1. The owner changes their password from their own tab.
+  const changed = await changePassword(
+    workerPost(
+      "/api/account/password",
+      { currentAuthSecret: ownerSecret, authSecret: bytes(32, 4), passwordSlot: bytes(40, 2), iterations: 600_000, slotAlg: "AES-KW" },
+      { cookie: ownerTab },
+    ),
+    env,
+  );
+  must(changed.status === 200, `the password change itself failed (${changed.status})`);
+  const fresh = setCookie(changed);
+  must(fresh !== "", "the password change did not re-issue the session that made it");
+  must(!(await alive(stolen)), "a session opened before the password change is still signed in afterwards");
+  must(!(await alive(ownerTab)), "the pre-change cookie of the tab that changed it still works — only the re-issued one should");
+  must(await alive(fresh), "the session that changed the password was signed out by its own change");
+  must(hungUp.includes("machine-owner"), "the password change left the account's signalling sockets up");
+
+  // 2. The operator resets the owner's password.
+  await tick();
+  hungUp.length = 0;
+  const operatorTab = await cookie("acct-op");
+  const reset = await statusOf(() =>
+    resetPassword(workerPost("/api/admin/reset-password", { id: "acct-owner", authSecret: operatorSecret }, { cookie: operatorTab }), env),
+  );
+  must(reset.status === 200, `the operator reset itself failed (${reset.status} ${reset.message})`);
+  must(!(await alive(fresh)), "an operator password reset left the owner's session signed in");
+  must(await alive(operatorTab), "resetting somebody else's password signed the operator out");
+  must(hungUp.includes("machine-owner"), "the operator reset left the account's signalling sockets up");
+
+  // 3. The owner signs in again; the operator then resets their TOTP.
+  await tick();
+  const later = await cookie("acct-owner");
+  must(await alive(later), "control: a session begun after the reset was refused");
+  await tick();
+  hungUp.length = 0;
+  const totp = await statusOf(() =>
+    resetTotp(workerPost("/api/admin/reset-totp", { id: "acct-owner", authSecret: operatorSecret }, { cookie: operatorTab }), env),
+  );
+  must(totp.status === 200, `the TOTP reset itself failed (${totp.status} ${totp.message})`);
+  must(!(await alive(later)), "an operator TOTP reset left the owner's session signed in");
+  must(hungUp.includes("machine-owner"), "the TOTP reset left the account's signalling sockets up");
+
+  return "password change: stolen session out, changing tab re-issued; operator reset and TOTP reset: owner out, operator in; all three hung up";
+});
+
+/*
+ * **Two set-passwords on one ticket: exactly one writes, and the other is told
+ * the truth — on the UPDATE branch too** (2026-09-24, audit item 57). Both
+ * requests are held at the batch until both have passed every read, so the
+ * race is not left to scheduling: this is the interleaving the pre-check could
+ * not survive. Fails against the unguarded UPDATE, where both wrote and both
+ * were told "set" while the account kept only the later password.
+ */
+checkAsync("setPassword's spent-ticket guard is in the write: a raced ticket sets one password", async () => {
+  const { env, hooks, raw, seed, addRecovery, cookie } = await sqliteEnv();
+  await seed({ id: "acct-set", handle: "setter", secret: bytes(32, 1) });
+  // A session begun after the previous set: each set ends the ones before it
+  // (audit item 58), and a browser would be holding the one it re-issued.
+  const fresh = async () => {
+    await tick();
+    return cookie("acct-set");
+  };
+
+  const race = async (credentialId: string, secrets: string[]) => {
+    const session = await fresh();
+    addRecovery("acct-set", credentialId, Date.now());
+    const ticket = await mintSession(env.SESSION_SECRET, "set-password", `acct-set:${credentialId}`);
+    let waiting: (() => void)[] = [];
+    // Hold each batch until both have arrived: both requests have now passed
+    // the pre-check, and D1 serialises what follows, in arrival order.
+    hooks.beforeBatch = () =>
+      new Promise<void>((resolve) => {
+        waiting.push(resolve);
+        if (waiting.length === secrets.length) {
+          for (const release of waiting) release();
+          waiting = [];
+        }
+      });
+    const outcomes = await Promise.all(
+      secrets.map((authSecret) =>
+        statusOf(() =>
+          setPassword(
+            workerPost(
+              "/api/account/set-password",
+              { ticket, authSecret, passwordSlot: bytes(40, 5), iterations: 600_000, slotAlg: "AES-KW" },
+              { cookie: session },
+            ),
+            env,
+          ),
+        ),
+      ),
+    );
+    hooks.beforeBatch = null;
+    const stored = raw.prepare("SELECT auth_hash FROM credentials WHERE account_id = 'acct-set' AND kind = 'password'").get() as {
+      auth_hash: Uint8Array;
+    };
+    return { outcomes, stored: toBase64Url(stored.auth_hash) };
+  };
+
+  const a = bytes(32, 21);
+  const b = bytes(32, 22);
+  const different = await race("rec-1", [a, b]);
+  const statuses = different.outcomes.map((o) => o.status).sort();
+  must(
+    statuses[0] === 200 && statuses[1] === 409,
+    `two different passwords on one ticket answered ${statuses.join(" and ")} — one of them was told "set" for a password the account does not have`,
+  );
+  const winner = different.outcomes[0].status === 200 ? a : b;
+  must(
+    different.stored === toBase64Url(new Uint8Array(await authHash(env.AUTH_PEPPER, winner))),
+    "the stored password is not the one the request told \"set\" asked for",
+  );
+
+  const same = await race("rec-2", [a, a]);
+  must(
+    same.outcomes.every((o) => o.status === 200),
+    `a double-submit of the same password was refused (${same.outcomes.map((o) => o.status).join(", ")})`,
+  );
+
+  // And the ticket is spent: a third request on it is refused outright.
+  const ticket = await mintSession(env.SESSION_SECRET, "set-password", "acct-set:rec-2");
+  const session = await fresh();
+  const again = await statusOf(() =>
+    setPassword(
+      workerPost(
+        "/api/account/set-password",
+        { ticket, authSecret: bytes(32, 23), passwordSlot: bytes(40, 5), iterations: 600_000, slotAlg: "AES-KW" },
+        { cookie: session },
+      ),
+      env,
+    ),
+  );
+  must(again.status === 401, `a spent ticket set a password again (${again.status})`);
+  return "different passwords: one 200, one 409, the 200's password stored; same password: 200 twice; spent ticket 401";
+});
+
+/*
+ * **Beginning a replacement upload does not take a live file off its page**
+ * (2026-09-24, audit item 55). A stolen operator cookie can begin, send parts
+ * and abort — all session-only — and the customer still gets the old bytes
+ * throughout; only the password-proved finish swaps them. Fails against the
+ * old `beginUpload`, which set `uploaded_at = NULL` and so refused the very
+ * next download.
+ */
+checkAsync("a replacement upload keeps the old file live until the password-proved finish", async () => {
+  const { env, raw, bucket, seed, cookie } = await sqliteEnv();
+  const operatorSecret = bytes(32, 9);
+  await seed({ id: "acct-op", handle: "operator", secret: operatorSecret, operator: true });
+  const now = Date.now() - 60_000;
+  raw.prepare("INSERT INTO download_pages (slug, title, visibility, status, created_at, updated_at) VALUES ('shop', 'Shop', 'public', 'live', ?, ?)").run(now, now);
+  raw.prepare(
+    "INSERT INTO download_files (id, slug, name, filename, free, size_bytes, created_at, uploaded_at) VALUES ('tool', 'shop', 'Tool', 'tool.exe', 1, 3, ?, ?)",
+  ).run(now, now);
+  bucket.objects.set("tool", { bytes: new TextEncoder().encode("OLD"), contentType: "application/octet-stream" });
+
+  const fetchTool = async () => {
+    const url = new URL("https://mcclevarty.ca/api/downloads/file?item=tool");
+    try {
+      return await (await downloadFile(new Request(url), env, url)).text();
+    } catch (error) {
+      return `refused ${(error as BadRequest).status}`;
+    }
+  };
+  must((await fetchTool()) === "OLD", "control: the live file did not download before any upload began");
+
+  const stolen = await cookie("acct-op");
+  const begin = async () => {
+    const response = await beginUpload(workerPost("/api/admin/downloads/upload/begin", { id: "tool", contentType: "application/x-msdownload" }, { cookie: stolen }), env);
+    return ((await response.json()) as { uploadId: string }).uploadId;
+  };
+  const part = async (uploadId: string, body: string) => {
+    const url = new URL(`https://mcclevarty.ca/api/admin/downloads/upload/part?id=tool&upload=${uploadId}&part=1`);
+    const response = await uploadPart(new Request(url, { method: "POST", headers: { cookie: stolen }, body }), env, url);
+    return ((await response.json()) as { etag: string }).etag;
+  };
+
+  const first = await begin();
+  must((await fetchTool()) === "OLD", `beginning a replacement took the live file down: ${await fetchTool()}`);
+  await part(first, "NEW");
+  must((await fetchTool()) === "OLD", "a part in flight replaced the live bytes");
+  await abortUpload(workerPost("/api/admin/downloads/upload/abort", { id: "tool", uploadId: first }, { cookie: stolen }), env);
+  must((await fetchTool()) === "OLD", "an aborted replacement left the file down");
+
+  const second = await begin();
+  const etag = await part(second, "NEW");
+  const unproven = await statusOf(() =>
+    finishUpload(workerPost("/api/admin/downloads/upload/finish", { id: "tool", uploadId: second, parts: [{ part: 1, etag }] }, { cookie: stolen }), env),
+  );
+  must(unproven.status === 401, `finishing a replacement without the password answered ${unproven.status}`);
+  must((await fetchTool()) === "OLD", "a refused finish left the file down");
+
+  const before = (raw.prepare("SELECT uploaded_at FROM download_files WHERE id = 'tool'").get() as { uploaded_at: number }).uploaded_at;
+  const proven = await statusOf(() =>
+    finishUpload(
+      workerPost("/api/admin/downloads/upload/finish", { id: "tool", uploadId: second, parts: [{ part: 1, etag }], authSecret: operatorSecret }, { cookie: stolen }),
+      env,
+    ),
+  );
+  must(proven.status === 200, `the password-proved finish failed (${proven.status} ${proven.message})`);
+  must((await fetchTool()) === "NEW", "the finished replacement is not what downloads");
+  const row = raw.prepare("SELECT uploaded_at, size_bytes, content_type FROM download_files WHERE id = 'tool'").get() as {
+    uploaded_at: number;
+    size_bytes: number;
+    content_type: string;
+  };
+  must(row.uploaded_at > before && row.size_bytes === 3, "the finish did not stamp the row for the new bytes");
+  must(row.content_type === "application/x-msdownload", `the row's content type is ${row.content_type}, not the upload's`);
+  return "begin, part and abort left OLD serving; an unproven finish was refused; the proven finish swapped to NEW";
+});
+
+/*
+ * **A download ticket dies with its code** (2026-09-24, audit item 60, K4).
+ * Revoking the code, or deleting the page — which deletes its codes — ends
+ * every ticket already redeemed, rather than thirty minutes later; and a page
+ * recreated at the same slug inside that window is not opened by the old
+ * customer's ticket. A ticket without a code ref is refused. Fails against the
+ * snapshot ticket, which kept opening all three.
+ */
+checkAsync("a download ticket dies with its code: revoked, or its page deleted and recreated", async () => {
+  const { env, raw, bucket, seed, cookie } = await sqliteEnv();
+  const operatorSecret = bytes(32, 9);
+  await seed({ id: "acct-op", handle: "operator", secret: operatorSecret, operator: true });
+  const operatorTab = await cookie("acct-op");
+  const stage = () => {
+    const now = Date.now() - 60_000;
+    raw.prepare("INSERT INTO download_pages (slug, title, visibility, status, created_at, updated_at) VALUES ('acme', 'Acme', 'code', 'live', ?, ?)").run(now, now);
+    raw.prepare(
+      "INSERT INTO download_files (id, slug, name, filename, free, size_bytes, created_at, uploaded_at) VALUES ('tool', 'acme', 'Tool', 'tool.exe', 0, 4, ?, ?)",
+    ).run(now, now);
+    bucket.objects.set("tool", { bytes: new TextEncoder().encode("PAID"), contentType: "application/octet-stream" });
+  };
+  stage();
+
+  const mint = async (scope: Record<string, string>) => {
+    const response = await mintCode(workerPost("/api/admin/downloads/codes", { ...scope, authSecret: operatorSecret }, { cookie: operatorTab }), env);
+    return ((await response.json()) as { code: string }).code;
+  };
+  const redeem = async (code: string) => {
+    const response = await claim(workerPost("/api/downloads/claim", { code }), env);
+    return ((await response.json()) as { ticket: string }).ticket;
+  };
+  const take = async (ticket: string) => {
+    const url = new URL(`https://mcclevarty.ca/api/downloads/file?item=tool&t=${encodeURIComponent(ticket)}`);
+    return (await statusOf(() => downloadFile(new Request(url), env, url))).status;
+  };
+
+  // 1. A page code: redeemed, then revoked.
+  const pageTicket = await redeem(await mint({ slug: "acme" }));
+  must((await take(pageTicket)) === 200, "control: a fresh page-code ticket did not download");
+  const listed = await listCodes(new Request("https://mcclevarty.ca/api/admin/downloads/codes", { headers: { cookie: operatorTab } }), env);
+  const ref = ((await listed.json()) as { codes: { ref: string }[] }).codes[0].ref;
+  const revoked = await statusOf(() =>
+    revokeCode(workerPost("/api/admin/downloads/codes/revoke", { ref, authSecret: operatorSecret }, { cookie: operatorTab }), env),
+  );
+  must(revoked.status === 200, `the revoke itself failed (${revoked.status})`);
+  must((await take(pageTicket)) === 403, "a ticket still downloads after its code was revoked");
+
+  // 2. A file code: redeemed, then the page deleted and recreated at the same slug.
+  const fileTicket = await redeem(await mint({ item: "tool" }));
+  must((await take(fileTicket)) === 200, "control: a fresh file-code ticket did not download");
+  const deleted = await statusOf(() =>
+    deletePage(workerPost("/api/admin/downloads/page/delete", { slug: "acme", authSecret: operatorSecret }, { cookie: operatorTab }), env),
+  );
+  must(deleted.status === 200, `the page delete itself failed (${deleted.status})`);
+  stage();
+  must((await take(fileTicket)) === 403, "a ticket from a deleted page opened the page recreated at its slug");
+
+  // 3. A ticket that names no code is not read as the old snapshot.
+  const bare = await mintSession(env.SESSION_SECRET, "download", "@acme");
+  must((await take(bare)) === 403, "a ticket with no code ref was honoured");
+  return "revoked code: ticket 403; deleted and recreated page: ticket 403; ref-less ticket 403; both controls 200";
+});
+
+/*
+ * **Rotating /64s inside one /48 cannot lock the owner out** (2026-09-24,
+ * audit item 56). The `pair:` bucket keys IPv6 on the /48, so one tunnel
+ * broker's /48 is one pair, not 65,536 — while the `client:` bucket keeps the
+ * /64 (a /48 there is a neighbour's outage). The real `RateLimiter` answers, as
+ * in the item-10 gate above. Fails against a pair keyed on the /64: forty /64s
+ * fill the handle ceiling and the owner gets 429.
+ */
+checkAsync("forty IPv6 /64s from one /48 cannot fill the handle ceiling", async () => {
+  must(normaliseIp("2001:db8:aa:bb::1") === "2001:db8:aa:bb::/64", `the client cut moved: ${normaliseIp("2001:db8:aa:bb::1")}`);
+  must(normaliseIp("2001:db8:aa:bb::1", 48) === "2001:db8:aa::/48", `the pair cut is ${normaliseIp("2001:db8:aa:bb::1", 48)}`);
+  must(normaliseIp("203.0.113.9", 48) === "203.0.113.9", "an IPv4 address was cut");
+  must(normaliseIp("::ffff:203.0.113.9", 48) === "::ffff:203.0.113.9", "a mapped IPv4 address was cut to a /48");
+
+  const account = { id: "acct-owner", handle: "owner", is_operator: 0, created_at: 0, reset_at: null };
+  const env = {
+    SESSION_SECRET: "check-session-secret",
+    AUTH_PEPPER: "check-pepper",
+    RATE_SALT_SEED: "check-seed",
+  } as unknown as Env & Record<string, unknown>;
+  const right = toBase64Url(new Uint8Array(32).fill(3));
+  const wrong = toBase64Url(new Uint8Array(32).fill(4));
+  const hash = await authHash(env.AUTH_PEPPER, right);
+  const limiters = new Map<string, RateLimiter>();
+  const storage = () => {
+    const m = new Map<string, unknown>();
+    return {
+      get: async (k: string) => structuredClone(m.get(k)),
+      put: async (k: string, v: unknown) => void m.set(k, structuredClone(v)),
+      deleteAll: async () => m.clear(),
+      setAlarm: async () => undefined,
+    };
+  };
+  env.RATE_LIMIT = {
+    idFromName: (name: string) => name,
+    get: (id: string) => {
+      let limiter = limiters.get(id);
+      if (!limiter) {
+        limiter = new RateLimiter({ storage: storage() } as unknown as DurableObjectState);
+        limiters.set(id, limiter);
+      }
+      const one = limiter;
+      return { fetch: (u: string) => one.fetch(new Request(u)) };
+    },
+  } as unknown as DurableObjectNamespace;
+  env.DB = {
+    prepare: (sql: string) => ({
+      bind: (...args: unknown[]) => ({
+        first: async () => (/FROM accounts WHERE handle_lower/.test(sql) && args[0] === "owner" ? account : null),
+        all: async () => ({
+          results: /FROM credentials/.test(sql) && args[0] === account.id ? [{ id: "cred-pw", secret: hash }] : [],
+        }),
+        run: async () => ({ meta: { changes: 1 } }),
+      }),
+    }),
+    batch: async () => [],
+  } as unknown as D1Database;
+  const attempt = (ip: string, authSecret: string) =>
+    statusOf(() => signin(workerPost("/api/auth/signin", { handle: "owner", authSecret }, { "cf-connecting-ip": ip }), env));
+
+  let refused = 0;
+  for (let n = 1; n <= 40; n += 1) {
+    const { status } = await attempt(`2001:db8:aa:${n.toString(16)}::1`, wrong);
+    if (status === 429) refused += 1;
+  }
+  must(refused >= 30, `only ${refused} of 40 guesses from one /48 were refused — the /48 is being counted as many pairs`);
+  const owner = await attempt("198.51.100.7", right);
+  must(
+    owner.status === 200,
+    `the owner's correct password was refused (${owner.status} ${owner.message}) after forty /64s from one /48 — the tunnel-broker lockout is back`,
+  );
+  return `cuts: /64 for the client, /48 for the pair, IPv4 whole; ${refused}/40 guesses from one /48 refused; the owner signed in`;
+});
+
+/*
+ * ---- Phase-2 sharing, driven (2026-09-24) ----------------------------------
+ *
+ * Five findings from the 2026-09-24 review, each gated by RUNNING the thing:
+ * the signalling Durable Object over a fake of the three runtime pieces it
+ * touches (the socket, the hibernation context, `WebSocketPair`); the agent
+ * tab over a fake WebSocket and a fake `RTCPeerConnection`, with Node's real
+ * `BroadcastChannel` between two agents; and the machines routes over a real
+ * SQLite with every migration applied. `npm run test:auth` drives the same
+ * behaviour against workerd end to end — these are the ones that run on every
+ * edit and every deploy.
+ *
+ * The three touch process globals (`WebSocket`, `location`,
+ * `RTCPeerConnection`, `Response`), so they run one at a time behind
+ * `serially` rather than interleaving with each other.
+ */
+// …and not beside any gate registered before them either: those drive real
+// Worker routes that construct `Response` and read `Date.now`, and a swapped
+// global under one of them fails it for a reason that is not its own (seen at
+// the 2026-09-24 merge: the session-epoch gate read a moved clock). So the
+// lock opens only once every earlier async gate has settled.
+let sharingLock: Promise<unknown> = Promise.allSettled([...pending]);
+const serially = <T>(fn: () => Promise<T>): Promise<T> => {
+  const run = sharingLock.then(fn, fn);
+  sharingLock = run.catch(() => undefined);
+  return run;
+};
+const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
+const until = async (cond: () => boolean, ms = 3_000): Promise<boolean> => {
+  const end = Date.now() + ms;
+  while (!cond()) {
+    if (Date.now() > end) return false;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return true;
+};
+const b64u = (bytes: Uint8Array) => toBase64Url(bytes);
+const unb64u = (text: string) => new Uint8Array(Buffer.from(text, "base64url"));
+const fakeSdp = () => {
+  const hex = [...crypto.getRandomValues(new Uint8Array(32))]
+    .map((b) => b.toString(16).padStart(2, "0").toUpperCase())
+    .join(":");
+  return `v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=fingerprint:sha-256 ${hex}\r\n`;
+};
+
+/** A server-side hibernatable socket, as far as `MachineSignal` uses one. */
+class FakeServerSocket {
+  sent: Record<string, any>[] = [];
+  readyState = 1;
+  code: number | null = null;
+  tags: string[] = [];
+  private att: unknown = null;
+  send(text: string) {
+    if (this.readyState !== 1) throw new Error("closed");
+    this.sent.push(JSON.parse(text));
+  }
+  close(code: number) {
+    this.code = code;
+    this.readyState = 2;
+  }
+  serializeAttachment(value: unknown) {
+    this.att = structuredClone(value);
+  }
+  deserializeAttachment() {
+    return structuredClone(this.att);
+  }
+  types() {
+    return this.sent.map((f) => f.type);
+  }
+}
+
+checkAsync(
+  "the signalling object makes an agent of the machine key, never of a session (N1, N3, N5)",
+  () =>
+    serially(async () => {
+      const sockets: FakeServerSocket[] = [];
+      const ctx = {
+        acceptWebSocket(ws: FakeServerSocket, tags: string[]) {
+          ws.tags = tags;
+          sockets.push(ws);
+        },
+        getWebSockets(tag?: string) {
+          return sockets.filter((s) => !tag || s.tags.includes(tag));
+        },
+      };
+      let stamped = 0;
+      const env = {
+        DB: {
+          prepare: (sql: string) => ({
+            bind: () => ({
+              run: async () => {
+                if (/last_seen/.test(sql)) stamped += 1;
+                return { meta: { changes: 1 } };
+              },
+            }),
+          }),
+        },
+      };
+      const g = globalThis as Record<string, any>;
+      const saved = { pair: g.WebSocketPair, response: g.Response, ws: g.WebSocket, now: Date.now };
+      g.WebSocketPair = class {
+        0 = new FakeServerSocket();
+        1 = new FakeServerSocket();
+      };
+      const RealResponse = saved.response as typeof Response;
+      try {
+        const signal = new MachineSignal(ctx as unknown as DurableObjectState, env as unknown as Env);
+        const machine = "machine-check";
+        const keys = await generateMachineKeypair();
+        const other = await generateMachineKeypair();
+        const key = b64u(keys.publicKeyBytes);
+
+        // `/connect` builds its 101 synchronously; Node's Response refuses 101,
+        // so the subclass stands in for exactly that call and no longer.
+        const connect = async (role: string, headers: Record<string, string> = {}) => {
+          g.Response = class extends RealResponse {
+            constructor(body?: BodyInit | null, init?: ResponseInit & { webSocket?: unknown }) {
+              super(body, init?.status === 101 ? { ...init, status: 200 } : init);
+            }
+          };
+          let pending: Promise<Response>;
+          try {
+            pending = signal.fetch(
+              new Request(`https://signal/connect?role=${role}`, { headers: { upgrade: "websocket", ...headers } }),
+            );
+          } finally {
+            g.Response = RealResponse;
+          }
+          const response = await pending;
+          return { status: response.status, ws: response.status === 200 ? sockets[sockets.length - 1] : null };
+        };
+        const agentHeaders = (k = key) => ({ [AGENT_KEY_HEADER]: k, [MACHINE_HEADER]: machine });
+        const message = (ws: FakeServerSocket | null, frame: unknown) =>
+          signal.webSocketMessage(ws as unknown as WebSocket, typeof frame === "string" ? frame : JSON.stringify(frame));
+        const presence = async () =>
+          ((await signal.fetch(new Request("https://signal/presence"))).json() as Promise<{ agentOnline: boolean }>).then(
+            (p) => p.agentOnline,
+          );
+        const prove = async (ws: FakeServerSocket, privateKey: CryptoKey, nonce = String(ws.sent[0].nonce)) =>
+          message(ws, { type: "prove", signature: b64u(await signConnectProof(privateKey, machine, nonce)) });
+
+        must((await connect("agent")).status === 400, "an agent upgrade without the Worker's key header was not refused");
+
+        // A session alone: a pending socket, challenged, and nothing more.
+        const { ws: a } = await connect("agent", agentHeaders());
+        must(a !== null && a.sent[0]?.type === "challenge", "an agent socket was not challenged on arrival");
+        must(!(await presence()), "an unproven agent socket counted as presence — a cookie makes the machine look online");
+
+        const { ws: browser } = await connect("browser");
+        must(browser!.sent[0]?.type === "hello" && browser!.sent[0].agentOnline === false, "the browser was told an unproven agent is online");
+
+        // The wrong key: refused, and nobody is evicted.
+        const { ws: impostor } = await connect("agent", agentHeaders());
+        await prove(impostor!, other.keyPair.privateKey);
+        must(impostor!.types().includes("proof-refused") && impostor!.code === 4003, "a proof by the wrong key was not refused with 4003");
+
+        // The machine key: accepted, online, stamped.
+        await prove(a!, keys.keyPair.privateKey);
+        must(a!.types().includes("accepted"), `the machine key's proof was not accepted: ${a!.types()}`);
+        must(await presence(), "a proven agent is not presence");
+        must(stamped === 1, `last_seen was stamped ${stamped} times — it belongs to the proof, once`);
+        must(browser!.sent.some((f) => f.type === "agent-status" && f.online === true), "browsers were not told the proven agent arrived");
+
+        // A pending socket is relayed nothing, and a proof is good for one challenge.
+        const { ws: lurker } = await connect("agent", agentHeaders());
+        await message(browser, { type: "offer", payload: { sdp: "x" } });
+        must(a!.sent.some((f) => f.type === "offer" && f.from === browser!.sent[0].peer), "the offer did not reach the proven agent, stamped with the browser's peer id");
+        must(lurker!.types().join() === "challenge", `an unproven agent socket was relayed ${lurker!.types()}`);
+        await prove(lurker!, keys.keyPair.privateKey, String(a!.sent[0].nonce));
+        must(lurker!.code === 4003, "a proof replayed from another socket's challenge was accepted");
+        must(!a!.types().includes("replaced"), "a refused proof evicted the incumbent");
+        const { ws: talker } = await connect("agent", agentHeaders());
+        await message(talker, { type: "answer", to: crypto.randomUUID(), payload: {} });
+        must(talker!.code === 1008, "an unproven agent socket that spoke before proving was not closed with 1008");
+
+        // Too late is refused even with the right key.
+        const { ws: late } = await connect("agent", agentHeaders());
+        Date.now = () => saved.now() + PROOF_WINDOW_MS + 1_000;
+        try {
+          await prove(late!, keys.keyPair.privateKey);
+        } finally {
+          Date.now = saved.now;
+        }
+        must(late!.code === 1008 && !late!.types().includes("accepted"), "a proof after the window was accepted");
+
+        // A second tab with the same key replaces the first (§12 M).
+        const { ws: b } = await connect("agent", agentHeaders());
+        await prove(b!, keys.keyPair.privateKey);
+        must(a!.types().includes("replaced") && a!.code === 4001, "a proven second tab did not replace the first");
+
+        // N3: a frame budget per socket.
+        const { ws: honest } = await connect("browser");
+        for (let i = 0; i < 40; i += 1) await message(honest, { type: "ice", payload: { candidate: `c${i}` } });
+        must(honest!.code === null, `an honest burst of forty frames was closed (${honest!.code})`);
+        const { ws: flood } = await connect("browser");
+        let sent = 0;
+        for (; sent < 400 && flood!.code === null; sent += 1) await message(flood, { type: "ice", payload: { candidate: `c${sent}` } });
+        must(flood!.code === 1008, `400 frames at once were all relayed — no frame budget (closed: ${flood!.code})`);
+        must(sent <= FRAME_BUDGET.browser.burst + 5, `the flood was cut off after ${sent} frames, past the ${FRAME_BUDGET.browser.burst}-frame burst`);
+
+        // N5: a re-key hangs up on the old key, once.
+        const offlineBefore = browser!.sent.filter((f) => f.type === "agent-status" && f.online === false).length;
+        const newKey = b64u((await generateMachineKeypair()).publicKeyBytes);
+        const { ws: stalePending } = await connect("agent", agentHeaders());
+        await signal.fetch(new Request("https://signal/shutdown?reason=rekeyed", { method: "POST", headers: { [AGENT_KEY_HEADER]: newKey } }));
+        must(b!.types().includes("rekeyed") && b!.code === 4005, "a re-key left the old key's agent connected");
+        must(stalePending!.code === 4005, "a re-key left a pending socket that could still prove the old key");
+        must(!(await presence()), "the machine still reads online after a re-key");
+        await signal.webSocketClose(b as unknown as WebSocket);
+        const offlineAfter = browser!.sent.filter((f) => f.type === "agent-status" && f.online === false).length;
+        must(offlineAfter - offlineBefore === 1, `browsers were told the agent left ${offlineAfter - offlineBefore} times on one re-key`);
+
+        // A credential change hangs up WITHOUT saying the machine was removed
+        // (pre-deploy review 2026-09-24): the kiosk must read it as a drop.
+        const { ws: watcher } = await connect("browser");
+        await signal.fetch(new Request("https://signal/shutdown?reason=signed-out", { method: "POST" }));
+        must(watcher!.code === 4006, `a signed-out hang-up closed with ${watcher!.code}, not 4006`);
+        must(!watcher!.types().includes("machine-removed"), "a signed-out hang-up told the socket its machine was removed");
+
+        must(MAX_BROWSER_SOCKETS === MAX_PEERS, `the object admits ${MAX_BROWSER_SOCKETS} browsing sockets and the agent ${MAX_PEERS} peers — they are one number`);
+        return "pending until proven: no presence, no relay, no eviction; wrong key, replay, late proof and early speech refused; 40-frame burst passes, flood closed 1008; re-key closes the old key once";
+      } finally {
+        g.WebSocketPair = saved.pair;
+        g.Response = saved.response;
+        Date.now = saved.now;
+      }
+    }),
+  15_000,
+);
+
+/** The agent's end of the signalling socket, as `VesselAgent` uses one. */
+class FakeClientSocket {
+  static OPEN = 1;
+  static made: FakeClientSocket[] = [];
+  readyState = 1;
+  sent: Record<string, any>[] = [];
+  onmessage: ((event: { data: string }) => void) | null = null;
+  onclose: (() => void) | null = null;
+  constructor(readonly url: string) {
+    FakeClientSocket.made.push(this);
+  }
+  send(text: string) {
+    this.sent.push(JSON.parse(text));
+  }
+  close() {
+    this.readyState = 3;
+  }
+  deliver(frame: unknown) {
+    this.onmessage?.({ data: JSON.stringify(frame) });
+  }
+  types() {
+    return this.sent.map((f) => f.type);
+  }
+}
+
+class FakePeerConnection {
+  static made: FakePeerConnection[] = [];
+  closed = false;
+  remoteDescription: unknown = null;
+  localDescription: { type: string; sdp: string } | null = null;
+  connectionState = "new";
+  ondatachannel: unknown = null;
+  onicecandidate: unknown = null;
+  onconnectionstatechange: unknown = null;
+  constructor() {
+    FakePeerConnection.made.push(this);
+  }
+  async setRemoteDescription(d: unknown) {
+    if (this.closed) throw new Error("closed");
+    this.remoteDescription = d;
+  }
+  async createAnswer() {
+    return { type: "answer", sdp: fakeSdp() };
+  }
+  async setLocalDescription(d: { type: string; sdp: string }) {
+    this.localDescription = d;
+  }
+  async addIceCandidate() {}
+  close() {
+    this.closed = true;
+  }
+}
+
+checkAsync(
+  "the agent tab proves its key, binds each handshake to its socket, caps and replaces peers, and recovers from being replaced (N1, N2)",
+  () =>
+    serially(async () => {
+      const g = globalThis as Record<string, any>;
+      const saved = { ws: g.WebSocket, location: g.location, pc: g.RTCPeerConnection };
+      if (typeof BroadcastChannel === "undefined") skip("this Node has no BroadcastChannel");
+      g.WebSocket = FakeClientSocket;
+      g.location = { protocol: "https:", host: "check.invalid" };
+      g.RTCPeerConnection = FakePeerConnection;
+      FakeClientSocket.made = [];
+      FakePeerConnection.made = [];
+      const agents: VesselAgent[] = [];
+      try {
+        const machine = "machine-agent-check";
+        const keys = await generateMachineKeypair();
+        const owner = await generateMachineKeypair(); // stands in for the grant key: same curve, same calls
+        const snapshots: AgentSnapshot[] = [];
+        const make = (sink: AgentSnapshot[] = []) => {
+          const agent = new VesselAgent(machine, keys.keyPair, owner.publicKeyBytes, async () => null, (s) => sink.push(s));
+          agents.push(agent);
+          return agent;
+        };
+        const state = (sink: AgentSnapshot[]) => sink[sink.length - 1]?.state;
+        const peers = (sink: AgentSnapshot[]) => sink[sink.length - 1]?.peers ?? 0;
+
+        const a = make(snapshots);
+        a.start();
+        const ws = FakeClientSocket.made[0];
+        must(ws.url.endsWith(`/api/signal/${machine}?role=agent`), `the agent dialled ${ws.url}`);
+        await settle();
+        must(state(snapshots) === "connecting", `an open, unproven socket already read "${state(snapshots)}"`);
+
+        // The challenge is answered with the machine key, over exactly that nonce.
+        const nonce = b64u(crypto.getRandomValues(new Uint8Array(32)));
+        ws.deliver({ type: "challenge", nonce });
+        must(await until(() => ws.types().includes("prove")), "the agent did not answer its challenge");
+        const proof = ws.sent.find((f) => f.type === "prove")!;
+        must(
+          await verifyConnectProof(keys.publicKeyBytes, machine, nonce, unb64u(String(proof.signature))),
+          "the agent's proof does not verify against its own public key over the object's nonce",
+        );
+        ws.deliver({ type: "challenge", nonce: "not-a-nonce" });
+        await settle();
+        must(ws.types().filter((t) => t === "prove").length === 1, "the agent signed a challenge that is not one the object mints");
+        // That refusal dropped the socket for a retry; take the retry's socket through.
+        must(await until(() => FakeClientSocket.made.length === 2, 4_000), "a refused challenge did not lead to a retry");
+        const ws2 = FakeClientSocket.made[1];
+        ws2.deliver({ type: "challenge", nonce });
+        await until(() => ws2.types().includes("prove"));
+        ws2.deliver({ type: "accepted" });
+        must(await until(() => state(snapshots) === "online"), "accepted did not make the agent online");
+
+        // N2: an offer is verified against the socket it arrived on.
+        const offerFrom = async (peer: string, signedFor = peer) => {
+          const sdp = fakeSdp();
+          const fp = sdp.match(/a=fingerprint:(.+)\r/)![1];
+          const signature = await signFingerprint(owner.keyPair.privateKey, "owner", machine, signedFor, fp);
+          ws2.deliver({ type: "offer", from: peer, payload: { sdp, signature: b64u(signature) } });
+        };
+        const p1 = crypto.randomUUID();
+        await offerFrom(p1);
+        must(await until(() => ws2.sent.some((f) => f.type === "answer" && f.to === p1)), "a good offer was not answered");
+        const answer = ws2.sent.find((f) => f.type === "answer" && f.to === p1)!;
+        must(
+          await verifyFingerprint(keys.publicKeyBytes, "agent", machine, p1, String(answer.payload.fingerprint), unb64u(String(answer.payload.signature))),
+          "the agent's answer does not verify bound to the peer it answered",
+        );
+        const p2 = crypto.randomUUID();
+        await offerFrom(p2, p1); // p1's signature, relayed from p2's socket
+        must(await until(() => ws2.sent.some((f) => f.type === "refused" && f.to === p2)), "an offer signed for another socket was not refused");
+        must(peers(snapshots) === 1, `a replayed offer opened a connection (${peers(snapshots)} peers)`);
+
+        const firstPc = FakePeerConnection.made[0];
+        await offerFrom(p1);
+        must(await until(() => ws2.sent.filter((f) => f.type === "answer" && f.to === p1).length === 2), "a second offer from one peer was not answered");
+        must(firstPc.closed, "a second offer from the same peer left the first connection open beside it");
+        must(peers(snapshots) === 1, `one peer holds ${peers(snapshots)} connections`);
+
+        for (let i = 1; i < MAX_PEERS; i += 1) await offerFrom(crypto.randomUUID());
+        must(await until(() => peers(snapshots) === MAX_PEERS), `the agent did not reach ${MAX_PEERS} peers`);
+        const overflow = crypto.randomUUID();
+        await offerFrom(overflow);
+        must(await until(() => ws2.sent.some((f) => f.type === "refused" && f.to === overflow)), `peer ${MAX_PEERS + 1} was not refused`);
+        must(peers(snapshots) === MAX_PEERS, `the agent holds ${peers(snapshots)} peers past its cap of ${MAX_PEERS}`);
+        const madeBefore = FakePeerConnection.made.length;
+        ws2.deliver({ type: "offer", from: "not-a-peer-id", payload: { sdp: fakeSdp(), signature: "x" } });
+        await settle();
+        must(FakePeerConnection.made.length === madeBefore, "an offer from a peer id the object could not have minted was acted on");
+
+        // N1: replaced by a sibling tab of this profile — wait while it lives,
+        // take back over when it goes. No click.
+        const siblingSnaps: AgentSnapshot[] = [];
+        const b = make(siblingSnaps);
+        b.start();
+        const wsB = FakeClientSocket.made[FakeClientSocket.made.length - 1];
+        wsB.deliver({ type: "accepted" });
+        await until(() => state(siblingSnaps) === "online");
+        ws2.deliver({ type: "replaced" });
+        must(await until(() => state(snapshots) === "replaced"), "replaced did not stand the agent down");
+        must(peers(snapshots) === 0, "a replaced agent kept its peer connections");
+        const socketsWhileReplaced = FakeClientSocket.made.length;
+        await new Promise((resolve) => setTimeout(resolve, 4_000));
+        must(state(snapshots) === "replaced" && FakeClientSocket.made.length === socketsWhileReplaced, "the replaced agent reclaimed while its sibling was still the live agent — ping-pong");
+        b.stop();
+        must(await until(() => FakeClientSocket.made.length > socketsWhileReplaced, 4_000), "the replaced agent did not take back over once its sibling closed — the host stays down until somebody clicks");
+        must(state(snapshots) === "connecting", `after reclaiming, the agent reads "${state(snapshots)}"`);
+
+        // Re-keyed elsewhere is terminal: no retry could ever prove the old key.
+        const wsC = FakeClientSocket.made[FakeClientSocket.made.length - 1];
+        wsC.deliver({ type: "proof-refused" });
+        must(await until(() => state(snapshots) === "rekeyed"), "a refused proof did not stand the agent down as re-keyed");
+        const socketsAfterRekey = FakeClientSocket.made.length;
+        await new Promise((resolve) => setTimeout(resolve, 2_600));
+        must(FakeClientSocket.made.length === socketsAfterRekey, "a re-keyed agent kept redialling a key that can never prove");
+
+        return `challenge signed over the object's nonce only; online on accepted; replayed offer refused; same-peer offer replaces; ${MAX_PEERS}-peer cap; replaced waits for its sibling and reclaims when it closes; re-keyed is terminal`;
+      } finally {
+        for (const agent of agents) agent.stop();
+        g.WebSocket = saved.ws;
+        g.location = saved.location;
+        g.RTCPeerConnection = saved.pc;
+      }
+    }),
+  30_000,
+);
+
+/*
+ * A D1 over node:sqlite, with every migration applied — enough of the binding
+ * for the machines routes, and each call yields to the event loop first, as a
+ * network round trip does. That yield is what lets two concurrent requests
+ * interleave between a count and an insert, which is the race being gated.
+ */
+async function sqliteD1Share(): Promise<{ db: D1Database; raw: { prepare(sql: string): { get(...a: unknown[]): unknown; run(...a: unknown[]): unknown } } }> {
+  let sqlite: { DatabaseSync: new (path: string) => any };
+  try {
+    sqlite = (await import("node:sqlite")) as unknown as typeof sqlite;
+  } catch {
+    return skip("node:sqlite is not available in this Node — the machines routes could not be driven");
+  }
+  const raw = new sqlite.DatabaseSync(":memory:");
+  for (const file of readdirSync("migrations").filter((f) => f.endsWith(".sql")).sort()) {
+    raw.exec(readFileSync(join("migrations", file), "utf8"));
+  }
+  const conv = (args: unknown[]) =>
+    args.map((a) => (a instanceof ArrayBuffer ? new Uint8Array(a) : a === undefined ? null : a));
+  const statement = (sql: string, args: unknown[] = []): any => ({
+    bind: (...next: unknown[]) => statement(sql, next),
+    first: async () => {
+      await settle();
+      return raw.prepare(sql).get(...conv(args)) ?? null;
+    },
+    all: async () => {
+      await settle();
+      return { results: raw.prepare(sql).all(...conv(args)) };
+    },
+    run: async () => {
+      await settle();
+      const result = raw.prepare(sql).run(...conv(args));
+      return { meta: { changes: Number(result.changes) } };
+    },
+    exec: () => raw.prepare(sql).run(...conv(args)),
+  });
+  const db = {
+    prepare: (sql: string) => statement(sql),
+    batch: async (statements: { exec(): unknown }[]) => {
+      await settle();
+      raw.exec("BEGIN");
+      try {
+        for (const s of statements) s.exec();
+        raw.exec("COMMIT");
+      } catch (error) {
+        raw.exec("ROLLBACK");
+        throw error;
+      }
+      return [];
+    },
+  };
+  return { db: db as unknown as D1Database, raw };
+}
+
+checkAsync(
+  "the machines routes: caps and drive labels hold in the write under concurrency, and a re-key hangs up on the old key (N5, N6)",
+  () =>
+    serially(async () => {
+    const { db, raw } = await sqliteD1Share();
+    const signalCalls: { id: string; url: string; key: string | null }[] = [];
+    const env = {
+      DB: db,
+      SESSION_SECRET: "check-session-secret",
+      AUTH_PEPPER: "check-pepper",
+      RATE_SALT_SEED: "check-seed",
+      RATE_LIMIT: {
+        idFromName: (name: string) => name,
+        get: () => ({ fetch: async () => new Response(JSON.stringify({ allowed: true, retryAt: 0, remaining: 5 })) }),
+      },
+      SIGNAL: {
+        idFromName: (name: string) => name,
+        get: (id: string) => ({
+          fetch: async (url: string, init?: RequestInit) => {
+            signalCalls.push({ id, url: String(url), key: new Headers(init?.headers).get(AGENT_KEY_HEADER) });
+            return Response.json({ agentOnline: false, status: "closed" });
+          },
+        }),
+      },
+    } as unknown as Env;
+
+    const accountId = "acct-machines-check";
+    const grant = await generateMachineKeypair();
+    raw.prepare("INSERT INTO accounts (id, handle, handle_lower, created_at, grant_pubkey) VALUES (?, ?, ?, ?, ?)").run(
+      accountId, "Machines", "machines", 0, grant.publicKeyBytes,
+    );
+    const authSecret = toBase64Url(new Uint8Array(32).fill(9));
+    raw.prepare(
+      "INSERT INTO credentials (id, account_id, kind, created_at, auth_hash, kdf_salt, kdf_iterations) VALUES (?, ?, 'password', 0, ?, ?, 600000)",
+    ).run("cred-machines-check", accountId, new Uint8Array(await authHash(env.AUTH_PEPPER, authSecret)), new Uint8Array(16));
+    const cookie = `${SESSION_COOKIE}=${await mintSession(env.SESSION_SECRET, "session", accountId)}`;
+    const call = async (route: (r: Request, e: Env) => Promise<Response>, body: unknown): Promise<number | string> => {
+      try {
+        const response = await route(
+          new Request("https://mcclevarty.ca/api/x", {
+            method: "POST",
+            headers: { cookie, "content-type": "application/json", "cf-connecting-ip": "203.0.113.7" },
+            body: JSON.stringify(body),
+          }),
+          env,
+        );
+        return response.status;
+      } catch (error) {
+        return (error as BadRequest).status ?? `threw ${(error as Error).message}`;
+      }
+    };
+    const count = (sql: string, ...args: unknown[]) => Number((raw.prepare(sql).get(...args) as { n: number }).n);
+    const pubkey = async () => b64u((await generateMachineKeypair()).publicKeyBytes);
+
+    // N6: twelve pairings at once may land ten.
+    const pairs = await Promise.all(
+      await Promise.all(
+        Array.from({ length: 12 }, async (_, i) => ({ name: `box ${i}`, agentPubkey: await pubkey(), authSecret })),
+      ).then((bodies) => bodies.map((b) => call(machinesRoute.pair, b))),
+    );
+    const machines = count("SELECT count(*) AS n FROM machines WHERE owner_id = ?", accountId);
+    must(machines === 10, `twelve concurrent pairings left ${machines} machines against a cap of 10 (${JSON.stringify(pairs)}) — the cap is a count before the write`);
+    must(pairs.filter((s) => s === 201).length === 10 && pairs.filter((s) => s === 400).length === 2, `pairings answered ${JSON.stringify(pairs)}`);
+    must(count("SELECT count(*) AS n FROM audit WHERE action = 'machine.paired'") === 10, "a refused pairing still wrote its audit row");
+
+    const machineId = String((raw.prepare("SELECT id FROM machines WHERE owner_id = ? ORDER BY name LIMIT 1").get(accountId) as { id: string }).id);
+
+    // N6: labels are unique per machine, case-insensitively, in the index.
+    must((await call(machinesRoute.driveAdd, { machineId, label: "Invoices" })) === 201, "the first drive was not added");
+    const dup = await call(machinesRoute.driveAdd, { machineId, label: "INVOICES" });
+    must(dup === 409, `a drive label differing only in case was ${dup}, not refused 409`);
+    let indexed = false;
+    try {
+      raw.prepare("INSERT INTO drives (id, machine_id, label, created_at) VALUES ('raw', ?, 'invoices', 0)").run(machineId);
+    } catch {
+      indexed = true;
+    }
+    must(indexed, "the database itself accepts a case-folded duplicate drive label — the uniqueness lives only in the handler");
+
+    // N6: eighteen drive adds at once may land sixteen, counting the one above.
+    const drives = await Promise.all(
+      Array.from({ length: 18 }, (_, i) => call(machinesRoute.driveAdd, { machineId, label: `burst ${i}` })),
+    );
+    const driveRows = count("SELECT count(*) AS n FROM drives WHERE machine_id = ?", machineId);
+    must(driveRows === 16, `eighteen concurrent drive adds left ${driveRows} drives against a cap of 16 (${JSON.stringify(drives)}) — the cap is a count before the write`);
+    must(count("SELECT count(*) AS n FROM audit WHERE action = 'drive.added'") === 16, "a refused drive add still wrote its audit row");
+
+    // N5: a re-key tells the object, with the new key.
+    signalCalls.length = 0;
+    const fresh = await pubkey();
+    const rekey = await call(machinesRoute.pair, { machineId, agentPubkey: fresh, authSecret });
+    must(rekey === 200, `the re-key answered ${rekey}`);
+    const shutdown = signalCalls.find((c) => c.url.includes("/shutdown"));
+    must(!!shutdown && shutdown.id === machineId, "a re-key did not tell the machine's signalling object to hang up — the old key's agent stays online");
+    must(/reason=rekeyed/.test(shutdown!.url) && shutdown!.key === fresh, `the re-key's hang-up does not name the new key (${shutdown!.url}, ${shutdown!.key})`);
+
+    return `12 concurrent pairings → 10; 18 concurrent drive adds → 16 total; case-folded label refused by handler and index; re-key calls /shutdown?reason=rekeyed with the new key`;
+  }),
+  15_000,
+);
 
 await Promise.all(pending);
 
@@ -6898,7 +9004,19 @@ for p in "$@"; do
     DO_ALLOW_SSH_PASSWORDS=0; DO_PIHOLE=0; PIHOLE_ADMIN_LAN=0
     STORE_DIR=""; STORE_EXPLICIT=0; KIOSK_URL=""; DEFAULT_URL="about:blank"
     DEFAULT_STORE="/srv/vessel"; STORE_FILE="$TMPROOT/none"; OPTIONS_FILE="$TMPROOT/none2"
-    parse_args --store "$p" about:blank && printf 'ACCEPTED %s\n' "$STORE_DIR"
+    HOME="$TMPROOT/homes/me"
+    case "$p" in
+      FILE:*)
+        # A value REMEMBERED in the store file, no --store: what the next run reads back.
+        STORE_FILE="$TMPROOT/store-file"; printf '%s\n' "$(printf '%s' "$p" | cut -d: -f2-)" > "$STORE_FILE"
+        parse_args about:blank && printf 'ACCEPTED %s\n' "$STORE_DIR" ;;
+      LINKFILE:*)
+        STORE_FILE="$TMPROOT/store-link"; printf '/srv/vessel\n' > "$TMPROOT/store-target"
+        ln -sfn "$TMPROOT/store-target" "$STORE_FILE"
+        parse_args about:blank && printf 'ACCEPTED %s\n' "$STORE_DIR" ;;
+      *)
+        parse_args --store "$p" about:blank && printf 'ACCEPTED %s\n' "$STORE_DIR" ;;
+    esac
   )"
   # No braced shell expansions anywhere in this probe, deliberately: it is a
   # template literal on the TypeScript side, and String.raw suppresses backslash
@@ -6919,6 +9037,10 @@ done
     // — the hole was only ever reachable through a path not yet created.
     symlinkSync("/etc", join(root, "link-to-etc"));
     symlinkSync("/var", join(root, "link-to-var"));
+    // HOME for the probe, and a second account beside it (2026-09-24, review item 6).
+    mkdirSync(join(root, "homes", "me"), { recursive: true });
+    mkdirSync(join(root, "homes", "other"), { recursive: true });
+    const rroot = realpathSync(root);
 
     const out = execFileSync(
       "bash",
@@ -6926,7 +9048,11 @@ done
        join(root, "link-to-etc", "vessel"),
        join(root, "link-to-var", "newlib"),
        join(root, "plain", "store"),
-       "/srv/vessel", "/etc", "//etc/x", "/home"],
+       "/srv/vessel", "/etc", "//etc/x", "/home",
+       join(root, "homes", "other", "store"), join(root, "homes", "me"), join(root, "homes", "me", "vessel"),
+       join(root, "homes", "me", ".config", "vessel"), "/home/user", "/home/someone-else/data",
+       "/opt/google/chrome", "/snap/chromium", "FILE:/etc/vessel", "FILE:/home/user", "FILE:/srv/vessel-kept",
+       "LINKFILE:"],
       { encoding: "utf8" },
     );
     const verdict = new Map<string, string>();
@@ -6941,6 +9067,16 @@ done
       ["/etc", "a blocked directory named outright"],
       ["//etc/x", "a leading // must collapse before the comparison"],
       ["/home", "a directory refused outright"],
+      [join(root, "homes", "other", "store"), "another account's home — sudo chown would hand it to this user"],
+      [join(root, "homes", "me"), "this user's home itself — it would be chmod'd 0750"],
+      [join(root, "homes", "me", ".config", "vessel"), "a dot-folder in this home — keys and the browser profile live there"],
+      ["/home/user", "a home under /home that is not this user's"],
+      ["/home/someone-else/data", "inside another account's home under /home"],
+      ["/opt/google/chrome", "the browser binary's own directory — /opt was an exact entry, so its children passed"],
+      ["/snap/chromium", "a snap — /snap was an exact entry, so its children passed"],
+      ["FILE:/etc/vessel", "a REMEMBERED value naming /etc — the file is user-writable and read back as root's chown target"],
+      ["FILE:/home/user", "a remembered value naming another home"],
+      ["LINKFILE:", "a store file that is a symlink — it cannot be trusted to be what was written"],
     ] as const) {
       must(
         verdict.get(p) === "REFUSED",
@@ -6951,17 +9087,617 @@ done
 
     // And it must stay usable, or the safe answer is "refuse everything" and the
     // script cannot set up the host it exists to set up.
-    for (const p of [join(root, "plain", "store"), "/srv/vessel"]) {
+    for (const p of [join(root, "plain", "store"), "/srv/vessel", join(root, "homes", "me", "vessel"), "FILE:/srv/vessel-kept"]) {
       must(
         verdict.get(p)?.startsWith("ACCEPTED") === true,
         `thinkcentre-setup.sh refused ${p.replace(root, "TMP")}, an ordinary store path — the blocklist has become a wall`,
       );
       driven += 1;
     }
+    must(verdict.get(join(root, "homes", "me", "vessel")) === `ACCEPTED ${join(rroot, "homes", "me", "vessel")}`,
+      `a folder inside this user's own home came back as ${verdict.get(join(root, "homes", "me", "vessel"))}`);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-  return `${driven} verdicts from the real parse_args, against a symlinked throwaway tree`;
+  return `${driven} verdicts from the real parse_args, against a symlinked throwaway tree: other homes, the home itself, dot-folders, /opt and /snap refused, typed or remembered`;
+});
+
+/*
+ * `--verify` finds the DESKTOP session, not the SSH one — driven (2026-09-24,
+ * review item 2). An SSH login is `Class=user` too, with `Type=tty`, so a lookup
+ * keyed on Class alone could hand back the terminal: `graphical session type`
+ * then FAILED as `tty` on a healthy X11 box, which is how --verify is usually
+ * run. The real function runs against a stub `loginctl` on PATH that lists the
+ * user manager, then an SSH session, then the desktop — the order that bit.
+ */
+check("--verify picks the graphical session, not an SSH one, driven", () => {
+  const probe = String.raw`
+set -uo pipefail
+SRC="$1"; BIN="$2"
+eval "$(awk '/^graphical_session_id\(\)/{i=1} i{print} i&&/^}/{i=0}' "$SRC")"
+for scenario in desktop-and-ssh ssh-only wayland; do
+  printf '%s\t%s\n' "$scenario" "$(SCENARIO="$scenario" USER=user PATH="$BIN:$PATH" graphical_session_id || printf none)"
+done
+`;
+  const stub = String.raw`#!/bin/bash
+if [ "$1" = list-sessions ]; then
+  printf '1 1000 user - -\n3 1000 user - pts/0\n'
+  [ "$SCENARIO" = ssh-only ] || printf '2 1000 user seat0 tty2\n'
+  exit 0
+fi
+case "$2:$4" in
+  1:Class) echo manager ;; 1:Type) echo unspecified ;;
+  3:Class) echo user ;;    3:Type) echo tty ;;
+  2:Class) echo user ;;
+  2:Type) if [ "$SCENARIO" = wayland ]; then echo wayland; else echo x11; fi ;;
+esac
+`;
+  const root = mkdtempSync(join(tmpdir(), "vessel-loginctl-"));
+  try {
+    mkdirSync(join(root, "bin"));
+    writeFileSync(join(root, "bin", "loginctl"), stub, { mode: 0o755 });
+    const out = execFileSync("bash", ["-c", probe, "probe", "scripts/thinkcentre-setup.sh", join(root, "bin")], {
+      encoding: "utf8",
+    });
+    const got = new Map(out.trim().split("\n").map((l) => l.split("\t") as [string, string]));
+    must(
+      got.get("desktop-and-ssh") === "2",
+      `with an SSH session listed before the desktop, graphical_session_id returned ${got.get("desktop-and-ssh")} — it must be the x11 session (2), not the tty one (3)`,
+    );
+    must(
+      got.get("ssh-only") === "none",
+      `over SSH with no desktop, graphical_session_id returned ${got.get("ssh-only")} — a tty is not a graphical session`,
+    );
+    must(
+      got.get("wayland") === "2",
+      `a Wayland desktop must still be FOUND (${got.get("wayland")}), so the session-type check can fail it by name`,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+  return "3 loginctl scenarios through the real function, SSH-first ordering included";
+});
+
+/*
+ * `--verify` reads SDDM's autologin the way SDDM does — driven (2026-09-24,
+ * review item 3). SDDM reads the packaged drop-ins, then /etc/sddm.conf.d sorted,
+ * then /etc/sddm.conf, and a LATER file wins; keys are scoped to their section.
+ * The old loop kept the first `User=` it met in any section of any file. The real
+ * `sddm_config_files` and `sddm_value` run against a throwaway tree.
+ */
+check("--verify reads SDDM autologin last-file-wins and section-scoped, driven", () => {
+  const probe = String.raw`
+set -uo pipefail
+SRC="$1"; ROOT="$2"
+eval "$(awk '/^(sddm_config_files|sddm_value)\(\)/{i=1} i{print} i&&/^}/{i=0}' "$SRC")"
+mapfile -d '' -t F < <(sddm_config_files "$ROOT")
+printf 'user\t%s\n' "$(sddm_value Autologin User "$F[@]" || printf UNSET)"
+printf 'session\t%s\n' "$(sddm_value Autologin Session "$F[@]" || printf UNSET)"
+printf 'relogin\t%s\n' "$(sddm_value Autologin Relogin "$F[@]" || printf UNSET)"
+`.replaceAll("$F[@]", "$" + "{F[@]}");
+  const root = mkdtempSync(join(tmpdir(), "vessel-sddm-"));
+  const put = (rel: string, text: string) => {
+    mkdirSync(join(root, rel, ".."), { recursive: true });
+    writeFileSync(join(root, rel), text);
+  };
+  try {
+    // Packaged defaults first, with empty values — lowest priority.
+    put("usr/lib/sddm/sddm.conf.d/default.conf", "[Autologin]\nUser=\nSession=\n");
+    // An earlier drop-in: a wrong session, and a User= in ANOTHER section first.
+    put("etc/sddm.conf.d/05-early.conf", "[Users]\nUser=not-autologin\n[Autologin]\nUser=someone-else\nSession=plasma\n");
+    // The project's own drop-in, later in sort order, with padding and a comment.
+    put("etc/sddm.conf.d/10-vessel.conf", "# written by plasma-dark-setup.sh\n[Autologin]\n  User = user \nSession=plasmax11\n");
+    // sddm.conf is read LAST: it sets one unrelated key in the right section.
+    put("etc/sddm.conf", "[Autologin]\nRelogin=false\n[General]\nUser=general-is-not-autologin\n");
+    const out = execFileSync("bash", ["-c", probe, "probe", "scripts/thinkcentre-setup.sh", root], { encoding: "utf8" });
+    const got = new Map(out.trim().split("\n").map((l) => l.split("\t") as [string, string]));
+    must(got.get("user") === "user", `autologin user read as "${got.get("user")}" — the later drop-in must win, and only [Autologin] counts`);
+    must(got.get("session") === "plasmax11", `session read as "${got.get("session")}" — the later drop-in must win`);
+    must(got.get("relogin") === "false", `Relogin read as "${got.get("relogin")}" — /etc/sddm.conf is read too, and last`);
+
+    // And a later file that switches autologin OFF must be believed.
+    put("etc/sddm.conf.d/99-off.conf", "[Autologin]\nUser=\n");
+    const off = execFileSync("bash", ["-c", probe, "probe", "scripts/thinkcentre-setup.sh", root], { encoding: "utf8" });
+    const offUser = off.split("\n").find((l) => l.startsWith("user\t"))?.split("\t")[1];
+    must(offUser === "", `a later "User=" (autologin off) read as "${offUser}" — an empty value is still SDDM's answer`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+  return "4 SDDM files in real read order, section scope and an empty later override, through the real parser";
+});
+
+/*
+ * --verify checks EVERY lockdown key the builder writes — driven (2026-09-24,
+ * review item 5). It checked three hand-picked keys, so a policy with
+ * URLBlocklist, DeveloperToolsAvailability, ExtensionInstallBlocklist or
+ * IncognitoModeAvailability deleted or loosened verified green. The builder's
+ * own `chromium_policy_json` is the expected value, so this runs it, writes the
+ * result as the policy on disk, and then loosens one key at a time: each must
+ * FAIL through the real `verify_policy_file`, and `{}` must fail everything.
+ */
+check("--verify compares every Chromium lockdown key with the builder's, driven", () => {
+  const probe = String.raw`
+set -uo pipefail
+SRC="$1"; POL="$2"; EXP="$3"
+have() { command -v "$1" >/dev/null 2>&1; }
+# A heredoc'd JSON document ends in its own column-0 brace, so the function ends at the first
+# column-0 brace OUTSIDE a heredoc, not the first one.
+eval "$(awk '/^(chromium_policy_json|json_value|json_keys|verify_policy_file)\(\)/{i=1} i{print} i&&/<<EOF$/{h=1;next} i&&h&&/^EOF$/{h=0;next} i&&!h&&/^}/{i=0}' "$SRC")"
+chromium_policy_json https mcclevarty.ca > "$EXP"
+[ -s "$POL" ] || cp "$EXP" "$POL"
+verify_policy_file "$POL" "$EXP" || printf 'NOTHING\tcompared\tnothing\n'
+`;
+  const root = mkdtempSync(join(tmpdir(), "vessel-policy-"));
+  try {
+    const run = (policy: string | null) => {
+      const pol = join(root, "pol.json");
+      writeFileSync(pol, policy ?? "");
+      const out = execFileSync("bash", ["-c", probe, "probe", "scripts/thinkcentre-setup.sh", pol, join(root, "exp.json")], { encoding: "utf8" });
+      return out.trim().split("\n").map((l) => l.split("\t")).map(([label, want, got]) => ({ label, ok: want === got, got }));
+    };
+    const clean = run(null);
+    must(clean.length >= 30, `only ${clean.length} policy keys were compared — the builder writes more than that`);
+    must(clean.every((r) => r.ok), `the builder's own policy fails its own check: ${clean.filter((r) => !r.ok).map((r) => r.label).join(", ")}`);
+    const written = JSON.parse(readFileSync(join(root, "exp.json"), "utf8")) as Record<string, unknown>;
+    const loosen: [string, unknown][] = [
+      ["URLBlocklist", undefined],
+      ["URLBlocklist", []],
+      ["DeveloperToolsAvailability", 1],
+      ["ExtensionInstallBlocklist", undefined],
+      ["IncognitoModeAvailability", 0],
+      ["URLAllowlist", ["*"]],
+      ["DefaultFileSystemWriteGuardSetting", 3],
+    ];
+    for (const [key, value] of loosen) {
+      const bad: Record<string, unknown> = { ...written };
+      if (value === undefined) delete bad[key];
+      else bad[key] = value;
+      const got = run(JSON.stringify(bad));
+      const row = got.find((r) => r.label === `policy ${key}`);
+      must(row !== undefined && !row.ok, `a policy with ${key} ${value === undefined ? "deleted" : `set to ${JSON.stringify(value)}`} passed --verify`);
+      must(got.filter((r) => !r.ok).length === 1, `loosening ${key} failed other keys too — the comparison is not per key`);
+    }
+    const empty = run("{}");
+    must(empty.length === clean.length && empty.every((r) => !r.ok), "`{}` as the policy did not fail every key");
+    return `${clean.length} keys from the builder's own policy compared; ${loosen.length} single loosenings and an empty policy each FAIL`;
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/*
+ * --verify FAILS a kiosk that is "active" but showing nothing — driven
+ * (2026-09-24, review item 4). The launcher is active while it polls for a
+ * display, so a box whose autologin failed, or whose browser died under a
+ * running unit, verified green. The real `kiosk_liveness` answers each shape;
+ * a verdict of kind `check` with expected != actual is a FAIL in verify().
+ */
+check("--verify fails an active kiosk with no desktop or no browser, driven", () => {
+  const src = readFileSync("scripts/thinkcentre-setup.sh", "utf8");
+  must(/done < <\(kiosk_liveness "\$\{active\}" "\$\{gsid\}" "\$\{chromium_up\}"/.test(src), "verify() no longer feeds kiosk_liveness into check");
+  const probe = String.raw`
+set -uo pipefail
+SRC="$1"; shift
+eval "$(awk '/^readonly KIOSK_GRACE_SECONDS=/{print} /^kiosk_liveness\(\)/{i=1} i{print} i&&/^}/{i=0}' "$SRC")"
+kiosk_liveness "$@"
+`;
+  const fails = (...args: string[]) =>
+    execFileSync("bash", ["-c", probe, "probe", "scripts/thinkcentre-setup.sh", ...args], { encoding: "utf8" })
+      .trim().split("\n").map((l) => l.split("\t"))
+      .filter(([kind, , want, got]) => kind === "check" && want !== got)
+      .map(([, label]) => label);
+  const cases: [string, string[], string[]][] = [
+    ["a healthy kiosk", ["active", "2", "yes", "86400", "no"], []],
+    ["active, polling for a display that never came, an hour after boot", ["active", "", "no", "3600", "no"], ["graphical session", "chromium"]],
+    ["a desktop, the unit active, and no browser", ["active", "2", "no", "3600", "no"], ["chromium"]],
+    ["inactive with no desktop after a real boot", ["inactive", "", "no", "3600", "no"], ["kiosk running", "graphical session", "chromium"]],
+    ["failed", ["failed", "2", "no", "3600", "no"], ["kiosk running", "chromium"]],
+    ["set up over SSH, not yet rebooted", ["inactive", "", "no", "3600", "yes"], []],
+    ["two minutes after boot, still starting", ["active", "", "no", "120", "no"], []],
+  ];
+  for (const [what, args, want] of cases) {
+    const got = fails(...args);
+    must(
+      JSON.stringify(got) === JSON.stringify(want),
+      `${what}: --verify would FAIL [${got.join(", ")}] where it should FAIL [${want.join(", ")}]`,
+    );
+  }
+  return `${cases.length} kiosk states through the real kiosk_liveness: polling, browserless and dead kiosks FAIL; a fresh setup and a booting box do not`;
+});
+
+/*
+ * --verify demands that autologin is THIS user — driven (2026-09-24, review item
+ * 11). "Some user logs in automatically" passed a box autologging into an
+ * account with no kiosk, whose Chromium profile holds no pairing. The real
+ * `check` and `autologin_line` run, and every display-manager branch must ask.
+ */
+check("--verify requires the autologin user to be the kiosk user, driven", () => {
+  const src = readFileSync("scripts/thinkcentre-setup.sh", "utf8");
+  for (const dm of ["sddm", "lightdm", "gdm3"]) {
+    must(src.includes(`< <(autologin_line ${dm} `), `the ${dm} branch of verify() no longer checks WHICH user autologs in`);
+  }
+  const probe = String.raw`
+set -uo pipefail
+SRC="$1"; WHO="$2"
+eval "$(awk '/^VERIFY_FAILED=0/{print} /^(check|autologin_line)\(\)/{i=1} i{print} i&&/^}/{i=0}' "$SRC")"
+IFS=$'\t' read -r l e a < <(USER=user autologin_line sddm "$WHO")
+check "$l" "$e" "$a" >/dev/null
+printf '%s\n' "$VERIFY_FAILED"
+`;
+  const verdict = (who: string) =>
+    execFileSync("bash", ["-c", probe, "probe", "scripts/thinkcentre-setup.sh", who], { encoding: "utf8" }).trim();
+  must(verdict("user") === "0", "autologin as the kiosk user FAILED --verify");
+  must(verdict("someone-else") === "1", "autologin as a different user PASSED --verify — that account holds no pairing");
+  must(verdict("") === "1", "no autologin user PASSED --verify");
+  return "the kiosk user passes; another user and none FAIL; all three display-manager branches ask";
+});
+
+/*
+ * The screen-never-blanks settings, written by the builder and read back by
+ * --verify, both through real KConfig — driven (2026-09-24, review item 1).
+ * Plasma 6 reads PowerDevil's profile from NESTED groups, `[AC][Display]` and
+ * `[AC][SuspendAndShutdown]` (PowerDevilProfileSettings.kcfg); the builder wrote
+ * a flat `[AC]` that PowerDevil never read, and --verify never asked. This
+ * executes the builder's own `kwriteconfig` lines into a throwaway
+ * XDG_CONFIG_HOME, then the real `display_idle_settings`, which must say ok —
+ * and must say FAIL for the old flat shape and for an empty file.
+ */
+check("the kiosk screen-never-blanks keys are written where PowerDevil reads them, driven", () => {
+  const has = (tool: string) => {
+    try {
+      execFileSync("bash", ["-c", 'command -v "$1"', "has", tool], { stdio: "pipe" });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (!has("kwriteconfig6") || !has("kreadconfig6")) {
+    skip("kwriteconfig6/kreadconfig6 are not installed here, so KConfig could not be driven");
+  }
+  const builder = readFileSync("scripts/plasma-dark-setup.sh", "utf8");
+  const writes = builder
+    .split("\n")
+    .filter((l) => /^\s*"\$\{KWRITE\}" --file (powerdevilrc|kscreenlockerrc) /.test(l) && !l.includes("--delete"));
+  must(writes.length >= 4, `only ${writes.length} powerdevilrc/kscreenlockerrc writes found in the builder`);
+
+  const probe = String.raw`
+set -uo pipefail
+SRC="$1"
+have() { command -v "$1" >/dev/null 2>&1; }
+eval "$(awk '/^display_idle_settings\(\)/{i=1} i{print} i&&/^}/{i=0}' "$SRC")"
+display_idle_settings
+`;
+  const verdict = (writesToRun: string[] | null, raw?: string) => {
+    const root = mkdtempSync(join(tmpdir(), "vessel-kconfig-"));
+    try {
+      const env = { ...process.env, XDG_CONFIG_HOME: join(root, "cfg"), XDG_CONFIG_DIRS: join(root, "xdg"), KWRITE: "kwriteconfig6" };
+      mkdirSync(env.XDG_CONFIG_HOME, { recursive: true });
+      mkdirSync(env.XDG_CONFIG_DIRS, { recursive: true });
+      if (raw !== undefined) writeFileSync(join(env.XDG_CONFIG_HOME, "powerdevilrc"), raw);
+      if (writesToRun) execFileSync("bash", ["-euc", writesToRun.join("\n")], { env, stdio: "pipe" });
+      const out = execFileSync("bash", ["-c", probe, "probe", "scripts/thinkcentre-setup.sh"], { env, encoding: "utf8" });
+      return out
+        .trim()
+        .split("\n")
+        .map((l) => l.split("\t"))
+        .map(([label, expected, actual]) => ({ label, ok: expected === actual, actual }));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  };
+
+  const written = verdict(writes);
+  must(written.length === 4, `display_idle_settings answered ${written.length} questions, not 4`);
+  const bad = written.filter((r) => !r.ok);
+  must(
+    bad.length === 0,
+    `after the builder's own writes, --verify still says the screen will blank: ${bad.map((r) => `${r.label}=${r.actual}`).join(", ")}`,
+  );
+
+  const flat = verdict(null, "[AC]\nTurnOffDisplayWhenIdle=false\nturnOffDisplayWhenIdle=false\nDimDisplayWhenIdle=false\nAutoSuspendAction=0\n");
+  must(
+    flat.filter((r) => r.label !== "screen never locks itself").every((r) => !r.ok),
+    "--verify passed the old flat [AC] powerdevilrc, which PowerDevil never reads",
+  );
+  const empty = verdict(null);
+  must(empty.every((r) => !r.ok), "--verify passed an empty config — PowerDevil's defaults blank the screen");
+  return `${writes.length} builder writes through kwriteconfig6, read back ok; the flat [AC] shape and an empty file both FAIL`;
+});
+
+/*
+ * `rdp-separate-user.sh`'s file-opening loop, EXECUTED (2026-09-24, review
+ * item 4). It used to paste each filename into an `sh -c` string run as root, so a
+ * file in /home/user named with a quote and a `$(...)` ran as root; and `chmod -R`
+ * on a top-level symlink followed it. The real functions are sourced and run,
+ * as this user, against a throwaway home holding exactly those names, and the
+ * undo manifest is replayed after a recorded directory is swapped for a link.
+ */
+check("rdp-separate-user.sh opens a home without running filenames or following links, driven", () => {
+  const text = readFileSync("scripts/rdp-separate-user.sh", "utf8");
+  const code = text
+    .split("\n")
+    .filter((l) => !/^\s*#/.test(l))
+    .join("\n");
+  must(!/\bsh -c\b/.test(code), "rdp-separate-user.sh builds an sh -c command again");
+  // 2026-09-24: nothing may act on a NAME under the kiosk home. `chmod -R` follows a link named
+  // on its command line, so find-then-chmod-by-name raced a symlink swap; and a plain `mv` as
+  // root into a directory uid 1000 owns moves the file INTO whatever directory link is planted
+  // at the destination.
+  must(!/\b(chmod|chgrp|chown)\s+(-\S+\s+)*-R\b/.test(code), "rdp-separate-user.sh runs a recursive chmod/chgrp/chown by name again");
+  const mvs = code.split("\n").filter((l) => /(^|[;&|]\s*|\s)mv\s/.test(l));
+  must(mvs.length >= 3, `only ${mvs.length} mv lines found in rdp-separate-user.sh`);
+  for (const l of mvs) must(/\bmv -T --/.test(l), `an mv without -T in rdp-separate-user.sh: ${l.trim()}`);
+  execFileSync("bash", ["-n", "scripts/rdp-separate-user.sh"], { stdio: "pipe" });
+
+  let sweep = "";
+  const root = mkdtempSync(join(tmpdir(), "vessel-rdp-"));
+  try {
+    const home = join(root, "home");
+    mkdirSync(join(home, "Docs", "sub"), { recursive: true, mode: 0o700 });
+    mkdirSync(join(home, ".ssh"), { mode: 0o700 });
+    mkdirSync(join(root, "outside"), { mode: 0o700 });
+    writeFileSync(join(home, "Docs", "sub", "f.txt"), "x", { mode: 0o600 });
+    writeFileSync(join(home, "Docs", "g.txt"), "x", { mode: 0o600 });
+    // Outside the home: what an ancestor swap and a hardlink swap point the undo at.
+    writeFileSync(join(root, "outside", "f.txt"), "x", { mode: 0o666 });
+    writeFileSync(join(root, "victim.txt"), "x", { mode: 0o644 });
+    // Explicit, because writeFileSync's mode passes through the umask.
+    execFileSync("chmod", ["666", join(root, "outside", "f.txt")]);
+    execFileSync("chmod", ["644", join(root, "victim.txt")]);
+    // Both quote styles, each running a command relative to the working directory.
+    writeFileSync(join(home, "a'$(touch PWNED)'b"), "");
+    writeFileSync(join(home, 'c"$(touch PWNED2)"d'), "");
+    symlinkSync(join(root, "outside"), join(home, "link-out"));
+
+    const probe = String.raw`
+set -uo pipefail
+SRC="$1"; T="$2"; H="$T/home"
+cd "$T"
+source "$SRC"
+set +e
+printf 'defaults\t%s %s %s\n' "$DO_SUDO" "$DO_SHARE_HOME" "$DO_UNDO"
+G="$(id -gn)"
+snapshot_modes "$H" "$T/manifest"
+open_to_group "$H" "$G"
+printf 'pwned\t%s\n' "$(ls "$T" | grep -c PWNED)"
+printf 'outside\t%s\n' "$(stat -c %a "$T/outside")"
+printf 'ssh\t%s\n' "$(stat -c %a "$H/.ssh")"
+printf 'opened\t%s\n' "$(stat -c %a "$H/Docs")"
+# Made AFTER the snapshot, inside a setgid folder: in no record, carrying the share group.
+SG="$(id -G | tr ' ' '\n' | sed -n 2p)"
+if [ -n "$SG" ]; then
+  open_to_group "$H" "$SG"
+  mkdir "$H/Docs/newdir"; : > "$H/Docs/new.txt"
+  printf 'new-group-before\t%s\n' "$([ "$(stat -c %g "$H/Docs/new.txt")" = "$SG" ] && echo share || echo other)"
+  fs_tool sweep "$H" "$SG" "$(id -g)" "$T/manifest"
+  printf 'new-group-after\t%s\n' "$([ "$(stat -c %g "$H/Docs/new.txt")" = "$(id -g)" ] && echo own || echo still-share)"
+  printf 'newdir-setgid\t%s\n' "$([ -g "$H/Docs/newdir" ] && echo yes || echo no)"
+  printf 'recorded-kept\t%s\n' "$([ "$(stat -c %g "$H/Docs")" = "$SG" ] && echo yes || echo no)"
+else
+  printf 'new-group-before\tno-secondary-group\n'
+fi
+chmod 777 "$T/outside"
+# An ANCESTOR swapped for a link: Docs/sub/f.txt is recorded at 600, and outside/f.txt is 666.
+mv "$H/Docs/sub" "$H/Docs/sub.real"
+ln -s "$T/outside" "$H/Docs/sub"
+# A DIFFERENT FILE at a recorded name: a hardlink to something outside the home.
+rm "$H/Docs/g.txt"; ln "$T/victim.txt" "$H/Docs/g.txt"
+restore_modes "$T/manifest" 2>/dev/null
+printf 'outside-after-undo\t%s\n' "$(stat -c %a "$T/outside")"
+printf 'ancestor-after-undo\t%s\n' "$(stat -c %a "$T/outside/f.txt")"
+printf 'hardlink-after-undo\t%s\n' "$(stat -c %a "$T/victim.txt")"
+printf 'docs-after-undo\t%s\n' "$(stat -c %a "$H/Docs")"
+printf 'docs-group-after-undo\t%s\n' "$([ "$(stat -c %g "$H/Docs")" = "$(id -g)" ] && echo own || echo other)"
+`;
+    const out = execFileSync("bash", ["-c", probe, "probe", join(process.cwd(), "scripts/rdp-separate-user.sh"), root], {
+      encoding: "utf8",
+    });
+    const got = new Map(out.trim().split("\n").map((l) => l.split("\t") as [string, string]));
+    must(got.get("defaults") === "0 0 0", `defaults are "${got.get("defaults")}" — sudo and --share-home must be opt-in`);
+    must(got.get("pwned") === "0", "a filename in the home was EXECUTED by the group-opening loop — it runs as root on the box");
+    must(got.get("outside") === "700", `a top-level symlink was followed: its target went to ${got.get("outside")}`);
+    must(got.get("ssh") === "700", `a hidden directory was opened (${got.get("ssh")}) — dotfiles are nobody else's`);
+    must(/^2?77\d$/.test(got.get("opened") ?? ""), `Docs was not opened to the group (${got.get("opened")})`);
+    must(got.get("outside-after-undo") === "777", `the undo followed a symlink and changed its target (${got.get("outside-after-undo")})`);
+    must(got.get("docs-after-undo") === "700", `the undo did not restore Docs (${got.get("docs-after-undo")}), setgid included`);
+    must(got.get("docs-group-after-undo") === "own", "the undo did not put Docs's group back");
+    // 2026-09-24, review item 3: the old undo tested only the LAST component for a link.
+    must(
+      got.get("ancestor-after-undo") === "666",
+      `the undo followed a swapped ANCESTOR and chmod'd a file outside the home to ${got.get("ancestor-after-undo")}`,
+    );
+    must(
+      got.get("hardlink-after-undo") === "644",
+      `the undo changed a different file that now sits at a recorded name (${got.get("hardlink-after-undo")}) — the inode must be the recorded one`,
+    );
+    // Review item 8: files made after the snapshot must not keep a group that is about to be deleted.
+    sweep = got.get("new-group-before") === "no-secondary-group"
+      ? "no secondary group here, so the post-snapshot sweep was NOT driven"
+      : (() => {
+          must(got.get("new-group-before") === "share", "a file made in an opened folder did not inherit the share group — the fixture is wrong");
+          must(got.get("new-group-after") === "own", "a file made after the snapshot kept the share group through the sweep — groupdel would orphan it");
+          must(got.get("newdir-setgid") === "no", "a folder made after the snapshot kept its setgid bit through the sweep");
+          must(got.get("recorded-kept") === "yes", "the sweep touched a RECORDED folder — that is restore's job, from the record");
+          return "post-snapshot files swept out of the share group";
+        })();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+  return "injection names inert, links unfollowed at every component, a swapped-in hardlink untouched, dotfiles untouched, modes restored, " + sweep + ", sudo and home-sharing opt-in";
+});
+
+/*
+ * Both kiosk launchers rewrite Chromium's Preferences BESIDE the file and only
+ * when jq produced something, and both pick the browser by absolute path first —
+ * driven (2026-09-24, review item 10). The Pi's launcher had regressed on both:
+ * `mktemp` in /tmp made the rename a cross-filesystem copy (a power cut mid-copy
+ * truncates the profile that IS the pairing), an empty jq output was moved over
+ * the real file, and `command -v chromium` let /usr/local/bin — group-writable
+ * by `staff` — choose the binary. The blocks are sliced out of each launcher's
+ * heredoc and run: `mv` and `jq` are stubbed on PATH to record and to fail, and
+ * `/usr/bin/` is pointed at a throwaway directory, the only substitution made.
+ */
+check("both kiosk launchers rewrite Preferences safely and pick the browser by path, driven", () => {
+  try {
+    execFileSync("bash", ["-c", "command -v jq"], { stdio: "pipe" });
+  } catch {
+    skip("jq is not installed here, and both launchers rewrite Preferences with it");
+  }
+  const root = mkdtempSync(join(tmpdir(), "vessel-launch-"));
+  try {
+    let driven = 0;
+    for (const file of ["scripts/thinkcentre-setup.sh", "scripts/pi-setup.sh"]) {
+      const text = readFileSync(file, "utf8");
+      const prefsFrom = text.indexOf('for prefs in "${HOME}/.config/chromium/Default/Preferences"');
+      must(prefsFrom >= 0, `${file}: the Preferences rewrite loop is gone`);
+      const prefsTo = text.indexOf("\ndone\n", prefsFrom) + "\ndone\n".length;
+      const prefsBlock = text.slice(prefsFrom, prefsTo);
+      const pickFrom = text.indexOf('CHROMIUM=""', prefsTo);
+      must(pickFrom >= 0, `${file}: the browser pick is gone`);
+      const pickEnd = text.indexOf('[ -n "${CHROMIUM}" ] ||', pickFrom);
+      must(pickEnd > pickFrom, `${file}: the browser pick has no end`);
+      const pickBlock = text.slice(pickFrom, pickEnd);
+      must(pickBlock.includes("/usr/bin/"), `${file}: the browser pick no longer tries /usr/bin first`);
+
+      const tag = file.includes("pi-") ? "pi" : "tc";
+      const home = join(root, tag, "home");
+      const bin = join(root, tag, "bin");
+      const usr = join(root, tag, "usrbin");
+      mkdirSync(join(home, ".config", "chromium", "Default"), { recursive: true });
+      mkdirSync(bin, { recursive: true });
+      mkdirSync(usr, { recursive: true });
+      const prefs = join(home, ".config", "chromium", "Default", "Preferences");
+      const original = '{"profile":{"exit_type":"Crashed","exited_cleanly":false},"keep":1}';
+      writeFileSync(prefs, original);
+      writeFileSync(join(bin, "mv"), `#!/bin/bash\nprintf '%s\\n' "$@" >> "${join(root, tag, "mv.log")}"\nexec /bin/mv "$@"\n`, { mode: 0o755 });
+      writeFileSync(join(bin, "chromium"), "#!/bin/sh\n", { mode: 0o755 });
+      const run = (block: string, env: Record<string, string>) =>
+        execFileSync("/bin/bash", ["-c", `set -uo pipefail\nlog() { :; }\n${block}\nprintf '%s' "\${CHROMIUM:-}"`], {
+          encoding: "utf8",
+          env: { ...process.env, HOME: home, ...env },
+        });
+
+      // 1. A real rewrite: the temp file must live beside Preferences, not in /tmp.
+      run(prefsBlock, { PATH: `${bin}:${process.env.PATH}` });
+      const rewritten = JSON.parse(readFileSync(prefs, "utf8"));
+      must(rewritten.profile.exit_type === "Normal" && rewritten.keep === 1, `${file}: Preferences was not rewritten (${JSON.stringify(rewritten)})`);
+      const moved = readFileSync(join(root, tag, "mv.log"), "utf8").split("\n").filter((l) => l.includes("Preferences."));
+      must(moved.length === 1 && moved[0].startsWith(join(home, ".config", "chromium", "Default") + "/"),
+        `${file}: the new Preferences was written at ${moved[0] ?? "nowhere"} — outside the profile directory, the rename is a cross-filesystem copy`);
+
+      // 2. jq that says nothing must leave the real file alone.
+      writeFileSync(prefs, original);
+      writeFileSync(join(bin, "jq"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      run(prefsBlock, { PATH: `${bin}:${process.env.PATH}` });
+      must(readFileSync(prefs, "utf8") === original, `${file}: an EMPTY jq output was moved over Preferences — Chromium discards the profile, and the pairing with it`);
+      rmSync(join(bin, "jq"));
+      must(readdirSync(join(home, ".config", "chromium", "Default")).length === 1, `${file}: a temporary Preferences copy was left behind`);
+
+      // 3. The browser: /usr/bin wins over a PATH entry, and PATH is only the fallback.
+      const pinned = pickBlock.split("/usr/bin/").join(`${usr}/`);
+      writeFileSync(join(usr, "chromium"), "#!/bin/sh\n", { mode: 0o755 });
+      const chose = run(pinned, { PATH: `${bin}:${process.env.PATH}` }).trim();
+      must(chose === join(usr, "chromium"), `${file}: the launcher chose ${chose} over the browser in /usr/bin — a group-writable PATH entry picks the binary holding the folder handle`);
+      rmSync(join(usr, "chromium"));
+      const fallback = run(pinned, { PATH: bin }).trim();
+      must(fallback === join(bin, "chromium"), `${file}: with nothing in /usr/bin the launcher did not fall back to PATH (${fallback})`);
+      driven += 5;
+    }
+    return `${driven} verdicts over both launchers: rename beside the file, empty jq refused, no temp left, /usr/bin first, PATH as fallback`;
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/*
+ * The Claude Code installer's checksum is compared, or says it was not — driven
+ * (2026-09-24, review item 14). It was printed beside "compare against a second
+ * download", compared with nothing, which reads as verification and is not.
+ */
+check("claude-code-setup.sh checks the installer against a given hash or says it did not, driven", () => {
+  const root = mkdtempSync(join(tmpdir(), "vessel-installer-"));
+  try {
+    const f = join(root, "install.sh");
+    writeFileSync(f, "echo hello\n");
+    const sum = execFileSync("sha256sum", [f], { encoding: "utf8" }).split(" ")[0];
+    const probe = String.raw`
+SRC="$1"; F="$2"; E="$3"
+source "$SRC"
+set +e
+installer_verdict "$F" "$E"
+printf '\t%s\n' "$?"
+`;
+    const ask = (expected: string) =>
+      execFileSync("bash", ["-c", probe, "probe", join(process.cwd(), "scripts/claude-code-setup.sh"), f, expected], { encoding: "utf8" });
+    const none = ask("");
+    must(/NOT verified/.test(none) && none.trim().endsWith("\t2"), `with no --sha256 the installer's hash did not say it was unverified: ${none.trim()}`);
+    must(ask(sum).trim().endsWith("\t0"), "the right hash did not match");
+    must(ask(sum.toUpperCase()).trim().endsWith("\t0"), "the right hash in upper case did not match");
+    must(ask("0".repeat(64)).trim().endsWith("\t1"), "a wrong hash was accepted");
+    const text = readFileSync("scripts/claude-code-setup.sh", "utf8");
+    must(/\*\) die "The installer is not the one you expected, so it was NOT run\."/.test(text), "a mismatch no longer stops the installer running");
+    must(text.indexOf("installer_verdict \"${tmp}/install.sh\"") < text.indexOf('bash "${tmp}/install.sh"'), "the installer runs before its hash is judged");
+    return "no hash: says NOT verified; right hash (either case): match; wrong hash: refused before the installer runs";
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/*
+ * dist-setup/ is what scripts/setup-bundle.sh builds, byte for byte — driven
+ * (2026-09-24). The bundle is what gets uploaded, and CHECKSUMS.txt is what a
+ * careful person compares against; both are generated, never typed. A script
+ * fixed here and not re-bundled ships the old hole under a checksum that
+ * "proves" it. This runs the real bundler into a throwaway directory and
+ * compares every file, so editing a script without regenerating fails here.
+ */
+check("dist-setup/ is exactly what setup-bundle.sh builds", () => {
+  const root = mkdtempSync(join(tmpdir(), "vessel-bundle-"));
+  try {
+    execFileSync("bash", [join(process.cwd(), "scripts/setup-bundle.sh"), "out"], { cwd: root, stdio: "pipe" });
+    const built = readdirSync(join(root, "out")).sort();
+    const shipped = readdirSync("dist-setup").sort();
+    must(JSON.stringify(built) === JSON.stringify(shipped), `dist-setup/ holds [${shipped.join(", ")}] where the bundler builds [${built.join(", ")}]`);
+    for (const name of built) {
+      const a = readFileSync(join(root, "out", name), "latin1");
+      const b = readFileSync(join("dist-setup", name), "latin1");
+      must(a === b, `dist-setup/${name} is not what setup-bundle.sh builds from scripts/ — run: bash scripts/setup-bundle.sh`);
+    }
+    return `${built.length} files, byte for byte, CHECKSUMS.txt included`;
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/*
+ * The superseded RDP scripts are kept as a record and must not be runnable by
+ * accident (review item 5) — the GDM one disables SDDM, which takes the kiosk's
+ * autologin, and with it file sharing, offline at the next reboot.
+ */
+check("the attic scripts are not executable", () => {
+  const attic = readdirSync("scripts").filter((f) => f.endsWith(".DO-NOT-RUN"));
+  must(attic.length >= 2, `only ${attic.length} attic scripts found`);
+  for (const f of attic) {
+    must((statSync(`scripts/${f}`).mode & 0o111) === 0, `scripts/${f} is executable on disk`);
+  }
+  // The disk mode is what a checkout gives the NEXT machine only if git agrees,
+  // so ask git too — when there is a git to ask. Without one (an unpacked
+  // archive), the disk answer stands and the detail says the index went unread.
+  let tracked = "";
+  try {
+    tracked = execFileSync("git", ["ls-files", "-s", "--", ...attic.map((f) => `scripts/${f}`)], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch {
+    return `${attic.length} attic scripts, not executable on disk; git's index could not be read here`;
+  }
+  for (const f of attic) {
+    const line = tracked.split("\n").find((l) => l.endsWith(`scripts/${f}`));
+    must(line !== undefined, `scripts/${f} is not tracked`);
+    must(line!.startsWith("100644"), `scripts/${f} is tracked as ${line!.split(" ")[0]} — it must not be executable`);
+  }
+  return `${attic.length} attic scripts, 644 in git and on disk`;
 });
 
 /*
@@ -7098,6 +9834,7 @@ check("every host script parses", () => {
     "scripts/claude-code-setup.sh",
     "scripts/linux-drive-report.sh",
     "scripts/06-wifi-tools.sh",
+    "scripts/rdp-separate-user.sh",
   ];
   for (const file of files) execFileSync("bash", ["-n", file], { stdio: "pipe" });
   return `${files.length} scripts parse`;

@@ -188,7 +188,14 @@ LOOK_FILES=(.config/kdeglobals
             .config/plasma-org.kde.plasma.desktop-appletsrc
             .config/gtk-3.0/settings.ini
             .config/gtk-4.0/settings.ini
-            .gtkrc-2.0)
+            .gtkrc-2.0
+            .config/breezerc
+            .config/Kvantum)
+# breezerc carries the window glow (the Breeze decoration's shadow colour) and
+# Kvantum is a DIRECTORY: the chosen theme plus any theme that exists only in this
+# account. Both were once outside the list, and the glow followed you into every
+# look after the first one that set it. Hence `-e`, not `-f`, wherever this list is
+# tested, and a prefix match rather than equality when a restore picks members.
 
 log()  { printf '\n==> %s\n' "$*"; }
 info() { printf '    %s\n' "$*"; }
@@ -211,7 +218,7 @@ case "${ACTION}" in
     save)
         mkdir -p "${PROFILE_DIR}"
         present=()
-        for f in "${LOOK_FILES[@]}"; do [ -f "${HOME}/${f}" ] && present+=("${f}"); done
+        for f in "${LOOK_FILES[@]}"; do [ -e "${HOME}/${f}" ] && present+=("${f}"); done
         [ "${#present[@]}" -gt 0 ] || { echo "Nothing to save — none of the look files exist yet." >&2; exit 1; }
         tar czf "${PROFILE_DIR}/${PROFILE}.tar.gz" -C "${HOME}" "${present[@]}"
         printf 'Saved %d files as "%s" in %s\n' "${#present[@]}" "${PROFILE}" "${PROFILE_DIR}"
@@ -230,7 +237,7 @@ case "${ACTION}" in
         # the ordinary way to use this: try one, dislike it, try another.
         mkdir -p "${PROFILE_DIR}"
         prev=()
-        for f in "${LOOK_FILES[@]}"; do [ -f "${HOME}/${f}" ] && prev+=("${f}"); done
+        for f in "${LOOK_FILES[@]}"; do [ -e "${HOME}/${f}" ] && prev+=("${f}"); done
         BACKUP="before-restore-$(date '+%Y%m%d-%H%M%S')"
         if [ "${#prev[@]}" -gt 0 ]; then
             tar czf "${PROFILE_DIR}/${BACKUP}.tar.gz" -C "${HOME}" "${prev[@]}"
@@ -248,12 +255,23 @@ case "${ACTION}" in
         # that does the sharing. Only names this script knows are extracted, so
         # an archive can add nothing to the account, and the intersection is
         # taken first because naming a member tar cannot find is an error.
+        #
+        # A LOOK_FILES entry may be a directory (.config/Kvantum), so a member
+        # UNDER one is taken too — but never a member with a `..` segment in it,
+        # which a prefix match would otherwise wave through to anywhere.
         want=()
         while IFS= read -r member; do
+            case "/${member}/" in */../*) continue ;; esac
+            case "${member}" in */) continue ;; esac   # directories come with their files
             for f in "${LOOK_FILES[@]}"; do
-                if [ "${member}" = "${f}" ]; then want+=("${member}"); break; fi
+                case "${member}" in
+                    "${f}"|"${f}"/*) want+=("${member}"); break ;;
+                esac
             done
         done < <(tar tzf "${ARCHIVE}")
+        # A profile saved before breezerc joined LOOK_FILES does not carry it. Its
+        # absence means "no glow", not "keep whatever the last look had".
+        printf '%s\n' "${want[@]}" | grep -qx '.config/breezerc' || rm -f "${HOME}/.config/breezerc"
         [ "${#want[@]}" -gt 0 ] || die "'${PROFILE}' contains none of the files a look is made of."
         tar xzf "${ARCHIVE}" -C "${HOME}" -- "${want[@]}"
         printf 'Restored "%s" (%d files).\n' "${PROFILE}" "${#want[@]}"
@@ -261,6 +279,7 @@ case "${ACTION}" in
         if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && [ -S "/run/user/$(id -u)/bus" ]; then
             export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus"
         fi
+        systemctl --user reset-failed plasma-plasmashell.service >/dev/null 2>&1 || true
         systemctl --user restart plasma-plasmashell.service >/dev/null 2>&1 \
             && printf 'plasmashell restarted.\n' \
             || printf 'Log out and back in to see it.\n'
@@ -271,13 +290,24 @@ esac
 [ "$(id -u)" -ne 0 ] || die "Run this as the user whose desktop it is, not root. Every setting below
        lands in that user's ~/.config; as root it themes root's desktop, which nobody sees."
 command -v sudo >/dev/null 2>&1 || die "sudo is not installed. As root: apt install sudo && /usr/sbin/usermod -aG sudo ${USER}"
-sudo -v || die "sudo refused. Is ${USER} in the sudo group?"
+# Asked for lazily, the first time something privileged has to CHANGE. Rebuilding
+# a look with --no-install on a box whose SDDM file already says the right thing
+# then needs no password at all — which is what lets a look be rebuilt and
+# photographed over SSH, where a sudo prompt just hangs. Anything that does need
+# root still asks, exactly as before.
+SUDO_OK=0
+need_sudo() {
+    [ "${SUDO_OK}" -eq 1 ] && return 0
+    sudo -v || die "sudo refused. Is ${USER} in the sudo group?"
+    SUDO_OK=1
+}
 [ -r /etc/os-release ] && grep -qE '^(ID|ID_LIKE)=.*debian' /etc/os-release || die "This is apt/Debian-only."
 
 # ----------------------------------------------------------------------------
 # 1. Packages.
 # ----------------------------------------------------------------------------
 if [ "${DO_INSTALL}" -eq 1 ]; then
+    need_sudo
     log "Installing Plasma and the parts that make it themeable"
     sudo apt-get update -q
 
@@ -341,7 +371,9 @@ case "${LOOK}" in
     osx)    CANDIDATES=(Papirus-Dark bloom-dark breeze-dark) ;;
     zorin)  CANDIDATES=(Papirus-Dark bloom-dark breeze-dark) ;;
     unity)  CANDIDATES=(Yaru-dark Yaru Papirus-Dark breeze-dark) ;;
-    gnome)  CANDIDATES=(Adwaita Papirus-Dark breeze-dark) ;;
+    # Not Adwaita, although it is GNOME's: it covers almost none of KDE, so the
+    # tray icons came out dark-on-dark and the dash had four entries with no icon.
+    gnome)  CANDIDATES=(Papirus-Dark breeze-dark) ;;
     win7)   CANDIDATES=(Papirus-Dark breeze-dark) ;;
     # The LIGHT Bloom, deliberately: the reference screenshot's dock is pale and
     # its icons are the light set. bloom-dark here would be the one wrong note.
@@ -374,7 +406,6 @@ else
 fi
 
 if command -v sddm >/dev/null 2>&1; then
-    sudo mkdir -p /etc/sddm.conf.d
     tmp="$(mktemp)"
     {
         printf '# Written by plasma-dark-setup.sh. Delete this file to undo it.\n'
@@ -384,15 +415,26 @@ if command -v sddm >/dev/null 2>&1; then
             printf '\n[Autologin]\nUser=%s\nSession=%s\nRelogin=false\n' "${USER}" "${SESSION}"
         fi
     } > "${tmp}"
-    sudo install -o root -g root -m 0644 "${tmp}" /etc/sddm.conf.d/10-vessel.conf
+    # Right bytes are not enough: a file that says the right thing but is not
+    # root-owned and 0644 is one somebody else could have written, so it is
+    # rewritten (which asks for sudo). Any failure to stat reads as "not right".
+    if cmp -s "${tmp}" /etc/sddm.conf.d/10-vessel.conf \
+       && [ "$(stat -c '%U:%G %a' /etc/sddm.conf.d/10-vessel.conf 2>/dev/null)" = "root:root 644" ]; then
+        info "/etc/sddm.conf.d/10-vessel.conf already says this; left alone"
+    else
+        need_sudo
+        sudo mkdir -p /etc/sddm.conf.d
+        sudo install -o root -g root -m 0644 "${tmp}" /etc/sddm.conf.d/10-vessel.conf
+        info "wrote /etc/sddm.conf.d/10-vessel.conf"
+    fi
     rm -f "${tmp}"
-    info "wrote /etc/sddm.conf.d/10-vessel.conf"
     [ "${DO_AUTOLOGIN}" -eq 1 ] && info "autologin: ${USER} into ${SESSION:-<no X11 session found>}"
 
     # Make SDDM the display manager if something else currently is. Debian reads
     # this file at boot; the systemd units follow it.
     current="$(cat /etc/X11/default-display-manager 2>/dev/null || true)"
     if [ "${current}" != "/usr/bin/sddm" ]; then
+        need_sudo
         printf '/usr/bin/sddm\n' | sudo tee /etc/X11/default-display-manager >/dev/null
         for other in lightdm gdm3 lxdm; do
             systemctl list-unit-files "${other}.service" >/dev/null 2>&1 && sudo systemctl disable "${other}" >/dev/null 2>&1 || true
@@ -618,6 +660,13 @@ if [ "${LOOK}" != "ubuntu" ]; then
         *)         set_key kwinrc org.kde.kdecoration2 ButtonsOnLeft "M"
                    set_key kwinrc org.kde.kdecoration2 ButtonsOnRight "HIAX" ;;
     esac
+    # The window glow lives in breezerc and survives a look change exactly as the
+    # buttons above do, so every look sets it rather than inheriting a variant's
+    # cyan halo. These are Breeze's own defaults: a plain dark shadow, no outline.
+    set_key breezerc Common ShadowSize "ShadowLarge"
+    set_key breezerc Common ShadowStrength "255"
+    set_key breezerc Common ShadowColor "0,0,0"
+    set_key breezerc Common OutlineIntensity "OutlineMedium"
     set_key kwinrc Plugins blurEnabled "true"
     set_key kwinrc Plugins contrastEnabled "true"
     set_key kwinrc Effect-blur BlurStrength "${BLUR_STRENGTH}"
@@ -669,8 +718,9 @@ if [ "${LOOK}" != "ubuntu" ]; then
     # showed: the panel layouts were genuinely different and the desktops still
     # read as one desktop fourteen times, because every one of them wore the same
     # Debian wallpaper. Colour is doing more of the identifying than layout is.
-    # A look with no entry here keeps the dark Debian swirl, which is the right
-    # default for the ones that are not imitating anybody (ubuntu, gnome, win7).
+    # A look with no entry here keeps the dark Debian swirl. Only ubuntu is left
+    # on it now: gnome and win7 ARE imitations, and six looks on one wallpaper
+    # read as one desktop six times in the contact sheet.
     GRAD_FROM=""; GRAD_TO=""; GRAD_ANGLE=135
     case "${LOOK}" in
         deepin-exact) GRAD_FROM="#F0468C"; GRAD_TO="#2FB6F0" ;;
@@ -681,7 +731,14 @@ if [ "${LOOK}" != "ubuntu" ]; then
         manjaro)      GRAD_FROM="#2B2B2B"; GRAD_TO="#16A085"; GRAD_ANGLE=115 ;;
         nitrux)       GRAD_FROM="#E8455F"; GRAD_TO="#2FBFA0"; GRAD_ANGLE=145 ;;
         xerolinux)    GRAD_FROM="#6B2D6B"; GRAD_TO="#E8A0C0"; GRAD_ANGLE=165 ;;
-        archcraft)    GRAD_FROM="#3A3A3A"; GRAD_TO="#8A8A8A"; GRAD_ANGLE=140 ;;
+        # Archcraft ships dark, saturated themes; mid-grey read as "no wallpaper".
+        archcraft)    GRAD_FROM="#1B1D24"; GRAD_TO="#3B4252"; GRAD_ANGLE=140 ;;
+        deepin)       GRAD_FROM="#0A1A3A"; GRAD_TO="#1E5A9E"; GRAD_ANGLE=135 ;;
+        osx)          GRAD_FROM="#1B1F4A"; GRAD_TO="#7A4FBF"; GRAD_ANGLE=150 ;;
+        zorin)        GRAD_FROM="#0C3A6B"; GRAD_TO="#1591E0"; GRAD_ANGLE=140 ;;
+        unity)        GRAD_FROM="#2C001E"; GRAD_TO="#77216F"; GRAD_ANGLE=135 ;;
+        gnome)        GRAD_FROM="#241F31"; GRAD_TO="#3D3846"; GRAD_ANGLE=160 ;;
+        win7)         GRAD_FROM="#0B3A6E"; GRAD_TO="#2E8BD8"; GRAD_ANGLE=130 ;;
         exodia)       GRAD_FROM="#1E1B2E"; GRAD_TO="#4A3D6B"; GRAD_ANGLE=150 ;;
         feren)        GRAD_FROM="#0E4A4A"; GRAD_TO="#2FA8A8"; GRAD_ANGLE=155 ;;
     esac
@@ -800,6 +857,12 @@ if [ "${LOOK}" != "ubuntu" ]; then
         # Restart first and WAIT for the bus name to come back before building.
         # Restarting after the panel is built is the other way to get this wrong:
         # the layout is still in the old process and may not have been flushed.
+        # plasma-plasmashell.service allows 3 starts a minute (StartLimitBurst=3),
+        # and building a look costs two: this restart and the opacity write below.
+        # The second look in a row hit the limit on 2026-09-24, systemd refused the
+        # start, and every look after it was built and SAVED with no panel at all.
+        # reset-failed clears the counter; nothing else about the unit changes.
+        systemctl --user reset-failed plasma-plasmashell.service >/dev/null 2>&1 || true
         if systemctl --user restart plasma-plasmashell.service >/dev/null 2>&1; then
             for _ in $(seq 1 30); do
                 "${QD}" org.kde.plasmashell >/dev/null 2>&1 && break
@@ -825,7 +888,21 @@ if [ "${LOOK}" != "ubuntu" ]; then
         fi
 
         # Every look starts from a clean slate, then builds its own panels.
+        # Deepin's own launcher glyph, which bloom ships. Named for the two deepin
+        # looks only when it is on disk; without it the launcher fell through the
+        # icon lookup to an unrelated back-arrow on 2026-09-24.
+        DDE_ICON=""
+        [ -f /usr/share/icons/bloom/places/48/deepin-launcher.svg ] && DDE_ICON="deepin-launcher"
+
+        # opacity(panel, n) RECORDS the wish instead of assigning panel.opacity,
+        # which is a silent no-op on Plasma 6.3.6 (CLAUDE.md, Plasma traps). The
+        # list is printed at the end of the script and written into plasmashellrc
+        # [PlasmaViews][Panel <id>] panelOpacity below — 1 opaque, 2 translucent.
         JS_HEAD='var ps = panels(); for (var i = 0; i < ps.length; i++) { ps[i].remove(); }
+var OPQ = [];
+function opacity(p, n) { OPQ.push(p.id + "=" + n); }
+var DDE_ICON = "'"${DDE_ICON}"'";
+function ddeLauncher(w) { if (DDE_ICON.length > 0) { w.currentConfigGroup = ["General"]; w.writeConfig("icon", DDE_ICON); } return w; }
 function spacer(p) { var s = p.addWidget("org.kde.plasma.panelspacer");
   s.currentConfigGroup = ["Configuration", "General"]; s.writeConfig("expanding", true); return s; }'
 
@@ -838,8 +915,8 @@ p.location = "bottom"; p.height = 56;
 try { p.lengthMode = "fill"; } catch (e) {}
 try { p.alignment = "center"; } catch (e) {}
 try { p.floating = false; } catch (e) {}
-try { p.opacity = "translucent"; } catch (e) {}
-p.addWidget("org.kde.plasma.kickerdash");
+opacity(p, 2);
+ddeLauncher(p.addWidget("org.kde.plasma.kickerdash"));
 spacer(p);
 p.addWidget("org.kde.plasma.icontasks");
 spacer(p);
@@ -854,11 +931,11 @@ p.addWidget("org.kde.plasma.showdesktop");'
             # than as any other dark Plasma. lengthMode "fit" is what keeps that
             # panel the width of its contents instead of the width of the screen.
             JS_BODY='var b = new Panel;
-b.location = "bottom"; b.height = 34;
+b.location = "bottom"; b.height = 42;
 try { b.lengthMode = "fill"; } catch (e) {}
 try { b.alignment = "center"; } catch (e) {}
 try { b.floating = false; } catch (e) {}
-try { b.opacity = "opaque"; } catch (e) {}
+opacity(b, 1);
 b.addWidget("org.kde.plasma.kickoff");
 b.addWidget("org.kde.plasma.showdesktop");
 spacer(b);
@@ -871,7 +948,7 @@ t.location = "top"; t.height = 28;
 try { t.lengthMode = "fit"; } catch (e) {}
 try { t.alignment = "center"; } catch (e) {}
 try { t.floating = true; } catch (e) {}
-try { t.opacity = "translucent"; } catch (e) {}
+opacity(t, 2);
 t.addWidget("org.kde.plasma.digitalclock");'
             ;;
         osx)
@@ -884,11 +961,15 @@ t.addWidget("org.kde.plasma.digitalclock");'
             [ -d /usr/share/plasma/plasmoids/org.kde.plasma.appmenu ] \
                 && APPMENU='m.addWidget("org.kde.plasma.appmenu");' \
                 || info "no global menu applet installed; the top bar gets tray and clock only"
+            # The Trash ends a macOS dock. Named only when on disk, like appmenu.
+            TRASH='d.addWidget("org.kde.plasma.showdesktop");'
+            [ -d /usr/share/plasma/plasmoids/org.kde.plasma.trash ] \
+                && TRASH='d.addWidget("org.kde.plasma.trash");'
             JS_BODY='var m = new Panel;
 m.location = "top"; m.height = 26;
 try { m.lengthMode = "fill"; } catch (e) {}
 try { m.floating = false; } catch (e) {}
-try { m.opacity = "translucent"; } catch (e) {}
+opacity(m, 2);
 m.addWidget("org.kde.plasma.kickoff");
 '"${APPMENU}"'
 spacer(m);
@@ -900,9 +981,9 @@ d.location = "bottom"; d.height = 60;
 try { d.lengthMode = "fit"; } catch (e) {}
 try { d.alignment = "center"; } catch (e) {}
 try { d.floating = true; } catch (e) {}
-try { d.opacity = "translucent"; } catch (e) {}
+opacity(d, 2);
 d.addWidget("org.kde.plasma.icontasks");
-d.addWidget("org.kde.plasma.showdesktop");'
+'"${TRASH}"
             ;;
         zorin)
             # Same two-panel skeleton as osx, and the differences are the whole
@@ -914,7 +995,7 @@ d.addWidget("org.kde.plasma.showdesktop");'
 m.location = "top"; m.height = 28;
 try { m.lengthMode = "fill"; } catch (e) {}
 try { m.floating = false; } catch (e) {}
-try { m.opacity = "opaque"; } catch (e) {}
+opacity(m, 1);
 spacer(m);
 m.addWidget("org.kde.plasma.systemtray");
 m.addWidget("org.kde.plasma.digitalclock");
@@ -924,7 +1005,7 @@ d.location = "bottom"; d.height = 52;
 try { d.lengthMode = "fit"; } catch (e) {}
 try { d.alignment = "center"; } catch (e) {}
 try { d.floating = true; } catch (e) {}
-try { d.opacity = "translucent"; } catch (e) {}
+opacity(d, 2);
 d.addWidget("org.kde.plasma.kickerdash");
 d.addWidget("org.kde.plasma.icontasks");'
             ;;
@@ -941,7 +1022,7 @@ d.addWidget("org.kde.plasma.icontasks");'
 l.location = "left"; l.height = 56;
 try { l.lengthMode = "fill"; } catch (e) {}
 try { l.floating = false; } catch (e) {}
-try { l.opacity = "translucent"; } catch (e) {}
+opacity(l, 2);
 l.addWidget("org.kde.plasma.kickerdash");
 l.addWidget("org.kde.plasma.icontasks");
 spacer(l);
@@ -951,7 +1032,7 @@ var m = new Panel;
 m.location = "top"; m.height = 24;
 try { m.lengthMode = "fill"; } catch (e) {}
 try { m.floating = false; } catch (e) {}
-try { m.opacity = "opaque"; } catch (e) {}
+opacity(m, 1);
 '"${APPMENU}"'
 spacer(m);
 m.addWidget("org.kde.plasma.systemtray");
@@ -965,7 +1046,7 @@ m.addWidget("org.kde.plasma.digitalclock");'
 m.location = "top"; m.height = 32;
 try { m.lengthMode = "fill"; } catch (e) {}
 try { m.floating = false; } catch (e) {}
-try { m.opacity = "opaque"; } catch (e) {}
+opacity(m, 1);
 m.addWidget("org.kde.plasma.kickerdash");
 spacer(m);
 m.addWidget("org.kde.plasma.digitalclock");
@@ -982,7 +1063,7 @@ m.addWidget("org.kde.plasma.systemtray");'
 b.location = "bottom"; b.height = 40;
 try { b.lengthMode = "fill"; } catch (e) {}
 try { b.floating = false; } catch (e) {}
-try { b.opacity = "opaque"; } catch (e) {}
+opacity(b, 1);
 b.addWidget("org.kde.plasma.kickoff");
 b.addWidget("org.kde.plasma.taskmanager");
 spacer(b);
@@ -1006,8 +1087,8 @@ p.location = "bottom"; p.height = 48;
 try { p.lengthMode = "fill"; } catch (e) {}
 try { p.alignment = "center"; } catch (e) {}
 try { p.floating = false; } catch (e) {}
-try { p.opacity = "translucent"; } catch (e) {}
-p.addWidget("org.kde.plasma.kickerdash");
+opacity(p, 2);
+ddeLauncher(p.addWidget("org.kde.plasma.kickerdash"));
 p.addWidget("org.kde.plasma.showdesktop");
 spacer(p);
 p.addWidget("org.kde.plasma.icontasks");
@@ -1026,7 +1107,7 @@ p.addWidget("org.kde.plasma.notifications");'
                 elementary) TOP_H=26; DOCK_H=64; TOP_CLOCK=centre; TOP_LAUNCH=1; DOCK_LAUNCH=0 ;;
                 popos)      TOP_H=28; DOCK_H=56; TOP_CLOCK=centre; TOP_LAUNCH=1; DOCK_LAUNCH=0 ;;
                 nitrux)     TOP_H=26; DOCK_H=60; TOP_CLOCK=right;  TOP_LAUNCH=0; DOCK_LAUNCH=1 ;;
-                xerolinux)  TOP_H=26; DOCK_H=56; TOP_CLOCK=right;  TOP_LAUNCH=0; DOCK_LAUNCH=0 ;;
+                xerolinux)  TOP_H=26; DOCK_H=56; TOP_CLOCK=right;  TOP_LAUNCH=0; DOCK_LAUNCH=1 ;;
                 archcraft)  TOP_H=24; DOCK_H=44; TOP_CLOCK=right;  TOP_LAUNCH=1; DOCK_LAUNCH=0 ;;
             esac
 
@@ -1041,7 +1122,7 @@ p.addWidget("org.kde.plasma.notifications");'
 m.location = "top"; m.height = '"${TOP_H}"';
 try { m.lengthMode = "fill"; } catch (e) {}
 try { m.floating = false; } catch (e) {}
-try { m.opacity = "translucent"; } catch (e) {}
+opacity(m, 2);
 '
             [ "${TOP_LAUNCH}" -eq 1 ] && JS_TOP="${JS_TOP}"'m.addWidget("org.kde.plasma.kickoff");
 '
@@ -1064,7 +1145,7 @@ d.location = "bottom"; d.height = '"${DOCK_H}"';
 try { d.lengthMode = "fit"; } catch (e) {}
 try { d.alignment = "center"; } catch (e) {}
 try { d.floating = true; } catch (e) {}
-try { d.opacity = "translucent"; } catch (e) {}
+opacity(d, 2);
 '
             [ "${DOCK_LAUNCH}" -eq 1 ] && JS_DOCK="${JS_DOCK}"'d.addWidget("org.kde.plasma.kickerdash");
 '
@@ -1081,7 +1162,7 @@ ${JS_DOCK}"
 b.location = "bottom"; b.height = 44;
 try { b.lengthMode = "fill"; } catch (e) {}
 try { b.floating = false; } catch (e) {}
-try { b.opacity = "opaque"; } catch (e) {}
+opacity(b, 1);
 b.addWidget("org.kde.plasma.kickoff");
 b.addWidget("org.kde.plasma.icontasks");
 spacer(b);
@@ -1100,7 +1181,7 @@ b.addWidget("org.kde.plasma.showdesktop");'
 m.location = "top"; m.height = 24;
 try { m.lengthMode = "fill"; } catch (e) {}
 try { m.floating = false; } catch (e) {}
-try { m.opacity = "opaque"; } catch (e) {}
+opacity(m, 1);
 '"${APPMENU}"'
 spacer(m);
 m.addWidget("org.kde.plasma.digitalclock");
@@ -1110,7 +1191,7 @@ var b = new Panel;
 b.location = "bottom"; b.height = 44;
 try { b.lengthMode = "fill"; } catch (e) {}
 try { b.floating = false; } catch (e) {}
-try { b.opacity = "opaque"; } catch (e) {}
+opacity(b, 1);
 b.addWidget("org.kde.plasma.kickoff");
 b.addWidget("org.kde.plasma.icontasks");
 spacer(b);
@@ -1127,7 +1208,8 @@ b.addWidget("org.kde.plasma.systemtray");'
 m.location = "top"; m.height = 26;
 try { m.lengthMode = "fill"; } catch (e) {}
 try { m.floating = false; } catch (e) {}
-try { m.opacity = "opaque"; } catch (e) {}
+opacity(m, 1);
+m.addWidget("org.kde.plasma.kickoff");
 m.addWidget("org.kde.plasma.pager");
 spacer(m);
 m.addWidget("org.kde.plasma.systemtray");
@@ -1146,15 +1228,37 @@ if (wall.length > 0) {
     ds[j].writeConfig("FillMode", 2);
   }
 }
+print("PANEL_OPACITY " + OPQ.join(" "));
 JSEOF
 )"
 
         if [ "${SHELL_UP}" -eq 1 ] \
-           && "${QD}" org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript \
+           && JS_OUT="$("${QD}" org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript \
              "${JS_HEAD}
 ${JS_BODY}
-${JS_TAIL}" >/dev/null 2>&1; then
+${JS_TAIL}" 2>&1)"; then
             info "panel rebuilt for the ${LOOK} look"
+            # Panel opacity, the way that is actually read. plasmashell must be
+            # STOPPED while the key is written — it rewrites plasmashellrc from
+            # memory on exit — and the pause first lets the new layout flush.
+            OPQ="$(printf '%s\n' "${JS_OUT}" | sed -n 's/^PANEL_OPACITY //p' | tail -1)"
+            if [ -n "${OPQ}" ] && [ -n "${KW}" ]; then
+                sleep 5
+                systemctl --user stop plasma-plasmashell.service >/dev/null 2>&1 || true
+                for pair in ${OPQ}; do
+                    "${KW}" --file plasmashellrc --group PlasmaViews --group "Panel ${pair%%=*}" \
+                            --key panelOpacity "${pair#*=}"
+                done
+                systemctl --user reset-failed plasma-plasmashell.service >/dev/null 2>&1 || true
+                systemctl --user start plasma-plasmashell.service >/dev/null 2>&1 || true
+                for _ in $(seq 1 30); do
+                    "${QD}" org.kde.plasmashell >/dev/null 2>&1 && break
+                    sleep 1
+                done
+                "${QD}" org.kde.plasmashell >/dev/null 2>&1 \
+                    && info "panel opacity written (${OPQ}; 1 opaque, 2 translucent)" \
+                    || warn "plasmashell did not come back after the opacity write. Log out and back in."
+            fi
             # The blur keys above are in the file but KWin has not re-read them.
             # Without this the look only arrives at the next login, which reads
             # as "the script did nothing".
@@ -1332,15 +1436,26 @@ fi
 # thing you connect to see is a password prompt, on the machine you are not
 # standing at. Nothing on this box managed either of these until now.
 #
-# WHY BOTH SPELLINGS OF EACH KEY. KConfig keys are case-sensitive, and PowerDevil's
-# generated accessors are lower-camel (`turnOffDisplayWhenIdle`, confirmed in
-# libpowerdevilcore) while KDE's own settings module has historically written the
-# upper-camel form into this file. A key in the wrong case is not an error: it is
-# silently ignored, and the symptom is a kiosk that blanks itself weeks later. The
-# boolean is safe to write twice — either spelling read yields false — which is the
-# reason this disables the ACTION with a boolean rather than by putting a sentinel
-# in the timeout. A timeout whose "never" value you have guessed wrong is a screen
-# that blanks IMMEDIATELY, and that is not a guess worth taking.
+# WHERE THE KEYS LIVE, AND WHY THIS WAS WRONG ONCE. Plasma 6's powerdevilrc is not
+# flat: PowerDevil's own schema (PowerDevilProfileSettings.kcfg in plasma/powerdevil)
+# declares each profile's settings in NESTED groups — [AC][Display] for
+# DimDisplayWhenIdle / TurnOffDisplayWhenIdle, [AC][SuspendAndShutdown] for
+# AutoSuspendAction — and its migration fixtures show the file in that shape. The
+# first version of this section wrote every key straight into a flat [AC] group, in
+# two spellings, and PowerDevil reads neither: a key in the wrong GROUP is exactly as
+# silent as a key in the wrong case. kwriteconfig6 nests with a repeated --group.
+#
+# The key names are the schema's <entry name=…>, which is the upper-camel form. The
+# lower-camel `turnOffDisplayWhenIdle` is the generated C++ ACCESSOR, not the key,
+# and was never read from the file. The stale flat keys the first version wrote are
+# deleted below so nobody reading the file later mistakes them for the live ones.
+#
+# The ACTION is disabled with a boolean rather than by putting a sentinel in the
+# timeout. A timeout whose "never" value you have guessed wrong is a screen that
+# blanks IMMEDIATELY, and that is not a guess worth taking.
+#
+# thinkcentre-setup.sh --verify reads these three back from the nested groups and
+# FAILS if the display would still dim, blank or suspend. Keep the two in step.
 log "Stopping the screen blanking, dimming and locking"
 
 # The screen locker. Autolock=false is the one that matters; LockOnResume covers
@@ -1351,27 +1466,51 @@ if [ -n "${KWRITE}" ]; then
 
     # PowerDevil, AC profile. This box has no battery; the AC profile is the only
     # one it ever loads, and writing the others would be pretending otherwise.
+    "${KWRITE}" --file powerdevilrc --group AC --group Display --key DimDisplayWhenIdle --type bool false
+    "${KWRITE}" --file powerdevilrc --group AC --group Display --key TurnOffDisplayWhenIdle --type bool false
+    # 0 is PowerButtonAction::NoAction — an ACTION enum, which is a different kind
+    # of value from a timeout and is unambiguous.
+    "${KWRITE}" --file powerdevilrc --group AC --group SuspendAndShutdown --key AutoSuspendAction 0
+
+    # The flat [AC] keys an earlier version of this script wrote. PowerDevil never
+    # read them; they are removed so the file says only what is true.
     for key in turnOffDisplayWhenIdle TurnOffDisplayWhenIdle \
-               dimDisplayWhenIdle DimDisplayWhenIdle; do
-        "${KWRITE}" --file powerdevilrc --group AC --key "${key}" false
+               dimDisplayWhenIdle DimDisplayWhenIdle \
+               autoSuspendAction AutoSuspendAction; do
+        "${KWRITE}" --file powerdevilrc --group AC --key "${key}" --delete 2>/dev/null || true
     done
-    # 0 is "do nothing" for an ACTION enum, which is a different kind of value from
-    # a timeout and is unambiguous.
-    for key in autoSuspendAction AutoSuspendAction; do
-        "${KWRITE}" --file powerdevilrc --group AC --key "${key}" 0
-    done
+
+    # Read back, because writing the file is not the same as the file saying it.
+    if [ -n "${KREAD:-}" ]; then
+        pd_off="$("${KREAD}" --file powerdevilrc --group AC --group Display --key TurnOffDisplayWhenIdle 2>/dev/null || true)"
+        pd_dim="$("${KREAD}" --file powerdevilrc --group AC --group Display --key DimDisplayWhenIdle 2>/dev/null || true)"
+        pd_sus="$("${KREAD}" --file powerdevilrc --group AC --group SuspendAndShutdown --key AutoSuspendAction 2>/dev/null || true)"
+        if [ "${pd_off}" != "false" ] || [ "${pd_dim}" != "false" ] || [ "${pd_sus}" != "0" ]; then
+            warn "powerdevilrc did not read back as written (TurnOffDisplayWhenIdle=${pd_off:-unset},
+     DimDisplayWhenIdle=${pd_dim:-unset}, AutoSuspendAction=${pd_sus:-unset}). This screen WILL blank."
+        fi
+    fi
 
     info "screen locker: autolock off"
     info "powerdevil: display never dims, never turns off, never auto-suspends"
 
-    # Apply to the running session. Both daemons re-read on request, so this does
-    # not wait for a reboot — which matters, because the window between now and the
-    # next reboot is exactly when somebody is watching to see whether it worked.
+    # Apply to the running session, because the window between now and the next
+    # reboot is exactly when somebody is watching to see whether it worked.
+    #
+    # RESTART PowerDevil; do not ask it to reparse. Measured 2026-09-24 on this box:
+    # after reparseConfiguration answered success, the X server's DPMS timers still
+    # read 1200/1200/1200 from the old config and the screen blanked 20 minutes
+    # later. A restart of plasma-powerdevil.service put all three at 0 at once.
+    # reparse is only the fallback for a session with no systemd user unit.
     if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v qdbus6 >/dev/null 2>&1; then
-        qdbus6 org.kde.Solid.PowerManagement /org/kde/Solid/PowerManagement \
-            org.kde.Solid.PowerManagement.reparseConfiguration >/dev/null 2>&1 \
-            && info "powerdevil reloaded live" \
-            || info "powerdevil will pick it up at the next login"
+        if systemctl --user restart plasma-powerdevil.service >/dev/null 2>&1; then
+            info "powerdevil restarted with the new settings"
+        else
+            qdbus6 org.kde.Solid.PowerManagement /org/kde/Solid/PowerManagement \
+                org.kde.Solid.PowerManagement.reparseConfiguration >/dev/null 2>&1 \
+                && info "powerdevil asked to reload (restart it or log out to be sure)" \
+                || info "powerdevil will pick it up at the next login"
+        fi
         qdbus6 org.kde.screensaver /ScreenSaver org.kde.screensaver.configure \
             >/dev/null 2>&1 || true
     fi

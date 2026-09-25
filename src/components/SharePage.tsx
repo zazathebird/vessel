@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ApiError, api, type DriveInfo, type MachineInfo } from "../auth/api";
 import { toBase64Url } from "../auth/encoding";
@@ -347,8 +347,20 @@ function AgentPanel({
     // Keyed on the machine id rather than the `stored` object: reloading the
     // store after a drive change makes a fresh object with the same key, and
     // restarting the agent on it would drop every connected peer for nothing.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [row.id, stored.machineId, rekeyedElsewhere, epoch]);
+
+  // The signalling object said this tab's key is no longer the machine's
+  // (re-keyed elsewhere, 2026-09-24). Re-read the row so `rekeyedElsewhere`
+  // becomes true and the page offers the re-key ceremony, instead of sitting on
+  // a stopped agent with nothing to click.
+  // Keyed on the state alone: `onChanged` is a fresh function every render, and
+  // listing it would re-read the row on every render while re-keyed.
+  const agentState = snapshot?.state;
+  const onChangedRef = useRef(onChanged);
+  onChangedRef.current = onChanged;
+  useEffect(() => {
+    if (agentState === "rekeyed") void onChangedRef.current();
+  }, [agentState]);
 
   // §12 N: warn on close only while somebody is actually connected.
   const peers = snapshot?.peers ?? 0;
@@ -444,8 +456,10 @@ function AgentPanel({
         : state === "offline"
           ? "Signalling connection lost — retrying."
           : state === "replaced"
-            ? "Another sharing tab took over."
-            : state === "removed"
+            ? "Another sharing tab in this browser took over — this one takes back over when it closes."
+            : state === "rekeyed"
+              ? "This machine was re-keyed elsewhere — sharing from here has stood down."
+              : state === "removed"
               ? "This machine was removed from the account."
               : "Stopped.";
 

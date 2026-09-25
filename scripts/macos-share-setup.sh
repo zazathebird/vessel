@@ -580,6 +580,35 @@ check_folder() {
         done
     done
 
+    # NO HIDDEN FOLDER, ANYWHERE ON THE PATH (2026-09-24).
+    #
+    # The dot-directory entries in BLOCK_PREFIX are a finite list and the secrets are not:
+    # ~/.claude, ~/.wine, ~/.ecryptfs, ~/.m2, ~/.electrum and ~/.azure all passed it. And every
+    # entry is keyed to THIS home, so a copied home on a backup disk —
+    # `/media/backup/home/bob/.ssh` — matched nothing at all. The rule is structural instead: a
+    # component beginning with a dot is where a program keeps its state, and it is refused
+    # wherever it sits, under a home or not. `$c` is canonical, so it holds no `.` or `..`
+    # components for this to trip on, and a link named innocently that points into a dot-folder
+    # arrives here already resolved to it. The explicit entries stay; this only refuses more.
+    case "$c/" in
+        */.*)
+            echo "NO That folder is hidden, or inside a hidden folder — that is where programs keep keys and passwords, so it will not be shared: $c"
+            return
+            ;;
+    esac
+
+    # AND NO `Library`, ANYWHERE ON THE PATH (2026-09-24). `~/Library` is blocked by prefix, but
+    # only THIS account's: a Time Machine or copied home on another disk
+    # (`/Volumes/Backup/Users/bob/Library/Keychains`) matched nothing. Keychains, Cookies and
+    # Application Support live under every Library, so the name is refused wherever it appears.
+    # Folded like every other comparison against `$f`.
+    case "$f/" in
+        *"$(fold_case /Library/)"*)
+            echo "NO That folder is inside a Library folder, where the Mac keeps keychains and passwords, so it will not be shared: $c"
+            return
+            ;;
+    esac
+
     # A folder that CONTAINS the share root makes the links recursive, and the
     # default share root lives inside the home directory, so this is reachable.
     case "$(fold_case "$SHARE_ROOT")/" in

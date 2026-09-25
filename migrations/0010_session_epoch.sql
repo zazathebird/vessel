@@ -1,0 +1,30 @@
+-- The session epoch: `accounts.sessions_after`.
+--
+-- A session token is stateless (worker/session.ts, and §9 has no session
+-- table), so until now nothing could end one early: a stolen cookie outlived a
+-- password change, an operator password reset and a TOTP reset, for up to the
+-- twelve-hour ceiling if it kept being refreshed. The token already carries the
+-- moment its session FIRST began (`issuedAt`, inside the MAC, never moved by a
+-- refresh), so one timestamp per account is enough: `requireAccount` refuses any
+-- session that began before it. Changing the password, an operator reset and an
+-- operator TOTP reset stamp it; the request that changed the password is
+-- re-issued a fresh session in the same response, so the owner stays signed in
+-- where they made the change and nowhere else.
+--
+-- **Not personal data**, and listed in SPEC-ACCOUNTS.md §9's inventory
+-- (2026-09-24): a clock value the server sets on a credential event, coarser
+-- than `reset_at` beside it, derived from nothing about the person.
+--
+-- **Safe on existing rows by construction.** `DEFAULT 0` means every existing
+-- account's epoch is the Unix epoch, and every token ever minted has an
+-- `issuedAt` after it — so applying this ends nobody's session. A NOT NULL
+-- column with a constant default is a plain `ALTER TABLE … ADD COLUMN` in
+-- SQLite; no table rebuild, no data copied.
+--
+-- **Apply it BEFORE deploying the Worker that reads it** (`npm run
+-- db:migrate:remote`, then `npm run deploy`). The Worker selects the column on
+-- every authenticated request; deployed first, every signed-in route would 500
+-- until the migration ran. Applied first, the old Worker never names the
+-- column and is unaffected.
+
+ALTER TABLE accounts ADD COLUMN sessions_after INTEGER NOT NULL DEFAULT 0;

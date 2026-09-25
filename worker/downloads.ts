@@ -115,6 +115,14 @@ async function codeHash(env: Env, code: string): Promise<Uint8Array> {
   return new Uint8Array(await hmac(env.AUTH_PEPPER, `download-code:${normalise(code)}`));
 }
 
+/** The revoke handle: the first `REF_LENGTH` hex characters of the stored hash, upper case. */
+function refOf(hash: Uint8Array): string {
+  return hash
+    .reduce((s, b) => s + b.toString(16).padStart(2, "0"), "")
+    .slice(0, REF_LENGTH)
+    .toUpperCase();
+}
+
 interface CodeRow {
   code_hash: unknown;
   label: string;
@@ -295,6 +303,43 @@ async function opened(
 }
 
 /**
+ * **What the code behind a ticket opens NOW, or null if it opens nothing**
+ * (2026-09-24, audit item 60 — K4).
+ *
+ * A download ticket is a stateless thirty-minute bearer token, and it used to
+ * be a snapshot: revoking its code, or deleting the page or file the code was
+ * for, left every ticket already redeemed working until it expired — and
+ * because slugs and file ids are re-usable, a page recreated at the same
+ * address inside that half hour was opened by the OLD customer's ticket. The
+ * ticket now carries its code's ref, and every use comes back here: the row
+ * must still exist and be unrevoked, and `opened` — the same function `claim`
+ * asked — must still name what the ticket names. `resolveAccess` keeps only the
+ * intersection, so a ticket can lose reach this way and never gain it.
+ *
+ * **Uses and expiry are not re-checked, deliberately.** The use was spent at
+ * redemption and the ticket is what it bought; the expiry bounds when a code
+ * may be *redeemed*, and a customer who typed it a minute before it lapsed is
+ * owed the download they started. Revocation and deletion are the operator
+ * withdrawing access, and those are what end a ticket.
+ *
+ * `REF_LENGTH` hex characters of the hash, checked unique at mint, so one row.
+ */
+export async function ticketStillOpens(
+  env: Env,
+  ref: string,
+): Promise<{ open: string[]; visible: string[]; items: string[] } | null> {
+  if (!new RegExp(`^[0-9A-F]{${REF_LENGTH}}$`).test(ref)) return null;
+  const row = await env.DB.prepare(
+    `SELECT code_hash, label, item_id, slug, created_at, expires_at, max_uses, uses, revoked_at, last_used_at
+       FROM download_codes WHERE substr(hex(code_hash), 1, ${REF_LENGTH}) = ?`,
+  )
+    .bind(ref)
+    .first<CodeRow>();
+  if (!row || row.revoked_at !== null) return null;
+  return opened(env, row);
+}
+
+/**
  * Redeem a code and return what it opens.
  *
  * The refusal is deliberately one message for every failure — unknown, expired,
@@ -383,10 +428,16 @@ export async function claim(request: Request, env: Env): Promise<Response> {
 
   // The TTL rides on the purpose (`session.ts`), not on this call — one place
   // decides how long each kind of token lives, so none of them can drift.
+  //
+  // **The ticket names the code that bought it** (2026-09-24, audit item 60),
+  // `REF|list`, inside the MAC. `resolveAccess` re-reads that code on every use
+  // (`ticketStillOpens`), so revoking the code, or deleting the page or file it
+  // was for — both of which delete its row — ends the ticket at once instead of
+  // thirty minutes later.
   const ticket = await mint(
     env.SESSION_SECRET,
     "download",
-    ticketSubject(opens.open, opens.visible, opens.items),
+    `${refOf(hash)}|${ticketSubject(opens.open, opens.visible, opens.items)}`,
   );
 
   return noStore(
@@ -805,10 +856,7 @@ export async function mintCode(request: Request, env: Env): Promise<Response> {
    * indexed-ish read per mint, against a class of bug nobody could diagnose from
    * the symptom.
    */
-  const ref = (await codeHash(env, code))
-    .reduce((s, b) => s + b.toString(16).padStart(2, "0"), "")
-    .slice(0, REF_LENGTH)
-    .toUpperCase();
+  const ref = refOf(await codeHash(env, code));
   const clash = await env.DB.prepare(
     `SELECT 1 FROM download_codes WHERE substr(hex(code_hash), 1, ${REF_LENGTH}) = ?`,
   )
@@ -882,11 +930,17 @@ export async function listCodes(request: Request, env: Env): Promise<Response> {
  * Revoke by reference — the first `REF_LENGTH` (sixteen) hex characters of the
  * hash, which is what the list shows. The operator cannot revoke by code
  * because they no longer have it, which is the point of not storing it.
+ *
+ * **Asks for the password** (2026-09-24, review item 18). Revoking is minting
+ * in reverse: a stolen operator cookie could otherwise walk this list and kill
+ * every paying customer's code, and nothing they could do would bring one back
+ * — a revoked row stays revoked.
  */
 export async function revokeCode(request: Request, env: Env): Promise<Response> {
-  await operator(request, env);
+  const account = await operator(request, env);
 
   const body = await readBody(request);
+  await assertPassword(request, env, account, body.authSecret, "Enter your password to revoke a code.");
   const ref = typeof body.ref === "string" ? body.ref.toUpperCase() : "";
   if (!new RegExp(`^[0-9A-F]{${REF_LENGTH}}$`).test(ref)) throw new BadRequest("Which code?");
 

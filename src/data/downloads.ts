@@ -510,11 +510,20 @@ export function sortFiles<T extends SortableFile>(files: readonly T[], sort: Fil
  * editor opens its password dialog when a 401 starts with the prefix, so the
  * two cannot drift apart. A lapsed session is also a 401 and does not start
  * this way, which is what tells the two apart.
+ *
+ * **`live` is the fifth, and it moved the line** (2026-09-24, review item 18,
+ * the caller's decision). A live page is text customers read and act on — a
+ * notice, the steps under a download, the words beside a paid file — and a
+ * stolen operator cookie could rewrite all of it with no password, which is a
+ * release in every sense but "who can get it": it changes what somebody *else*
+ * is told. So any save to a page that is live now, its blocks, or the details
+ * of a file on it asks. Drafts, reordering and new rows stay silent.
  */
 export const PROOF_PREFIX = "Enter your password";
 export const RELEASE_WORDING = {
   page: `${PROOF_PREFIX} to publish this page.`,
   file: `${PROOF_PREFIX} to change who can get this file.`,
+  live: `${PROOF_PREFIX} to change a page that is live.`,
 } as const;
 
 export function formatPrice(cents: number): string | null {

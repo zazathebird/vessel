@@ -3,7 +3,6 @@ import { useEffect, useMemo, useRef } from "react";
 import { useConfig } from "../config/ConfigContext";
 import { resolveDuel } from "../data/duelSettings";
 import { PALETTES } from "../data/palettes";
-import { applyDuelTuning } from "./duel";
 import { drawFx } from "./effects";
 import { TIERS, saveTier, storedTier } from "./perf";
 import type { FxCache } from "./effects";
@@ -70,12 +69,9 @@ export function FxCanvas() {
   const liveDuel = useRef(duel);
   useEffect(() => {
     liveDuel.current = duel;
-    // The pacing knobs are the engine's own global — see `applyDuelTuning`.
-    // Applied here as well as in `DuelOrnament` because either surface can be
-    // the only one on the page: the ornament can be "None" while the background
-    // effect is a duel, and vice versa. Both write the same resolved value, so
-    // it does not matter which runs last.
-    applyDuelTuning(duel.tuning);
+    // The pacing knobs are not applied here any more: the background fight
+    // assigns `st.tuning` from its frame, as the ornament does, and this file
+    // must not import the engine — it is a lazy chunk (see `loadDuelEngine`).
   }, [duel]);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 

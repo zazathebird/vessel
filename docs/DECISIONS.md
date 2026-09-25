@@ -13,6 +13,215 @@ file records what happened to the codebase.
 
 ---
 
+## 2026-09-24 — the agent role belongs to the machine key, not to a session
+
+Five phase-2 findings from the 2026-09-24 review (N1–N3, N5, N6), each re-verified against the code
+before it was changed, each gated by running the thing, and each gate **break-verified** — reverted
+fix by fix, and the gate went red every time.
+
+### N1 (Medium): a stolen cookie could take an unattended host offline, and hear its owner
+
+`signalUpgrade` let any session that owned the machine open `?role=agent`, and the signalling object
+evicted the incumbent **unconditionally** on arrival. The evicted tab received `replaced` and went
+quiescent for good — §12 M's "the newest tab is authoritative" assumed the newest tab was the
+owner's — so one upgrade with a thirty-minute cookie left the ThinkCentre's kiosk sitting on "Take
+over here" until somebody walked up to it. The impostor socket was then the one every browsing
+tab's offer was relayed to, ICE candidates included: the owner's addresses, on request. It could
+never finish a connection (the offer's signature is checked against the trust root, and the
+browsing tab checks the answer's against `agent_pubkey`), so this was availability and a network
+leak, not files.
+
+**Decision: an agent socket is pending until it proves the machine key.** The Worker hands the
+object `machines.agent_pubkey` and the machine id on the internal upgrade (deleting any
+client-supplied copy of either header first — a header the caller could set would let it choose the
+key its own proof is checked against). The object sends the socket a `challenge` — 32 random bytes
+it minted — and the agent signs `vessel/p2p/agent-connect/v1\n<machineId>\n<nonce>` with the
+non-extractable key whose public half is that column. Only a verified socket evicts the incumbent,
+counts as presence, is relayed a frame, or stamps `last_seen` (which moved from the Worker into the
+object for that reason). Anything else a pending socket sends closes it 1008; a wrong or replayed
+proof gets `proof-refused` and 4003; a proof after ten seconds is refused.
+
+*Chosen over a signed, timestamped upgrade URL* — which is stateless but replayable inside its
+window unless the server remembers what it has seen, and remembering it would be a new column (§9 is
+a spec change) or DO storage (the object persists nothing). A per-socket nonce in the hibernation
+attachment is fresh by construction and stores nothing anywhere. *Chosen over refusing a second
+agent* — §12 M's reasoning (a crashed tab's half-open socket must not lock sharing out) still holds
+for tabs that can prove the key.
+
+**Pending sockets are bounded at four, and the OLDEST is evicted, never the newcomer refused.**
+Refusing would let anybody with a session hold four stale sockets open and lock the real agent out of
+reconnecting; evicting costs the real agent at most a retry, and its proof is one round trip where a
+flood has to keep pace for ever.
+
+**Recovery from `replaced` is automatic, and asks the profile.** Since only a key-holder can replace
+a tab now, `replaced` means another tab of *the same browser profile* (the key lives in its
+IndexedDB and cannot be exported). So a replaced tab asks that profile's tabs over a
+`BroadcastChannel` whether one of them is the live agent: if one answers, it waits and asks again
+with backoff; if none does — the replacing tab was closed or crashed — it takes back over. A tab that
+stops says `released`, so the wait is usually nothing. Only an active tab answers, so two tabs never
+ping-pong. "Take over here" stays for a person who opened a second tab on purpose. The dropped-socket
+retry also gained backoff (2s doubling to 60s, jittered; it was a flat 5s for ever), and a
+`proof-refused` or `rekeyed` frame is terminal — a key that no longer matches can never prove — and
+sends the page to its re-key form instead of retrying.
+
+**Deploy note:** this changes the signalling protocol. An agent tab running the previous bundle
+never answers the challenge, so it stays pending and the host reads offline **until that tab
+reloads** — restart the kiosk (or reload its `/share` tab) after deploying.
+
+### N2 (Low): the handshake was replayable, and the agent's peer map unbounded
+
+The fingerprint signatures bound role, machine and fingerprint, and nothing about *which socket*, so
+a captured offer was valid from any socket for ever; replayed by a session holder, it got an answer
+and the host's ICE candidates (never a connection — the replayer has no DTLS key). **v2 binds the
+peer id the object minted for the socket**: the browsing tab signs the id its `hello` carried, the
+object stamps `from` on every relayed frame, the agent verifies against `from`, and the answer is
+bound the same way. No extra round trip — both ends already had the value. Context strings moved to
+`…-fp/v2` so a v1 signature cannot verify as v2. In the agent, a second offer from the same peer now
+closes the first `RTCPeerConnection` rather than leaking it beside the new one, and live peers are
+capped at eight (`MAX_PEERS`, equal to the object's `MAX_BROWSER_SOCKETS`, gated equal): a newcomer
+past the cap is refused, an incumbent never evicted.
+
+### N3 (Low): the relay had a size cap and no rate cap
+
+Per-socket token buckets in the hibernation attachment: browsing sockets 64 burst / 16 per second,
+agents 256 / 64 (eight peers' answers and candidates at once). Exhaustion closes 1008 — a dropped
+frame would be a connection that fails later for no visible reason.
+
+### N5 (Low): re-keying left the old key's agent online
+
+`pair()`'s re-key branch replaced `agent_pubkey` and told the object nothing. It now calls
+`/shutdown?reason=rekeyed` with the new key, and the object closes (`rekeyed`, 4005) every agent
+socket admitted under any other key — pending ones included, since a socket admitted before the
+write would otherwise be proved against the old key it was admitted with. Browsing tabs stay and are
+told the agent left, once: the closed socket is demoted before its close, so `webSocketClose` does
+not announce a second departure (the e2e caught that duplicate).
+
+### N6 (Low): drive labels could collide, and both caps were count-then-insert
+
+Migration `0011_drive_labels_unique.sql` adds `(machine_id, label COLLATE NOCASE)` unique, renaming
+(never deleting) any pre-existing duplicate the way 0009 did; production held one paired machine, so
+the rename is expected to match nothing, and it is there so the migration cannot fail half-applied if
+that is wrong. `MACHINES_MAX` and `DRIVES_MAX` moved into the INSERT's own WHERE (`INSERT … SELECT …
+WHERE (SELECT count(*) …) < ?`), zero changes being the refusal and the audit row following it —
+the last-way-in shape. Numbered 0011 because main gained its own 0010 the same day.
+
+### The gates
+
+`npm run check` drives all of it: `MachineSignal` over a fake of the three runtime pieces it touches;
+`VesselAgent` over a fake WebSocket and `RTCPeerConnection`, with Node's real `BroadcastChannel`
+between two agents; and `pair` / `driveAdd` over **node:sqlite with every migration applied**, whose
+D1 shim yields to the event loop per call — which is what makes the count-then-insert race
+reproducible (12 concurrent pairings landed 12 against the old code). `npm run test:auth` drives the
+object in workerd end to end. Fourteen reverts (the last the literal old count-then-insert), fourteen
+red gates.
+
+**What only a real two-browser session can show:** that a real `RTCPeerConnection` completes with
+v2 signatures on both legs, that `BroadcastChannel` recovery behaves across real tabs and a real
+crash, and that the kiosk comes back by itself after its tab is replaced and the replacer closed.
+
+## 2026-09-24 (later) — sessions end on a credential change, tickets die with their codes, a replacement stays live
+
+The reviewers' second Worker list, six code items and one runbook, fixed on a branch and **not
+deployed**; `docs/SECURITY-AUDIT.md` items 55–60 have each fault and fix. Two of these were on
+`TODO.md`'s *Needs the client* list (items 2 and 3); the client's instruction for this pass was "fix
+everything", which is taken as the decision.
+
+- **A session epoch, one column on `accounts`** (`sessions_after`, migration 0010, added to §9's
+  inventory). The token already carried when its session first began, inside the MAC and unmoved by
+  refreshes, so no session table was needed — the rejected option in `session.ts` stays rejected.
+  Stamped by a password change, a recovery set-password, an operator password reset and an
+  operator TOTP reset; the request that changed the password is re-issued a fresh session and is
+  the only one that survives. **No "sign out everywhere" route was added** — none existed, and one
+  is an interface decision; the column makes it a two-line route if he wants it. Options weighed:
+  a session table (§9 change and a write per sign-in — rejected, as in 2026-08-12); a per-account
+  secret mixed into the MAC (the same column wearing a key's name, and it makes a lost row an
+  unverifiable session rather than a refused one — rejected). **The kiosk is signed out by its
+  owner's password change**, deliberately, and signs in again as it does after the 12-hour ceiling.
+- **The same events hang up the account's signalling sockets**, through the `/shutdown` fan-out
+  `deleteAccount` already used, now one helper (`hangUpSignalling`) called after the epoch commits
+  so a hung-up socket cannot re-dial. This closes 2026-09-22's "below the bar" line about sockets
+  outliving a password change.
+- **A replacement upload keeps the old file live until the password-proved finish.** Chosen over
+  "ask the password at begin when the row is already uploaded" because it also fixes the honest
+  failure (an abandoned replacement left customers with nothing), and because R2 multipart already
+  gives the atomic swap: nothing is visible until `complete()`. The row's size, type and
+  `uploaded_at` move in one statement after it.
+- **A download ticket names its code and is re-checked against it on every use.** Chosen over
+  binding `uploaded_at` into the MAC: a code is the entitlement, so revocation and deletion — which
+  delete or revoke its row — are what must end the ticket, and a replaced file under a still-valid
+  code is what the customer paid for. Uses and expiry are deliberately not re-checked (the use was
+  spent at redemption; expiry bounds redemption). Only the intersection of the ticket's list and
+  what the code opens now is granted, so a ticket can lose reach and never gain it. Closes the last
+  "below the bar" line of 2026-09-22. Tickets minted before the deploy carry no ref and are refused
+  — at most thirty minutes of customers re-typing a code.
+- **The sign-in `pair:` bucket keys IPv6 on the /48; `client:` stays on the /64.** At /64 one free
+  tunnel-broker /48 was 65,536 pairs, so item 50's lockout came back for anybody with a free IPv6
+  tunnel. /48 for the client bucket too was the reviewer's suggestion and is **not** taken: that
+  bucket is shared by every handle, and `crypto.ts` already records why a /48 there turns an attack
+  into an outage for the neighbours; a `pair:` bucket is per handle, so only strangers guessing at
+  the same account share one. **Item 50's "paid for rather than free" was wrong and is corrected**:
+  six IPv4 addresses or six /48s — two free tunnel-broker sign-ups, or a handful of cloud VMs — is
+  cheap. The honest statement is that a per-handle ceiling can always be filled by somebody willing
+  to spend a little, and **passkey sign-in, which no bucket touches, is the mitigation**.
+  Recovery-code sign-in shares the buckets and `challenge` checks them; that was kept, not loosened:
+  a recovery exit around the ceiling would be a second password door without the ceiling.
+- **`setPassword`'s spent-ticket check moved into every write's WHERE**, both branches, with the
+  losing request answered by the same stored-hash comparison item 51 introduced.
+- **`docs/BREAK-GLASS.md` gained a rotation section.** No key versioning was implemented: none of
+  the four secrets carries a key id today, and adding one to the TOTP ciphertext is a migration
+  of every enrolled secret — not trivial, so written down instead.
+
+Every fix has a driven gate in `scripts/check.ts`, four of them over a real SQLite (`node:sqlite`,
+all ten migrations applied) because the fixes are WHERE clauses a SQL-matching stub cannot
+evaluate; each was break-verified by reverting the fix in place.
+
+## 2026-09-24 — the review's Worker findings: anonymous lockout, a truthful 409, and the release line moves
+
+Five of the 2026-09-24 review's site items (`TODO.md` 10, 16, 17, 18, 21), fixed on a branch and
+**not deployed**. `docs/SECURITY-AUDIT.md` items 50–54 have each fault and fix; what is recorded here
+is what was *decided*.
+
+- **Sign-in rate limiting is two buckets per handle, and the tight one is per (address, handle).**
+  The per-handle `account:` bucket at five was reachable by anybody, so a stranger's six wrong
+  guesses locked the owner out. Options weighed: drop the per-handle bucket (leaves distributed
+  guessing uncapped — rejected); key it on the handle only after a correct password (a check that
+  runs after the password is not a limit on guessing it — rejected); exempt the owner by a
+  remembered device (a new stored field, a §9 change — rejected). Chosen: `pair:` per (client,
+  handle) at five, `account:` per handle at **30**. `gate`'s refund means one address feeds the
+  handle bucket at most six times per window, so it takes five or more addresses to lock an owner
+  out — the distributed attack the bucket exists to cap, now paid for rather than free (**corrected
+  in the entry above**: at the /64 one free IPv6 tunnel was enough, and even at the /48 the price is
+  a few free tunnels or cloud VMs, not a botnet). 30 is a
+  judgement: low enough that a botnet gets ~30 guesses plus one per backoff period, high enough that
+  no single address or household reaches it. **The `second-factor:` bucket keeps its five, per
+  account, deliberately** — only a password-holder reaches it, and loosening it trades the second
+  factor for availability against exactly the person it exists to stop. **Revisit if** passkey
+  adoption makes password sign-in rare enough to tighten 30, or if a real owner is ever reported
+  locked out by the handle ceiling.
+- **The release line is now "what somebody else can get *or is told*".** The 2026-09-06 line
+  ("releases, not writes") asked for the password on six routes and on saves that *widen*. A stolen
+  cookie could still rewrite a live download page's text and a file's blurb — the instructions a
+  customer follows before running something — and revoke every code and grant. So `revokeCode` and
+  `removeGrant` take the password, and any save to a page that is **live now** asks (its row, its
+  blocks, an existing file's details on it). The client's "no password on every keystroke" still
+  holds where it was about: drafts, reordering, new rows and upload parts are silent, and the editor
+  asks reactively, once per save, through the dialog it already had. This is the caller's decision
+  on the client's behalf (TODO item 18 said "worth his call"); **revisit if** he finds the prompt on
+  live-page typo fixes worse than the exposure, in which case the narrower cut is "live and public
+  only".
+- **`setPassword`'s UNIQUE branch compares before it answers.** Same password as the stored one is
+  still "set"; a different one is a 409. The alternative — overwrite with the loser's password —
+  would be repairing, and would make the winner's "set" the lie instead.
+- **Passkey labels refuse rather than slice**, through `expectDisplayName`.
+- **CORP `same-origin` everywhere, `/api/health` memoised 30s per isolate, no HSTS preload.** No
+  `cache-control` on health: a browser holding the previous deploy's answer is the one staleness
+  deploy verification cannot have. `harden` and `health` moved to `worker/hardening.ts` because
+  `index.ts` pulls `signal.ts` into the scripts typecheck, where workers-types' `WebSocket` loses to
+  DOM's.
+
+Every fix has a driven gate in `scripts/check.ts`; each was break-verified by reverting the fix in
+place and watching its gate fail with the fault's own description.
+
 ## 2026-09-22 — a sixth security pass: two fixes that each finished an earlier one
 
 Five parallel read-only reviews (auth and sessions, downloads, the Worker's front door and admin,
@@ -334,8 +543,6 @@ Also: the **operator surfaces after the bundle split** were driven in a real bro
 production chunks with a signed-in operator — all eight lazy chunks mount, zero console errors, zero
 overflow, both overlays opened for the first time. And `scripts/local-operator.ts` defaulted to the
 handle `operator`, which is in `RESERVED_HANDLES`, so the dev scaffolding failed on its first call.
-
----
 
 ## 2026-09-08 — The host's screen was never told not to blank, and `xset` was the wrong lever
 

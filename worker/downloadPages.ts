@@ -39,6 +39,7 @@ import { assertPassword, json, noStore, readJsonLenient, requireAccount } from "
 import { BadRequest } from "./encoding";
 import type { Env } from "./env";
 import { verify } from "./session";
+import { ticketStillOpens } from "./downloads";
 import {
   BLOCK_KINDS,
   CATEGORY_IDS,
@@ -157,6 +158,13 @@ async function operator(request: Request, env: Env) {
  * line is "does this change what somebody *else* can get", not "does this
  * write". `assertPassword` carries its own rate limit, so this is a bucket and
  * not an oracle.
+ *
+ * **2026-09-24 (review item 18) moved the line to "does this change what
+ * somebody else can get *or reads*".** `removeGrant` and `revokeCode` take the
+ * password now — withdrawing is a release in reverse — and a save to a page
+ * that is live (its row, its blocks, or an existing file's details on it) asks
+ * through `assertPassword` with `RELEASE_WORDING.live`. Drafts, reordering,
+ * new file rows and upload parts stay session-only.
  */
 /**
  * How far a page's visibility reaches, so a save can tell widening from
@@ -317,11 +325,30 @@ export async function resolveAccess(request: Request, env: Env, url: URL): Promi
   const ticket = url.searchParams.get("t") ?? "";
   if (ticket) {
     const token = await verify(env.SESSION_SECRET, "download", ticket);
-    if (token) {
-      for (const part of token.subject.split(",").filter(Boolean)) {
-        if (part.startsWith("@")) access.ticketPages.add(part.slice(1));
-        else if (part.startsWith("~")) access.ticketVisible.add(part.slice(1));
-        else access.ticketItems.add(part);
+    /*
+     * **A ticket is honoured only while the code that bought it still opens
+     * what it names** (2026-09-24, audit item 60). The subject is `REF|list`;
+     * a subject without a ref is a ticket this Worker did not mint in that
+     * shape and is refused, not read as the old snapshot — refuse, never
+     * repair. What the code opens now comes from `ticketStillOpens`, which asks
+     * `opened`, the function `claim` asked, and only the intersection is
+     * granted: a ticket can lose reach between redemption and use, never gain
+     * it.
+     */
+    const bar = token ? token.subject.indexOf("|") : -1;
+    const now = token && bar > 0 ? await ticketStillOpens(env, token.subject.slice(0, bar)) : null;
+    if (token && now) {
+      const open = new Set(now.open);
+      const visible = new Set(now.visible);
+      const items = new Set(now.items);
+      for (const part of token.subject.slice(bar + 1).split(",").filter(Boolean)) {
+        if (part.startsWith("@")) {
+          if (open.has(part.slice(1))) access.ticketPages.add(part.slice(1));
+        } else if (part.startsWith("~")) {
+          if (visible.has(part.slice(1))) access.ticketVisible.add(part.slice(1));
+        } else if (items.has(part)) {
+          access.ticketItems.add(part);
+        }
       }
     }
   }
@@ -709,7 +736,26 @@ export async function savePage(request: Request, env: Env): Promise<Response> {
     .first<{ visibility: string; status: string }>();
   const widens =
     status === "live" && (before?.status !== "live" || reach(visibility) > reach(before.visibility));
-  if (widens) await assertPassword(request, env, account, b.authSecret, RELEASE_WORDING.page);
+  /*
+   * **And a save to a page that is live NOW asks, whatever it changes**
+   * (2026-09-24, review item 18). `widens` asks about who can get the page;
+   * this asks about what they are told. A stolen cookie could otherwise rewrite
+   * a live page's title, intro and notice — the text a customer follows before
+   * running something they downloaded — without the password. Keyed on the
+   * stored status, not the requested one, so unpublishing a live page asks
+   * too: taking a customer's page down is a change to what somebody else gets.
+   * A draft stays a draft: saving one asks nothing, as before.
+   */
+  const live = before?.status === "live";
+  if (widens || live) {
+    await assertPassword(
+      request,
+      env,
+      account,
+      b.authSecret,
+      widens ? RELEASE_WORDING.page : RELEASE_WORDING.live,
+    );
+  }
 
   /*
    * The presentation switches (0007). Each one falls back to the behaviour the
@@ -893,15 +939,24 @@ export async function reorderFiles(request: Request, env: Env): Promise<Response
   return noStore(json({ ok: true }));
 }
 
-/** Blocks are replaced wholesale — the editor owns the whole list. */
+/**
+ * Blocks are replaced wholesale — the editor owns the whole list.
+ *
+ * On a live page this is the text customers read, so it asks for the password
+ * (2026-09-24, review item 18; `savePage` has the argument). A draft's blocks
+ * stay a session-only save.
+ */
 export async function saveBlocks(request: Request, env: Env): Promise<Response> {
-  await operator(request, env);
+  const account = await operator(request, env);
   const b = await body(request);
   const slug = str(b.slug, 64);
-  const page = await env.DB.prepare("SELECT slug FROM download_pages WHERE slug = ?")
+  const page = await env.DB.prepare("SELECT slug, status FROM download_pages WHERE slug = ?")
     .bind(slug)
-    .first<{ slug: string }>();
+    .first<{ slug: string; status: string }>();
   if (!page) throw new BadRequest("No such page.", 404);
+  if (page.status === "live") {
+    await assertPassword(request, env, account, b.authSecret, RELEASE_WORDING.live);
+  }
 
   const raw = Array.isArray(b.blocks) ? b.blocks : [];
   // A hard cap, because this is a page and not a document store.
@@ -955,9 +1010,15 @@ export async function saveFile(request: Request, env: Env): Promise<Response> {
    *
    * A row that does not exist yet has nothing to keep, so there it is required.
    */
-  const existing = await env.DB.prepare("SELECT filename, slug, free FROM download_files WHERE id = ?")
+  // `page_status` is the status of the page the file is on NOW, which is what
+  // decides whether customers are reading its details (see `live` below).
+  const existing = await env.DB.prepare(
+    `SELECT f.filename, f.slug, f.free, p.status AS page_status
+       FROM download_files f LEFT JOIN download_pages p ON p.slug = f.slug
+      WHERE f.id = ?`,
+  )
     .bind(id)
-    .first<{ filename: string; slug: string; free: number }>();
+    .first<{ filename: string; slug: string; free: number; page_status: string | null }>();
   const supplied = str(b.filename, 160);
   const filename = supplied || existing?.filename || "";
   if (!filename) throw new BadRequest("A new file needs the file itself.");
@@ -1063,7 +1124,23 @@ export async function saveFile(request: Request, env: Env): Promise<Response> {
    */
   const free = b.free === true ? 1 : 0;
   const widens = existing !== null && ((free === 1 && existing.free !== 1) || existing.slug !== slug);
-  if (widens) await assertPassword(request, env, account, b.authSecret, RELEASE_WORDING.file);
+  /*
+   * **And an existing file on a live page asks for ANY edit** (2026-09-24,
+   * review item 18). Its name, blurb, version, caveat and price are what a
+   * customer reads before downloading and running it; `savePage` has the
+   * argument. A new row still asks nothing — it has no bytes, is hidden from
+   * visitors until `finishUpload`, and that asks.
+   */
+  const live = existing !== null && existing.page_status === "live";
+  if (widens || live) {
+    await assertPassword(
+      request,
+      env,
+      account,
+      b.authSecret,
+      widens ? RELEASE_WORDING.file : RELEASE_WORDING.live,
+    );
+  }
 
   const now = Date.now();
 
@@ -1139,14 +1216,28 @@ export async function deleteFile(request: Request, env: Env): Promise<Response> 
  * the day a file gets big.
  *
  * The row is written by `saveFile` first and `uploaded_at` is set only by
- * `finishUpload`, so a browser that closes mid-upload leaves a row the page
- * hides and the admin screen shows as unfinished.
+ * `finishUpload`, so a browser that closes mid-upload of a NEW file leaves a row
+ * the page hides and the admin screen shows as unfinished.
+ *
+ * **A REPLACEMENT keeps the old file live until `finishUpload` swaps it**
+ * (2026-09-24, audit item 55). `beginUpload` used to set `uploaded_at = NULL`
+ * on the row, which takes an already-published file off its page and makes
+ * every code for it redeem as invalid — and `beginUpload` is session-only, so a
+ * stolen operator cookie could darken every download on the site one begin at
+ * a time, no password asked, with nothing to finish. It also meant an honest
+ * replacement abandoned half-way left customers with nothing. Now `beginUpload`
+ * writes nothing to the row at all: an R2 multipart upload is invisible until
+ * `complete()`, which replaces the object under the key in one step, so the old
+ * bytes are what `file()` serves right up to the password-proved finish, and an
+ * abort — or a tab closed mid-upload — leaves them exactly as they were. The
+ * content type rides on the multipart upload and reaches the row at the finish,
+ * read back from the object with the size.
  */
 export async function beginUpload(request: Request, env: Env): Promise<Response> {
   await operator(request, env);
   const b = await body(request);
   const id = fileId(b.id);
-  const row = await env.DB.prepare("SELECT id, content_type FROM download_files WHERE id = ?")
+  const row = await env.DB.prepare("SELECT id FROM download_files WHERE id = ?")
     .bind(id)
     .first<{ id: string }>();
   if (!row) throw new BadRequest("Save the file's details first.", 404);
@@ -1155,9 +1246,6 @@ export async function beginUpload(request: Request, env: Env): Promise<Response>
   const upload = await env.DOWNLOADS.createMultipartUpload(id, {
     httpMetadata: { contentType },
   });
-  await env.DB.prepare("UPDATE download_files SET content_type = ?, uploaded_at = NULL WHERE id = ?")
-    .bind(contentType, id)
-    .run();
 
   return noStore(json({ uploadId: upload.uploadId }));
 }
@@ -1189,8 +1277,9 @@ export async function uploadPart(request: Request, env: Env, url: URL): Promise<
 export async function finishUpload(request: Request, env: Env): Promise<Response> {
   // The password is asked at the *finish*, not the begin: this is the call that
   // makes the bytes live, and it is the one a replacement upload cannot
-  // complete without. A begin or a part without it leaves an invisible draft,
-  // which is the state a closed tab leaves anyway.
+  // complete without. A begin or a part without it leaves an invisible draft
+  // for a new file, and the old file untouched and live for a replacement —
+  // the state a closed tab leaves anyway (audit item 55).
   const { b } = await proven(request, env, "Enter your password to publish the file.");
   const id = fileId(b.id);
   const uploadId = str(b.uploadId, 200);
@@ -1253,10 +1342,16 @@ export async function finishUpload(request: Request, env: Env): Promise<Response
    * either way. The bytes are cleaned up here rather than left for somebody to
    * notice, and the operator is told the truth: the row is gone.
    */
+  /*
+   * **The swap** (audit item 55). `complete()` above replaced the bytes under
+   * the key in one step; this makes the row describe them — size, type and a
+   * new `uploaded_at` in one statement. Until here a replacement's row still
+   * described the old bytes, which were the ones being served.
+   */
   const written = await env.DB.prepare(
-    "UPDATE download_files SET size_bytes = ?, uploaded_at = ? WHERE id = ?",
+    "UPDATE download_files SET size_bytes = ?, content_type = ?, uploaded_at = ? WHERE id = ?",
   )
-    .bind(head.size, Date.now(), id)
+    .bind(head.size, head.httpMetadata?.contentType || "application/octet-stream", Date.now(), id)
     .run();
   if (!written.meta.changes) {
     await env.DOWNLOADS.delete(id);
@@ -1387,9 +1482,15 @@ export async function addGrant(request: Request, env: Env): Promise<Response> {
   return noStore(json({ ok: true }));
 }
 
+/**
+ * Take somebody's access away. **Asks for the password** (2026-09-24, review
+ * item 18): it changes what somebody else can get as surely as `addGrant`
+ * does, only in the other direction — and a stolen cookie that could strip a
+ * paying customer's access is a denial of the thing they paid for, lasting as
+ * long as nobody notices.
+ */
 export async function removeGrant(request: Request, env: Env): Promise<Response> {
-  await operator(request, env);
-  const b = await body(request);
+  const { b } = await proven(request, env, "Enter your password to take somebody's access away.");
   const id = Number(b.id);
   if (!Number.isInteger(id)) throw new BadRequest("Which grant?");
   const gone = await env.DB.prepare("DELETE FROM download_grants WHERE id = ?").bind(id).run();

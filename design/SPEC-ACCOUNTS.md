@@ -488,6 +488,7 @@ the signalling service, which is exactly the party it must be secure against.
 
 ```
 accounts      id · handle · created_at · grant_pubkey · is_operator · reset_at
+                sessions_after                         ← session epoch, §4 (2026-09-24)
 credentials   id · account_id · kind · label · created_at · last_used_at
                 last_challenge · last_challenge_at        ← replay guard, §4
                 kind = 'password' | 'passkey' | 'recovery'
@@ -516,9 +517,16 @@ that a stored field is a spec change to be argued rather than slipped in, so eac
   which voids §4's reason for waiving both the TOTP stage and rate limiting on the passkey path: a
   replay forges no signature.
 
-**None of the three is personal data**, which is what §9 exists to police. Each stores either a
+**A fourth clock field joined them on 2026-09-24: `accounts.sessions_after`** (migration `0010`,
+§12 *Resolved 2026-09-24*). The moment before which no session for the account is honoured —
+stamped by a password change, a recovery set-password, an operator password reset and an operator
+TOTP reset. Without it a stolen session outlived every one of those events for up to twelve hours,
+because a stateless token cannot otherwise be ended early. It is a server-set timestamp on a
+credential event, coarser than `reset_at` beside it.
+
+**None of the four is personal data**, which is what §9 exists to police. Each stores either a
 clock window or a digest of a random value **the server itself minted minutes earlier**; none is
-derived from anything about the person, none is disclosed to anybody, and all three are coarser
+derived from anything about the person, none is disclosed to anybody, and all four are coarser
 than `credentials.last_used_at`, which this inventory already covered. Each is also **load-bearing
 for a documented attack** — the alternative to storing them is not storing less, it is accepting
 replay.
@@ -585,6 +593,7 @@ later addition has to be argued against a list rather than slipped in.
 | `drives.label` | A label the owner types | No |
 | `grants.paths` | Relative subpaths under a drive | No absolute path, no home directory, no username |
 | `created_at`, `last_seen`, `last_used_at`, `reset_at` | Timestamps | Activity metadata. Retained because a user needs "last used" to spot a credential that is not theirs |
+| `sessions_after` | A timestamp: the last credential change that ended the account's sessions | No. Set by the server on a password change or an operator reset, never shown, derived from nothing about the person |
 | `audit` | Actor, action, target, time | Behavioural, and deliberately so — it is the record that catches a compromised frontend (§3). No IP, no user agent |
 
 **Not stored, at any point:** email addresses, real names, dates of birth, phone numbers, postal
@@ -792,6 +801,25 @@ than to disprove twice.
 
 Each rejected option carries a **"revisit if"** — the condition that would make it the right answer.
 
+### Resolved 2026-09-24 (a session epoch enters the inventory)
+
+**`accounts.sessions_after` is approved and §9 lists it.** Sessions survived a password change and an
+operator reset (`TODO.md` *Needs the client* item 2, audit item 58); the client's instruction was to
+fix everything the review found, and this was the one fix that needed a stored field. The token
+already carries, inside its MAC, when its session first began, so one timestamp per account ends
+every older session; the request that changed the password is re-issued a fresh one. The same events
+hang up the account's signalling sockets.
+
+- *Rejected: a session table.* The option `worker/session.ts` has rejected since 2026-08-12: it
+  writes a row about a person on every sign-in, which is the thing §9 exists to avoid, to buy
+  per-device sign-out that nothing asks for. **Revisit if** per-device session management ("sign out
+  that laptop") is wanted — the epoch can only end *all* sessions.
+- *Rejected: a per-account secret mixed into the session MAC.* The same column wearing a key's name,
+  and a missing row becomes an unverifiable token instead of a refused one. **Revisit if** a key
+  hierarchy for sessions is ever wanted for another reason.
+- *Not built: a "sign out everywhere" button.* None existed; the column makes it a two-line route.
+  **Revisit if** the client asks for it.
+
 ### Resolved 2026-09-04 (the replay-guard fields enter the inventory)
 
 **The three replay-guard fields are approved and §9 lists them.** `totp.last_step` had been
@@ -863,6 +891,12 @@ drives, and read-only makes that harmless.
 
 - *Rejected: refusing the second tab.* A crashed tab with a half-open socket would lock sharing
   out until some timeout expired; replacement makes the newest tab authoritative with no timer.
+- **Amended 2026-09-24:** "a second agent socket" now means a second socket that has **proven the
+  machine key** (§13, Signalling). As first built, a session alone could replace the agent, so a
+  stolen cookie took an unattended host offline until somebody clicked. With the proof, a replacer
+  can only be a tab of the same profile, so the replaced tab is no longer quiescent for good: it
+  asks that profile's other tabs whether one is the agent and takes back over when none is.
+  `docs/DECISIONS.md` (2026-09-24) has the alternatives weighed.
 
 **N. Presence is the DO's socket state, persisted nowhere.** "Is the agent online" is answered by
 whether its socket is currently open; the machine list carries the answer and the browse surface
@@ -1132,11 +1166,15 @@ drops the handle. Bounds: machines and drives are user-writable tables, so both 
 
 One Durable Object per machine (`idFromName(machineId)`), reached by WebSocket at
 `GET /api/signal/<machineId>?role=agent|browser`. The Worker authenticates the upgrade — session
-cookie, account must own the machine — before the DO ever sees it, and stamps `last_seen` when an
-agent connects. The DO:
+cookie, account must own the machine — before the DO ever sees it, and hands the DO the machine's
+`agent_pubkey` for an agent upgrade. The DO:
 
-- holds **one agent socket** (a newcomer replaces the incumbent, which is sent `replaced` — §12 M)
-  and any number of browser sockets, each assigned an opaque peer id;
+- **admits an agent socket only on proof of the machine key** (amended 2026-09-24): it sends a
+  `challenge` nonce it minted, the agent answers `prove` with a P-256 signature over
+  `vessel/p2p/agent-connect/v1\n<machineId>\n<nonce>`, and until that verifies the socket is not
+  presence, is relayed nothing and replaces nobody. `last_seen` is stamped on the proof;
+- holds **one proven agent socket** (a newly proven one replaces the incumbent, which is sent
+  `replaced` — §12 M) and up to eight browser sockets, each assigned an opaque peer id;
 - relays `{ type: "offer" | "answer" | "ice", ... }` between a browser (tagged `from`) and the
   agent (addressed `to`) **without reading payloads** — the signed fingerprints ride inside them,
   so the introducer never handles, and could not usefully alter, the material that authenticates
@@ -1145,18 +1183,21 @@ agent connects. The DO:
   departure, and the Worker's machine list asks the DO the same question over a plain fetch;
 - persists nothing, ever. Who-talked-to-whom exists only as open sockets.
 
-Frames are JSON text, bounded (64 KiB); an oversized or unparseable frame closes the socket.
+Frames are JSON text, bounded (64 KiB) and budgeted per socket (a token bucket, since 2026-09-24);
+an oversized, unparseable or over-budget frame closes the socket.
 
 ### The connect ceremony
 
 1. The browsing tab unwraps the grant key for this connection (§12 K — password prompt, any slot;
    the key is non-extractable and never stored).
 2. It creates an `RTCPeerConnection` (STUN only — §12 P), reads its local DTLS fingerprint from
-   the offer SDP, and signs `vessel/p2p/owner-fp/v1\n<machineId>\n<fingerprint>` with the grant
-   key. Offer + signature go to the agent through the DO.
-3. The agent verifies the signature against its stored trust root. Failure is a refusal before any
-   answer is sent. Success: it answers, signing its own fingerprint under
-   `vessel/p2p/agent-fp/v1\n<machineId>\n<fingerprint>` with the machine key.
+   the offer SDP, and signs `vessel/p2p/owner-fp/v2\n<machineId>\n<peerId>\n<fingerprint>` with the
+   grant key, where `peerId` is the id the DO's `hello` gave this socket (v2, 2026-09-24 — v1 bound
+   no socket, so a captured offer was replayable from anywhere). Offer + signature go to the agent
+   through the DO, which stamps them `from` that same peer id.
+3. The agent verifies the signature against its stored trust root, with `from` as the peer id.
+   Failure is a refusal before any answer is sent. Success: it answers, signing its own fingerprint
+   under `vessel/p2p/agent-fp/v2\n<machineId>\n<peerId>\n<fingerprint>` with the machine key.
 4. The browser verifies that against `agent_pubkey` from its machine list. Only then does either
    side proceed; a substituted fingerprint on either leg fails its check and the connection is
    refused (§3's MITM row).

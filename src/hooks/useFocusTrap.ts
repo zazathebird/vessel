@@ -17,8 +17,67 @@ import type { RefObject } from "react";
  * trap may handle Tab; the ones beneath wait their turn.
  */
 
+/*
+ * The selector is the first pass only — what *could* take focus. `select` and
+ * `textarea` gained their `:not([disabled])` beside `button` and `input`'s
+ * (2026-09-24), but no selector can say whether an element is inside an
+ * `inert` subtree or not rendered at all; `canTakeFocus` answers those.
+ */
 const FOCUSABLE =
-  'button:not([disabled]), [href], input:not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])';
+  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/** What `canTakeFocus` needs to know about an element — DOM-free, so the gate
+ *  can drive the decision with plain objects. */
+export interface FocusFacts {
+  /** `:disabled` — including through a disabled `<fieldset>`, which no attribute selector sees. */
+  disabled: boolean;
+  /** Inside an `inert` subtree — the sleeping chrome, for one. */
+  inert: boolean;
+  /** Has a box: not `display: none`, and not under a `hidden` or `display: none` ancestor. */
+  rendered: boolean;
+  /** Not `visibility: hidden` / `collapse`. */
+  visible: boolean;
+}
+
+/**
+ * Can the trap hand this element focus? (2026-09-24 review, item 15.)
+ *
+ * The selector alone let the trap pick an element the browser will not
+ * focus, or one the visitor cannot see: a collapsed `<details>` body, a
+ * `hidden` section, a control inside an `inert` region. `focus()` on those
+ * either does nothing — so the trap's "first control takes focus" left focus
+ * outside the dialog it promised to hold — or lands on something invisible,
+ * and Tab's wrap to the *last* item went to the invisible one.
+ */
+export function canTakeFocus(f: FocusFacts): boolean {
+  return !f.disabled && !f.inert && f.rendered && f.visible;
+}
+
+/** Inside the hidden body of a closed `<details>` (at any depth)? */
+function inClosedDetails(el: HTMLElement): boolean {
+  for (let d = el.closest("details"); d; d = d.parentElement?.closest("details") ?? null) {
+    const summary = el.closest("summary");
+    const ownSummary = summary !== null && summary.parentElement === d;
+    if (!(d as HTMLDetailsElement).open && !ownSummary) return true;
+  }
+  return false;
+}
+
+/** The browser's answers to `FocusFacts`, for a real element. */
+function factsOf(el: HTMLElement): FocusFacts {
+  const style = getComputedStyle(el);
+  return {
+    disabled: el.matches(":disabled"),
+    inert: el.closest("[inert]") !== null,
+    // No client rects means no box: display:none on it or on any ancestor
+    // (which is what `hidden` does). Cheaper than walking the ancestors.
+    // …except inside a closed `<details>`: Chrome hides its body with
+    // `content-visibility`, which leaves the children reporting rects. The
+    // closed element's own `<summary>` is still a real, visible control.
+    rendered: el.getClientRects().length > 0 && !inClosedDetails(el),
+    visible: style.visibility !== "hidden" && style.visibility !== "collapse",
+  };
+}
 
 /** Open traps, oldest first. The last entry is the one allowed to act. */
 const stack: RefObject<HTMLElement | null>[] = [];
@@ -60,7 +119,10 @@ export function useFocusTrap(
   useEffect(() => {
     if (!open) return;
     const previous = document.activeElement as HTMLElement | null;
-    const items = () => Array.from(ref.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? []);
+    const items = () =>
+      Array.from(ref.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? []).filter((el) =>
+        canTakeFocus(factsOf(el)),
+      );
 
     stack.push(ref);
     if (modal) modals += 1;

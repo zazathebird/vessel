@@ -233,9 +233,20 @@ parse_args() {
     # actually uses rather than reporting the default as missing. It goes through the same
     # validation below as one typed on the command line: the file is ordinary and editable, and
     # this path gets chowned.
-    if [ "${STORE_EXPLICIT}" -eq 0 ] && [ -r "${STORE_FILE}" ]; then
+    #
+    # FAIL CLOSED ON A BAD REMEMBERED VALUE (2026-09-24). The file is ~/.config, writable by
+    # anything running as this user — the autologin desktop, the browser — and whatever it names
+    # is `sudo chown`ed on the next run. So a remembered value is checked exactly as hard as a
+    # typed one, and a refusal says where the value came from: a run that quietly fell back to
+    # the default would hide that somebody edited it.
+    local store_origin="--store"
+    if [ "${STORE_EXPLICIT}" -eq 0 ] && [ -e "${STORE_FILE}" ]; then
+        [ -f "${STORE_FILE}" ] && [ ! -L "${STORE_FILE}" ] && [ -r "${STORE_FILE}" ] \
+            || die "${STORE_FILE} is not a plain readable file, so the remembered data store cannot be
+       trusted. Look at it, delete it, and pass --store again."
         STORE_DIR="$(head -n1 "${STORE_FILE}")"
         [ -n "${STORE_DIR}" ] || STORE_DIR="${DEFAULT_STORE}"
+        store_origin="the store remembered in ${STORE_FILE}"
     fi
 
     # Same reasoning for the opt-outs. Without this, `--verify` on a host deliberately set up with
@@ -279,11 +290,13 @@ parse_args() {
 
     case "${STORE_DIR}" in
         /*) ;;
-        *)  die "--store must be an absolute path. Got: '${STORE_DIR}'" ;;
+        *)  die "${store_origin} must be an absolute path. Got: '${STORE_DIR}'" ;;
     esac
-    if printf '%s' "${STORE_DIR}" | grep -q '[[:space:]"'"'"'\\]'; then
-        die "--store must not contain spaces, quotes or backslashes: '${STORE_DIR}'"
-    fi
+    # A `case` glob sees the WHOLE value, newlines included; `grep` would judge it line by line.
+    case "${STORE_DIR}" in
+        *[[:space:]\"\'\\]*|*[[:cntrl:]]*)
+            die "${store_origin} must not contain spaces, quotes, backslashes or control characters: '${STORE_DIR}'" ;;
+    esac
 
     # CANONICALISE FIRST, AND FAIL CLOSED. This list was an exact match on the raw string, and the
     # value ends up in `sudo chown ${USER}:${grp}` — so `/etc/`, `/etc/.`, `//etc`, `/etc/systemd`,
@@ -294,15 +307,15 @@ parse_args() {
     # rather than exact-match.
     local store_canon bad
     store_canon="$(canon_store "${STORE_DIR}")" \
-        || die "Could not work out where '${STORE_DIR}' really is, so it will not be used as the data store."
+        || die "Could not work out where '${STORE_DIR}' (${store_origin}) really is, so it will not be used as the data store."
     STORE_DIR="${store_canon}"
 
     # Refused outright, but their children are fine — /srv/vessel is the default and lives under
     # one of them.
-    for bad in / /home /root /var /opt /srv /mnt /media /snap /tmp; do
+    for bad in / /home /mnt /media /srv /tmp; do
         if [ "${STORE_DIR}" = "${bad}" ]; then
-            die "Refusing to use '${STORE_DIR}' as the data store. It would chown a system directory.
-       Use a folder inside it instead."
+            die "Refusing to use '${STORE_DIR}' (${store_origin}) as the data store. It would chown a
+       system directory. Use a folder inside it instead."
         fi
     done
 
@@ -310,15 +323,47 @@ parse_args() {
     # /usr/local is a plausible thing to type and just as wrong. /var and /root joined
     # 2026-09-07 (audit item 49): `--store /var/lib` was accepted and chowned the dpkg
     # database to the autologin desktop user, which is the physical-access-becomes-root
-    # path the preflight warns about, remembered permanently in the store file.
-    for bad in /etc /usr /bin /sbin /lib /lib32 /lib64 /libx32 /boot /dev /proc /sys /run /var /root; do
+    # path the preflight warns about, remembered permanently in the store file. /opt and /snap
+    # joined 2026-09-24: they were exact entries, so `/opt/google/chrome` — the browser binary
+    # that holds the folder handle — and anything under /snap were accepted and chowned.
+    for bad in /etc /usr /bin /sbin /lib /lib32 /lib64 /libx32 /boot /dev /proc /sys /run /var /root \
+               /opt /snap; do
         case "${STORE_DIR}/" in
             "${bad}"/*)
-                die "Refusing to use '${STORE_DIR}' as the data store. It is inside ${bad}, which this
-       script would then chown to your user."
+                die "Refusing to use '${STORE_DIR}' (${store_origin}) as the data store. It is inside
+       ${bad}, which this script would then chown to your user."
                 ;;
         esac
     done
+
+    # NOBODY'S HOME, AND NOT YOUR OWN HOME ITSELF (2026-09-24). `/home` was refused exactly and
+    # everything under it accepted, so `--store /home/someone-else` handed another account's
+    # files to this user by `sudo chown`, and `--store $HOME` chmod'd the home to 0750. The test
+    # is containment in the account containers — /home, and wherever this home actually lives —
+    # the same shape the share scripts use; a folder INSIDE your own home stays allowed.
+    local ch hp parent
+    ch="$(cd -P "${HOME}" 2>/dev/null && pwd -P)" || ch="${HOME}"
+    while [ "${ch#//}" != "${ch}" ]; do ch="${ch#/}"; done
+    hp="${ch%/*}"
+    [ "${STORE_DIR}" != "${ch}" ] \
+        || die "Refusing to use your home directory itself (${store_origin}) as the data store. Use a
+       folder inside it, or the default ${DEFAULT_STORE}."
+    for parent in /home "${hp}"; do
+        case "${parent}" in ""|/) continue ;; esac
+        case "${STORE_DIR}/" in "${parent}"/*) ;; *) continue ;; esac
+        case "${STORE_DIR}/" in "${ch}"/*) continue ;; esac
+        die "Refusing to use '${STORE_DIR}' (${store_origin}) as the data store. It is inside somebody
+       else's home directory, which this script would then chown to your user."
+    done
+
+    # And no dot-folder anywhere on the path: ~/.ssh, ~/.config and their kind hold keys and the
+    # browser profile, and a store is chmod'd 0750 for a group.
+    case "${STORE_DIR}/" in
+        */.*)
+            die "Refusing to use '${STORE_DIR}' (${store_origin}) as the data store. A hidden folder is
+       where programs keep keys and settings, not a place for shared files."
+            ;;
+    esac
 }
 
 # Canonicalise a store path for comparison against the list above.
@@ -1691,6 +1736,60 @@ enable_linger() {
 # startup and the user cannot override from inside the browser. Remove the file to undo it.
 # ---------------------------------------------------------------------------------------------
 
+# The managed policy, as JSON, for SCHEME://HOST. ONE definition, read by two callers: the builder
+# writes it, and --verify rebuilds it from the same URL and demands every key on disk match. The
+# lockdown used to be checked by a hand-picked three of its thirty-odd keys, so a policy with
+# URLBlocklist, DeveloperToolsAvailability, ExtensionInstallBlocklist or IncognitoModeAvailability
+# deleted or loosened verified green — and a list of keys restated in --verify would drift the
+# first time a key was added here. Both arguments are validated by the builder before this runs.
+chromium_policy_json() {
+    local scheme="$1" host="$2"
+    cat <<EOF
+{
+  "_comment": "Written by scripts/thinkcentre-setup.sh for the Vessel sharing host. Delete this file to undo it.",
+  "_comment_allowlist": "The leading dot means this host EXACTLY, not its subdomains, and the scheme is pinned. Chromium's filter format matches subdomains and every scheme unless you say otherwise, so a bare host here would have allowed http://anything.example on the one machine holding the operator's session.",
+
+  "URLBlocklist": ["*"],
+  "URLAllowlist": ["${scheme}://.${host}"],
+
+  "IncognitoModeAvailability": 1,
+  "BrowserSignin": 0,
+  "SyncDisabled": true,
+  "PasswordManagerEnabled": false,
+  "PasswordLeakDetectionEnabled": false,
+  "AutofillAddressEnabled": false,
+  "AutofillCreditCardEnabled": false,
+  "DeveloperToolsAvailability": 2,
+  "BackgroundModeEnabled": false,
+  "MetricsReportingEnabled": false,
+  "SafeBrowsingExtendedReportingEnabled": false,
+  "SearchSuggestEnabled": false,
+  "SpellCheckServiceEnabled": false,
+  "TranslateEnabled": false,
+  "PrintingEnabled": false,
+  "ShowHomeButton": false,
+  "BookmarkBarEnabled": false,
+  "DefaultBrowserSettingEnabled": false,
+  "PromptForDownloadLocation": false,
+  "ExtensionInstallBlocklist": ["*"],
+
+  "SafeBrowsingProtectionLevel": 1,
+  "DefaultPopupsSetting": 2,
+  "DefaultNotificationsSetting": 2,
+  "DefaultGeolocationSetting": 2,
+  "AudioCaptureAllowed": false,
+  "VideoCaptureAllowed": false,
+  "ScreenCaptureAllowed": false,
+  "DefaultSensorsSetting": 2,
+  "DefaultSerialGuardSetting": 2,
+  "DefaultWebUsbGuardSetting": 2,
+  "DefaultWebBluetoothGuardSetting": 2,
+  "DefaultFileSystemReadGuardSetting": 3,
+  "DefaultFileSystemWriteGuardSetting": 2
+}
+EOF
+}
+
 configure_chromium_policy() {
     log "Locking Chromium down with a managed policy"
 
@@ -1778,50 +1877,7 @@ configure_chromium_policy() {
     fi
 
     local tmp="${WORK_DIR}/policy.json"
-    cat > "${tmp}" <<EOF
-{
-  "_comment": "Written by scripts/thinkcentre-setup.sh for the Vessel sharing host. Delete this file to undo it.",
-  "_comment_allowlist": "The leading dot means this host EXACTLY, not its subdomains, and the scheme is pinned. Chromium's filter format matches subdomains and every scheme unless you say otherwise, so a bare host here would have allowed http://anything.example on the one machine holding the operator's session.",
-
-  "URLBlocklist": ["*"],
-  "URLAllowlist": ["${scheme}://.${host}"],
-
-  "IncognitoModeAvailability": 1,
-  "BrowserSignin": 0,
-  "SyncDisabled": true,
-  "PasswordManagerEnabled": false,
-  "PasswordLeakDetectionEnabled": false,
-  "AutofillAddressEnabled": false,
-  "AutofillCreditCardEnabled": false,
-  "DeveloperToolsAvailability": 2,
-  "BackgroundModeEnabled": false,
-  "MetricsReportingEnabled": false,
-  "SafeBrowsingExtendedReportingEnabled": false,
-  "SearchSuggestEnabled": false,
-  "SpellCheckServiceEnabled": false,
-  "TranslateEnabled": false,
-  "PrintingEnabled": false,
-  "ShowHomeButton": false,
-  "BookmarkBarEnabled": false,
-  "DefaultBrowserSettingEnabled": false,
-  "PromptForDownloadLocation": false,
-  "ExtensionInstallBlocklist": ["*"],
-
-  "SafeBrowsingProtectionLevel": 1,
-  "DefaultPopupsSetting": 2,
-  "DefaultNotificationsSetting": 2,
-  "DefaultGeolocationSetting": 2,
-  "AudioCaptureAllowed": false,
-  "VideoCaptureAllowed": false,
-  "ScreenCaptureAllowed": false,
-  "DefaultSensorsSetting": 2,
-  "DefaultSerialGuardSetting": 2,
-  "DefaultWebUsbGuardSetting": 2,
-  "DefaultWebBluetoothGuardSetting": 2,
-  "DefaultFileSystemReadGuardSetting": 3,
-  "DefaultFileSystemWriteGuardSetting": 2
-}
-EOF
+    chromium_policy_json "${scheme}" "${host}" > "${tmp}"
 
     # Validate before installing. A malformed policy file is ignored silently by Chromium, which
     # would leave this host unlocked while the summary claims otherwise.
@@ -2654,17 +2710,102 @@ readonly NO_USER_BUS="could not ask — no systemd user bus (run this from the d
 # 2 is the desktop (Class=user, Type=x11). Taking the FIRST match is why the session-type report
 # read "unspecified" on a machine that was correctly on X11 — and would have read "unspecified" on
 # one that was wrongly on Wayland too, which is the whole failure this question exists to catch.
-# Class is what separates them, so ask for Class rather than trusting the order.
+#
+# Class alone is not enough either, and that was the second time this went wrong: an SSH login is
+# ALSO Class=user, with Type=tty. Over SSH — which is how --verify is usually run on this box — the
+# SSH session could come back first, and every check keyed on "is there a desktop" then asked about
+# a terminal: `graphical session type` FAILED as `tty` on a healthy X11 box, and unclutter was
+# looked for in a session that never started it. So a session counts only when its Type is one a
+# display server gives it. Wayland is accepted HERE on purpose: hiding a Wayland desktop is not
+# this function's job — the session-type check in verify() fails it by name.
 graphical_session_id() {
-    local sid
+    local sid class type
     while read -r sid; do
         [ -n "${sid}" ] || continue
-        if [ "$(loginctl show-session "${sid}" -p Class --value 2>/dev/null)" = "user" ]; then
-            printf '%s' "${sid}"
-            return 0
-        fi
+        class="$(loginctl show-session "${sid}" -p Class --value 2>/dev/null)"
+        [ "${class}" = "user" ] || continue
+        type="$(loginctl show-session "${sid}" -p Type --value 2>/dev/null)"
+        case "${type}" in
+            x11|wayland|mir)
+                printf '%s' "${sid}"
+                return 0
+                ;;
+        esac
     done < <(loginctl list-sessions --no-legend 2>/dev/null | awk -v u="${USER}" '$3 == u {print $1}')
     return 1
+}
+
+# The files SDDM reads, in the order it reads them, NUL-separated: the packaged defaults, then
+# /etc/sddm.conf.d, then /etc/sddm.conf — each directory sorted by name, and every regular file in
+# it, since SDDM does not filter on `.conf` (a stray `10-vessel.conf~` left by an editor is read
+# too). `$1` is a root prefix, empty on the real machine; the gate points it at a throwaway tree.
+sddm_config_files() {
+    local root="${1:-}" dir f
+    local LC_ALL=C
+    for dir in "${root}/usr/lib/sddm/sddm.conf.d" "${root}/etc/sddm.conf.d"; do
+        [ -d "${dir}" ] || continue
+        for f in "${dir}"/*; do
+            [ -f "${f}" ] && printf '%s\0' "${f}"
+        done
+    done
+    [ -f "${root}/etc/sddm.conf" ] && printf '%s\0' "${root}/etc/sddm.conf"
+    return 0
+}
+
+# The value SDDM itself would use for KEY in [SECTION]: files in the order given, LATER FILES WIN,
+# and only a key inside the named section counts. The first version kept the FIRST `User=` it saw
+# in any section of any file — so a later drop-in switching autologin off, or a `User=` under some
+# other section, reported as whatever the earliest file said. An empty value is still a value:
+# SDDM assigns it, so `User=` in a later file really does switch autologin off, and this says so.
+# Prints the value and returns 0, or prints nothing and returns 1 when no file sets it.
+sddm_value() {
+    local section="$1" key="$2" f v found=1 val=""
+    shift 2
+    for f in "$@"; do
+        [ -f "${f}" ] || continue
+        if v="$(awk -v want="${section}" -v key="${key}" '
+            function trim(s) { sub(/^[ \t\r]+/, "", s); sub(/[ \t\r]+$/, "", s); return s }
+            { line = trim($0) }
+            line ~ /^[#;]/ || line == "" { next }
+            line ~ /^\[.*\]$/ { sec = trim(substr(line, 2, length(line) - 2)); next }
+            sec == want {
+                eq = index(line, "=")
+                if (eq > 0 && trim(substr(line, 1, eq - 1)) == key) { val = trim(substr(line, eq + 1)); hit = 1 }
+            }
+            END { if (hit) { print val; exit 0 } exit 1 }
+        ' "${f}")"; then
+            val="${v}"
+            found=0
+        fi
+    done
+    [ "${found}" -eq 0 ] || return 1
+    printf '%s' "${val}"
+}
+
+# What PowerDevil and the screen locker will do when this box sits idle, read back through KConfig
+# itself — so /etc/xdg defaults and the nesting are resolved the way the daemons resolve them.
+# One line per question: label, expected, actual, tab-separated. Returns 2 when there is no
+# kreadconfig to ask.
+#
+# The groups are NESTED — [AC][Display], [AC][SuspendAndShutdown] — per PowerDevil's own schema
+# (PowerDevilProfileSettings.kcfg). plasma-dark-setup.sh once wrote these keys into a flat [AC]
+# group, PowerDevil read none of them, and nothing on this box asked. An unset key reads as
+# `unset` and FAILS, because PowerDevil's default for an unset key is to dim and turn the display
+# off: silence in this file is a screen that blanks.
+display_idle_settings() {
+    local kread="" c
+    for c in kreadconfig6 kreadconfig5; do
+        have "${c}" && { kread="${c}"; break; }
+    done
+    [ -n "${kread}" ] || return 2
+    printf 'display never turns off\tfalse\t%s\n' \
+        "$("${kread}" --file powerdevilrc --group AC --group Display --key TurnOffDisplayWhenIdle --default unset 2>/dev/null)"
+    printf 'display never dims\tfalse\t%s\n' \
+        "$("${kread}" --file powerdevilrc --group AC --group Display --key DimDisplayWhenIdle --default unset 2>/dev/null)"
+    printf 'powerdevil never auto-suspends\t0\t%s\n' \
+        "$("${kread}" --file powerdevilrc --group AC --group SuspendAndShutdown --key AutoSuspendAction --default unset 2>/dev/null)"
+    printf 'screen never locks itself\tfalse\t%s\n' \
+        "$("${kread}" --file kscreenlockerrc --group Daemon --key Autolock --default unset 2>/dev/null)"
 }
 
 # Read one key out of an INI-ish file, ignoring comments. Enough for the display managers' config
@@ -2705,6 +2846,96 @@ else:
     fi
 }
 
+# Every top-level key of a JSON object, one per line, through the same readers as json_value.
+json_keys() {
+    local file="$1"
+    if have jq; then
+        jq -r 'keys_unsorted[]' "${file}" 2>/dev/null
+    elif have python3; then
+        python3 -c '
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(1)
+for k in d:
+    print(k)
+' "${file}" 2>/dev/null
+    else
+        return 1
+    fi
+}
+
+# Every lockdown key the builder writes, compared against the policy on disk: one line per key,
+# label, expected, actual, tab-separated. EXPECTED is chromium_policy_json's own output, so a key
+# added to the builder is verified from the day it is added, and none can be forgotten here.
+# Returns non-zero when there was nothing to compare against.
+verify_policy_file() {
+    local pol="$1" expected="$2" key want got n=0
+    while IFS= read -r key; do
+        case "${key}" in ""|_*) continue ;; esac
+        want="$(json_value "${expected}" "${key}")" || return 1
+        got="$(json_value "${pol}" "${key}" || true)"
+        printf 'policy %s\t%s\t%s\n' "${key}" "${want}" "${got:-unset}"
+        n=$((n + 1))
+    done < <(json_keys "${expected}")
+    [ "${n}" -gt 0 ]
+}
+
+# Is the kiosk actually showing the page, as far as this box can tell? One line per question:
+# kind (check|note), label, expected, actual — tab-separated.
+#
+#   ACTIVE      systemctl --user is-active for the kiosk unit
+#   GSID        the graphical session id, or empty
+#   CHROMIUM    yes|no — is the kiosk browser running as this user
+#   UPTIME      whole seconds since boot
+#   FRESH       yes when the kiosk unit file is newer than this boot: set up and not yet rebooted
+#
+# "The unit is active" used to be the whole answer, and the launcher is active while it POLLS for a
+# display that never comes — so a box whose autologin had failed, sitting at a login screen with
+# nothing shared, verified green, as did one whose browser had died under a running unit. After a
+# grace period long enough for the launcher's two waits (two minutes for a display, five for the
+# site), an active unit with no desktop, or no browser, FAILS. Before a first reboot the desktop
+# genuinely cannot exist yet, and that stays a note.
+readonly KIOSK_GRACE_SECONDS=600
+kiosk_liveness() {
+    local active="$1" gsid="$2" chromium="$3" uptime="$4" fresh="$5"
+    local settled=no
+    if [ "${fresh}" != "yes" ] && [ "${uptime}" -ge "${KIOSK_GRACE_SECONDS}" ] 2>/dev/null; then
+        settled=yes
+    fi
+
+    if [ "${active}" = "inactive" ] && [ -z "${gsid}" ] && [ "${settled}" = "no" ]; then
+        printf 'note\tkiosk running\t-\tinactive (no graphical session yet — expected before the first reboot)\n'
+    else
+        printf 'check\tkiosk running\tactive\t%s\n' "${active}"
+    fi
+
+    if [ -n "${gsid}" ]; then
+        printf 'note\tgraphical session\t-\t%s\n' "${gsid}"
+    elif [ "${settled}" = "yes" ]; then
+        printf 'check\tgraphical session\tpresent\tnone, %ss after boot — autologin has not produced a desktop, so the kiosk launcher is polling for a display that will not come\n' "${uptime}"
+    else
+        printf 'note\tgraphical session\t-\tnone yet (%s)\n' "$([ "${fresh}" = "yes" ] && echo "set up since the last boot — reboot, then verify again" || echo "${uptime}s after boot")"
+    fi
+
+    if [ "${chromium}" = "yes" ]; then
+        printf 'check\tchromium\trunning in kiosk mode\trunning in kiosk mode\n'
+    elif [ "${settled}" = "yes" ]; then
+        printf 'check\tchromium\trunning in kiosk mode\tnot running, %ss after boot\n' "${uptime}"
+    else
+        printf 'note\tchromium\t-\tnot running (expected before the first reboot, or in the first %s minutes)\n' "$((KIOSK_GRACE_SECONDS / 60))"
+    fi
+}
+
+# The autologin user must be THIS user — the one whose Chromium profile holds the pairing. "Some
+# user logs in automatically" was the old test, and it passed a box autologging into an account
+# with no kiosk at all. One line: label, expected, actual.
+autologin_line() {
+    local dm_name="$1" configured="$2"
+    printf 'autologin user (%s)\t%s\t%s\n' "${dm_name}" "${USER}" "${configured:-none}"
+}
+
 verify() {
     # Up front rather than lazily, so a password prompt cannot appear halfway down the report
     # where it reads as the report having hung.
@@ -2733,27 +2964,30 @@ verify() {
 
         # `failed` is not `inactive`. A unit with Restart=always that has hit its start rate limit
         # reports `failed`, and demoting everything-that-is-not-active to a note meant the single
-        # most important process on this machine could be dead while --verify exited 0. Only a
-        # genuinely inactive unit with nobody logged in at the screen is expected.
-        local active
+        # most important process on this machine could be dead while --verify exited 0. And
+        # `active` is not "showing the page" either — see kiosk_liveness.
+        local active chromium_up=no uptime_s fresh=no boot_epoch unit_epoch
         active="$(first_or inactive systemctl --user is-active "${SERVICE_NAME}.service")"
-        if [ "${active}" = "inactive" ] && [ -z "${gsid}" ]; then
-            note "kiosk running" "inactive (no graphical session — expected over SSH before a reboot)"
-        else
-            check "kiosk running" "active" "${active}"
+        if pgrep -u "$(id -u)" -f -- 'chrom.*--class=vessel-kiosk' >/dev/null 2>&1; then
+            chromium_up=yes
         fi
+        uptime_s="$(awk '{ printf "%d", $1 }' /proc/uptime 2>/dev/null || echo 0)"
+        boot_epoch="$(awk '/^btime / { print $2 }' /proc/stat 2>/dev/null || echo 0)"
+        unit_epoch="$(stat -c %Y "${UNIT_FILE}" 2>/dev/null || echo 0)"
+        [ "${unit_epoch:-0}" -gt "${boot_epoch:-0}" ] 2>/dev/null && fresh=yes
+        local lv_kind lv_label lv_expected lv_actual
+        while IFS=$'\t' read -r lv_kind lv_label lv_expected lv_actual; do
+            case "${lv_kind}" in
+                check) check "${lv_label}" "${lv_expected}" "${lv_actual}" ;;
+                note)  note "${lv_label}" "${lv_actual}" ;;
+            esac
+        done < <(kiosk_liveness "${active}" "${gsid}" "${chromium_up}" "${uptime_s:-0}" "${fresh}")
     else
         unknown_check "linger enabled" "${NO_USER_BUS}"
         unknown_check "watchdog timer enabled" "${NO_USER_BUS}"
         unknown_check "watchdog timer active" "${NO_USER_BUS}"
         unknown_check "kiosk unit enabled" "${NO_USER_BUS}"
         unknown_check "kiosk running" "${NO_USER_BUS}"
-    fi
-
-    if pgrep -u "$(id -u)" -f 'chromium.*--kiosk' >/dev/null 2>&1; then
-        note "chromium" "running in kiosk mode"
-    else
-        note "chromium" "not running (expected before the first reboot)"
     fi
 
     # The launcher starts unclutter to get the pointer off the screen. If it is missing or has
@@ -2820,7 +3054,20 @@ verify() {
     #   - With no JSON reader installed, a file Chromium would discard whole printed the same as
     #     a good one. "Valid" and "not checked" are different answers.
     if [ "${DO_CHROMIUM_POLICY}" -eq 1 ]; then
-        local dir pol
+        local dir pol expected_policy="" pv_scheme=""
+        case "${kiosk_url}" in
+            https://*) pv_scheme=https ;;
+            http://*)  pv_scheme=http ;;
+        esac
+        # The same refusal the builder applies before interpolating: a host that could not have
+        # been written into a policy cannot be the expected value of one either.
+        case "${kiosk_host}" in
+            ""|*[!A-Za-z0-9.:-]*) pv_scheme="" ;;
+        esac
+        if [ -n "${pv_scheme}" ]; then
+            expected_policy="${WORK_DIR}/expected-policy.json"
+            chromium_policy_json "${pv_scheme}" "${kiosk_host}" > "${expected_policy}"
+        fi
         while read -r dir; do
             [ -n "${dir}" ] || continue
             pol="${dir}/${POLICY_NAME}"
@@ -2836,32 +3083,26 @@ verify() {
                 continue
             fi
 
-            local read_guard write_guard allowlist
-            read_guard="$(json_value "${pol}" DefaultFileSystemReadGuardSetting || true)"
-            if [ -z "${read_guard}" ] && ! json_value "${pol}" URLBlocklist >/dev/null 2>&1; then
+            # EVERY key the builder writes, rebuilt from the builder's own function and compared one
+            # by one. Three hand-picked keys were checked before, so a policy with its
+            # URLBlocklist, DeveloperToolsAvailability, ExtensionInstallBlocklist or
+            # IncognitoModeAvailability deleted or loosened verified green. 3 for the read guard
+            # is deliberate — that prompt IS the folder picker — and it is checked like the rest.
+            if ! json_keys "${pol}" >/dev/null; then
                 check "chromium policy valid JSON" "yes" "no — ${pol} does not parse"
                 continue
             fi
-            write_guard="$(json_value "${pol}" DefaultFileSystemWriteGuardSetting || true)"
-            allowlist="$(json_value "${pol}" URLAllowlist || true)"
-
-            # 3 is "ask", and that prompt IS the folder picker this machine exists to answer, so
-            # it may not be tightened to 2. Write stays blocked because the design shares
-            # read-only. Either value drifting is a silent change to what the box can do.
-            check "policy file-read guard" "3" "${read_guard:-unset}"
-            check "policy file-write guard" "2" "${write_guard:-unset}"
-
-            # A kiosk pointed at one host and allowlisted for another is a blank screen with no
-            # error anywhere. The two values were printed side by side and never compared.
-            if [ -n "${kiosk_host}" ]; then
-                case ",${allowlist}," in
-                    *",https://.${kiosk_host},"*|*",https://${kiosk_host},"*)
-                        check "policy allows the kiosk URL" "yes" "yes" ;;
-                    *)
-                        check "policy allows the kiosk URL" "yes" \
-                            "no — allowlist is [${allowlist:-empty}], kiosk host is ${kiosk_host}" ;;
-                esac
+            if [ -z "${expected_policy}" ]; then
+                unknown_check "chromium policy matches the builder" \
+                    "could not ask — ${URL_FILE} has no usable http(s) URL to rebuild it from"
+                continue
             fi
+            local pv_label pv_expected pv_actual
+            while IFS=$'\t' read -r pv_label pv_expected pv_actual; do
+                [ -n "${pv_label}" ] || continue
+                check "${pv_label}" "${pv_expected}" "${pv_actual}"
+            done < <(verify_policy_file "${pol}" "${expected_policy}" \
+                     || printf 'policy keys\tcompared\tnothing to compare\n')
         done < <(policy_dirs)
     fi
 
@@ -2969,6 +3210,26 @@ verify() {
             "$(first_or missing systemctl is-enabled unattended-upgrades)"
     fi
 
+    # The screen must never blank, dim, suspend or lock. On a Plasma desktop the launcher's `xset`
+    # calls are not what decides that — PowerDevil runs its own idle timer and calls DPMS itself —
+    # so the only honest question is what PowerDevil's and the locker's own files say. Nothing
+    # asked until 2026-09-24, and the keys had been written into the wrong group the whole time.
+    if pkg_installed powerdevil || pkg_installed plasma-workspace; then
+        local idle_out="" idle_rc=0 idle_label idle_expected idle_actual
+        idle_out="$(display_idle_settings)" || idle_rc=$?
+        if [ "${idle_rc}" -eq 2 ]; then
+            unknown_check "display never turns off" \
+                "could not ask — neither kreadconfig6 nor kreadconfig5 is installed"
+        else
+            while IFS=$'\t' read -r idle_label idle_expected idle_actual; do
+                [ -n "${idle_label}" ] || continue
+                check "${idle_label}" "${idle_expected}" "${idle_actual:-unset}"
+            done <<< "${idle_out}"
+        fi
+    else
+        note "display idle (powerdevil)" "not a Plasma desktop — the launcher's xset is the mechanism"
+    fi
+
     # X11 is load-bearing on this host and not a preference: the launcher blanks the screen with
     # xset and hides the pointer with unclutter, both of which are silent no-ops under Wayland, so
     # a Wayland session gives you a kiosk that blanks itself — the one thing an always-on host
@@ -2976,18 +3237,19 @@ verify() {
     #
     # At rest, in the display manager's config: true even with no session running, which is the
     # state anybody checking over SSH before a reboot is in.
-    local dm dm_name sddm_conf autologin_user="" session_pin=""
+    local dm dm_name sddm_conf autologin_user="" session_pin="" al_label al_expected al_actual
     dm="$(cat /etc/X11/default-display-manager 2>/dev/null || true)"
     dm_name="${dm##*/}"
     case "${dm_name}" in
         sddm)
-            for sddm_conf in /etc/sddm.conf.d/*.conf /etc/sddm.conf; do
-                [ -f "${sddm_conf}" ] || continue
-                [ -n "${autologin_user}" ] || autologin_user="$(ini_value "${sddm_conf}" User)"
-                [ -n "${session_pin}" ]    || session_pin="$(ini_value "${sddm_conf}" Session)"
-            done
+            local -a sddm_files=()
+            mapfile -d '' -t sddm_files < <(sddm_config_files "")
+            autologin_user="$(sddm_value Autologin User "${sddm_files[@]}" || true)"
+            session_pin="$(sddm_value Autologin Session "${sddm_files[@]}" || true)"
             check "autologin configured (sddm)" "yes" \
                 "$([ -n "${autologin_user}" ] && echo yes || echo "no — no [Autologin] User= found")"
+            IFS=$'\t' read -r al_label al_expected al_actual < <(autologin_line sddm "${autologin_user}")
+            check "${al_label}" "${al_expected}" "${al_actual}"
             check "display manager session" "plasmax11" "${session_pin:-unset}"
             ;;
         lightdm)
@@ -2997,11 +3259,16 @@ verify() {
             done
             check "autologin configured (lightdm)" "yes" \
                 "$([ -n "${autologin_user}" ] && echo yes || echo "no — no autologin-user= found")"
+            IFS=$'\t' read -r al_label al_expected al_actual < <(autologin_line lightdm "${autologin_user}")
+            check "${al_label}" "${al_expected}" "${al_actual}"
             ;;
         gdm3|gdm)
             autologin_user="$(ini_value /etc/gdm3/daemon.conf AutomaticLoginEnable)"
             check "autologin configured (gdm3)" "yes" \
                 "$(case "${autologin_user}" in [Tt]rue|1) echo yes;; *) echo "no — AutomaticLoginEnable is ${autologin_user:-unset}";; esac)"
+            IFS=$'\t' read -r al_label al_expected al_actual \
+                < <(autologin_line gdm3 "$(ini_value /etc/gdm3/daemon.conf AutomaticLogin)")
+            check "${al_label}" "${al_expected}" "${al_actual}"
             ;;
         "")
             unknown_check "autologin configured" \

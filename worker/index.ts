@@ -21,13 +21,13 @@ import * as downloads from "./downloads";
 import * as pages from "./downloadPages";
 import * as passkeys from "./passkeys";
 import * as setups from "./setups";
-import { clientKey } from "./crypto";
-import { BadRequest, readBounded } from "./encoding";
+import { BadRequest, fromBlob, readBounded, toBase64Url } from "./encoding";
 import type { Env } from "./env";
 import { RateLimiter } from "./rate-limit";
-import { MachineSignal } from "./signal";
+import { AGENT_KEY_HEADER, MACHINE_HEADER, MachineSignal } from "./signal";
 import { publishSiteConfig, readSiteConfig, withSiteConfig } from "./site-config";
 import { crawlerFile, withPageMeta } from "./page-meta";
+import { HSTS, harden, health } from "./hardening";
 
 export { MachineSignal, RateLimiter };
 export type { Env };
@@ -121,11 +121,6 @@ function httpsRedirect(request: Request, url: URL): Response | null {
   });
 }
 
-/**
- * Two years, subdomains included. Not preloaded — preload is a one-way door that
- * needs a deliberate submission, and the apex is what matters here.
- */
-const HSTS = "max-age=63072000; includeSubDomains";
 
 /**
  * Refuse a state-changing request whose `Origin` is not ours.
@@ -280,40 +275,6 @@ async function cspReport(request: Request): Promise<Response> {
   if (text) console.warn("csp-report", text.slice(0, 2_048).replace(/[\u0000-\u001f\u007f]/g, " "));
 
   return new Response(null, { status: 204 });
-}
-
-/**
- * Headers every response carries; the CSP only where there is a document for it
- * to govern. API responses are JSON to a fetch — a policy there is noise the
- * report endpoint would faithfully relay.
- */
-function harden(response: Response, csp?: string): Response {
-  const out = new Response(response.body, response);
-  out.headers.set("strict-transport-security", HSTS);
-  out.headers.set("x-content-type-options", "nosniff");
-  out.headers.set("referrer-policy", "strict-origin-when-cross-origin");
-  // The site is never legitimately framed, and this is the cheap half of the
-  // clickjacking defence a CSP `frame-ancestors` would otherwise carry.
-  out.headers.set("x-frame-options", "DENY");
-  // Features the site will never use, refused site-wide so a compromised or
-  // injected script cannot quietly ask for them. WebAuthn is deliberately not
-  // listed: `publickey-credentials-get`/`create` keep their default
-  // self-allowlist, which is exactly what the passkey ceremonies need.
-  out.headers.set(
-    "permissions-policy",
-    "camera=(), microphone=(), geolocation=(), payment=(), usb=(), accelerometer=(), gyroscope=(), magnetometer=()",
-  );
-  // The site opens no popups and is opened by none it wants a handle on;
-  // severing any opener relationship costs nothing and keeps a hostile page
-  // that window.open'd us from scripting against the window.
-  out.headers.set("cross-origin-opener-policy", "same-origin");
-  if (csp) {
-    // Report-only until production has run quiet — see `cspPolicy`. This line
-    // is the flip: drop the `-report-only` suffix to enforce.
-    out.headers.set("content-security-policy-report-only", csp);
-    out.headers.set("reporting-endpoints", 'csp-endpoint="/api/csp-report"');
-  }
-  return out;
 }
 
 /** The four Worker secrets, named once so nothing can check three of them. */
@@ -748,16 +709,18 @@ async function route(
  * Authenticate a signalling upgrade and hand it to the machine's Durable
  * Object (§13). Everything that decides *whether* this caller may reach the
  * object happens here, in front of it: the session, the ownership check, and
- * the role. The object itself trusts what arrives, which is what keeps it an
- * introducer with no knowledge of accounts.
+ * the role. The object knows nothing of accounts; what it does check, since
+ * 2026-09-24, is the one thing a session cannot vouch for — that an agent
+ * socket holds the machine key — against the `agent_pubkey` handed to it here.
  *
  * **Phase 3 widens the reach gate to grantees. It must NOT widen the role
  * gate**, and the comment that used to sit here — "phase 3 widens exactly this
  * gate to grantees; the object does not change" — was false about the half
- * that matters (2026-09-14). `MachineSignal`'s `/connect?role=agent` evicts the
- * incumbent agent unconditionally and makes the newcomer the socket every
- * browsing tab is introduced to; a grantee who passed a widened reach check
- * could therefore install themselves as the machine's agent. Not reachable
+ * that matters (2026-09-14). A proven agent socket evicts the incumbent and
+ * becomes the socket every browsing tab is introduced to. The key proof now
+ * stands between a widened reach check and that position as well, but the
+ * role gate stays: a grantee has no business opening an agent socket at all,
+ * even one it cannot prove. Not reachable
  * today, because today reach *is* ownership — which is exactly what makes a
  * shared check the wrong thing to leave behind. The two are separate statements
  * below, and the role one compares against `account.id` rather than reusing the
@@ -803,10 +766,10 @@ async function signalUpgrade(request: Request, env: Env, url: URL): Promise<Resp
   // the role gate below can ask its own question of the row rather than
   // inheriting this one's answer.
   const machine = await env.DB.prepare(
-    "SELECT id, owner_id FROM machines WHERE id = ? AND owner_id = ?",
+    "SELECT id, owner_id, agent_pubkey FROM machines WHERE id = ? AND owner_id = ?",
   )
     .bind(machineId, account.id)
-    .first<{ id: string; owner_id: string }>();
+    .first<{ id: string; owner_id: string; agent_pubkey: unknown }>();
   if (!machine) throw new BadRequest("No such machine on this account.", 404);
 
   const role = url.searchParams.get("role");
@@ -817,9 +780,9 @@ async function signalUpgrade(request: Request, env: Env, url: URL): Promise<Resp
   /*
    * **The role gate, and it is deliberately redundant today.** Given the WHERE
    * clause above this comparison cannot currently fail — that is the point. The
-   * agent role is not "a way to connect", it is *being* the machine: the object
-   * evicts whatever agent socket is already open and routes every browsing
-   * tab's offer to the newcomer. Answering for somebody's machine is the
+   * agent role is not "a way to connect", it is *being* the machine: once the
+   * newcomer proves the machine key, the object evicts the incumbent and routes
+   * every browsing tab's offer to it. Answering for somebody's machine is the
    * owner's alone, whatever else a grant may come to mean, so it is asserted
    * where the decision is rather than left as a property of a query written for
    * a different question. Written as a comparison against `account.id`, not as
@@ -830,16 +793,28 @@ async function signalUpgrade(request: Request, env: Env, url: URL): Promise<Resp
     throw new BadRequest("Only this machine's owner can connect as its agent.", 403);
   }
 
-  // Connection events, not liveness (§12 N) — liveness is the object's socket
-  // state, asked for by the machine list, persisted nowhere.
+  /*
+   * **A session reaches the object; only the machine key makes an agent**
+   * (2026-09-24). The role gate above says who may *ask* to be the agent; the
+   * object then challenges the socket and admits it only on a signature from
+   * the key whose public half is this row's `agent_pubkey`. The key is handed
+   * over here, from the row, and any copy of either header the caller sent is
+   * deleted first — a header the client could set would let the caller choose
+   * the key its own proof is checked against. `last_seen` moved into the object
+   * with it, stamped on proof rather than on a cookie's say-so.
+   */
+  const headers = new Headers(request.headers);
+  headers.delete(AGENT_KEY_HEADER);
+  headers.delete(MACHINE_HEADER);
   if (role === "agent") {
-    await env.DB.prepare("UPDATE machines SET last_seen = ? WHERE id = ?")
-      .bind(Date.now(), machineId)
-      .run();
+    headers.set(AGENT_KEY_HEADER, toBase64Url(fromBlob(machine.agent_pubkey)));
+    headers.set(MACHINE_HEADER, machine.id);
   }
 
   const stub = env.SIGNAL.get(env.SIGNAL.idFromName(machineId));
-  const response = await stub.fetch(new Request(`https://signal/connect?role=${role}`, request));
+  const response = await stub.fetch(
+    new Request(`https://signal/connect?role=${role}`, { method: "GET", headers }),
+  );
 
   // **The 101 is the only response that may skip `harden`**, because copying a
   // response drops its `webSocket` and every upgrade would hang. Everything else
@@ -849,27 +824,6 @@ async function signalUpgrade(request: Request, env: Env, url: URL): Promise<Resp
   // the object's own; this makes the rule structural rather than a coincidence
   // that holds while the duplication does.
   return response.status === 101 ? response : harden(response);
-}
-
-/**
- * Liveness, and specifically the two things that can be misconfigured in a way
- * the site would otherwise hide: D1 reachable with the migration applied, and
- * the Durable Object namespace answering.
- */
-async function health(env: Env): Promise<Response> {
-  const row = await env.DB.prepare(
-    "SELECT count(*) AS n FROM sqlite_master WHERE type = 'table' AND name IN ('accounts','credentials','key_slots','totp','setups','audit','machines','drives')",
-  ).first<{ n: number }>();
-
-  const key = await clientKey("0.0.0.0", env.RATE_SALT_SEED ?? "dev-seed");
-  const limiter = env.RATE_LIMIT.get(env.RATE_LIMIT.idFromName(key));
-  const verdict = await limiter.fetch("https://rate-limit/check").then((r) => r.json());
-
-  return Response.json({
-    ok: row?.n === 8,
-    tables: row?.n ?? 0,
-    rateLimit: verdict,
-  });
 }
 
 /** A failure the client is expected to act on. */

@@ -30,8 +30,11 @@ import type { Env } from "./env";
 import {
   assertPassword,
   auditStatement,
+  endSessionsStatement,
+  hangUpSignalling,
   json,
   noStore,
+  ownedMachineIds,
   readJson,
   requireAccount,
 } from "./accounts";
@@ -200,11 +203,21 @@ export async function setOperator(request: Request, env: Env): Promise<Response>
 export async function resetTotp(request: Request, env: Env): Promise<Response> {
   const { caller, body } = await proven(request, env);
   const account = await target(env, body);
+  const machines = await ownedMachineIds(env, account.id);
 
+  /*
+   * **And every session the account holds ends** (2026-09-24, audit item 58).
+   * A TOTP reset is what the operator does when the owner says "I lost my
+   * phone" — which is also what somebody who has stolen the phone, or a
+   * session, would like the operator to do. Whatever was signed in before the
+   * factor changed is signed out by it, and its signalling sockets hung up.
+   */
   await env.DB.batch([
     env.DB.prepare("DELETE FROM totp WHERE account_id = ?").bind(account.id),
+    endSessionsStatement(env, account.id, Date.now()),
     auditStatement(env, caller.id, "admin.totp.reset", account.handle),
   ]);
+  await hangUpSignalling(env, machines);
 
   return json({ status: "ok", handle: account.handle });
 }
@@ -256,6 +269,8 @@ export async function resetPassword(request: Request, env: Env): Promise<Respons
   // slots, none of which these statements touch, so it is stable across the
   // batch. The batch is a transaction; if the guard is false all three
   // statements no-op and the stamp below reports it.
+  const now = Date.now();
+  const machines = await ownedMachineIds(env, account.id);
   const guard = `EXISTS (SELECT 1
                    FROM key_slots s JOIN credentials c ON c.id = s.credential_id
                   WHERE s.account_id = ?
@@ -268,11 +283,13 @@ export async function resetPassword(request: Request, env: Env): Promise<Respons
     env.DB.prepare(
       `DELETE FROM credentials WHERE account_id = ? AND kind = 'password' AND ${guard}`,
     ).bind(account.id, account.id),
-    env.DB.prepare(`UPDATE accounts SET reset_at = ? WHERE id = ? AND ${guard}`).bind(
-      Date.now(),
-      account.id,
-      account.id,
-    ),
+    // The stamp also ends every session the account holds (audit item 58): the
+    // reset exists because the password is no longer trusted, so neither is
+    // anything that signed in with it. Same statement, same guard — a refused
+    // reset moves neither.
+    env.DB.prepare(
+      `UPDATE accounts SET reset_at = ?, sessions_after = MAX(sessions_after, ?) WHERE id = ? AND ${guard}`,
+    ).bind(now, now, account.id, account.id),
   ]);
   if ((results[2]?.meta?.changes ?? 0) === 0) {
     throw new BadRequest(
@@ -282,6 +299,8 @@ export async function resetPassword(request: Request, env: Env): Promise<Respons
 
   // After the verdict, so the audit never records a reset the guard refused.
   await env.DB.batch([auditStatement(env, caller.id, "admin.password.reset", account.handle)]);
+  // After the epoch committed, so nothing hung up here can re-dial.
+  await hangUpSignalling(env, machines);
 
   return json({ status: "ok", handle: account.handle });
 }
@@ -326,21 +345,15 @@ export async function deleteAccount(request: Request, env: Env): Promise<Respons
     throw new BadRequest("You cannot delete the account you are signed in with.");
   }
 
-  const { results: owned } = await env.DB.prepare("SELECT id FROM machines WHERE owner_id = ?")
-    .bind(account.id)
-    .all<{ id: string }>();
+  const owned = await ownedMachineIds(env, account.id);
 
   await env.DB.batch([
     auditStatement(env, caller.id, "admin.account.deleted", account.handle),
     env.DB.prepare("DELETE FROM accounts WHERE id = ?").bind(account.id),
   ]);
 
-  await Promise.allSettled(
-    owned.map(async (machine) => {
-      const stub = env.SIGNAL.get(env.SIGNAL.idFromName(machine.id));
-      await stub.fetch("https://signal/shutdown", { method: "POST" });
-    }),
-  );
+  // The one fan-out every session-ending event shares (`hangUpSignalling`).
+  await hangUpSignalling(env, owned, "removed");
 
   return json({ status: "ok", handle: account.handle });
 }

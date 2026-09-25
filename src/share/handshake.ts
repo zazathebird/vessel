@@ -13,17 +13,55 @@
  *
  * The context strings namespace the two roles — an agent's signature can never
  * be replayed as an owner's or vice versa — and bind the machine id, so a
- * signature for one machine's ceremony is noise in another's. The `vessel/`
+ * signature for one machine's ceremony is noise in another's, and (since v2,
+ * 2026-09-24) the signalling peer id, so a signature for one socket is noise on
+ * another. The agent's connect proof has a third context of its own. The `vessel/`
  * prefix is deliberate (CLAUDE.md deviation 10): wire formats keep the
  * internal name.
  */
 
 export type HandshakeRole = "agent" | "owner";
 
+/**
+ * **v2 binds the signalling peer id** (2026-09-24). v1 signed role, machine and
+ * fingerprint and nothing else, so a signed offer was valid for ever and from
+ * anywhere: anybody holding the owner's session cookie who had once captured an
+ * offer could replay it from a socket of their own, and the agent — whose
+ * verification it passed — answered with its SDP and then trickled its ICE
+ * candidates, which are the host's addresses. The replayer holds no DTLS key and
+ * so could never complete the call; what it bought was the machine's IPs on
+ * demand. The peer id is minted by the Durable Object per socket
+ * (`crypto.randomUUID()` in `worker/signal.ts`), told to the browsing tab in its
+ * `hello`, and stamped by the object on every frame it relays to the agent as
+ * `from` — so the agent verifies against the id of the socket the offer actually
+ * arrived on, and a captured offer replayed from any other socket fails. No extra
+ * round trip: the freshness is a value both ends already had.
+ *
+ * The agent's answer carries the same binding, so an answer is only good for the
+ * one browsing socket it was made for.
+ */
 const CONTEXT: Record<HandshakeRole, string> = {
-  agent: "vessel/p2p/agent-fp/v1",
-  owner: "vessel/p2p/owner-fp/v1",
+  agent: "vessel/p2p/agent-fp/v2",
+  owner: "vessel/p2p/owner-fp/v2",
 };
+
+/**
+ * The agent's proof that it holds the machine key, answered to a challenge the
+ * signalling object mints per socket (2026-09-24). Its own context string, so a
+ * proof can never be presented as a fingerprint signature or the other way
+ * round: the messages differ from their first byte.
+ */
+const CONNECT_CONTEXT = "vessel/p2p/agent-connect/v1";
+
+/**
+ * A signalling peer id: the shape `crypto.randomUUID()` produces and the only
+ * shape the object mints. Refused, never repaired — a peer id that is not one
+ * cannot have come from the object, and there is nothing to sign it into.
+ */
+export const PEER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** 32 random bytes, base64url without padding — what `mintConnectNonce` returns. */
+export const CONNECT_NONCE = /^[A-Za-z0-9_-]{43}$/;
 
 const ECDSA_P256 = { name: "ECDSA", namedCurve: "P-256" } as const;
 const SIGN_PARAMS = { name: "ECDSA", hash: "SHA-256" } as const;
@@ -41,7 +79,11 @@ export async function generateMachineKeypair(): Promise<{
     "sign",
     "verify",
   ])) as CryptoKeyPair;
-  const publicKeyBytes = new Uint8Array(await crypto.subtle.exportKey("raw", keyPair.publicKey));
+  // `as ArrayBuffer`: the Workers typings (this module is also compiled into
+  // the signalling object, for the connect proof) widen a raw export's type.
+  const publicKeyBytes = new Uint8Array(
+    (await crypto.subtle.exportKey("raw", keyPair.publicKey)) as ArrayBuffer,
+  );
   return { keyPair, publicKeyBytes };
 }
 
@@ -93,14 +135,22 @@ export function fingerprintFromSdp(sdp: string): string | null {
   return [...found][0];
 }
 
-/** The exact bytes both sides sign and verify. Exported for the harness. */
+/**
+ * The exact bytes both sides sign and verify. Exported for the harness.
+ *
+ * Throws on a peer id that is not one (above): the signer goes through here, so
+ * it cannot be talked into signing a message bound to something other than a
+ * socket id the object could have minted.
+ */
 export function fingerprintMessage(
   role: HandshakeRole,
   machineId: string,
+  peerId: string,
   fingerprint: string,
 ): Uint8Array {
+  if (!PEER_ID.test(peerId)) throw new Error("That is not a signalling peer id.");
   return new TextEncoder().encode(
-    `${CONTEXT[role]}\n${machineId}\n${normalizeFingerprint(fingerprint)}`,
+    `${CONTEXT[role]}\n${machineId}\n${peerId}\n${normalizeFingerprint(fingerprint)}`,
   );
 }
 
@@ -109,12 +159,13 @@ export async function signFingerprint(
   privateKey: CryptoKey,
   role: HandshakeRole,
   machineId: string,
+  peerId: string,
   fingerprint: string,
 ): Promise<Uint8Array> {
   const signature = await crypto.subtle.sign(
     SIGN_PARAMS,
     privateKey,
-    fingerprintMessage(role, machineId, fingerprint) as BufferSource,
+    fingerprintMessage(role, machineId, peerId, fingerprint) as BufferSource,
   );
   return new Uint8Array(signature);
 }
@@ -128,25 +179,84 @@ export async function verifyFingerprint(
   publicKeyBytes: Uint8Array,
   role: HandshakeRole,
   machineId: string,
+  peerId: string,
   fingerprint: string,
   signature: Uint8Array,
 ): Promise<boolean> {
-  let publicKey: CryptoKey;
+  if (!PEER_ID.test(peerId)) return false;
+  return verifyRaw(publicKeyBytes, signature, fingerprintMessage(role, machineId, peerId, fingerprint));
+}
+
+/**
+ * A fresh challenge for an agent socket — 32 random bytes. Minted by the
+ * signalling object, never by the agent: the whole value of the proof is that
+ * the party checking it chose what was signed.
+ */
+export function mintConnectNonce(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  let binary = "";
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/** The bytes an agent signs to prove it holds the machine key. Exported for the harness. */
+export function connectProofMessage(machineId: string, nonce: string): Uint8Array {
+  if (!CONNECT_NONCE.test(nonce)) throw new Error("That is not a connect challenge.");
+  return new TextEncoder().encode(`${CONNECT_CONTEXT}\n${machineId}\n${nonce}`);
+}
+
+/**
+ * The agent's answer to its socket's challenge (2026-09-24). Refuses a nonce of
+ * any other shape — a hostile signalling service is in scope (§3), and an agent
+ * that signed whatever it was handed would be a signing oracle for its own
+ * machine key. The context string already keeps a proof from ever validating as
+ * a fingerprint signature; the shape check keeps the input to what the object
+ * mints.
+ */
+export async function signConnectProof(
+  privateKey: CryptoKey,
+  machineId: string,
+  nonce: string,
+): Promise<Uint8Array> {
+  const signature = await crypto.subtle.sign(
+    SIGN_PARAMS,
+    privateKey,
+    connectProofMessage(machineId, nonce) as BufferSource,
+  );
+  return new Uint8Array(signature);
+}
+
+/** Verify a connect proof against `machines.agent_pubkey`. False is a refusal. */
+export async function verifyConnectProof(
+  publicKeyBytes: Uint8Array,
+  machineId: string,
+  nonce: string,
+  signature: Uint8Array,
+): Promise<boolean> {
+  if (!CONNECT_NONCE.test(nonce)) return false;
+  return verifyRaw(publicKeyBytes, signature, connectProofMessage(machineId, nonce));
+}
+
+async function verifyRaw(
+  publicKeyBytes: Uint8Array,
+  signature: Uint8Array,
+  message: Uint8Array,
+): Promise<boolean> {
   try {
-    publicKey = await crypto.subtle.importKey(
+    const publicKey = await crypto.subtle.importKey(
       "raw",
       publicKeyBytes as BufferSource,
       ECDSA_P256,
       false,
       ["verify"],
     );
+    return await crypto.subtle.verify(
+      SIGN_PARAMS,
+      publicKey,
+      signature as BufferSource,
+      message as BufferSource,
+    );
   } catch {
     return false;
   }
-  return crypto.subtle.verify(
-    SIGN_PARAMS,
-    publicKey,
-    signature as BufferSource,
-    fingerprintMessage(role, machineId, fingerprint) as BufferSource,
-  );
 }

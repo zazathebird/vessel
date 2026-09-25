@@ -9,7 +9,7 @@
 # The .txt copy of each script is the same bytes as the script, so it has
 # the same checksum. That is the point of it: what you read is what runs.
 #
-40d5d4ff0ea3f02129e77dcd64c6faab503eb00af7102f9efbb68197fd29698d  windows-share-setup.ps1
+2e5e1861ff41622a4d9b548b18759a63b13df38f982920c7a361c1bc4287d796  windows-share-setup.ps1
 b9eed399629aaddb0effd21d721e7947826650aa89bc9bd64b3dd898059ec1d9  launch.bat
-f0b5e6ac17bb0905cbe76c48a1d162b0c7e1db3fdbf5081460ff966e22efe21e  macos-share-setup.sh
-8d09d584ce9c3f90b9072e448cedd87283a8bed842f925db5ff57b721d3efe93  linux-share-setup.sh
+0625472b093df51247ad3e5e9fda95d5d90e5470cd87b38a3143510ee55ac9d5  macos-share-setup.sh
+3560769db00fd49a3ad05571c35fce4f148131fdd43bdb59b440d6abf2ae97c4  linux-share-setup.sh

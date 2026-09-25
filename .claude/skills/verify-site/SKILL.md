@@ -132,7 +132,7 @@ document.querySelector('h1').textContent
 
 ## Things that cannot be watched here, and what to do instead
 
-Canvas effects, the duel, entrance animations, the 60-second screensaver, and any rAF-driven
+Canvas effects, the duel, entrance animations, the ten-minute screensaver, and any rAF-driven
 transition. rAF is parked (trap 3). Two escape hatches:
 
 - **`fxlab.html`** — all sixteen effects, driven through `FxCanvas`'s exact frame maths by an
@@ -152,10 +152,10 @@ different claims, and the client has explicitly called out the difference.
 
 ## Sweeping every route
 
-Sixteen routes (`src/data/pageIds.ts`): `/ /scams /about /work /gallery /contact /guestbook /now
-/changelog /setup /404 /signup /signin /admin /machines /share`.
+Fifteen routes (`src/data/pageIds.ts`): `/ /scams /about /work /contact /guestbook /now /setup
+/404 /signup /signin /admin /machines /share /downloads`.
 
-Reuse one iframe and swap `src` rather than opening sixteen tabs. Worth probing per route:
+Reuse one iframe and swap `src` rather than opening fifteen tabs. Worth probing per route:
 horizontal overflow (`documentElement.scrollWidth - innerWidth`, a documented trap class),
 console errors, images missing `alt`, controls with no accessible name, unlabelled inputs.
 

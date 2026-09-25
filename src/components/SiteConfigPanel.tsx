@@ -540,20 +540,12 @@ export function SiteConfigPanel() {
             Sound
           </button>
           {/*
-            Operator-only, and the only control here whose *audience* is the
-            operator rather than the visitor: it prints each tile's slot notes
-            ("4:5 · photo slot") on the page, which is useful while the real
-            photographs are still going in and is production furniture to
-            anybody else. Default off — see `Config.slots`.
+            "Slot labels" was here. It printed each photo tile's slot note, and
+            since 2026-09-23 no page has a tile (docs/RETIRED-PAGES.md), so it
+            was a control that did nothing. `Config.slots` and share-code bit
+            32 stay — they are wire formats — and so does the tile markup, for
+            the day real photographs bring a page back. Restore this chip then.
           */}
-          <button
-            type="button"
-            className={`chip${eff.slots ? " is-active" : ""}`}
-            aria-pressed={eff.slots}
-            onClick={() => setLook({ slots: !eff.slots })}
-          >
-            Slot labels
-          </button>
           <button
             type="button"
             className={`chip${config.calm ? " is-active" : ""}`}

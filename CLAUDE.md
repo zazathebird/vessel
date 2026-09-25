@@ -41,7 +41,7 @@ indistinguishable from a skill skipped. `verify-site` for anything that must be 
 npm run dev          # Vite dev server on http://localhost:5173 — no API
 npm run dev:worker   # full stack: Worker + API + local D1, on http://127.0.0.1:8787
 npm run check        # THE GATE — every automatable invariant. Also runs as predeploy
-npm run check:fast   # the same without the duel simulation (~4s); runs after every edit via hook
+npm run check:fast   # the same without the duel simulation (~43s); runs after every edit via hook
 npm run build        # typecheck + production build to dist/
 npm run typecheck    # types only: app, worker, and scripts/
 npm run test:auth    # auth end-to-end suite; needs dev:worker running
@@ -261,7 +261,10 @@ The spec's *Product decisions already made* table is binding. The ones most like
 - **No city is ever named**, and the operator is not named. No client names on Work.
 - **The email never appears in static markup** — assembled at runtime, click-to-reveal, copies on
   reveal, resets to unrevealed on page change.
-- **Guestbook has no form.** "A form is a database is a liability."
+- **No testimonials and no case studies unless they are real.** `/work` and `/guestbook` were
+  removed 2026-09-23 because an earlier model session had invented all eleven. They are archived
+  in `docs/RETIRED-PAGES.md` as a template only. Never restore that content, and never write a
+  replacement: a fabricated case study is fake evidence of skill.
 - **The operator door and its `authenticate` button are theatre.** Never present an unlock route as
   security.
 - **The self-deprecating copy is *out*, and so is the one-person framing** (client's reversal, and
@@ -277,7 +280,7 @@ The spec's *Product decisions already made* table is binding. The ones most like
 - **Nothing on the site advertises the site** — no palette inventories, no feature lists, no mention
   of pages a visitor cannot see. A joke that works by reciting an inventory is still reciting the
   inventory. The 404's page *list* stays: those are navigation.
-- **The 404's page count moves whenever a content page is added** — "eleven other pages" today,
+- **The 404's page count moves whenever a content page is added** — "seven other pages" today,
   gated. The counts on that page are jokes that depend on being true.
 - **No copy promises anything the client has not said, and no fee is named.** "Free diagnosis" and
   "Fixed, or you pay nothing" were both removed as untrue of the business. *"Rough quote back, free"*
@@ -297,9 +300,9 @@ The spec's *Product decisions already made* table is binding. The ones most like
   the truth, having been chosen for rhythm. **The most dangerous shape is a retired promise rebuilt
   without its words**, which is why the gate tests `PAGES` and the snippets for the *form* of a
   promise, not for a phrase.
-- **A quotation is somebody's words; an attribution is the writer's.** The guestbook's five quotes
-  may be re-attributed freely and **never reworded** — editing them for rhythm manufactures a
-  testimonial.
+- **A quotation is somebody's words; an attribution is the writer's.** If real customer quotes
+  ever appear, the attribution may be rewritten freely and the quote **never reworded** — editing
+  one for rhythm manufactures a testimonial.
 - **`/now` claims to be true today, so it may only ever contain true things.** It lists what is
   actually in for repair, which means **it goes stale by sitting still**, and a stale `now` page is
   worse than no `now` page. Same rule for `about`: there is no workshop yet, there is a bin of parts.
@@ -352,8 +355,9 @@ The spec's *Product decisions already made* table is binding. The ones most like
   Tab. **The panel and door are deliberately not modal**: `sudo` with the panel open opens the door.
 - **Adapted layouts: the operator's stored layout is never overwritten** when a small screen
   collapses it — it re-emerges when the window widens. That state is surfaced nowhere.
-- **Seventeen real URLs are wired in `src/data/pageIds.ts`** — ten content pages (the spec's eight
-  plus `/setup` and `/scams`), `/404`, `/signup`, `/signin`, `/admin`, `/downloads`, and (phase 2)
+- **Thirteen real URLs are wired in `src/data/pageIds.ts`** — six content pages (the spec's eight
+  plus `/setup` and `/scams`, less `/gallery`, `/changelog`, `/work` and `/guestbook`, removed
+  2026-09-23; `docs/RETIRED-PAGES.md`), `/404`, `/signup`, `/signin`, `/admin`, `/downloads`, and (phase 2)
   `/machines` and `/share`. **`PATHS` is a total map from a closed union**, which makes every link
   compiler-checkable — and **adding a content page moves the 404's page count**.
 - **One route has something after it, and exactly one** — `/downloads/<name>`, whose names are D1
@@ -374,8 +378,9 @@ The spec's *Product decisions already made* table is binding. The ones most like
   those are written to be forwarded, and a page about fraud that describes itself differently each
   time it is forwarded is arguing against itself. Gated on both sides, length, the retired claims,
   the no-rotate list, and that every home line names the business.
-- **The 404 pill left the public nav** and now leads `OPERATOR_NAV` (404 / Account / Admin) plus a
-  Config tab. **`OPERATOR_NAV` is deliberately not part of `NAV`**, which `useOperatorRoutes` cycles
+- **The 404 pill left the public nav** and now leads `OPERATOR_NAV` (404 / Account / Admin / Share)
+  plus a Config tab. Share is there because the one page that sets the machine up was
+  undiscoverable once signed in; `machines` is deliberately not beside it (see `pageIds.ts`). **`OPERATOR_NAV` is deliberately not part of `NAV`**, which `useOperatorRoutes` cycles
   and Radial's orbit renders. The 404 *page* still renders for anyone at an unknown URL.
 - **`FX` is the wire format; `PICKABLE_FX` is the menu.** Anything offering a choice to a human reads
   `PICKABLE_FX`; anything *resolving* a stored or shared value reads `FX`, because a hidden effect is
@@ -383,8 +388,8 @@ The spec's *Product decisions already made* table is binding. The ones most like
   and the flag anyway**: it is the mechanism for withdrawing an effect without moving anyone's share
   code. Same split as `CATEGORIES` / `PICKABLE_CATEGORIES`.
 - **Every surface that reads `PICKABLE_FX` is operator-gated.** A visitor's only appearance control
-  is the calm toggle, and the home page's "Show me something weird" **navigates to the gallery, it
-  does not roll the dice**.
+  is the calm toggle, and no visitor-facing control rolls the dice (the home page's "Show me something weird", which
+  navigated to the removed gallery, is gone with it).
 - **Presets define themselves structurally and derive their share code** (`src/data/presets.ts`) — a
   hardcoded `"N-7-5-3-5-3"` stays correct until a catalogue gains an entry and then becomes a
   *working* code pointing at the wrong palette. **A preset is a menu, so it may never name a `hidden`
@@ -413,17 +418,17 @@ about making a trace legible. Read them before writing or editing an effect.
 
 ## Known deviations from the prototype
 
-**The fifteen are listed in full in `docs/INVARIANTS.md`** — all deliberate, each with its reason.
+**The sixteen are listed in full in `docs/INVARIANTS.md`** — all deliberate, each with its reason.
 **Add to that list rather than silently diverging.** In brief: guardrail evaluation is all-clauses
 and must reach the page as well as the dice (1); focus-visible styles exist (2); Magazine's h1
 minimum is the spec's `46px` (3); Matrix rain is rebuilt per column (4); "breathing" drives the
 vignette (5); Contact's CTA reveals the address (6); the hero ornament is a setting with eight
 entries, five withdrawn, and carries a *station* (7); the vitals strip is removed (8); duel blades
 are literal colours (9); visible "vessel" branding is gone while **internal identifiers deliberately
-keep the old name** (10); photo slots hold EXIF-stripped placeholders (11); the contact sheet
+keep the old name** (10); photo slots hold EXIF-stripped placeholders (11 — moot since 2026-09-23: the only pages with photos were removed, and `public/photos/` is gone); the contact sheet
 duotones them in every mode including calm (12); **fourteen layouts, twenty-five palettes, sixteen
 effects, all appended and never inserted** (13); six self-hosted variable webfonts, each paired with
-a platform-picked system fallback (14); **the cursor-lean card tilt is deleted** (15).
+a platform-picked system fallback (14); **the cursor-lean card tilt is deleted** (15); the screensaver waits ten minutes, not sixty seconds (16).
 
 ## The duel
 
@@ -456,6 +461,11 @@ covers how to *see* any of this. The load-bearing few:
   then runs 1.67× fast.
 - **The duels are operator-only, enforced where the thing is drawn, never at the storage end** — else
   the operator's own published config silently rewrites itself when he looks at his site logged out.
+- **The engine is a lazy chunk, never in the entry bundle** (2026-09-24) — `effects.ts` reaches it
+  only through `loadDuelEngine`, `Ornament.tsx` through `lazy()`, and the config validator reads
+  `src/fx/roster.ts` (ids, `SIDES`, pools — the one declaration of each fighter's side) rather than
+  `fighters.ts`. One static import of `./duel` anywhere in the entry undoes it silently. Gated on the
+  real bundle graph.
 - **Every default is 1 and 1 must stay arithmetic identity**, so 360,000 stepped frames and 280,000
   generated sequences pass unchanged.
 
@@ -479,7 +489,16 @@ its reasoning and a *"revisit if"* condition. The load-bearing few:
   stranger read my files."
 - **A session says who you are, never how you proved it.** Every admin route that WRITES demands the
   caller's password (`proven()`), and the downloads editor and site publish draw the same line at
-  **releases**, not writes.
+  **releases** — what somebody else can get *or is told* — not writes: withdrawals (revoke, remove
+  grant) and any save to a page that is **live now** ask; drafts, reorders and new rows do not.
+- **The anonymous sign-in limit is per (address, handle), with a looser per-handle ceiling behind
+  it** — one per-handle bucket at five let any stranger lock the owner out. Do not collapse them.
+  **The pair's address is the IPv6 /48; the client bucket's stays the /64** — do not harmonise
+  them. Six addresses can still fill the ceiling; passkey sign-in, which no bucket touches, is the
+  mitigation, and the docs say so rather than calling the attack expensive.
+- **A session that began before `accounts.sessions_after` is refused** — a password change, a
+  recovery set-password and an operator password or TOTP reset stamp it and hang up the account's
+  signalling sockets; the request that changed the password is re-issued a *fresh* session.
 - **Refuse, never repair**, and **the last-way-in guards live in the writes' own `WHERE` clauses**,
   not in a check before them — check-then-act lets two concurrent requests each count the other as
   "another way in".
@@ -538,6 +557,9 @@ database table, not TypeScript.** The load-bearing few:
   404 from 403 makes the status code an existence oracle over the whole table.
 - **Deleting a page deletes the codes minted for its FILES as well as for its slug**, because ids are
   re-usable in practice (`suggestFromFilename` derives one and the editor auto-fills it).
+- **A download ticket names its code and is re-checked against it on every use** — revoke or delete
+  ends it at once. **A replacement upload never touches the row until the password-proved finish**;
+  `beginUpload` nulling `uploaded_at` let a stolen cookie take every download offline.
 - **Zero is "no price", never "free"**, and `free` / `price_cents` stay independent in the table.
   **Prices render only when the page has `show_prices` set, which is off by default** — do not flip
   it; the decision is the operator's and the switch is how it stays theirs.
@@ -547,7 +569,7 @@ database table, not TypeScript.** The load-bearing few:
 
 ## Checks — run them, and add to them
 
-`npm run check` is the gate (`scripts/check.ts`); `npm run check:fast` (~4s) is the same without the duel simulation and
+`npm run check` is the gate (`scripts/check.ts`); `npm run check:fast` (~43s, measured 2026-09-24) is the same without the duel simulation and
 runs automatically after every edit to `src/`, `worker/` or `scripts/` via the `PostToolUse` hook in
 `.claude/settings.json`. The full pass is `predeploy`, so **nothing reaches production without it.**
 

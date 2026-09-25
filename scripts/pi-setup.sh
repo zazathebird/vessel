@@ -704,16 +704,29 @@ log "Display ready (${found}), DISPLAY=${DISPLAY}, WAYLAND_DISPLAY=${WAYLAND_DIS
 # it the last exit was clean before it looks. jq is used rather than sed because Preferences is a
 # single-line JSON document and a regex that matches "exited_cleanly" also matches it inside
 # unrelated nested objects.
-PREFS="${HOME}/.config/chromium/Default/Preferences"
-if [ -f "${PREFS}" ] && command -v jq >/dev/null 2>&1; then
-    if tmp="$(mktemp)" && jq '.profile.exit_type = "Normal" | .profile.exited_cleanly = true' "${PREFS}" > "${tmp}" 2>/dev/null; then
-        mv "${tmp}" "${PREFS}"
-        log "Reset the profile's exit state so no restore bubble appears."
+#
+# BESIDE THE FILE, NON-EMPTY, AND RENAMED INTO PLACE — the ThinkCentre launcher's pattern, ported
+# 2026-09-24 (audit item 48 had regressed here). `mktemp` with no template lands in /tmp, a
+# different filesystem from ~/.config on most installs, so `mv` became copy-then-delete: not
+# atomic, and a power cut mid-copy left a truncated Preferences that Chromium discards — taking
+# the persistent folder grant with it, which is the trip to the machine the profile-is-the-pairing
+# rule exists to avoid. And an empty jq output (a disk full, a killed jq) was moved over the real
+# file just the same. Both profiles are covered, as on the ThinkCentre.
+for prefs in "${HOME}/.config/chromium/Default/Preferences" \
+             "${HOME}/.config/chromium/Profile "*"/Preferences"; do
+    [ -f "${prefs}" ] || continue
+    command -v jq >/dev/null 2>&1 || break
+    tmp="$(mktemp "${prefs}.XXXXXX")"
+    if jq '.profile.exit_type = "Normal" | .profile.exited_cleanly = true' "${prefs}" > "${tmp}" 2>/dev/null \
+       && [ -s "${tmp}" ]; then
+        chmod --reference="${prefs}" "${tmp}" 2>/dev/null || true
+        mv -f "${tmp}" "${prefs}"
+        log "Reset the exit state in ${prefs}, so no restore bubble appears."
     else
-        rm -f "${tmp}"
-        log "Could not rewrite ${PREFS}; relying on the command-line flags alone."
+        log "Could not rewrite ${prefs}; relying on the command-line flags alone."
     fi
-fi
+    rm -f "${tmp}"
+done
 
 # ---- Hide the pointer -------------------------------------------------------------------------
 # unclutter is an X11 client. Under XWayland it hides the pointer over X windows, which is every
@@ -724,13 +737,26 @@ if command -v unclutter >/dev/null 2>&1; then
 fi
 
 # ---- Find the browser -------------------------------------------------------------------------
+# Absolute paths first, and `command -v` only as a fallback — the ThinkCentre launcher's fix,
+# ported 2026-09-24. /usr/local/bin comes ahead of /usr/bin in the default PATH and is
+# group-writable by `staff` on Debian and Raspberry Pi OS, so a plain `command -v chromium` lets
+# anyone in that group choose which binary holds the directory handle.
 CHROMIUM=""
-for candidate in chromium-browser chromium; do
-    if command -v "${candidate}" >/dev/null 2>&1; then
+for candidate in /usr/bin/chromium-browser /usr/bin/chromium; do
+    if [ -x "${candidate}" ]; then
         CHROMIUM="${candidate}"
         break
     fi
 done
+if [ -z "${CHROMIUM}" ]; then
+    for candidate in chromium-browser chromium; do
+        if command -v "${candidate}" >/dev/null 2>&1; then
+            CHROMIUM="$(command -v "${candidate}")"
+            log "Falling back to ${CHROMIUM}, which is not in /usr/bin."
+            break
+        fi
+    done
+fi
 [ -n "${CHROMIUM}" ] || { log "No chromium binary found."; exit 1; }
 
 # ---- Flags ------------------------------------------------------------------------------------
