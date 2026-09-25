@@ -19,7 +19,7 @@
 #                                      default) measured 82% solid and looked opaque.
 #   Konsole Halo Opacity=0.70          Lives in the .colorscheme, not the .profile (see
 #                                      konsole-profiles.sh for why).
-#   Plasma panel 0.85 -> 0.6,          Panel; start menu and tray popups.
+#   Plasma panel 0.85 -> 0.35,         Panel; start menu and tray popups.
 #   dialogs 0.85 -> 0.3                A LOCAL copy of breeze-dark
 #                                      in ~/.local/share/plasma/desktoptheme/ shadows the system
 #                                      one; /usr/share is never touched.
