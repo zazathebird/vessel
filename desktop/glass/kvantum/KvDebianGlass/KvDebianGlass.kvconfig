@@ -62,7 +62,7 @@ submenu_delay=250
 transient_groove=false
 tree_branch_line=false
 no_inactiveness=false
-reduce_menu_opacity=40
+reduce_menu_opacity=60
 
 [GeneralColors]
 window.color=#302f2e
