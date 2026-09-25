@@ -15,8 +15,11 @@
 # to ~/.config/desktop-glass-backup-<timestamp>/ first.
 #
 # THE NUMBERS, AND WHY EACH ONE
-#   Kvantum reduce_window_opacity=45   Dolphin & every Qt app ~55% solid. 18 (the theme's own
+#   Kvantum reduce_window_opacity=55   Dolphin & every Qt app ~45% solid. 18 (the theme's own
 #                                      default) measured 82% solid and looked opaque.
+#   Kvantum base.color alpha 55        Views (Dolphin's file list) paint base.color OVER the
+#                                      translucent window, so the theme's cc (80%) stacked into
+#                                      a near-solid panel. alt.base (alternate rows) gets 66.
 #   Konsole Halo Opacity=0.70          Lives in the .colorscheme, not the .profile (see
 #                                      konsole-profiles.sh for why).
 #   Plasma panel 0.85 -> 0.35,         Panel; start menu and tray popups.
@@ -112,7 +115,7 @@ check() {
     local kv="${HOME}/.config/Kvantum/KvDebianGlass/KvDebianGlass.kvconfig"
     echo "    widgetStyle:             $([ -n "${KREAD}" ] && "${KREAD}" --file kdeglobals --group KDE --key widgetStyle)"
     echo "    kvantum theme:           $(sed -n 's/^theme=//p' "${HOME}/.config/Kvantum/kvantum.kvconfig" 2>/dev/null)"
-    echo "    reduce_window_opacity:   $(sed -n 's/^reduce_window_opacity=//p' "${kv}" 2>/dev/null)   (want 45)"
+    echo "    reduce_window_opacity:   $(sed -n 's/^reduce_window_opacity=//p' "${kv}" 2>/dev/null)   (want 55)"
     echo "    Konsole Halo Opacity:    $(sed -n 's/^Opacity=//p' "${HOME}/.local/share/konsole/Halo.colorscheme" 2>/dev/null)   (want 0.70)"
     echo "    KWin BlurStrength:       $([ -n "${KREAD}" ] && "${KREAD}" --file kwinrc --group Effect-blur --key BlurStrength)   (want 6)"
     echo "    glass-everywhere rule:   $(grep -q '^\[glass-everywhere\]' "${HOME}/.config/kwinrulesrc" 2>/dev/null && echo present || echo MISSING)"

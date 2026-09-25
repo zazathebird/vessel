@@ -13,7 +13,8 @@ The target it was tuned to: a folder icon sitting under a Dolphin window can jus
 
 | Piece | Where it lives | The value |
 |---|---|---|
-| Qt app glass | `kvantum/KvDebianGlass/` | `reduce_window_opacity=45` (~55% solid) |
+| Qt app glass | `kvantum/KvDebianGlass/` | `reduce_window_opacity=55` (~45% solid) |
+| File lists and other Qt views | `kvantum/KvDebianGlass/` `[GeneralColors]` | `base.color` alpha cc → 55, `alt.base.color` → 66 |
 | Terminal | `konsole/Halo.colorscheme` | `Opacity=0.70` |
 | Panel | `plasma-theme/breeze-dark/` (local override) | background 0.85 → 0.35 |
 | Start menu, tray popups | same, `translucent/dialogs` | background 0.85 → 0.3; `plasmarc` contrast intensity 0.6 → 0.85 |
