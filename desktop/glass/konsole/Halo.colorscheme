@@ -9,14 +9,14 @@ Color=10,14,20
 Color=10,14,20
 
 [Foreground]
-Color=214,228,240
+Color=0,204,106
 
 [ForegroundIntense]
-Color=214,228,240
+Color=0,204,106
 Bold=true
 
 [ForegroundFaint]
-Color=214,228,240
+Color=0,204,106
 
 [Color0]
 Color=18,24,34
@@ -37,13 +37,13 @@ Color=255,138,138
 Color=255,92,92
 
 [Color2]
-Color=92,232,168
+Color=19,161,14
 
 [Color2Intense]
-Color=138,255,203
+Color=22,198,12
 
 [Color2Faint]
-Color=92,232,168
+Color=19,161,14
 
 [Color3]
 Color=255,176,0
@@ -82,17 +82,17 @@ Color=168,242,250
 Color=127,233,245
 
 [Color7]
-Color=214,228,240
+Color=159,232,191
 
 [Color7Intense]
-Color=255,255,255
+Color=200,245,218
 
 [Color7Faint]
-Color=214,228,240
+Color=159,232,191
 
 [General]
 Blur=false
 ColorRandomization=false
-Description=UNSC hard-light HUD: cyan on gunmetal
+Description=UNSC hard-light HUD: Windows mint on gunmetal, no white anywhere
 Opacity=0.70
 Wallpaper=
